@@ -1,0 +1,70 @@
+# Copy to config.yaml and adjust. Secrets can instead come from the
+# environment: ATERNITY_URL / ATERNITY_USERNAME / ATERNITY_PASSWORD and
+# NETIM_URL / NETIM_USERNAME / NETIM_PASSWORD.
+
+aternity:
+  # Aternity REST API (OData) endpoint for your tenant, shown in
+  # Aternity > Settings > REST API Access.
+  base_url: https://your-tenant-odata.aternity.com/aternity.odata/v2.0
+  username: you@example.com
+  password: ""            # the REST API access token
+  verify_tls: true        # or a path to a CA bundle
+  # Entity and column names. Run `uxcorrelate aternity-sample <ENTITY>` to see
+  # the real columns in your tenant and override any that differ.
+  entities:
+    activities: BUSINESS_ACTIVITIES_RAW
+    device_health: DEVICE_HEALTH_RAW
+    inventory: DEVICE_INVENTORY
+  fields:
+    activities:
+      timestamp: TIMEFRAME
+      username: USERNAME
+      device: DEVICE_NAME
+      application: APPLICATION_NAME
+      response_time: ACTIVITY_RESPONSE_TIME
+    device_health:
+      cpu: CPU_UTILIZATION
+      memory: MEMORY_UTILIZATION
+    inventory:
+      ip_address: IP_ADDRESS
+      location: LOCATION
+
+netim:
+  base_url: https://netim.example.com:8543
+  username: admin
+  password: ""
+  verify_tls: true
+  api_prefix: /api/netim/v1
+  # Network Metric Data and Active Alerts APIs; confirm the paths in
+  # https://<netim>:8543/api-docs for your release. Set alerts_path: "" to disable.
+  metric_data_path: /swarm/NETIM_NETWORK_METRIC_DATA_SERVICE/api/v1/network-metric-data
+  alerts_path: /api/netim/v1/alerts
+  # Metrics to correlate. Run `uxcorrelate netim-check --metric-classes` to
+  # list the metric classes / names your NetIM collects. Omit to use defaults.
+  metrics:
+    - {key: if_util_in,  label: "Interface utilization in (%)",  object_type: INTERFACE, metric_class: IF_UTIL,   metric: utilizationIn,  threshold: 80}
+    - {key: if_util_out, label: "Interface utilization out (%)", object_type: INTERFACE, metric_class: IF_UTIL,   metric: utilizationOut, threshold: 80}
+    - {key: if_errors,   label: "Interface errors",              object_type: INTERFACE, metric_class: IF_ERRORS, metric: inErrors,       threshold: 10}
+    - {key: if_discards, label: "Interface discards",            object_type: INTERFACE, metric_class: IF_ERRORS, metric: outDiscards,    threshold: 50}
+    - {key: dev_cpu,     label: "Device CPU (%)",                object_type: DEVICE,    metric_class: CPU_UTIL,  metric: cpuUtilization, threshold: 85}
+
+thresholds:
+  response_time_s: 3.0          # an activity slower than this is "degraded"
+  response_time_s_by_app:
+    CRM Portal: 2.5
+  uxi_min: 70
+  device_cpu: 85
+  device_memory: 90
+  wifi_signal_dbm: -70
+  client_network_latency_ms: 150
+
+# How users and applications map onto NetIM. The endpoint's gateway is found
+# automatically from its IP (any NetIM interface whose subnet contains it).
+topology:
+  applications:                 # Aternity application name -> server hostnames / IPs
+    CRM Portal: [10.100.5.20, crm-app01]
+  sites:                        # Aternity location -> NetIM device names (WAN routers, etc.)
+    Branch-Denver: [den-br-rtr01]
+  always_include: []            # e.g. core switches, internet firewalls
+
+bucket_minutes: 5

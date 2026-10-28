@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UX Correlator</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --text: #1d2330; --muted: #5d6676; --border: #dde1e7;
+    --accent: #2563eb; --bad: #d33c3c; --warn: #c7820a; --ok: #2f8f5b;
+    --client: #8b5cf6; --network: #0ea5e9; --backend: #f59e0b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #12151b; --panel: #1b2029; --text: #e6e9ef; --muted: #9aa3b2; --border: #2d3440; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--panel); display: flex; gap: 12px; align-items: baseline; }
+  header h1 { font-size: 18px; margin: 0; }
+  header span { color: var(--muted); }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+  form { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; align-items: end; }
+  label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+  input { padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+  button { padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: wait; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  .verdict { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  .verdict .label { font-size: 22px; font-weight: 700; }
+  .pill { padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: #fff; }
+  .scores { display: grid; gap: 8px; margin-top: 12px; }
+  .score { display: grid; grid-template-columns: 160px 1fr 60px; gap: 10px; align-items: center; }
+  .bar { height: 10px; background: var(--border); border-radius: 5px; overflow: hidden; }
+  .bar > div { height: 100%; }
+  .muted { color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 16px; }
+  .warn { color: var(--warn); }
+  .err { color: var(--bad); white-space: pre-wrap; }
+  svg text { fill: var(--muted); font-size: 11px; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  .tableWrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+<header><h1>UX Correlator</h1><span>Aternity end-user experience × NetIM infrastructure</span><span id="mode"></span></header>
+<main>
+  <section class="panel">
+    <form id="f">
+      <label>Username<input name="username" placeholder="jdoe"></label>
+      <label>Device<input name="device" placeholder="LT-JDOE-01"></label>
+      <label>Application<input name="application" list="apps" placeholder="optional"></label>
+      <label>Start (local)<input name="start" type="datetime-local" required></label>
+      <label>End (local)<input name="end" type="datetime-local" required></label>
+      <label>Bucket (min)<input name="bucket_minutes" type="number" min="1" max="60" value="5"></label>
+      <button id="go">Investigate</button>
+    </form>
+    <datalist id="apps"></datalist>
+    <div id="error" class="err"></div>
+  </section>
+  <div id="out" hidden>
+    <section class="panel">
+      <div class="verdict"><div class="label" id="vLabel"></div><span class="pill" id="vConf"></span></div>
+      <div id="vHead" class="muted"></div>
+      <div class="scores" id="scores"></div>
+    </section>
+    <section class="panel" style="margin-top:16px">
+      <h2>Timeline</h2>
+      <div id="chart"></div>
+      <div class="legend">
+        <span><i style="background:var(--text)"></i>Avg response time (s)</span>
+        <span><i style="background:var(--bad);opacity:.25"></i>Degraded interval</span>
+        <span><i style="background:var(--client)"></i>Client anomaly</span>
+        <span><i style="background:var(--network)"></i>Network anomaly</span>
+        <span><i style="background:var(--backend)"></i>Backend anomaly</span>
+      </div>
+    </section>
+    <section class="panel" style="margin-top:16px">
+      <h2>Evidence during degraded intervals</h2>
+      <div class="tableWrap"><table id="evidence"></table></div>
+    </section>
+    <div class="grid2" style="margin-top:16px">
+      <section class="panel"><h2>Next steps</h2><ul id="recs"></ul><div id="warns"></div></section>
+      <section class="panel"><h2>Scope</h2><div id="endpoints"></div><div class="tableWrap"><table id="objects"></table></div></section>
+    </div>
+  </div>
+</main>
+<script>
+const COLORS = { client: "var(--client)", network: "var(--network)", backend: "var(--backend)" };
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const toLocalInput = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+
+async function init() {
+  try {
+    const info = await (await fetch("api/info")).json();
+    const f = $("f");
+    const end = info.default_end ? new Date(info.default_end) : new Date();
+    const start = info.default_start ? new Date(info.default_start) : new Date(end - 4 * 3600e3);
+    f.start.value = toLocalInput(start);
+    f.end.value = toLocalInput(end);
+    f.bucket_minutes.value = info.bucket_minutes;
+    if (info.default_user) f.username.value = info.default_user;
+    $("apps").innerHTML = info.applications.map((a) => `<option value="${esc(a)}">`).join("");
+    if (info.demo) { $("mode").textContent = "· demo data"; f.application.value = info.applications[0] || ""; }
+  } catch (e) { $("error").textContent = "Could not load settings: " + e; }
+}
+
+$("f").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = ev.target, body = {};
+  for (const k of ["username", "device", "application"]) body[k] = f[k].value.trim() || null;
+  body.start = new Date(f.start.value).toISOString();
+  body.end = new Date(f.end.value).toISOString();
+  body.bucket_minutes = Number(f.bucket_minutes.value) || null;
+  $("go").disabled = true; $("error").textContent = "";
+  try {
+    const r = await fetch("api/investigate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
+    render(data);
+  } catch (e) { $("error").textContent = e.message; }
+  finally { $("go").disabled = false; }
+});
+
+function render(d) {
+  $("out").hidden = false;
+  const s = d.summary;
+  $("vLabel").textContent = s.verdict === "none" ? "No degradation found" : s.verdict_label;
+  const conf = $("vConf");
+  conf.textContent = `confidence ${s.confidence.toFixed(2)}`;
+  conf.style.background = s.confidence >= 0.6 ? "var(--bad)" : s.confidence >= 0.25 ? "var(--warn)" : "var(--muted)";
+  $("vHead").textContent = `${s.headline} ${s.samples} samples, ${s.degraded_samples} degraded.`;
+  $("scores").innerHTML = Object.entries(d.scores).map(([k, v]) => `
+    <div class="score"><div>${esc(v.label)}<div class="muted" style="font-size:11px">overlap ${v.overlap.toFixed(2)} · time share ${v.breakdown_share == null ? "n/a" : v.breakdown_share.toFixed(2)}</div></div>
+    <div class="bar"><div style="width:${v.score * 100}%;background:${COLORS[k]}"></div></div><div>${v.score.toFixed(2)}</div></div>`).join("");
+
+  $("chart").innerHTML = chart(d.timeline);
+
+  $("evidence").innerHTML = d.evidence.length
+    ? `<tr><th>Coverage</th><th>Domain</th><th>Source</th><th>Object</th><th>Metric</th><th>Worst</th><th>Threshold</th><th>Window</th></tr>` +
+      d.evidence.map((e) => `<tr><td>${(e.coverage * 100).toFixed(0)}%</td>
+        <td><span class="pill" style="background:${COLORS[e.domain]}">${esc(e.domain)}</span></td>
+        <td>${esc(e.source)}</td><td>${esc(e.object)}${e.role ? `<div class="muted">${esc(e.role)}</div>` : ""}</td>
+        <td>${esc(e.metric)}</td><td>${e.worst ?? ""}</td><td>${e.threshold ?? ""}</td>
+        <td class="muted">${new Date(e.first).toLocaleTimeString()} – ${new Date(e.last).toLocaleTimeString()}</td></tr>`).join("")
+    : `<tr><td class="muted">No infrastructure or endpoint anomalies overlapped the degraded intervals.</td></tr>`;
+
+  $("recs").innerHTML = d.recommendations.map((r) => `<li>${esc(r)}</li>`).join("") || "<li class='muted'>—</li>";
+  $("warns").innerHTML = d.warnings.map((w) => `<p class="warn">⚠ ${esc(w)}</p>`).join("");
+  $("endpoints").innerHTML = d.endpoints.map((e) =>
+    `<p><b>${esc(e.device)}</b> <span class="muted">ip ${esc(e.ip_address || "?")} · ${esc(e.location || "unknown location")} · ${esc(e.os || "")}</span></p>`).join("");
+  $("objects").innerHTML = d.mapped_objects.length
+    ? `<tr><th>Role</th><th>Type</th><th>NetIM object</th><th>Why</th></tr>` + d.mapped_objects.map((m) =>
+        `<tr><td>${esc(m.role)}</td><td>${esc(m.object_type)}</td><td>${esc(m.name)}</td><td class="muted">${esc(m.reason)}</td></tr>`).join("")
+    : `<tr><td class="muted">No NetIM objects mapped.</td></tr>`;
+}
+
+function chart(tl) {
+  if (!tl.length) return `<p class="muted">No data in window.</p>`;
+  const W = 1100, H = 240, L = 64, R = 10, T = 10, laneH = 10, B = 24 + 3 * (laneH + 4);
+  const plotH = H - T - B, n = tl.length, step = (W - L - R) / n;
+  const rts = tl.map((b) => b.avg_response_time).filter((v) => v != null);
+  const max = Math.max(1, ...rts) * 1.1;
+  const y = (v) => T + plotH - (v / max) * plotH;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Response time timeline">`;
+  tl.forEach((b, i) => { if (b.degraded) svg += `<rect x="${L + i * step}" y="${T}" width="${step}" height="${plotH}" fill="var(--bad)" opacity=".18"><title>${esc(b.time)} degraded</title></rect>`; });
+  for (let k = 0; k <= 4; k++) {
+    const v = (max / 4) * k;
+    svg += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--border)"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v.toFixed(1)}</text>`;
+  }
+  let path = "";
+  tl.forEach((b, i) => { if (b.avg_response_time != null) path += `${path ? "L" : "M"}${(L + (i + 0.5) * step).toFixed(1)},${y(b.avg_response_time).toFixed(1)}`; });
+  svg += `<path d="${path}" fill="none" stroke="var(--text)" stroke-width="1.8"/>`;
+  ["client", "network", "backend"].forEach((d, j) => {
+    const ly = T + plotH + 6 + j * (laneH + 4);
+    svg += `<text x="${L - 6}" y="${ly + 9}" text-anchor="end">${d}</text>`;
+    tl.forEach((b, i) => {
+      if (b[d].length) svg += `<rect x="${L + i * step + 0.5}" y="${ly}" width="${Math.max(1, step - 1)}" height="${laneH}" fill="${COLORS[d]}"><title>${esc(b.time)}\n${b[d].map((a) => esc(`${a.object}: ${a.metric} ${a.value ?? ""}`)).join("\n")}</title></rect>`;
+    });
+  });
+  const every = Math.ceil(n / 8);
+  tl.forEach((b, i) => { if (i % every === 0) svg += `<text x="${L + i * step}" y="${H - 4}">${new Date(b.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</text>`; });
+  return svg + "</svg>";
+}
+init();
+</script>
+</body>
+</html>
