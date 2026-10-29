@@ -74,7 +74,7 @@ def render_text(result: dict) -> str:
             lines.append(f"  {g['slow']:>4} of {g['users']:<4} slow  {g['name']}{usual}{mark}")
         for u in im["affected_users"][:10]:
             lines.append(f"  - {u['username'] or u['device']}  {u['device']}  {u['network']}  "
-                         f"worst {u['worst_response_time']} s")
+                         f"slowest action {u['worst_response_time']} s in {u['worst_app']}")
         if im["affected_total"] > 10:
             lines.append(f"  ... {im['affected_total'] - 10} more (see --json or the web UI)")
     lg = result.get("logons")

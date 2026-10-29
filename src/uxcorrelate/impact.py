@@ -161,6 +161,8 @@ def who_else(aternity, netim, apps: list[str], degraded: set[datetime], minutes:
     top = ranked[0] if ranked else None
     common = top if (top and unusual and top["unusual"] and top["slow"] * 2 > slow_total) else None
 
+    for u in users.values():
+        u["worst"] = max(u["slow"], key=lambda s: s.response_time) if u["slow"] else None
     affected = sorted((u for u in users.values() if u["slow"]),
                       key=lambda u: (-len(u["slow"]), u["username"] or u["device"]))
     by_loc: dict[str, dict] = {}
@@ -182,7 +184,8 @@ def who_else(aternity, netim, apps: list[str], degraded: set[datetime], minutes:
         "affected_users": [{
             "username": u["username"], "device": u["device"], "location": u["location"],
             "network": u["group"][1], "slow_activities": len(u["slow"]),
-            "worst_response_time": round(max(s.response_time for s in u["slow"]), 2),
+            "worst_response_time": round(u["worst"].response_time, 2),
+            "worst_app": u["worst"].application,
         } for u in affected[:100]],
         "affected_total": len(affected),
     }

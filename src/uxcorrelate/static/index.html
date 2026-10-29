@@ -344,8 +344,8 @@ function renderWho(im, sentence) {
     + `<td>${g.slow} of ${g.users}</td><td>${g.usual_rate == null ? "?" : `up to ${Math.round(g.usual_rate * 100)}%`}</td></tr>`).join("");
   const more = im.affected_total > im.affected_users.length ? `<tr><td colspan="4" class="muted">… and ${im.affected_total - im.affected_users.length} more</td></tr>` : "";
   $("whoUsers").innerHTML = im.affected_users.length
-    ? "<tr><th>Slow user</th><th>Device</th><th>Network point</th><th>Worst (s)</th></tr>" + im.affected_users.map((u) =>
-      `<tr><td>${esc(u.username)}</td><td>${esc(u.device)}</td><td>${esc(u.network)}</td><td>${u.worst_response_time}</td></tr>`).join("") + more
+    ? "<tr><th>Slow user</th><th>Device</th><th>Network point</th><th>Slowest action</th></tr>" + im.affected_users.map((u) =>
+      `<tr><td>${esc(u.username)}</td><td>${esc(u.device)}</td><td>${esc(u.network)}</td><td>${u.worst_response_time} s <span class="muted">${esc(u.worst_app ?? "")}</span></td></tr>`).join("") + more
     : `<tr><td class="muted">No other user was slow at the same time.</td></tr>`;
 }
 
