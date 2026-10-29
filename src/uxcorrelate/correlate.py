@@ -28,6 +28,8 @@ from statistics import mean
 from typing import Protocol
 
 from .config import NetimMetric, Settings
+from .answer import build_answer
+from .impact import who_else
 from .logons import logon_report
 from .models import (
     AppUsageSample, DeviceHealthSample, HealthEvent, EndpointInfo, MappedObject, MetricSample, NetimAlert,
@@ -48,22 +50,6 @@ ROLE_DOMAIN = {
     "app-server-network": "network",
     "always": "network",
     "app-server": "backend",
-}
-RECOMMENDATIONS = {
-    "client": [
-        "Review processes consuming CPU/memory on the endpoint (Aternity device health / process view).",
-        "Check for recent software, patch or security agent changes on the device.",
-    ],
-    "network": [
-        "Inspect the flagged NetIM interfaces for saturation, errors and discards during the window.",
-        "Check QoS policy and top talkers on the congested link (NetProfiler / AppResponse if available).",
-        "Compare with other users at the same location to confirm a site-wide impact.",
-    ],
-    "backend": [
-        "Check application server and database health for the window (APM / server monitoring).",
-        "Confirm whether other users of the application were affected at the same time.",
-        "Review recent application deployments or changes.",
-    ],
 }
 
 
@@ -242,100 +228,6 @@ def _usage_anomalies(u: AppUsageSample) -> list[dict]:
     return out
 
 
-def _rate(slow: int, users: int) -> float | None:
-    return slow / users if users else None
-
-
-def _who_else(aternity: AternitySource, req: InvestigationRequest, samples: list[UserSample],
-              degraded: set[datetime], location: str | None, settings: Settings) -> dict | None:
-    """Other users of the same application(s) during the user's slow intervals.
-
-    Scope uses a plain majority: most other users at the user's location slow ->
-    site; most users elsewhere slow too -> everyone; otherwise only this user.
-    """
-    if not degraded or not hasattr(aternity, "app_activity"):
-        return None
-    minutes = settings.bucket_minutes
-    slow_own = [s for s in samples if _bucket(s.timestamp, minutes) in degraded and _is_degraded(s, settings)]
-    apps = [req.application] if req.application else \
-        [a for a, _ in Counter(s.application for s in slow_own if s.application).most_common(3)]
-    if not apps:
-        return None
-    start, end = min(degraded), max(degraded) + timedelta(minutes=minutes)
-    who = req.username or req.device
-    log.info("Aternity: comparing with other users of %s, %s to %s UTC", ", ".join(apps),
-             start.strftime("%H:%M"), end.strftime("%H:%M"))
-    rows = aternity.app_activity(apps, start, end)
-    users: dict[str, dict] = {}
-    for s in rows:
-        key = s.username or s.device
-        if not key or key == who or (not req.username and s.device == req.device):
-            continue
-        if _bucket(s.timestamp, minutes) not in degraded:
-            continue  # same time = the user's own slow intervals
-        u = users.setdefault(key, {"username": s.username, "device": s.device, "locations": Counter(),
-                                   "slow": [], "activities": 0})
-        u["activities"] += 1
-        if s.location:
-            u["locations"][s.location] += 1
-        if _is_degraded(s, settings):
-            u["slow"].append(s)
-    by_loc: dict[str, dict] = {}
-    for u in users.values():
-        u["location"] = u.pop("locations").most_common(1)[0][0] if u["locations"] else None
-        g = by_loc.setdefault(u["location"] or "(unknown)", {"location": u["location"] or "(unknown)",
-                                                             "users": 0, "slow": 0})
-        g["users"] += 1
-        g["slow"] += bool(u["slow"])
-    here = [u for u in users.values() if location and u["location"] == location]
-    there = [u for u in users.values() if not (location and u["location"] == location)]
-    same = {"users": len(here), "slow": sum(bool(u["slow"]) for u in here)}
-    other = {"users": len(there), "slow": sum(bool(u["slow"]) for u in there)}
-    r_same, r_other = _rate(same["slow"], same["users"]), _rate(other["slow"], other["users"])
-    loc = location or "the user's location"
-    counts = (f"{same['slow']} of {same['users']} other users at {loc} and "
-              f"{other['slow']} of {other['users']} elsewhere were slow at the same time")
-    if not users:
-        scope, text = "unknown", f"No other users of {', '.join(apps)} were active at the same time."
-    elif (r_other or 0) >= 0.5 and (r_same is None or r_same >= 0.5):
-        scope, text = "everyone", f"Everyone using {', '.join(apps)}: {counts}. Points at the application or its servers."
-    elif r_same is not None and r_same >= 0.5:
-        scope, text = "site", f"Site {loc}: {counts}. Points at {loc} or its network path."
-    else:
-        scope, text = "user", f"Only {who}: {counts}. Points at {who}'s device or connection."
-    slow_peer_samples = [s for u in users.values() for s in u["slow"]]
-    affected = sorted((u for u in users.values() if u["slow"]),
-                      key=lambda u: (-len(u["slow"]), u["username"] or u["device"]))
-    log.info("Aternity: %d other users active then, %d of them slow", len(users), len(affected))
-    return {
-        "applications": apps, "start": _iso(start), "end": _iso(end), "location": location,
-        "scope": scope, "text": text, "same_location": same, "other_locations": other,
-        "slow_time_split": {d: round(v, 3) for d, v in _breakdown_shares(slow_peer_samples).items()},
-        "by_location": sorted(by_loc.values(), key=lambda g: (-g["slow"], -g["users"]))[:15],
-        "affected_users": [{
-            "username": u["username"], "device": u["device"], "location": u["location"],
-            "slow_activities": len(u["slow"]), "activities": u["activities"],
-            "worst_response_time": round(max(s.response_time for s in u["slow"]), 2),
-        } for u in affected[:100]],
-        "affected_total": len(affected),
-    }
-
-
-def _cause(verdict: str, evidence: list[dict], impact: dict | None) -> str | None:
-    """One line: who is affected and the strongest measurement behind the verdict."""
-    parts = [impact["text"]] if impact else []
-    # a named NetIM device or interface says more than the endpoint's own view
-    ranked = sorted((e for e in evidence if e["domain"] == verdict),
-                    key=lambda e: (not e["source"].startswith("NetIM"), -e["coverage"]))
-    top = ranked[0] if ranked else None
-    if top:
-        value = "" if top["worst"] is None else f" {top['worst']}"
-        limit = "" if top["threshold"] in (None, 0) else f" (limit {top['threshold']})"
-        parts.append(f"Measured: {top['object']} {top['metric']}{value}{limit} "
-                     f"in {top['coverage']:.0%} of the slow intervals.")
-    return " ".join(parts) or None
-
-
 def investigate(req: InvestigationRequest, aternity: AternitySource, netim: NetimSource | None,
                 settings: Settings) -> dict:
     req.validate()
@@ -497,11 +389,18 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
     all_uxi = [u.uxi for u in usage if u.uxi is not None]
     user_location = next((e.location for e in endpoints if e.location), None) or \
         next((s.location for s in samples if s.location), None)
-    impact = _who_else(aternity, req, samples, degraded, user_location, settings)
+    user_ip = next((e.ip_address for e in endpoints if e.ip_address), None)
+    slow_own = [s for s in samples if _bucket(s.timestamp, minutes) in degraded and _is_degraded(s, settings)]
+    apps = [req.application] if req.application else \
+        [a for a, _ in Counter(s.application for s in slow_own if s.application).most_common(3)]
+    impact = who_else(aternity, netim, apps, degraded, minutes, lambda t: _bucket(t, minutes),
+                      lambda s: _is_degraded(s, settings), req.username or req.device,
+                      None if req.username else req.device, user_ip, user_location)
     warnings.extend(w for w in getattr(aternity, "warnings", []) if w not in warnings)
-    cause = _cause(verdict, evidence, impact)
     logons = logon_report(aternity, req.start, req.end, username=req.username, device=req.device, top=10)
     warnings.extend(w for w in logons.pop("warnings", []) if w not in warnings)
+    answer = build_answer(verdict, scores, evidence, len(degraded), samples, deg_samples,
+                          req.username or req.device, impact, mapped, logons, settings.thresholds)
     log.info("Done in %.0f s: %s", time.monotonic() - started, headline)
     return {
         "request": {
@@ -520,13 +419,12 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
             "uxi_avg": round(mean(all_uxi), 1) if all_uxi else None,
             "uxi_min": round(min(all_uxi), 1) if all_uxi else None,
             "health_events": len(events),
-            "cause": cause,
         },
+        "answer": answer,
         "impact": impact,
         "logons": logons,
         "scores": scores,
         "evidence": evidence,
-        "recommendations": RECOMMENDATIONS.get(verdict, []),
         "endpoints": [asdict(e) for e in endpoints],
         "mapped_objects": [asdict(m) for m in mapped],
         "timeline": timeline,

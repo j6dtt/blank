@@ -134,7 +134,7 @@ class AternityClient:
         key = "activities"
         f = self.cfg.fields[key]
         apps = " or ".join(f"{f['application']} eq {odata_quote(a)}" for a in applications)
-        logical = ("timestamp", "username", "device", "application", "location",
+        logical = ("timestamp", "username", "device", "application", "location", "ip_address",
                    "response_time", "client_time", "network_time", "backend_time")
         select = [f[k] for k in logical if f.get(k)]
         rows = self.query(self.cfg.entities[key], f"{self._time_filter(key, start, end)} and ({apps})",
@@ -149,6 +149,7 @@ class AternityClient:
                     device=str(row.get(f["device"], "")),
                     application=str(row.get(f["application"], "")),
                     location=row.get(f.get("location", "")) or None,
+                    ip_address=row.get(f.get("ip_address", "")) or None,
                     response_time=to_float(row.get(f.get("response_time", ""))),
                     client_time=to_float(row.get(f.get("client_time", ""))),
                     network_time=to_float(row.get(f.get("network_time", ""))),

@@ -97,7 +97,6 @@ DEFAULT_ATERNITY_FIELDS = {
         "device": "DEVICE_NAME",
         "type": "MEASUREMENT_TYPE",
         "component": "MEASUREMENT_COMPONENT",
-        "start_type": "MEASUREMENT_START_TYPE",
         "duration": "MEASUREMENT_DURATION_AVG",
         "degradation": "MEASUREMENT_DEGRADATION_TIME",
     },

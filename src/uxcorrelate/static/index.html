@@ -44,7 +44,9 @@
   .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
   .tableWrap { overflow-x: auto; }
-  .cause { font-weight: 600; margin-top: 8px; }
+  .atitle { font-size: 22px; font-weight: 700; }
+  .answer #aReason { margin-top: 4px; }
+  button.link { background: none; color: var(--accent); padding: 4px 0; font-weight: 600; }
   nav { margin-left: auto; display: flex; gap: 6px; }
   nav button { background: transparent; color: var(--muted); border: 1px solid var(--border); padding: 5px 12px; }
   nav button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
@@ -95,42 +97,59 @@
     </section>
   </div>
   <div id="out" hidden>
-    <section class="panel">
-      <div class="verdict"><div class="label" id="vLabel"></div><span class="pill" id="vConf"></span></div>
-      <div id="vHead" class="muted"></div>
-      <div id="vCause" class="cause"></div>
-      <div class="scores" id="scores"></div>
-    </section>
-    <section class="panel" style="margin-top:16px" id="who">
-      <h2>Who else</h2>
-      <div id="whoText" class="muted"></div>
-      <div class="grid2" style="margin-top:10px">
-        <div class="tableWrap scroll"><table id="whoLoc"></table></div>
-        <div class="tableWrap scroll"><table id="whoUsers"></table></div>
-      </div>
-    </section>
-    <section class="panel" style="margin-top:16px">
-      <h2>Timeline</h2>
-      <div id="chart"></div>
-      <div class="legend">
-        <span><i style="background:var(--text)"></i>Avg response time (s)</span>
-        <span><i style="background:var(--bad);opacity:.25"></i>Degraded interval</span>
-        <span><i style="background:var(--client)"></i>Client anomaly</span>
-        <span><i style="background:var(--network)"></i>Network anomaly</span>
-        <span><i style="background:var(--backend)"></i>Backend anomaly</span>
-      </div>
-    </section>
-    <section class="panel" style="margin-top:16px">
-      <h2>Evidence during degraded intervals</h2>
-      <div class="tableWrap"><table id="evidence"></table></div>
-    </section>
-    <section class="panel" style="margin-top:16px" id="invLogonsPanel">
-      <h2>Boots and logons</h2>
-      <div id="invLogons"></div>
+    <section class="panel answer" id="aCard">
+      <div class="atitle" id="aTitle"></div>
+      <div id="aReason"></div>
     </section>
     <div class="grid2" style="margin-top:16px">
-      <section class="panel"><h2>Next steps</h2><ul id="recs"></ul><div id="warns"></div></section>
-      <section class="panel"><h2>Scope</h2><div id="endpoints"></div><div class="tableWrap"><table id="objects"></table></div></section>
+      <section class="panel"><h2>What the user felt</h2><div id="aFelt"></div></section>
+      <section class="panel"><h2>Where the time went</h2><div id="aWent"></div></section>
+    </div>
+    <section class="panel" style="margin-top:16px" id="who">
+      <h2>Is it just them?</h2>
+      <div id="aJust"></div>
+      <button type="button" class="link" id="whoBtn">Show who</button>
+      <div id="whoBox" hidden>
+        <div class="grid2" style="margin-top:10px">
+          <div class="tableWrap scroll"><table id="whoGroups"></table></div>
+          <div class="tableWrap scroll"><table id="whoUsers"></table></div>
+        </div>
+      </div>
+    </section>
+    <div class="grid2" style="margin-top:16px">
+      <section class="panel"><h2>What we found</h2><ul id="aFound"></ul></section>
+      <section class="panel"><h2>What to do</h2><ul id="aTodo"></ul><div id="warns"></div></section>
+    </div>
+    <button type="button" class="link" id="detBtn" style="margin-top:12px">Details for IT ▸</button>
+    <div id="details" hidden>
+      <section class="panel" style="margin-top:12px">
+        <div class="verdict"><div class="label" id="vLabel"></div><span class="pill" id="vConf"></span></div>
+        <div id="vHead" class="muted"></div>
+        <div class="scores" id="scores"></div>
+        <p class="muted" style="font-size:12px">Score = how often a domain's measurements line up with the slow
+          moments ("overlap"), combined with Aternity's own split of the slow time ("time share").</p>
+      </section>
+      <section class="panel" style="margin-top:16px">
+        <h2>Timeline</h2>
+        <div id="chart"></div>
+        <div class="legend">
+          <span><i style="background:var(--text)"></i>Avg response time (s)</span>
+          <span><i style="background:var(--bad);opacity:.25"></i>Slow moment</span>
+          <span><i style="background:var(--client)"></i>PC problem</span>
+          <span><i style="background:var(--network)"></i>Network problem</span>
+          <span><i style="background:var(--backend)"></i>Server problem</span>
+        </div>
+      </section>
+      <section class="panel" style="margin-top:16px">
+        <h2>All measurements during slow moments</h2>
+        <div class="tableWrap"><table id="evidence"></table></div>
+      </section>
+      <section class="panel" style="margin-top:16px" id="invLogonsPanel">
+        <h2>Boots and logons</h2>
+        <div id="invLogons"></div>
+      </section>
+      <section class="panel" style="margin-top:16px"><h2>Scope</h2><div id="endpoints"></div>
+        <div class="tableWrap"><table id="objects"></table></div></section>
     </div>
   </div>
 </main>
@@ -210,7 +229,17 @@ $("lf").addEventListener("submit", (ev) => {
 function logonsHtml(lg, all) {
   if (!lg || !lg.total) return `<p class="muted">No boots or logons in the window.</p>`;
   const t = (iso) => new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  let h = `<p class="muted">Durations in Aternity's units. ${lg.types.map((x) => `<b>${esc(x.type)}</b>: ${x.count} measured, median ${x.median}, 90% under ${x.p90}, slowest ${x.max}`).join(" · ")}</p>`;
+  let h = "";
+  const top = lg.slowest[0];
+  if (all && top) {
+    // plain summary first: the slowest one, what slowed it, and the slowest place
+    const why = top.components.length ? ` Slowed most by <b>${esc(top.components[0].component)}</b>.` : "";
+    const vs = top.x_usual != null ? `${top.x_usual}× its usual` : top.x_median != null ? `${top.x_median}× the median` : "";
+    h += `<p class="atitle" style="font-size:18px">Slowest: ${esc(top.username || top.device)}'s ${esc(top.type.toLowerCase())} at ${t(top.time)} took ${top.duration}${vs ? ` (${vs})` : ""}.</p><p>${why}</p>`;
+    const locs = lg.by_location.filter((g) => g.type === top.type && g.count > 1).sort((x, y) => y.median - x.median);
+    if (locs.length > 1) h += `<p>Slowest place: <b>${esc(locs[0].location)}</b>, median ${locs[0].median} over ${locs[0].count} ${esc(top.type.toLowerCase())}s, against ${locs[locs.length - 1].median} at ${esc(locs[locs.length - 1].location)}.</p>`;
+  }
+  h += `<p class="muted">Durations in Aternity's units. ${lg.types.map((x) => `<b>${esc(x.type)}</b>: ${x.count} measured, median ${x.median}, 90% under ${x.p90}, slowest ${x.max}`).join(" · ")}</p>`;
   h += `<div class="tableWrap${all ? " scroll" : ""}"><table><tr><th>When</th><th>Type</th><th>Duration</th><th>vs median</th>`
     + `${lg.baseline_days ? `<th>vs its usual (${lg.baseline_days} d)</th>` : ""}<th>User</th><th>Device</th><th>Location</th></tr>`;
   for (const b of lg.slowest) {
@@ -244,62 +273,90 @@ async function waitFor(id, started) {
   }
 }
 
+const hm = (iso) => iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+const LEVEL_COLOR = { likely: "var(--bad)", possible: "var(--warn)", unsure: "var(--muted)", none: "var(--ok)" };
+
 function render(d) {
-  $("out").hidden = false;
-  const s = d.summary;
+  $("out").hidden = false; $("out").dataset.has = "1";
+  const a = d.answer, s = d.summary;
+  // the answer, in plain words
+  $("aCard").style.borderLeft = `6px solid ${LEVEL_COLOR[a.level]}`;
+  $("aTitle").textContent = a.title;
+  $("aReason").textContent = a.reason;
+  const f = a.felt;
+  let felt = f.slow_actions
+    ? `<p><b>${f.slow_actions}</b> slow of ${f.actions} actions, ${hm(f.first)}–${hm(f.last)}.</p>`
+    : `<p>No slow actions (${f.actions} measured).</p>`;
+  if (f.slowest) felt += `<p>Slowest: <b>${f.slowest.seconds} s</b> in ${esc(f.slowest.app)}${f.slowest.activity ? ` (${esc(f.slowest.activity)})` : ""} at ${hm(f.slowest.when)}.</p>`;
+  if (f.logon) felt += `<p>Slowest ${esc(f.logon.type.toLowerCase())}: <b>${f.logon.duration}</b> at ${hm(f.logon.time)}${f.logon.usual != null ? `, usually ${f.logon.usual}` : ""} <span class="muted">(Aternity's units)</span>.</p>`;
+  $("aFelt").innerHTML = felt;
+  const tw = a.time_went;
+  $("aWent").innerHTML = tw ? [["PC", "pc", "client"], ["Network", "network", "network"], ["Server", "server", "backend"]].map(([label, k, c]) =>
+    `<div class="score"><div>${label}</div><div class="bar"><div style="width:${(tw[k] || 0) * 100}%;background:${COLORS[c]}"></div></div><div>${tw[k] == null ? "" : Math.round(tw[k] * 100) + "%"}</div></div>`).join("")
+    + `<p class="muted" style="font-size:12px">Aternity's split of the slow actions' time.</p>`
+    : `<p class="muted">Aternity gave no split for these actions.</p>`;
+  renderWho(d.impact, a.just_them);
+  $("aFound").innerHTML = a.found.map((x) => `<li>${esc(x.text)}${x.when ? `, from ${hm(x.when)}` : ""}</li>`).join("") || "<li class='muted'>Nothing measured.</li>";
+  $("aTodo").innerHTML = a.todo.map((x) => `<li>${esc(x)}</li>`).join("") || "<li class='muted'>Nothing to do.</li>";
+  $("warns").innerHTML = d.warnings.map((w) => `<p class="warn">⚠ ${esc(w)}</p>`).join("");
+
+  // details for IT
   $("vLabel").textContent = s.verdict === "none" ? "No degradation found" : s.verdict_label;
   const conf = $("vConf");
-  conf.textContent = `confidence ${s.confidence.toFixed(2)}`;
-  conf.style.background = s.confidence >= 0.6 ? "var(--bad)" : s.confidence >= 0.25 ? "var(--warn)" : "var(--muted)";
+  conf.textContent = `score ${s.confidence.toFixed(2)}`;
+  conf.style.background = LEVEL_COLOR[a.level];
   const uxi = s.uxi_avg == null ? "UXI n/a" : `UXI avg ${s.uxi_avg}, lowest ${s.uxi_min}`;
-  $("vHead").textContent = `${s.headline} ${s.samples} samples, ${s.degraded_samples} degraded. `
+  $("vHead").textContent = `${s.headline} ${s.samples} samples, ${s.degraded_samples} slow. `
     + `${uxi}; ${s.health_events ?? 0} device health event(s).`;
   $("scores").innerHTML = Object.entries(d.scores).map(([k, v]) => `
     <div class="score"><div>${esc(v.label)}<div class="muted" style="font-size:11px">overlap ${v.overlap.toFixed(2)} · time share ${v.breakdown_share == null ? "n/a" : v.breakdown_share.toFixed(2)}</div></div>
     <div class="bar"><div style="width:${v.score * 100}%;background:${COLORS[k]}"></div></div><div>${v.score.toFixed(2)}</div></div>`).join("");
-
-  $("out").dataset.has = "1";
-  $("vCause").textContent = s.cause || "";
   $("invLogonsPanel").hidden = !(d.logons && d.logons.total);
   $("invLogons").innerHTML = logonsHtml(d.logons, false);
-  renderWho(d.impact);
   $("chart").innerHTML = chart(d.timeline, d.request);
-
   $("evidence").innerHTML = d.evidence.length
-    ? `<tr><th>Coverage</th><th>Domain</th><th>Source</th><th>Object</th><th>Metric</th><th>Worst</th><th>Threshold</th><th>Window</th></tr>` +
+    ? `<tr><th>Slow moments</th><th>Where</th><th>Source</th><th>Object</th><th>Measurement</th><th>Worst</th><th>Limit</th><th>When</th></tr>` +
       d.evidence.map((e) => `<tr><td>${(e.coverage * 100).toFixed(0)}%</td>
-        <td><span class="pill" style="background:${COLORS[e.domain]}">${esc(e.domain)}</span></td>
+        <td><span class="pill" style="background:${COLORS[e.domain]}">${esc({ client: "PC", network: "network", backend: "server" }[e.domain])}</span></td>
         <td>${esc(e.source)}</td><td>${esc(e.object)}${e.role ? `<div class="muted">${esc(e.role)}</div>` : ""}</td>
         <td>${esc(e.metric)}</td><td>${e.worst ?? ""}</td><td>${e.threshold ?? ""}</td>
-        <td class="muted">${new Date(e.first).toLocaleTimeString()} – ${new Date(e.last).toLocaleTimeString()}</td></tr>`).join("")
-    : `<tr><td class="muted">No infrastructure or endpoint anomalies overlapped the degraded intervals.</td></tr>`;
-
-  $("recs").innerHTML = d.recommendations.map((r) => `<li>${esc(r)}</li>`).join("") || "<li class='muted'>—</li>";
-  $("warns").innerHTML = d.warnings.map((w) => `<p class="warn">⚠ ${esc(w)}</p>`).join("");
+        <td class="muted">${hm(e.first)}–${hm(e.last)}</td></tr>`).join("")
+    : `<tr><td class="muted">Nothing measured was out of line during the slow moments.</td></tr>`;
   $("endpoints").innerHTML = d.endpoints.map((e) =>
-    `<p><b>${esc(e.device)}</b> <span class="muted">ip ${esc(e.ip_address || "?")} · ${esc(e.location || "unknown location")} · ${esc(e.os || "")}</span></p>`).join("");
+    `<p><b>${esc(e.device)}</b> <span class="muted">ip ${esc(e.ip_address || "?")} · ${esc(e.location || "no location in Aternity")} · ${esc(e.os || "")}</span></p>`).join("");
   $("objects").innerHTML = d.mapped_objects.length
     ? `<tr><th>Role</th><th>Type</th><th>NetIM object</th><th>Why</th></tr>` + d.mapped_objects.map((m) =>
         `<tr><td>${esc(m.role)}</td><td>${esc(m.object_type)}</td><td>${esc(m.name)}</td><td class="muted">${esc(m.reason)}</td></tr>`).join("")
-    : `<tr><td class="muted">No NetIM objects mapped.</td></tr>`;
+    : `<tr><td class="muted">No NetIM objects on this PC's path.</td></tr>`;
 }
 
-// Other users of the same app during this user's slow intervals: by location, then who.
-function renderWho(im) {
+// Is it just them: the sentence, then (on "Show who") network points and the slow users.
+function renderWho(im, sentence) {
   $("who").hidden = !im;
   if (!im) return;
-  const t = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  // the scope sentence is already in the cause line above; here only what was compared
-  $("whoText").textContent = `Other users of ${im.applications.join(", ")} during the slow intervals, `
-    + `${t(im.start)}–${t(im.end)}. ${im.affected_total} of them were slow.`;
-  $("whoLoc").innerHTML = "<tr><th>Location</th><th>Users</th><th>Slow</th></tr>" + im.by_location.map((g) =>
-    `<tr${g.location === im.location ? ' style="font-weight:600"' : ""}><td>${esc(g.location)}</td><td>${g.users}</td><td>${g.slow}</td></tr>`).join("");
+  $("aJust").innerHTML = `<p>${esc(sentence)}</p><p class="muted" style="font-size:12px">Compared: other users of `
+    + `${esc(im.applications.join(", "))}, ${hm(im.start)}–${hm(im.end)}`
+    + `${im.baseline_days ? `, and the same hours on the ${im.baseline_days} previous days` : ""}.`
+    + `${im.netim_index_ready ? "" : " NetIM index not ready yet: users are grouped by subnet only."}</p>`;
+  $("whoBox").hidden = true; $("whoBtn").textContent = "Show who";
+  $("whoGroups").innerHTML = "<tr><th>Network point</th><th>Slow</th><th>Usually</th></tr>" + im.groups.map((g) =>
+    `<tr${g.includes_user ? ' style="font-weight:600"' : ""}><td>${esc(g.name)}${g.includes_user ? " ← this user" : ""}</td>`
+    + `<td>${g.slow} of ${g.users}</td><td>${g.usual_rate == null ? "?" : `up to ${Math.round(g.usual_rate * 100)}%`}</td></tr>`).join("");
   const more = im.affected_total > im.affected_users.length ? `<tr><td colspan="4" class="muted">… and ${im.affected_total - im.affected_users.length} more</td></tr>` : "";
   $("whoUsers").innerHTML = im.affected_users.length
-    ? "<tr><th>Slow user</th><th>Device</th><th>Location</th><th>Worst (s)</th></tr>" + im.affected_users.map((u) =>
-      `<tr><td>${esc(u.username)}</td><td>${esc(u.device)}</td><td>${esc(u.location ?? "")}</td><td>${u.worst_response_time}</td></tr>`).join("") + more
+    ? "<tr><th>Slow user</th><th>Device</th><th>Network point</th><th>Worst (s)</th></tr>" + im.affected_users.map((u) =>
+      `<tr><td>${esc(u.username)}</td><td>${esc(u.device)}</td><td>${esc(u.network)}</td><td>${u.worst_response_time}</td></tr>`).join("") + more
     : `<tr><td class="muted">No other user was slow at the same time.</td></tr>`;
 }
+
+$("whoBtn").addEventListener("click", () => {
+  const box = $("whoBox"); box.hidden = !box.hidden;
+  $("whoBtn").textContent = box.hidden ? "Show who" : "Hide who";
+});
+$("detBtn").addEventListener("click", () => {
+  const box = $("details"); box.hidden = !box.hidden;
+  $("detBtn").textContent = box.hidden ? "Details for IT ▸" : "Details for IT ▾";
+});
 
 // x is time across the whole requested window; the line breaks where a bucket has no activity
 function chart(tl, req) {

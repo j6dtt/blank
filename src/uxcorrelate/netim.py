@@ -185,6 +185,10 @@ class NetimClient:
             ]
         return self._devices
 
+    def cached_interfaces(self) -> dict[str, list[NetimInterface]]:
+        """Interfaces already read, by device id; never calls NetIM."""
+        return dict(self._interfaces) if self._devices is not None else {}
+
     def interfaces(self, device_id: str) -> list[NetimInterface]:
         if device_id not in self._interfaces:
             rows = self._paged(f"{self.cfg.api_prefix}/devices/{device_id}/interfaces")

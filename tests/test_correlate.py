@@ -116,18 +116,30 @@ def test_aternity_time_split_alone_is_not_a_verdict():
     s = result["summary"]
     assert s["verdict"] == "inconclusive" and s["confidence"] == 0.0
     assert "Aternity counts 100% of the slow time as client device time" in s["headline"]
+    assert result["answer"]["title"] == "Not sure what caused it"
 
 
-def test_who_else_finds_the_site_and_the_affected_users():
+def test_who_else_finds_the_common_network_point_and_compares_with_earlier_days():
     result, _ = run_demo()
-    impact = result["impact"]
-    assert impact["scope"] == "site" and impact["location"] == "Branch-Denver"
-    assert impact["same_location"] == {"users": 20, "slow": 20}
-    assert impact["other_locations"] == {"users": 30, "slow": 0}
-    assert impact["affected_total"] == 20 and impact["affected_users"][0]["location"] == "Branch-Denver"
-    assert impact["slow_time_split"]["network"] > 0.7
-    cause = result["summary"]["cause"]
-    assert cause.startswith("Site Branch-Denver: 20 of 20 other users") and "Measured: den-br-rtr01" in cause
+    im = result["impact"]
+    assert im["users"] == 50 and im["slow"] == 20 and im["baseline_days"] == 3
+    assert im["usual_rate"] == 0.0 and im["unusual"] is True
+    cp = im["common_point"]
+    assert cp["kind"] == "gateway" and cp["name"] == "den-br-rtr01 Gi0/0 (LAN) (10.20.30.0/24)"
+    assert cp["slow"] == 20 and cp["includes_user"]
+    hq = next(g for g in im["groups"] if g["kind"] == "subnet")
+    assert hq["name"] == "10.50.0.0/24 (not in NetIM)" and hq["slow"] == 0
+    assert im["affected_users"][0]["network"] == cp["name"]
+
+
+def test_answer_is_plain_language():
+    a = run_demo()[0]["answer"]
+    assert a["level"] == "likely" and a["title"] == "Likely: the network"
+    assert a["just_them"].startswith("No: 20 of 50 other CRM Portal users were slow (40%)")
+    assert "share one network point: den-br-rtr01 Gi0/0 (LAN)" in a["just_them"]
+    assert a["todo"][0].startswith("Many users are slow behind den-br-rtr01")
+    assert a["found"][0]["text"].startswith("den-br-rtr01:Gi0/1 (WAN-MPLS): Interface utilization")
+    assert a["time_went"]["network"] > 0.8 and a["felt"]["slow_actions"] == 23
 
 
 def test_who_else_says_when_only_this_user_is_slow():
@@ -142,8 +154,9 @@ def test_who_else_says_when_only_this_user_is_slow():
 
     result = investigate(InvestigationRequest(start=t0, end=t0 + timedelta(hours=2), username="amy"),
                          WithPeers(samples, []), None, Settings())
-    assert result["impact"]["scope"] == "user"
-    assert result["impact"]["text"].startswith("Only amy: 0 of 10 other users at HQ")
+    assert result["impact"]["slow"] == 0
+    assert result["answer"]["just_them"] == "Yes: none of the 10 other ERP users were slow."
+    assert result["answer"]["level"] == "unsure"
 
 
 def test_investigation_includes_the_users_logons():

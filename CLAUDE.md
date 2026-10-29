@@ -39,6 +39,15 @@ unset `<REQUIRED>` base URLs.
   threshold and no assumed type names or units. Used by the investigation
   result (`logons`) and by the "Slow logons" tab (`/api/logon-jobs`) and
   the `logons` CLI command.
+- `impact.py`: "who else" — other users of the same apps in the user's slow
+  intervals, grouped by the NetIM gateway (or /24) they sit behind and
+  compared with the same hours on previous days ("unusual" = more slow
+  than any of those days; common point = an unusual group holding more
+  than half the slow users). This NetIM grouping is what Aternity can't do.
+- `answer.py`: the plain-language answer at the top of the page and the
+  CLI report (title, what the user felt, where the time went, is it just
+  them, what we found, what to do). Keep it free of scores and jargon;
+  scores and tables live under "Details for IT".
 - `verify.py` checks every configured Aternity data source/column (against
   OData `$metadata`), NetIM metric class/metric (against NetIM's list, then
   one real fetch) and topology name, and prints the closest real names.

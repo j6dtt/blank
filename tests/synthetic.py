@@ -89,16 +89,21 @@ class DemoAternity:
     def app_activity(self, applications, start, end):
         # other CRM users: 20 more at Branch-Denver (slow during the incident, like jdoe)
         # and 30 at other sites (fine)
+        # (earlier days are answered too, all normal, for the "usual" comparison)
         out = []
         for n in range(50):
             loc = "Branch-Denver" if n < 20 else "HQ"
-            for t, m in self._minutes(start, end, 5):
+            ip = f"10.20.30.{100 + n}" if n < 20 else f"10.50.0.{n}"
+            t = start
+            while t <= end:
+                m = (t - self.origin).total_seconds() / 60
                 slow = loc == "Branch-Denver" and _in(m, INCIDENT)
                 out.append(UserSample(
                     timestamp=t, username=f"user{n:02d}", device=f"PC-{n:02d}", application="CRM Portal",
-                    location=loc, response_time=6.0 if slow else 1.2,
+                    location=loc, ip_address=ip, response_time=6.0 if slow else 1.2,
                     client_time=0.3, network_time=5.0 if slow else 0.3, backend_time=0.7,
                 ))
+                t += timedelta(minutes=5)
         return out
 
     def boots(self, start, end, username=None, device=None, location=None):

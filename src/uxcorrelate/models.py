@@ -16,6 +16,7 @@ class UserSample:
     application: str
     activity: str | None = None
     location: str | None = None
+    ip_address: str | None = None
     response_time: float | None = None  # seconds
     client_time: float | None = None
     network_time: float | None = None
