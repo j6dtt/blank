@@ -27,11 +27,15 @@ import yaml
 # memory, disk queue, round-trip time, IP and location at that moment.
 # health_events: crashes, hangs and errors on the device (one row per event).
 # app_usage: per-application UXI, crashes and hang time.
+# boots: one row per Windows boot or logon (MEASUREMENT_TYPE says which).
+# boot_components: what each boot/logon spent its time on.
 DEFAULT_ATERNITY_ENTITIES = {
     "activities": "BUSINESS_ACTIVITIES_RAW",
     "inventory": "DEVICE_INVENTORY",
     "health_events": "DEVICE_HEALTH_RAW",
     "app_usage": "APPLICATIONS_RAW",
+    "boots": "WINDOWS_MACHINE_BOOTS",
+    "boot_components": "MACHINE_BOOT_COMPONENTS",
 }
 
 # logical name -> Aternity OData column
@@ -77,6 +81,25 @@ DEFAULT_ATERNITY_FIELDS = {
         "uxi": "APPLICATION_UXI_AVG",
         "crashes": "APPLICATION_CRASHES_TOTAL",
         "hang_time": "APPLICATION_HANG_TIME_TOTAL",
+    },
+    "boots": {
+        "timestamp": "TIMEFRAME",
+        "started": "MEASUREMENT_START_TIMESTAMP",
+        "username": "USERNAME",
+        "device": "DEVICE_NAME",
+        "location": "BUSINESS_LOCATION",
+        "ip_address": "DEVICE_IP_ADDRESS",
+        "type": "MEASUREMENT_TYPE",
+        "duration": "MEASUREMENT_DURATION_AVG",
+    },
+    "boot_components": {
+        "timestamp": "TIMEFRAME",
+        "device": "DEVICE_NAME",
+        "type": "MEASUREMENT_TYPE",
+        "component": "MEASUREMENT_COMPONENT",
+        "start_type": "MEASUREMENT_START_TYPE",
+        "duration": "MEASUREMENT_DURATION_AVG",
+        "degradation": "MEASUREMENT_DEGRADATION_TIME",
     },
 }
 

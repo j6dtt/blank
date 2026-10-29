@@ -44,15 +44,22 @@
   .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
   .tableWrap { overflow-x: auto; }
+  .cause { font-weight: 600; margin-top: 8px; }
+  nav { margin-left: auto; display: flex; gap: 6px; }
+  nav button { background: transparent; color: var(--muted); border: 1px solid var(--border); padding: 5px 12px; }
+  nav button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .comp td { color: var(--muted); border-bottom: 0; padding-top: 0; font-size: 12px; }
+  .scroll { max-height: 320px; overflow-y: auto; }
   #progress { margin-top: 10px; font-size: 13px; }
   #progress .now { font-weight: 600; }
   #progress ol { margin: 6px 0 0; padding-left: 18px; color: var(--muted); max-height: 9em; overflow-y: auto; }
 </style>
 </head>
 <body>
-<header><h1>UX Correlator</h1><span>Aternity end-user experience × NetIM infrastructure</span></header>
+<header><h1>UX Correlator</h1><span>Aternity end-user experience × NetIM infrastructure</span>
+  <nav><button id="tabInv" class="on">Investigate</button><button id="tabLog">Slow logons</button></nav></header>
 <main>
-  <section class="panel">
+  <section class="panel" id="invForm">
     <form id="f">
       <label>Username<input name="username" placeholder="Aternity user name"></label>
       <label>Device<input name="device" placeholder="Aternity device name"></label>
@@ -63,14 +70,44 @@
       <button id="go">Investigate</button>
     </form>
     <datalist id="apps"></datalist>
-    <div id="progress" hidden><div class="now" id="pNow"></div><ol id="pLines"></ol></div>
-    <div id="error" class="err"></div>
   </section>
+  <section class="panel" id="logForm" hidden>
+    <form id="lf">
+      <label>Username<input name="username" placeholder="optional"></label>
+      <label>Device<input name="device" placeholder="optional"></label>
+      <label>Location<input name="location" placeholder="optional (Aternity location)"></label>
+      <label>Start (local)<input name="start" type="datetime-local" required></label>
+      <label>End (local)<input name="end" type="datetime-local" required></label>
+      <button id="lgo">Find slow logons</button>
+    </form>
+    <div class="muted" style="margin-top:8px">Leave the first three empty to search everyone.</div>
+  </section>
+  <div id="progress" class="panel" hidden><div class="now" id="pNow"></div><ol id="pLines"></ol></div>
+  <div id="error" class="err"></div>
+  <div id="lout" hidden>
+    <section class="panel">
+      <h2>Boots and logons</h2>
+      <div id="lBody"></div>
+    </section>
+    <section class="panel" style="margin-top:16px">
+      <h2>Slowest locations</h2>
+      <div class="tableWrap scroll"><table id="lLoc"></table></div>
+    </section>
+  </div>
   <div id="out" hidden>
     <section class="panel">
       <div class="verdict"><div class="label" id="vLabel"></div><span class="pill" id="vConf"></span></div>
       <div id="vHead" class="muted"></div>
+      <div id="vCause" class="cause"></div>
       <div class="scores" id="scores"></div>
+    </section>
+    <section class="panel" style="margin-top:16px" id="who">
+      <h2>Who else</h2>
+      <div id="whoText" class="muted"></div>
+      <div class="grid2" style="margin-top:10px">
+        <div class="tableWrap scroll"><table id="whoLoc"></table></div>
+        <div class="tableWrap scroll"><table id="whoUsers"></table></div>
+      </div>
     </section>
     <section class="panel" style="margin-top:16px">
       <h2>Timeline</h2>
@@ -86,6 +123,10 @@
     <section class="panel" style="margin-top:16px">
       <h2>Evidence during degraded intervals</h2>
       <div class="tableWrap"><table id="evidence"></table></div>
+    </section>
+    <section class="panel" style="margin-top:16px" id="invLogonsPanel">
+      <h2>Boots and logons</h2>
+      <div id="invLogons"></div>
     </section>
     <div class="grid2" style="margin-top:16px">
       <section class="panel"><h2>Next steps</h2><ul id="recs"></ul><div id="warns"></div></section>
@@ -110,28 +151,77 @@ async function init() {
     f.start.value = toLocalInput(start);
     f.end.value = toLocalInput(end);
     f.bucket_minutes.value = info.bucket_minutes;
+    $("lf").start.value = toLocalInput(new Date(end - 24 * 3600e3));
+    $("lf").end.value = toLocalInput(end);
     $("apps").innerHTML = info.applications.map((a) => `<option value="${esc(a)}">`).join("");
   } catch (e) { $("error").textContent = "Could not load settings: " + e; }
 }
 
-$("f").addEventListener("submit", async (ev) => {
-  ev.preventDefault();
-  const f = ev.target, body = {};
-  for (const k of ["username", "device", "application"]) body[k] = f[k].value.trim() || null;
+// Two modes; switching keeps each mode's form and last result.
+function mode(logons) {
+  $("tabInv").classList.toggle("on", !logons); $("tabLog").classList.toggle("on", logons);
+  $("invForm").hidden = logons; $("logForm").hidden = !logons;
+  $("out").hidden = logons || !$("out").dataset.has; $("lout").hidden = !logons || !$("lout").dataset.has;
+  $("error").textContent = "";
+}
+$("tabInv").addEventListener("click", () => mode(false));
+$("tabLog").addEventListener("click", () => mode(true));
+
+function formBody(f, keys) {
+  const body = {};
+  for (const k of keys) body[k] = f[k].value.trim() || null;
   body.start = new Date(f.start.value).toISOString();
   body.end = new Date(f.end.value).toISOString();
-  body.bucket_minutes = Number(f.bucket_minutes.value) || null;
-  $("go").disabled = true; $("error").textContent = "";
+  return body;
+}
+
+// Start a job, show its progress, hand the result to show().
+async function runJob(url, body, button, show) {
+  button.disabled = true; $("error").textContent = "";
   const started = Date.now();
   $("progress").hidden = false; $("pNow").textContent = "Starting…"; $("pLines").innerHTML = "";
   try {
-    const r = await fetch("api/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const job = await r.json();
     if (!r.ok) throw new Error(detail(job));
-    render(await waitFor(job.id, started));
+    show(await waitFor(job.id, started));
   } catch (e) { $("error").textContent = e.message; }
-  finally { $("go").disabled = false; $("progress").hidden = true; }
+  finally { button.disabled = false; $("progress").hidden = true; }
+}
+
+$("f").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const body = formBody(ev.target, ["username", "device", "application"]);
+  body.bucket_minutes = Number(ev.target.bucket_minutes.value) || null;
+  runJob("api/jobs", body, $("go"), render);
 });
+
+$("lf").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  runJob("api/logon-jobs", formBody(ev.target, ["username", "device", "location"]), $("lgo"), (lg) => {
+    $("lout").dataset.has = "1"; $("lout").hidden = false;
+    $("lBody").innerHTML = logonsHtml(lg, true);
+    $("lLoc").innerHTML = "<tr><th>Type</th><th>Location</th><th>Median</th><th>90% under</th><th>Measured</th></tr>"
+      + lg.by_location.slice(0, 50).map((g) => `<tr><td>${esc(g.type)}</td><td>${esc(g.location)}</td><td>${g.median}</td><td>${g.p90}</td><td>${g.count}</td></tr>`).join("");
+  });
+});
+
+// Shared by both modes: per-type summary, then the slowest with what slowed them.
+function logonsHtml(lg, all) {
+  if (!lg || !lg.total) return `<p class="muted">No boots or logons in the window.</p>`;
+  const t = (iso) => new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  let h = `<p class="muted">Durations in Aternity's units. ${lg.types.map((x) => `<b>${esc(x.type)}</b>: ${x.count} measured, median ${x.median}, 90% under ${x.p90}, slowest ${x.max}`).join(" · ")}</p>`;
+  h += `<div class="tableWrap${all ? " scroll" : ""}"><table><tr><th>When</th><th>Type</th><th>Duration</th><th>vs median</th>`
+    + `${lg.baseline_days ? `<th>vs its usual (${lg.baseline_days} d)</th>` : ""}<th>User</th><th>Device</th><th>Location</th></tr>`;
+  for (const b of lg.slowest) {
+    h += `<tr><td>${t(b.time)}</td><td>${esc(b.type)}</td><td><b>${b.duration}</b></td><td>${b.x_median ?? ""}×</td>`
+      + `${lg.baseline_days ? `<td>${b.x_usual == null ? "no history" : `${b.x_usual}× (usual ${b.usual})`}</td>` : ""}`
+      + `<td>${esc(b.username ?? "")}</td><td>${esc(b.device)}</td><td>${esc(b.location ?? "")}</td></tr>`;
+    if (b.components.length) h += `<tr class="comp"><td></td><td colspan="7">Slowed by: ${b.components.map((c) =>
+      `${esc(c.component)} (degradation ${c.degradation ?? "?"}, duration ${c.duration ?? "?"})`).join(" · ")}</td></tr>`;
+  }
+  return h + "</table></div>";
+}
 
 const detail = (d) => typeof d.detail === "string" ? d.detail : JSON.stringify(d.detail);
 
@@ -168,7 +258,12 @@ function render(d) {
     <div class="score"><div>${esc(v.label)}<div class="muted" style="font-size:11px">overlap ${v.overlap.toFixed(2)} · time share ${v.breakdown_share == null ? "n/a" : v.breakdown_share.toFixed(2)}</div></div>
     <div class="bar"><div style="width:${v.score * 100}%;background:${COLORS[k]}"></div></div><div>${v.score.toFixed(2)}</div></div>`).join("");
 
-  $("chart").innerHTML = chart(d.timeline);
+  $("out").dataset.has = "1";
+  $("vCause").textContent = s.cause || "";
+  $("invLogonsPanel").hidden = !(d.logons && d.logons.total);
+  $("invLogons").innerHTML = logonsHtml(d.logons, false);
+  renderWho(d.impact);
+  $("chart").innerHTML = chart(d.timeline, d.request);
 
   $("evidence").innerHTML = d.evidence.length
     ? `<tr><th>Coverage</th><th>Domain</th><th>Source</th><th>Object</th><th>Metric</th><th>Worst</th><th>Threshold</th><th>Window</th></tr>` +
@@ -189,31 +284,61 @@ function render(d) {
     : `<tr><td class="muted">No NetIM objects mapped.</td></tr>`;
 }
 
-function chart(tl) {
+// Other users of the same app during this user's slow intervals: by location, then who.
+function renderWho(im) {
+  $("who").hidden = !im;
+  if (!im) return;
+  const t = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  // the scope sentence is already in the cause line above; here only what was compared
+  $("whoText").textContent = `Other users of ${im.applications.join(", ")} during the slow intervals, `
+    + `${t(im.start)}–${t(im.end)}. ${im.affected_total} of them were slow.`;
+  $("whoLoc").innerHTML = "<tr><th>Location</th><th>Users</th><th>Slow</th></tr>" + im.by_location.map((g) =>
+    `<tr${g.location === im.location ? ' style="font-weight:600"' : ""}><td>${esc(g.location)}</td><td>${g.users}</td><td>${g.slow}</td></tr>`).join("");
+  const more = im.affected_total > im.affected_users.length ? `<tr><td colspan="4" class="muted">… and ${im.affected_total - im.affected_users.length} more</td></tr>` : "";
+  $("whoUsers").innerHTML = im.affected_users.length
+    ? "<tr><th>Slow user</th><th>Device</th><th>Location</th><th>Worst (s)</th></tr>" + im.affected_users.map((u) =>
+      `<tr><td>${esc(u.username)}</td><td>${esc(u.device)}</td><td>${esc(u.location ?? "")}</td><td>${u.worst_response_time}</td></tr>`).join("") + more
+    : `<tr><td class="muted">No other user was slow at the same time.</td></tr>`;
+}
+
+// x is time across the whole requested window; the line breaks where a bucket has no activity
+function chart(tl, req) {
   if (!tl.length) return `<p class="muted">No data in window.</p>`;
   const W = 1100, H = 240, L = 64, R = 10, T = 10, laneH = 10, B = 24 + 3 * (laneH + 4);
-  const plotH = H - T - B, n = tl.length, step = (W - L - R) / n;
+  const plotH = H - T - B, bms = req.bucket_minutes * 60000;
+  const t0 = Math.min(new Date(req.start).getTime(), new Date(tl[0].time).getTime());
+  const slot = (b) => Math.floor((new Date(b.time).getTime() - t0) / bms);
+  const n = Math.max(1, Math.ceil((new Date(req.end).getTime() - t0) / bms), slot(tl[tl.length - 1]) + 1);
+  const step = (W - L - R) / n, x = (i) => L + (i + 0.5) * step;
   const rts = tl.map((b) => b.avg_response_time).filter((v) => v != null);
   const max = Math.max(1, ...rts) * 1.1;
   const y = (v) => T + plotH - (v / max) * plotH;
   let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Response time timeline">`;
-  tl.forEach((b, i) => { if (b.degraded) svg += `<rect x="${L + i * step}" y="${T}" width="${step}" height="${plotH}" fill="var(--bad)" opacity=".18"><title>${esc(b.time)} degraded</title></rect>`; });
+  tl.forEach((b) => { if (b.degraded) svg += `<rect x="${L + slot(b) * step}" y="${T}" width="${Math.max(step, 3)}" height="${plotH}" fill="var(--bad)" opacity=".18"><title>${esc(b.time)} degraded</title></rect>`; });
   for (let k = 0; k <= 4; k++) {
     const v = (max / 4) * k;
     svg += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--border)"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v.toFixed(1)}</text>`;
   }
-  let path = "";
-  tl.forEach((b, i) => { if (b.avg_response_time != null) path += `${path ? "L" : "M"}${(L + (i + 0.5) * step).toFixed(1)},${y(b.avg_response_time).toFixed(1)}`; });
+  let path = "", prev = null;
+  tl.forEach((b) => {
+    if (b.avg_response_time == null) return;
+    const i = slot(b), px = x(i).toFixed(1), py = y(b.avg_response_time).toFixed(1);
+    path += `${prev === i - 1 ? "L" : "M"}${px},${py}`;
+    svg += `<circle cx="${px}" cy="${py}" r="2.5" fill="var(--text)"><title>${esc(new Date(b.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}: ${b.avg_response_time} s, ${b.samples} activities${b.avg_uxi != null ? `, UXI ${b.avg_uxi}` : ""}</title></circle>`;
+    prev = i;
+  });
   svg += `<path d="${path}" fill="none" stroke="var(--text)" stroke-width="1.8"/>`;
   ["client", "network", "backend"].forEach((d, j) => {
     const ly = T + plotH + 6 + j * (laneH + 4);
     svg += `<text x="${L - 6}" y="${ly + 9}" text-anchor="end">${d}</text>`;
-    tl.forEach((b, i) => {
-      if (b[d].length) svg += `<rect x="${L + i * step + 0.5}" y="${ly}" width="${Math.max(1, step - 1)}" height="${laneH}" fill="${COLORS[d]}"><title>${esc(b.time)}\n${b[d].map((a) => esc(`${a.object}: ${a.metric} ${a.value ?? ""}`)).join("\n")}</title></rect>`;
+    tl.forEach((b) => {
+      if (b[d].length) svg += `<rect x="${L + slot(b) * step + 0.5}" y="${ly}" width="${Math.max(2, step - 1)}" height="${laneH}" fill="${COLORS[d]}"><title>${esc(b.time)}\n${b[d].map((a) => esc(`${a.object}: ${a.metric} ${a.value ?? ""}`)).join("\n")}</title></rect>`;
     });
   });
   const every = Math.ceil(n / 8);
-  tl.forEach((b, i) => { if (i % every === 0) svg += `<text x="${L + i * step}" y="${H - 4}">${new Date(b.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</text>`; });
+  for (let i = 0; i < n; i += every) {
+    svg += `<text x="${L + i * step}" y="${H - 4}">${new Date(t0 + i * bms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</text>`;
+  }
   return svg + "</svg>";
 }
 init();

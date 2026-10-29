@@ -37,6 +37,17 @@ Evidence during degraded intervals:
    `APPLICATIONS_RAW`. Events, crashes and hangs count as client-device
    evidence; UXI is shown as Aternity reports it and does not change the
    verdict.
+   **Who else.** For the user's slow intervals, the same application's
+   activity for every other user is read (`$select` keeps it small). Most
+   other users at the user's location slow means the site; most users
+   elsewhere slow too means everyone (the application); otherwise only
+   this user. The affected users are listed, and the result's cause line
+   combines this with the strongest NetIM measurement.
+   **Boots and logons.** The user's boots and logons in the window come
+   from `WINDOWS_MACHINE_BOOTS`, each compared with the median of its type
+   and with that device's own last 30 days, and the slowest ones list what
+   slowed them (`MACHINE_BOOT_COMPONENTS`). The "Slow logons" tab and
+   `uxcorrelate logons --last 24h [-l <location>]` search everyone.
 3. **Path mapping (NetIM API).** Maps the user and the application onto NetIM
    objects:
    | role | how it is found |

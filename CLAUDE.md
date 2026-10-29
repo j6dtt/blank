@@ -33,6 +33,12 @@ unset `<REQUIRED>` base URLs.
 - `correlate.py`: the core. It maps endpoints and apps to NetIM objects
   (roles), groups samples into time buckets, flags anomalies, and scores the
   domains. The data sources are the `AternitySource`/`NetimSource` protocols.
+- `logons.py`: slow boots/logons (`WINDOWS_MACHINE_BOOTS`,
+  `MACHINE_BOOT_COMPONENTS`): the slowest, per-type and per-location
+  medians, what slowed them, and a device's own 30-day usual. No "slow"
+  threshold and no assumed type names or units. Used by the investigation
+  result (`logons`) and by the "Slow logons" tab (`/api/logon-jobs`) and
+  the `logons` CLI command.
 - `verify.py` checks every configured Aternity data source/column (against
   OData `$metadata`), NetIM metric class/metric (against NetIM's list, then
   one real fetch) and topology name, and prints the closest real names.

@@ -16,6 +16,7 @@ from __future__ import annotations
 import difflib
 import textwrap
 import xml.etree.ElementTree as ET
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from statistics import median
@@ -113,11 +114,12 @@ def _value_ranges(settings: Settings, client: AternityClient, schema: dict[str, 
         ("activities", "disk_queue"): f"disk_queue {th.disk_queue}",
         ("activities", "network_latency"): f"client_network_latency_ms {th.client_network_latency_ms}",
         ("app_usage", "uxi"): "none (UXI is shown as Aternity reports it)",
+        ("boots", "duration"): "none (compared with medians; this shows the units)",
     }
     cfg = settings.aternity
     end = datetime.now(timezone.utc)
     checks = []
-    for key in ("activities", "app_usage"):
+    for key in ("activities", "app_usage", "boots"):
         entity, fields = cfg.entities.get(key), cfg.fields.get(key, {})
         if entity not in schema or fields.get("timestamp") not in schema[entity]:
             continue
@@ -130,6 +132,11 @@ def _value_ranges(settings: Settings, client: AternityClient, schema: dict[str, 
         if not rows:
             checks.append(Check("Aternity", f"values in {entity}", None, "No rows in the last day."))
             continue
+        kinds = Counter(str(r.get(fields.get("type", ""))) for r in rows if r.get(fields.get("type", "")))
+        if key == "boots" and kinds:
+            checks.append(Check("Aternity", f"values {fields['type']}", None,
+                                "Measurement types seen: " + ", ".join(f"{k} ({n})" for k, n in kinds.most_common())
+                                + ". Logon reports group by these names."))
         for (k, logical), limit in limits.items():
             column = fields.get(logical)
             if k != key or column not in schema[entity]:

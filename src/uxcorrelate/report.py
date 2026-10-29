@@ -23,6 +23,23 @@ def render_text(result: dict) -> str:
         f"  Aternity UXI: "
         + (f"avg {summ['uxi_avg']}, lowest {summ['uxi_min']}" if summ.get("uxi_avg") is not None else "n/a")
         + f"; device health events: {summ.get('health_events', 0)}",
+    ]
+    if summ.get("cause"):
+        lines.append(f"  CAUSE: {summ['cause']}")
+    im = result.get("impact")
+    if im:
+        lines += ["", f"Who else ({', '.join(im['applications'])}, same slow intervals):"]
+        for g in im["by_location"][:5]:
+            lines.append(f"  {g['location']:<24} {g['slow']:>4} of {g['users']:<4} slow")
+        for u in im["affected_users"][:10]:
+            lines.append(f"  - {u['username'] or u['device']}  {u['device']}  {u['location'] or '?'}  "
+                         f"worst {u['worst_response_time']} s")
+        if im["affected_total"] > 10:
+            lines.append(f"  ... {im['affected_total'] - 10} more (see --json or the web UI)")
+    lg = result.get("logons")
+    if lg and lg["total"]:
+        lines += ["", "Boots and logons in the window (Aternity's units):"] + _logon_lines(lg, 5)
+    lines += [
         "",
         "Domain scores (score | overlap with degraded intervals | Aternity time share):",
     ]
@@ -58,3 +75,37 @@ def render_text(result: dict) -> str:
         lines += ["", "Warnings:"]
         lines += [f"  ! {w}" for w in result["warnings"]]
     return "\n".join(lines)
+
+
+def _logon_lines(lg: dict, limit: int) -> list[str]:
+    lines = []
+    for t in lg["types"]:
+        lines.append(f"  {t['type']}: {t['count']} measured, median {t['median']}, "
+                     f"90% under {t['p90']}, slowest {t['max']}")
+    for b in lg["slowest"][:limit]:
+        vs = f"{b['x_median']}x median" if b["x_median"] is not None else ""
+        if b["x_usual"] is not None:
+            vs += f", {b['x_usual']}x its usual {b['usual']}"
+        lines.append(f"  - {b['time'][:16]}  {b['type']:<12} {b['duration']:>8}  {b['username'] or '?'}  "
+                     f"{b['device']}  {b['location'] or '?'}  ({vs})")
+        for c in b["components"][:3]:
+            lines.append(f"      {c['component']}: degradation {c['degradation']}, duration {c['duration']}")
+    return lines
+
+
+def render_logons(lg: dict) -> str:
+    """Plain-text slow boots/logons report."""
+    f = lg["filters"]
+    who = ", ".join(f"{k} {v}" for k, v in f.items() if v) or "everyone"
+    lines = [f"Boots and logons: {who}", f"Window: {lg['start']} -> {lg['end']}  ({lg['total']} measured)",
+             "Durations are in Aternity's units (uxcorrelate verify prints their range).", ""]
+    if not lg["total"]:
+        return "\n".join(lines + ["No boots or logons in the window."])
+    lines += _logon_lines(lg, 20)
+    lines += ["", "Slowest locations (median per type):"]
+    for g in lg["by_location"][:10]:
+        lines.append(f"  {g['type']:<12} {g['location']:<24} median {g['median']}  ({g['count']} measured)")
+    for w in lg.get("warnings", []):
+        lines.append(f"WARNING: {w}")
+    return "\n".join(lines)
+

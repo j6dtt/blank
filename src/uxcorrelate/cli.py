@@ -13,7 +13,7 @@ from .config import load_settings
 from .correlate import InvestigationRequest, investigate
 from .http import ApiError
 from .models import parse_time
-from .report import render_text
+from .report import render_logons, render_text
 
 
 def parse_duration(text: str) -> timedelta:
@@ -55,6 +55,18 @@ def cmd_investigate(args) -> int:
         print(f"Wrote {args.out}")
     else:
         print(output)
+    return 0
+
+
+def cmd_logons(args) -> int:
+    from .aternity import AternityClient
+    from .logons import logon_report
+    settings = load_settings(args.config)
+    end = parse_time(args.end) if args.end else datetime.now(timezone.utc)
+    start = parse_time(args.start) if args.start else end - (args.last or timedelta(hours=24))
+    result = logon_report(AternityClient(settings.aternity), start, end, username=args.user,
+                          device=args.device, location=args.location, top=args.top)
+    print(json.dumps(result, indent=2) if args.json else render_logons(result))
     return 0
 
 
@@ -122,6 +134,17 @@ def main(argv: list[str] | None = None) -> int:
     inv.add_argument("--json", action="store_true", help="emit JSON instead of text")
     inv.add_argument("-o", "--out", help="write the report to a file")
     inv.set_defaults(func=cmd_investigate)
+
+    lg = sub.add_parser("logons", help="find the slowest Windows boots and logons")
+    lg.add_argument("-u", "--user", help="Aternity username")
+    lg.add_argument("-d", "--device", help="Aternity device (hostname)")
+    lg.add_argument("-l", "--location", help="Aternity location")
+    lg.add_argument("--start", help="ISO-8601 start time (UTC if no offset)")
+    lg.add_argument("--end", help="ISO-8601 end time (default: now)")
+    lg.add_argument("--last", type=parse_duration, help="window length ending at --end (default 24h)")
+    lg.add_argument("--top", type=int, default=20, help="how many of the slowest to list")
+    lg.add_argument("--json", action="store_true", help="emit JSON instead of text")
+    lg.set_defaults(func=cmd_logons)
 
     srv = sub.add_parser("serve", help="run the web UI and REST API")
     srv.add_argument("--host", default="127.0.0.1")

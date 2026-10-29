@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 from uxcorrelate.config import NetimMetric, Settings, Topology
 from uxcorrelate.models import (
-    AppUsageSample, DeviceHealthSample, EndpointInfo, HealthEvent, MetricSample, NetimAlert, NetimDevice,
+    AppUsageSample, BootComponent, BootSample, DeviceHealthSample, EndpointInfo, HealthEvent, MetricSample, NetimAlert, NetimDevice,
     NetimInterface, UserSample,
 )
 
@@ -85,6 +85,47 @@ class DemoAternity:
                 network_latency=self.rng.uniform(180, 260) if _in(m, INCIDENT) else self.rng.uniform(20, 40),
             ))
         return out
+
+    def app_activity(self, applications, start, end):
+        # other CRM users: 20 more at Branch-Denver (slow during the incident, like jdoe)
+        # and 30 at other sites (fine)
+        out = []
+        for n in range(50):
+            loc = "Branch-Denver" if n < 20 else "HQ"
+            for t, m in self._minutes(start, end, 5):
+                slow = loc == "Branch-Denver" and _in(m, INCIDENT)
+                out.append(UserSample(
+                    timestamp=t, username=f"user{n:02d}", device=f"PC-{n:02d}", application="CRM Portal",
+                    location=loc, response_time=6.0 if slow else 1.2,
+                    client_time=0.3, network_time=5.0 if slow else 0.3, backend_time=0.7,
+                ))
+        return out
+
+    def boots(self, start, end, username=None, device=None, location=None):
+        # one logon a day per user, 1 h into the window; Denver logons are slow today
+        out = []
+        for n in range(-1, 50):
+            user, dev = ("jdoe", "LT-JDOE-01") if n < 0 else (f"user{n:02d}", f"PC-{n:02d}")
+            loc = "Branch-Denver" if n < 20 else "HQ"
+            if (username and user != username) or (device and dev != device) or (location and loc != location):
+                continue
+            day = self.origin + timedelta(hours=1)
+            while day > start:
+                day -= timedelta(days=1)
+            day += timedelta(days=1)
+            while day <= end:
+                today = day >= self.origin
+                slow = today and loc == "Branch-Denver"
+                out.append(BootSample(timestamp=day, device=dev, username=user, location=loc, type="Logon",
+                                      duration=(90.0 if slow else 30.0) + (n % 5), started=day))
+                day += timedelta(days=1)
+        return out
+
+    def boot_components(self, devices, start, end):
+        return [BootComponent(timestamp=b.timestamp, device=b.device, type="Logon", component=c,
+                              duration=d, degradation=g)
+                for b in self.boots(start, end) if b.device in devices and b.duration > 60
+                for c, d, g in (("Group Policy", 55.0, 45.0), ("User profile", 20.0, 5.0))]
 
     def health_events(self, device, start, end):
         # one application crash during the CPU spike (the user was fine then)

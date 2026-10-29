@@ -15,6 +15,7 @@ class UserSample:
     device: str
     application: str
     activity: str | None = None
+    location: str | None = None
     response_time: float | None = None  # seconds
     client_time: float | None = None
     network_time: float | None = None
@@ -57,6 +58,33 @@ class AppUsageSample:
     uxi: float | None = None
     crashes: float | None = None
     hang_time: float | None = None
+
+
+@dataclass
+class BootSample:
+    """One Windows boot or logon measured by Aternity (type as Aternity names it)."""
+
+    timestamp: datetime
+    device: str
+    username: str | None = None
+    location: str | None = None
+    ip_address: str | None = None
+    type: str | None = None
+    duration: float | None = None  # in Aternity's units; verify prints the range
+    started: datetime | None = None
+
+
+@dataclass
+class BootComponent:
+    """One component's share of a boot or logon (a startup app, GPO, profile...)."""
+
+    timestamp: datetime
+    device: str
+    type: str | None = None
+    component: str | None = None
+    start_type: str | None = None
+    duration: float | None = None
+    degradation: float | None = None
 
 
 @dataclass
