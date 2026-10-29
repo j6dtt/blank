@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import re
 import sys
 from datetime import datetime, timedelta, timezone
@@ -142,6 +143,9 @@ def main(argv: list[str] | None = None) -> int:
     ver.set_defaults(func=cmd_verify)
 
     args = p.parse_args(argv)
+    # progress lines go to stderr (docker compose logs), reports to stdout
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
+    logging.getLogger("httpx").setLevel(logging.WARNING)  # no line per HTTP call
     try:
         return args.func(args)
     except (ApiError, ValueError) as exc:

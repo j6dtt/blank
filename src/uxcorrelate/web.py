@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+import threading
+import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -15,6 +19,20 @@ from .http import ApiError
 from .models import utc
 
 STATIC = Path(__file__).parent / "static"
+KEEP_JOBS = 20
+
+
+class JobLog(logging.Handler):
+    """Copies the "uxcorrelate" progress lines of each job's thread into that job."""
+
+    def __init__(self):
+        super().__init__()
+        self.by_thread: dict[int, list[str]] = {}
+
+    def emit(self, record: logging.LogRecord) -> None:
+        lines = self.by_thread.get(record.thread)
+        if lines is not None:
+            lines.append(f"{time.strftime('%H:%M:%S', time.localtime(record.created))} {record.getMessage()}")
 
 
 class InvestigateBody(BaseModel):
@@ -53,8 +71,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
             "bucket_minutes": settings.bucket_minutes,
         }
 
-    @app.post("/api/investigate")
-    def run(body: InvestigateBody):
+    def run_investigation(body: InvestigateBody) -> dict:
         try:
             settings, aternity, netim = sources()
             if body.bucket_minutes:
@@ -69,5 +86,43 @@ def create_app(config_path: str | None = None) -> FastAPI:
             raise HTTPException(400, str(exc))
         except ApiError as exc:
             raise HTTPException(502, str(exc))
+
+    @app.post("/api/investigate")
+    def run(body: InvestigateBody):
+        return run_investigation(body)
+
+    # The UI runs investigations as jobs so it can show progress while NetIM is searched.
+    job_log = JobLog()
+    logging.getLogger("uxcorrelate").addHandler(job_log)
+    logging.getLogger("uxcorrelate").setLevel(logging.INFO)
+    jobs: dict[str, dict] = {}
+
+    def run_job(job: dict, body: InvestigateBody) -> None:
+        job_log.by_thread[threading.get_ident()] = job["lines"]
+        try:
+            job["result"] = run_investigation(body)
+        except HTTPException as exc:
+            job["error"] = exc.detail
+        except Exception as exc:  # shown in the UI instead of a silent hang
+            logging.getLogger("uxcorrelate").exception("Investigation failed")
+            job["error"] = f"{type(exc).__name__}: {exc}"
+        finally:
+            job_log.by_thread.pop(threading.get_ident(), None)
+            job["done"] = True
+
+    @app.post("/api/jobs")
+    def start_job(body: InvestigateBody):
+        for old in list(jobs)[:-KEEP_JOBS]:
+            jobs.pop(old, None)
+        job_id = uuid.uuid4().hex
+        jobs[job_id] = job = {"lines": [], "done": False, "result": None, "error": None}
+        threading.Thread(target=run_job, args=(job, body), daemon=True).start()
+        return {"id": job_id}
+
+    @app.get("/api/jobs/{job_id}")
+    def job_status(job_id: str):
+        if job_id not in jobs:
+            raise HTTPException(404, "Unknown job (the app may have restarted); run it again.")
+        return jobs[job_id]
 
     return app

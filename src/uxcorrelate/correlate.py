@@ -18,6 +18,8 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
+import time
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
@@ -29,6 +31,8 @@ from .models import (
     DeviceHealthSample, EndpointInfo, MappedObject, MetricSample, NetimAlert,
     NetimDevice, NetimInterface, UserSample,
 )
+
+log = logging.getLogger("uxcorrelate")
 
 DOMAINS = ("client", "network", "backend")
 DOMAIN_LABELS = {
@@ -147,7 +151,11 @@ def map_netim_objects(netim: NetimSource, endpoints: list[EndpointInfo], applica
                     add(MappedObject("INTERFACE", itf.id, f"{dev.name}:{itf.name}", dev.id, role, reason))
 
     def add_gateways_for(ip: str, role: str, reason: str) -> None:
-        for dev in devices:
+        log.info("NetIM: looking for the gateway of %s on %d devices (one call each, can take minutes)",
+                 ip, len(devices))
+        for n, dev in enumerate(devices, 1):
+            if n % 25 == 0:
+                log.info("NetIM: checked %d of %d devices", n, len(devices))
             for itf in netim.interfaces(dev.id):
                 if _subnet_contains(itf.ip_addresses, ip):
                     # keep an earlier role for the device (e.g. the app server itself)
@@ -218,6 +226,11 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
     req.validate()
     minutes = settings.bucket_minutes
     warnings: list[str] = []
+    started = time.monotonic()
+    who = ", ".join(f"{k} {v}" for k, v in (("user", req.username), ("device", req.device),
+                                            ("app", req.application)) if v)
+    log.info("Investigating %s, %s to %s UTC", who, req.start.strftime("%Y-%m-%d %H:%M"),
+             req.end.strftime("%H:%M"))
 
     # 1. user experience
     samples = aternity.user_activity(req.start, req.end, username=req.username,
@@ -226,6 +239,8 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
         device_names = [req.device]
     else:
         device_names = [d for d, _ in Counter(s.device for s in samples if s.device).most_common(3)]
+
+    log.info("Aternity: %d activity samples, device(s): %s", len(samples), ", ".join(device_names) or "none")
 
     # 2. endpoint
     endpoints = [aternity.endpoint_info(d) for d in device_names]
@@ -238,6 +253,8 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
     alerts: list[NetimAlert] = []
     if netim is not None:
         mapped = map_netim_objects(netim, endpoints, req.application, settings)
+        log.info("NetIM: %d objects on the user's path; reading %d metrics",
+                 len(mapped), len(settings.netim.metrics))
         for metric in settings.netim.metrics:
             ids = [m.object_id for m in mapped if m.object_type == metric.object_type]
             metric_samples.extend(netim.metrics(metric, ids, req.start, req.end))
@@ -339,6 +356,7 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
             headline = (f"{len(degraded)} degraded interval(s); most likely cause: "
                         f"{DOMAIN_LABELS[verdict]} (score {confidence:.2f}).")
 
+    log.info("Done in %.0f s: %s", time.monotonic() - started, headline)
     return {
         "request": {
             "username": req.username, "device": req.device, "application": req.application,

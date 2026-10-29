@@ -44,6 +44,9 @@
   .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
   .tableWrap { overflow-x: auto; }
+  #progress { margin-top: 10px; font-size: 13px; }
+  #progress .now { font-weight: 600; }
+  #progress ol { margin: 6px 0 0; padding-left: 18px; color: var(--muted); max-height: 9em; overflow-y: auto; }
 </style>
 </head>
 <body>
@@ -60,6 +63,7 @@
       <button id="go">Investigate</button>
     </form>
     <datalist id="apps"></datalist>
+    <div id="progress" hidden><div class="now" id="pNow"></div><ol id="pLines"></ol></div>
     <div id="error" class="err"></div>
   </section>
   <div id="out" hidden>
@@ -118,14 +122,37 @@ $("f").addEventListener("submit", async (ev) => {
   body.end = new Date(f.end.value).toISOString();
   body.bucket_minutes = Number(f.bucket_minutes.value) || null;
   $("go").disabled = true; $("error").textContent = "";
+  const started = Date.now();
+  $("progress").hidden = false; $("pNow").textContent = "Starting…"; $("pLines").innerHTML = "";
   try {
-    const r = await fetch("api/investigate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    const data = await r.json();
-    if (!r.ok) throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
-    render(data);
+    const r = await fetch("api/jobs", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const job = await r.json();
+    if (!r.ok) throw new Error(detail(job));
+    render(await waitFor(job.id, started));
   } catch (e) { $("error").textContent = e.message; }
-  finally { $("go").disabled = false; }
+  finally { $("go").disabled = false; $("progress").hidden = true; }
 });
+
+const detail = (d) => typeof d.detail === "string" ? d.detail : JSON.stringify(d.detail);
+
+// Poll the job once a second; show elapsed time, the latest step and all steps so far.
+async function waitFor(id, started) {
+  for (;;) {
+    const r = await fetch(`api/jobs/${id}`);
+    const job = await r.json();
+    if (!r.ok) throw new Error(detail(job));
+    const secs = Math.round((Date.now() - started) / 1000);
+    const last = job.lines[job.lines.length - 1];
+    $("pNow").textContent = `Working… ${secs} s — ${last ? last.slice(9) : "starting"}`;
+    $("pLines").innerHTML = job.lines.map((l) => `<li>${esc(l)}</li>`).join("");
+    $("pLines").scrollTop = $("pLines").scrollHeight;
+    if (job.done) {
+      if (job.error) throw new Error(typeof job.error === "string" ? job.error : JSON.stringify(job.error));
+      return job.result;
+    }
+    await new Promise((ok) => setTimeout(ok, 1000));
+  }
+}
 
 function render(d) {
   $("out").hidden = false;
