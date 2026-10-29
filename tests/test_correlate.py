@@ -4,7 +4,7 @@ import pytest
 
 from uxcorrelate.config import Settings
 from uxcorrelate.correlate import InvestigationRequest, investigate
-from uxcorrelate.demo import CPU_SPIKE, INCIDENT, DemoAternity, DemoNetim, demo_sources
+from synthetic import CPU_SPIKE, INCIDENT, DemoAternity, DemoNetim, demo_sources
 from uxcorrelate.models import DeviceHealthSample, UserSample
 
 NOW = datetime(2026, 10, 28, 12, 0, tzinfo=timezone.utc)

@@ -7,6 +7,8 @@ says whether the slowdown most likely came from the **client device**, the
 **network**, or the **application backend**, along with the evidence for that
 call.
 
+Example report:
+
 ```
 VERDICT: Network  (confidence 0.93)
   9 degraded interval(s); most likely cause: Network (score 0.93).
@@ -24,12 +26,13 @@ Evidence during degraded intervals:
 
 ## How it works
 
-1. **User experience (Aternity OData API).** Gets the user's activity response
-   times, UXI and the client / network / backend time breakdown for the
-   window. Each time bucket (5 minutes by default) is flagged *degraded* when a
-   sample goes over the response-time threshold or under the UXI threshold.
-2. **Endpoint (Aternity).** Gets device health (CPU, memory, disk queue, Wi-Fi
-   signal, network latency) and inventory (IP address, location).
+1. **User experience (Aternity OData API).** Gets the user's activities from
+   `BUSINESS_ACTIVITIES_RAW`: response time and its client / network /
+   backend split. Each time bucket (5 minutes by default) is flagged
+   *degraded* when an activity is slower than the response-time threshold.
+2. **Endpoint (Aternity).** The same activity rows carry the device's CPU,
+   memory, disk queue, round-trip time, IP address and location at that
+   moment.
 3. **Path mapping (NetIM API).** Maps the user and the application onto NetIM
    objects:
    | role | how it is found |
@@ -39,9 +42,9 @@ Evidence during degraded intervals:
    | `app-server` | a NetIM device matching a server in `topology.applications` |
    | `app-server-network` | an L3 interface whose subnet contains the app server IP |
    | `always` | devices in `topology.always_include` |
-4. **Infrastructure (NetIM).** Gets interface utilization, errors, discards and
-   device CPU, memory and latency for those objects, plus active alerts. A
-   sample over its threshold is an anomaly.
+4. **Infrastructure (NetIM).** Gets interface utilization and device CPU for
+   those objects (add more metrics in the config; `verify` lists what your
+   NetIM has). A sample over its threshold is an anomaly.
 5. **Correlation.** Each domain gets a score from two parts:
    - how many degraded buckets have an anomaly in that domain, with a small
      penalty when the anomalies also show up while the user was fine;
@@ -52,34 +55,150 @@ Evidence during degraded intervals:
 
 ## Quick start
 
-```bash
-pip install -e .            # or: pip install -e '.[dev]' for tests
+The tool needs a live Aternity and NetIM; see "Connect to Riverbed" below.
 
-# Try it with built-in synthetic data (no Riverbed systems needed)
-uxcorrelate investigate --demo
-uxcorrelate serve --demo    # web UI at http://127.0.0.1:8080
-```
-
-### Against your environment
+### Docker
 
 ```bash
-cp config.example.yaml config.yaml          # edit URLs, thresholds, topology
-export ATERNITY_PASSWORD=...  NETIM_PASSWORD=...
-
-# 1. Confirm connectivity and the real field names
-uxcorrelate -c config.yaml aternity-sample BUSINESS_ACTIVITIES_RAW --top 2
-uxcorrelate -c config.yaml aternity-sample DEVICE_HEALTH_RAW --top 2
-uxcorrelate -c config.yaml netim-check --metric-classes
-
-# 2. Investigate
-uxcorrelate -c config.yaml investigate -u jdoe -a "CRM Portal" --last 4h
-uxcorrelate -c config.yaml investigate -d LT-JDOE-01 --start 2026-10-27T09:00 --end 2026-10-27T12:00 --json -o report.json
-
-# 3. Web UI + REST API
-uxcorrelate -c config.yaml serve --host 0.0.0.0 --port 8080
+docker compose up -d --build
+docker compose ps                 # STATUS shows "(healthy)" after ~30 s
 ```
 
-Note that `-c` comes before the sub-command.
+The image holds only Python and the libraries; `compose.yaml` mounts the
+code from `./src`. To fix code, edit `src/uxcorrelate/*.py` and run
+`docker compose restart`; rebuild only when dependencies in
+`pyproject.toml` change. The settings block at the top of `compose.yaml`
+lists what to do before the first start. Healthy means the web server is up; it
+does not mean Aternity or NetIM are reachable (`verify` checks that).
+
+**Web UI.** Open `http://<docker-host>:8080`. The `ports` setting in
+`compose.yaml` decides who can reach it: `["127.0.0.1:8080:8080"]` is the
+Docker host only, `["8080:8080"]` is the whole network. The UI has no login.
+
+**CLI.** Run it inside the running container:
+
+```bash
+docker compose exec uxcorrelate uxcorrelate verify
+docker compose exec uxcorrelate uxcorrelate investigate -u <user> -a "<app>" --last 4h
+docker compose exec uxcorrelate uxcorrelate investigate -u <user> --json > report.json
+docker compose exec uxcorrelate uxcorrelate investigate --help
+```
+
+`-o` writes inside the container. To keep a report, redirect
+stdout to a file on the host, as shown above. Without Docker, run the same
+commands as `uxcorrelate -c config.yaml <command>` (`-c` goes before the
+command).
+
+### Air-gapped live host
+
+The live host has no internet, so it never builds. On the dev host:
+
+```bash
+scripts/make-bundle.sh        # -> dist/uxcorrelate-<version>.tar
+```
+
+Copy that one file to the live host. It holds the runtime image, `src/`,
+`compose.yaml`, `config.example.yaml`, this README and `INSTALL.txt`, which
+has the install, code-fix and upgrade steps.
+
+## Connect to Riverbed
+
+### What you need
+
+- **Aternity:** the tenant's OData URL (it ends in
+  `/aternity.odata/v2.0`), an Aternity user name, and that user's REST API
+  access token. An Aternity admin creates the token on the REST API Access
+  page in Aternity's settings; the URL is shown on the same page.
+- **NetIM:** the NetIM core URL (`https://<netim-core>:8543`) and a
+  **local** NetIM user with ADMIN rights. Riverbed's docs say the NetIM
+  metric APIs take HTTP basic auth only, so SAML and TACACS users do not
+  work.
+- **Network:** the Docker host must reach both URLs over HTTPS. Their
+  certificates are not checked, so self-signed and internal-CA certificates
+  work.
+
+### Steps
+
+1. Create the config and fill in every `<REQUIRED>` value (the two URLs and
+   two user names):
+
+   ```bash
+   cp config.example.yaml config.yaml
+   chmod -R o+rX src config.yaml   # container user uid 1000 must read them
+   ```
+
+2. Put the passwords in `.env` (gitignored, never in the image):
+
+   ```bash
+   cat > .env <<'ENV'
+   ATERNITY_PASSWORD=<REST API access token>
+   NETIM_PASSWORD=<NetIM password>
+   ENV
+   chmod 600 .env
+   ```
+
+3. Start it: `docker compose up -d --build`.
+
+4. Check every name against the live systems:
+
+   ```bash
+   docker compose exec uxcorrelate uxcorrelate verify
+   ```
+
+   It prints one line per check, `OK`, `FAIL` (with a `fix:` line) or `--`
+   (skipped), and ends with "All checks passed." or the number of problems.
+
+5. For each `FAIL`, change the named setting in `config.yaml` to the real
+   name that `verify` suggests and run `verify` again. `config.yaml` is
+   re-read on every run, so no restart is needed.
+
+6. Fill in `topology` (which servers each app runs on and which NetIM
+   routers serve each location), run `verify` again, then investigate:
+
+   ```bash
+   docker compose exec uxcorrelate uxcorrelate investigate -u <user> -a "<app>" --last 4h
+   ```
+
+### What `verify` checks
+
+Everything it finds stays on the live host's screen; nothing has to come
+back to dev.
+
+- **Aternity:** it logs in and reads `$metadata`, the tenant's own list of
+  data sources and columns. Every configured data source and column must be
+  in it; for a missing one it prints the closest real name **as YAML to
+  paste into `config.yaml`**. Every `topology` application and location must
+  have activity in the last 7 days. Then it prints the min / median / max of
+  response time, CPU, memory, disk queue and round-trip time
+  over the last day next to each threshold, so you can see the units match.
+- **NetIM:** it logs in and lists devices; every `topology` device must be
+  one of them. It checks interface IP addresses can be read (that is how
+  users are placed on the network), lists every metric class, checks each
+  configured class and metric (printing the class's real metric names), and
+  fetches each metric for real for the last hour. Corrections come as one
+  `netim.metrics` block to paste.
+- **A reply it cannot read** (device addresses, interface addresses, metric
+  data): it prints the reply's key names, never values, and which function
+  in `./src/uxcorrelate/netim.py` to fix. Edit it there and run
+  `docker compose restart`; then bring the same fix to dev by hand.
+
+### Defaults and where they come from
+
+Only the URLs, users, passwords and topology are yours to fill in. The rest
+has defaults in `src/uxcorrelate/config.py`, each taken from Riverbed's own
+material and pinned by `tests/test_contract.py` (`scripts/make-bundle.sh`
+refuses to build a bundle if a test fails):
+
+- **Aternity** data sources and columns: all in a real Aternity API 2.0
+  `$metadata` (`tests/fixtures/aternity_metadata_v2.xml`).
+- **NetIM** paths, paging, the metric-data request and reply layout,
+  `IFC_UTIL` (`utilizationIn`, `utilizationOut`): Riverbed's
+  `steelscript-netim` SDK. `CPU_UTIL` (`cpuUtil`) and basic auth with a
+  local user: Riverbed's NetIM documentation.
+- **Not in any public Riverbed source**, so left to `verify` on the live
+  host: the layout of interface IP addresses, the units of each value, and
+  the alerts path (alerts are off until you set `netim.alerts_path` from
+  NetIM's HELP > API Documentation).
 
 ## REST API
 
@@ -87,7 +206,7 @@ Note that `-c` comes before the sub-command.
 
 ```bash
 curl -s localhost:8080/api/investigate -H 'Content-Type: application/json' -d '{
-  "username": "jdoe", "application": "CRM Portal",
+  "username": "<user>", "application": "<app>",
   "start": "2026-10-27T09:00:00Z", "end": "2026-10-27T12:00:00Z"}'
 ```
 
@@ -95,23 +214,20 @@ The response holds `summary` (verdict, confidence, headline), `scores` per
 domain, `evidence`, `recommendations`, `endpoints`, `mapped_objects`, the
 per-bucket `timeline` and `warnings`.
 
-## Adapting to your Riverbed versions
+## How the clients call Riverbed
 
-Aternity column names and NetIM endpoint paths and metric names differ
-between releases and deployments, so **all of them are configurable**:
-
-- **Aternity**: `aternity.entities` and `aternity.fields` map logical fields
-  to OData entities and columns. Columns that are missing are skipped, not
-  treated as errors. The client authenticates with basic auth (user name +
-  REST API access token), follows `@odata.nextLink`, and filters on
-  `TIMEFRAME`.
-- **NetIM**: devices and interfaces come from `{api_prefix}/devices` and
-  `/devices/{id}/interfaces` (paged with `offset`/`limit`). Metrics come from a
-  `POST` to `metric_data_path` with `objectType`, `objectIds`, `metricClass`,
-  `metrics`, `startTime` and `endTime` (epoch ms). The parser accepts flat
-  (one point per item) and nested (series per object) responses. If a metric
-  or the alerts endpoint fails, the run continues and a warning is added to
-  the report. Check the exact paths in your NetIM's `https://<netim>:8543/api-docs`.
+- **Aternity**: basic auth (user name + REST API access token). Queries the
+  data sources in `aternity.entities`, filters on the timestamp column,
+  follows `@odata.nextLink`. Columns missing from a row are skipped.
+- **NetIM** (as Riverbed's `steelscript-netim` SDK does): devices and
+  interfaces come from `{api_prefix}/devices` and `/devices/{id}/interfaces`,
+  paged with `offset`/`limit` and `meta.next_offset`. Metrics come from a
+  `POST` to `metric_data_path` with `elementIds`, `elementType` (`VNES_OE`
+  for devices, `VNES_INTERFACE`), `metricClass`, `metrics`, `startTime`,
+  `endTime` (epoch ms), `includeSamples` and `metricEpochEnum: RAW`; the
+  reply is read from `metricData.metricElementDataList[].timestampToValuesMap`.
+  If a metric or the alerts endpoint fails, the run
+  continues and a warning is added to the report.
 
 To add another data source (for example NetProfiler or AppResponse), implement
 the small `AternitySource` / `NetimSource` protocols in
@@ -124,11 +240,12 @@ src/uxcorrelate/
   aternity.py    Aternity OData client
   netim.py       NetIM REST client + tolerant metric parsing
   correlate.py   mapping, bucketing, scoring
-  demo.py        synthetic scenario (branch WAN saturation)
+  verify.py      checks the config against live Aternity / NetIM
   report.py      text report
   cli.py         command line
   web.py         FastAPI app;  static/index.html  UI
-tests/           pytest suite (HTTP mocked with httpx.MockTransport)
+tests/           pytest suite (HTTP mocked with httpx.MockTransport;
+                 synthetic.py is a fake Aternity/NetIM for engine tests)
 ```
 
 Run the tests with `pytest`.

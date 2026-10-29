@@ -20,19 +20,19 @@ class RestClient:
         base_url: str,
         username: str = "",
         password: str = "",
-        verify: bool | str = True,
         timeout: float = 60.0,
         retries: int = 3,
         transport: httpx.BaseTransport | None = None,
     ):
         if not base_url:
-            raise ApiError(f"{name}: base_url is not configured")
+            raise ApiError(f"{name}: base_url is not set; add {name.lower()}.base_url to config.yaml "
+                           "(see config.example.yaml)")
         self.name = name
         self.retries = retries
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
             auth=(username, password) if username else None,
-            verify=verify,
+            verify=False,  # Riverbed hosts often use self-signed certificates
             timeout=timeout,
             headers={"Accept": "application/json"},
             transport=transport,

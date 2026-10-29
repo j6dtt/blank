@@ -1,0 +1,19 @@
+{
+  "elementIdToObjectInfoMap": {
+    "9001": {"objectId": 51, "objectType": "VNES_INTERFACE"}
+  },
+  "metricData": {
+    "metricNames": ["utilizationIn", "utilizationOut"],
+    "metricToMetaInfoMap": {
+      "utilizationIn": {"units": "%", "valueEnumMap": "null"},
+      "utilizationOut": {"units": "%", "valueEnumMap": "null"}
+    },
+    "metricElementDataList": [
+      {"elementId": 9001,
+       "timestampToValuesMap": {
+         "1793095200000": ["91.5", "12.0"],
+         "1793095500000": ["40", "11.0"]
+       }}
+    ]
+  }
+}

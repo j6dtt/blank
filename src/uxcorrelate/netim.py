@@ -1,11 +1,13 @@
 """Riverbed NetIM REST API client.
 
-Base URL is the NetIM core, e.g. https://netim.example.com:8543
-Model data (devices, interfaces) comes from the core API under `api_prefix`;
-metric data from the Network Metric Data API at `metric_data_path`; active
-alerts from `alerts_path`. Paths and payload field names vary by NetIM
-release, so they are configurable and the response parsing below accepts the
-common shapes. Browse https://<netim>:8543/api-docs to confirm yours.
+Base URL is the NetIM core, https://<netim-core>:8543. Paths, request bodies
+and response layouts follow Riverbed's own steelscript-netim SDK:
+  devices / interfaces / metric classes  GET  {api_prefix}/...  (items + meta paging)
+  metric data   POST {metric_data_path}  body elementIds, elementType (VNES_OE for
+                devices, VNES_INTERFACE), metricClass, metrics, startTime, endTime;
+                reply metricData.metricElementDataList[].timestampToValuesMap
+The alerts path is not in any public Riverbed source, so it is off by default.
+`uxcorrelate verify` checks all of this against a live NetIM.
 """
 
 from __future__ import annotations
@@ -68,8 +70,48 @@ def _parse_ip_entries(raw) -> list[str]:
     return out
 
 
+ELEMENT_TYPES = {"DEVICE": "VNES_OE", "INTERFACE": "VNES_INTERFACE"}
+
+
+def metric_request_body(metric: NetimMetric, object_ids: list[str], start: datetime, end: datetime) -> dict:
+    """Network Metric Data request, as built by steelscript-netim's _get_metric_data."""
+    return {
+        "elementIds": [int(i) if str(i).isdigit() else i for i in object_ids],
+        "elementType": ELEMENT_TYPES[metric.object_type],
+        "metricClass": metric.metric_class,
+        "metrics": [metric.metric],
+        "startTime": _ms(start),
+        "endTime": _ms(end),
+        "includeSamples": True,
+        "metricEpochEnum": "RAW",
+        "pageSize": 1000,
+        "rollupCriterias": ["aggregateAvgRollup"],
+        "sortOrder": "ASCENDING",
+        "aggregations": [],
+    }
+
+
+def _parse_riverbed_metric_data(data: dict, metric: NetimMetric, object_type: str) -> list[MetricSample]:
+    """The layout steelscript-netim reads: metricNames index each timestamp's value list."""
+    md = data.get("metricData") or {}
+    names = md.get("metricNames") or []
+    id_map = data.get("elementIdToObjectInfoMap") or {}
+    samples = []
+    for el in md.get("metricElementDataList") or []:
+        info = id_map.get(str(el.get("elementId"))) or {}
+        obj_id = info.get("objectId", el.get("elementId"))
+        for ts, values in (el.get("timestampToValuesMap") or {}).items():
+            for name, value in zip(names, values or []):
+                t, v = parse_time(ts), to_float(value)
+                if name == metric.metric and obj_id is not None and t is not None and v is not None:
+                    samples.append(MetricSample(object_type, str(obj_id), metric.key, t, v))
+    return samples
+
+
 def parse_metric_response(data: Any, metric: NetimMetric, object_type: str) -> list[MetricSample]:
-    """Normalize flat (one point per item) or nested (series per object) responses."""
+    """Riverbed's metricData layout first; flat or nested series as a fallback."""
+    if isinstance(data, dict) and isinstance(data.get("metricData"), dict):
+        return _parse_riverbed_metric_data(data, metric, object_type)
     samples: list[MetricSample] = []
 
     def add(obj_id, ts, value):
@@ -102,22 +144,31 @@ class NetimClient:
         self.cfg = cfg
         self.http = RestClient(
             "NetIM", cfg.base_url, cfg.username, cfg.password,
-            verify=cfg.verify_tls, timeout=cfg.timeout, transport=transport,
+            timeout=cfg.timeout, transport=transport,
         )
         self._devices: list[NetimDevice] | None = None
         self._interfaces: dict[str, list[NetimInterface]] = {}
         self.warnings: list[str] = []
 
     def _paged(self, path: str, params: dict | None = None) -> list[dict]:
+        """Follow meta.next_offset like steelscript-netim; fall back to short pages."""
         out: list[dict] = []
         offset = 0
         while True:
             q = dict(params or {}, offset=offset, limit=self.cfg.page_size)
-            batch = _items(self.http.get_json(path, params=q))
+            data = self.http.get_json(path, params=q)
+            batch = _items(data)
             out.extend(batch)
-            if len(batch) < self.cfg.page_size:
+            meta = data.get("meta") if isinstance(data, dict) else None
+            if isinstance(meta, dict) and "next_offset" in meta:
+                nxt, total = meta.get("next_offset"), meta.get("total")
+                if nxt is None or (total is not None and nxt >= total) or not batch:
+                    return out
+                offset = nxt
+            elif len(batch) < self.cfg.page_size:
                 return out
-            offset += len(batch)
+            else:
+                offset += len(batch)
 
     def devices(self) -> list[NetimDevice]:
         if self._devices is None:
@@ -125,7 +176,7 @@ class NetimClient:
             self._devices = [
                 NetimDevice(
                     id=str(r.get("id")),
-                    name=str(_first(r, "name", "deviceName", "displayName", default=r.get("id"))),
+                    name=str(_first(r, "deviceName", "name", "displayName", "sysName", default=r.get("id"))),
                     ip_address=_first(r, "accessAddress", "ipAddress", "primaryAddress"),
                     device_type=_first(r, "deviceType", "type"),
                     site=_first(r, "siteName", "site", "location"),
@@ -141,7 +192,7 @@ class NetimClient:
                 NetimInterface(
                     id=str(r.get("id")),
                     device_id=device_id,
-                    name=str(_first(r, "name", "ifName", "ifDescr", "displayName", default=r.get("id"))),
+                    name=str(_first(r, "displayName", "name", "ifName", "ifDescr", default=r.get("id"))),
                     ip_addresses=_parse_ip_entries(
                         _first(r, "ipAddresses", "ipAddressList", "addresses", "ipAddress")
                     ),
@@ -152,23 +203,19 @@ class NetimClient:
         return self._interfaces[device_id]
 
     def metric_classes(self) -> Any:
-        return self.http.get_json(f"{self.cfg.api_prefix}/metric-classes")
+        return {"items": self._paged(f"{self.cfg.api_prefix}/metric-classes")}
+
+    def metric_class(self, class_id: str) -> Any:
+        """One metric class with its `metrics` list."""
+        return self.http.get_json(f"{self.cfg.api_prefix}/metric-classes/{class_id}")
 
     def metrics(self, metric: NetimMetric, object_ids: Iterable[str],
                 start: datetime, end: datetime) -> list[MetricSample]:
         ids = list(object_ids)
         if not ids:
             return []
-        body = {
-            "objectType": metric.object_type,
-            "objectIds": ids,
-            "metricClass": metric.metric_class,
-            "metrics": [metric.metric],
-            "startTime": _ms(start),
-            "endTime": _ms(end),
-        }
         try:
-            data = self.http.post_json(self.cfg.metric_data_path, body)
+            data = self.http.post_json(self.cfg.metric_data_path, metric_request_body(metric, ids, start, end))
         except ApiError as exc:
             self.warnings.append(f"NetIM metric {metric.key} unavailable: {exc}")
             return []

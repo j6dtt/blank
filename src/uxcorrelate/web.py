@@ -26,22 +26,17 @@ class InvestigateBody(BaseModel):
     bucket_minutes: int | None = None
 
 
-def create_app(config_path: str | None = None, demo: bool = False) -> FastAPI:
+def create_app(config_path: str | None = None) -> FastAPI:
     app = FastAPI(title="UX Correlator", version="0.1.0",
                   description="Correlate Riverbed Aternity user experience with Riverbed NetIM metrics")
 
     def sources():
+        from .aternity import AternityClient
+        from .netim import NetimClient
         settings = load_settings(config_path)
-        if demo:
-            from .demo import demo_sources
-            aternity, netim, start, end = demo_sources(settings)
-        else:
-            from .aternity import AternityClient
-            from .netim import NetimClient
-            aternity = AternityClient(settings.aternity)
-            netim = NetimClient(settings.netim) if settings.netim.base_url else None
-            start = end = None
-        return settings, aternity, netim, start, end
+        aternity = AternityClient(settings.aternity)
+        netim = NetimClient(settings.netim) if settings.netim.base_url else None
+        return settings, aternity, netim
 
     @app.get("/")
     def index():
@@ -50,22 +45,18 @@ def create_app(config_path: str | None = None, demo: bool = False) -> FastAPI:
     @app.get("/api/info")
     def info():
         try:
-            settings, _, _, start, end = sources()
+            settings, _, _ = sources()
         except ApiError as exc:
             raise HTTPException(503, str(exc))
         return {
-            "demo": demo,
             "applications": sorted(settings.topology.applications),
             "bucket_minutes": settings.bucket_minutes,
-            "default_start": start.isoformat() if start else None,
-            "default_end": end.isoformat() if end else None,
-            "default_user": "jdoe" if demo else None,
         }
 
     @app.post("/api/investigate")
     def run(body: InvestigateBody):
         try:
-            settings, aternity, netim, _, _ = sources()
+            settings, aternity, netim = sources()
             if body.bucket_minutes:
                 settings.bucket_minutes = body.bucket_minutes
             req = InvestigationRequest(

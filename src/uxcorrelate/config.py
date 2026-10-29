@@ -7,9 +7,8 @@ with environment variables for secrets:
     NETIM_URL, NETIM_USERNAME, NETIM_PASSWORD
 
 Aternity column names and NetIM endpoint paths / metric names differ between
-product versions and tenants, so every one of them is configurable. Use the
-discovery commands (`uxcorrelate aternity-sample`, `uxcorrelate
-netim-metric-classes`) to confirm the names in your environment.
+product versions and tenants, so every one of them is configurable. Run
+`uxcorrelate verify` to check every name against your live systems.
 """
 
 from __future__ import annotations
@@ -22,9 +21,12 @@ from typing import Any
 import yaml
 
 
+# Aternity data sources and columns. Every name below is in a real Aternity
+# API 2.0 $metadata (tests/fixtures/aternity_metadata_v2.xml); the contract
+# tests fail if one is not. Each activity row also carries the device's CPU,
+# memory, disk queue, round-trip time, IP and location at that moment.
 DEFAULT_ATERNITY_ENTITIES = {
     "activities": "BUSINESS_ACTIVITIES_RAW",
-    "device_health": "DEVICE_HEALTH_RAW",
     "inventory": "DEVICE_INVENTORY",
 }
 
@@ -37,45 +39,36 @@ DEFAULT_ATERNITY_FIELDS = {
         "application": "APPLICATION_NAME",
         "activity": "ACTIVITY_NAME",
         "response_time": "ACTIVITY_RESPONSE_TIME",
-        "client_time": "CLIENT_TIME",
-        "network_time": "NETWORK_TIME",
-        "backend_time": "BACKEND_TIME",
-        "uxi": "UXI",
-    },
-    "device_health": {
-        "timestamp": "TIMEFRAME",
-        "device": "DEVICE_NAME",
-        "cpu": "CPU_UTILIZATION",
-        "memory": "MEMORY_UTILIZATION",
-        "disk_queue": "DISK_QUEUE_LENGTH",
-        "wifi_signal": "WIFI_SIGNAL_STRENGTH",
-        "network_latency": "NETWORK_LATENCY",
+        "client_time": "ACTIVITY_CLIENT_TIME",
+        "network_time": "ACTIVITY_NETWORK_TIME",
+        "backend_time": "ACTIVITY_BACKEND_TIME",
+        "cpu": "HRC_CPU_UTIL",
+        "memory": "HRC_PHYSICAL_MEMORY_UTIL",
+        "disk_queue": "HRC_DISK_QUEUE_LENGTH",
+        "network_latency": "NETWORK_RTT_AVG",
+        "ip_address": "DEVICE_IP_ADDRESS",
+        "location": "BUSINESS_LOCATION",
+        "os": "OS_NAME",
     },
     "inventory": {
         "device": "DEVICE_NAME",
-        "ip_address": "IP_ADDRESS",
-        "location": "LOCATION",
+        "ip_address": "DEVICE_IP_ADDRESS",
+        "location": "BUSINESS_LOCATION",
         "os": "OS_NAME",
     },
 }
 
-# Default NetIM metrics. object_type is DEVICE or INTERFACE. metric_class and
-# metric are the names NetIM reports; confirm with `netim-metric-classes`.
+# Default NetIM metrics: only names confirmed by Riverbed (IFC_UTIL with
+# utilizationIn/Out in the steelscript-netim SDK, CPU_UTIL with cpuUtil in
+# the NetIM docs). `uxcorrelate verify` lists every class and metric your
+# NetIM has, so you can add more (errors, discards, memory, latency).
 DEFAULT_NETIM_METRICS = [
     {"key": "if_util_in", "label": "Interface utilization in (%)", "object_type": "INTERFACE",
-     "metric_class": "IF_UTIL", "metric": "utilizationIn", "threshold": 80.0},
+     "metric_class": "IFC_UTIL", "metric": "utilizationIn", "threshold": 80.0},
     {"key": "if_util_out", "label": "Interface utilization out (%)", "object_type": "INTERFACE",
-     "metric_class": "IF_UTIL", "metric": "utilizationOut", "threshold": 80.0},
-    {"key": "if_errors", "label": "Interface errors", "object_type": "INTERFACE",
-     "metric_class": "IF_ERRORS", "metric": "inErrors", "threshold": 10.0},
-    {"key": "if_discards", "label": "Interface discards", "object_type": "INTERFACE",
-     "metric_class": "IF_ERRORS", "metric": "outDiscards", "threshold": 50.0},
+     "metric_class": "IFC_UTIL", "metric": "utilizationOut", "threshold": 80.0},
     {"key": "dev_cpu", "label": "Device CPU (%)", "object_type": "DEVICE",
-     "metric_class": "CPU_UTIL", "metric": "cpuUtilization", "threshold": 85.0},
-    {"key": "dev_mem", "label": "Device memory (%)", "object_type": "DEVICE",
-     "metric_class": "MEM_UTIL", "metric": "memoryUtilization", "threshold": 90.0},
-    {"key": "dev_latency", "label": "Response time / latency (ms)", "object_type": "DEVICE",
-     "metric_class": "AVAILABILITY", "metric": "responseTime", "threshold": 150.0},
+     "metric_class": "CPU_UTIL", "metric": "cpuUtil", "threshold": 85.0},
 ]
 
 
@@ -84,7 +77,6 @@ class AternityConfig:
     base_url: str = ""
     username: str = ""
     password: str = ""
-    verify_tls: bool | str = True
     timeout: float = 60.0
     max_pages: int = 50
     entities: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_ATERNITY_ENTITIES))
@@ -112,11 +104,12 @@ class NetimConfig:
     base_url: str = ""
     username: str = ""
     password: str = ""
-    verify_tls: bool | str = True
     timeout: float = 60.0
     api_prefix: str = "/api/netim/v1"
     metric_data_path: str = "/swarm/NETIM_NETWORK_METRIC_DATA_SERVICE/api/v1/network-metric-data"
-    alerts_path: str = "/api/netim/v1/alerts"
+    # No public Riverbed source documents an alerts read API; set it once
+    # NetIM's HELP > API Documentation shows the path.
+    alerts_path: str = ""
     page_size: int = 500
     metrics: list[NetimMetric] = field(
         default_factory=lambda: [NetimMetric(**m) for m in DEFAULT_NETIM_METRICS]
@@ -134,7 +127,6 @@ class Thresholds:
     device_cpu: float = 85.0
     device_memory: float = 90.0
     disk_queue: float = 2.0
-    wifi_signal_dbm: float = -70.0  # weaker (lower) than this is anomalous
     client_network_latency_ms: float = 150.0
 
 

@@ -1,7 +1,8 @@
 """Correlation engine.
 
 1. Pull the user's Aternity activity for the window and flag degraded time buckets.
-2. Pull endpoint health (Aternity) for the user's device(s).
+2. Endpoint context (Aternity): CPU, memory, disk queue, round-trip time, IP and
+   location from the activity rows.
 3. Map the user and application onto NetIM objects:
      client-gateway      L3 interface whose subnet contains the endpoint IP
      site                devices configured for the endpoint's Aternity location
@@ -45,7 +46,6 @@ ROLE_DOMAIN = {
 RECOMMENDATIONS = {
     "client": [
         "Review processes consuming CPU/memory on the endpoint (Aternity device health / process view).",
-        "Check Wi-Fi signal and roaming; try a wired connection to confirm.",
         "Check for recent software, patch or security agent changes on the device.",
     ],
     "network": [
@@ -200,7 +200,6 @@ def _endpoint_anomalies(h: DeviceHealthSample, settings: Settings) -> list[tuple
         ("client", h.cpu, th.device_cpu, ">", "CPU %"),
         ("client", h.memory, th.device_memory, ">", "Memory %"),
         ("client", h.disk_queue, th.disk_queue, ">", "Disk queue"),
-        ("client", h.wifi_signal, th.wifi_signal_dbm, "<", "Wi-Fi signal dBm"),
         # latency measured from the endpoint points at the network, not the device
         ("network", h.network_latency, th.client_network_latency_ms, ">", "Endpoint network latency ms"),
     ]
@@ -231,6 +230,7 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
     # 2. endpoint
     endpoints = [aternity.endpoint_info(d) for d in device_names]
     health = [h for d in device_names for h in aternity.device_health(d, req.start, req.end)]
+    warnings.extend(getattr(aternity, "warnings", []))
 
     # 3/4. infrastructure
     mapped: list[MappedObject] = []

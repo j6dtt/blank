@@ -1,0 +1,41 @@
+# ===================== SETTINGS =====================
+# Runtime image: Python + libraries only, no app code.
+# Dev builds it (docker compose build); the air-gapped
+# live host loads it from the bundle made by
+# scripts/make-bundle.sh and never builds. Bump the tag
+# only when pyproject.toml dependencies change.
+x-image: &image uxcorrelate-runtime:3
+
+x-settings:
+  # Host address:port for the web UI. The UI has no
+  # login: use "8080:8080" only on a trusted network,
+  # "127.0.0.1:8080:8080" for this host only.
+  ports: &ports ["8080:8080"]
+
+# Before the first start:
+#   1. cp config.example.yaml config.yaml, fill <REQUIRED>
+#   2. put ATERNITY_PASSWORD / NETIM_PASSWORD in ./.env
+#   3. docker compose up -d, then check the connection:
+#      docker compose exec uxcorrelate uxcorrelate verify
+# Code fix: edit ./src/uxcorrelate/*.py, then
+#   docker compose restart
+# Full steps: README.md, "Connect to Riverbed".
+# ====================================================
+
+services:
+  uxcorrelate:
+    build: .
+    image: *image
+    pull_policy: never
+    container_name: uxcorrelate
+    restart: unless-stopped
+    command: ["serve", "--host", "0.0.0.0", "--port", "8080"]
+    ports: *ports
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      UXCORRELATE_CONFIG: /config/config.yaml
+    volumes:
+      - ./src:/app/src:ro
+      - ./config.yaml:/config/config.yaml:ro

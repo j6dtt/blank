@@ -47,12 +47,12 @@
 </style>
 </head>
 <body>
-<header><h1>UX Correlator</h1><span>Aternity end-user experience × NetIM infrastructure</span><span id="mode"></span></header>
+<header><h1>UX Correlator</h1><span>Aternity end-user experience × NetIM infrastructure</span></header>
 <main>
   <section class="panel">
     <form id="f">
-      <label>Username<input name="username" placeholder="jdoe"></label>
-      <label>Device<input name="device" placeholder="LT-JDOE-01"></label>
+      <label>Username<input name="username" placeholder="Aternity user name"></label>
+      <label>Device<input name="device" placeholder="Aternity device name"></label>
       <label>Application<input name="application" list="apps" placeholder="optional"></label>
       <label>Start (local)<input name="start" type="datetime-local" required></label>
       <label>End (local)<input name="end" type="datetime-local" required></label>
@@ -97,16 +97,16 @@ const toLocalInput = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000
 
 async function init() {
   try {
-    const info = await (await fetch("api/info")).json();
+    const res = await fetch("api/info");
+    const info = await res.json();
+    if (!res.ok) { $("error").textContent = info.detail || `HTTP ${res.status}`; return; }
     const f = $("f");
-    const end = info.default_end ? new Date(info.default_end) : new Date();
-    const start = info.default_start ? new Date(info.default_start) : new Date(end - 4 * 3600e3);
+    const end = new Date();
+    const start = new Date(end - 4 * 3600e3);
     f.start.value = toLocalInput(start);
     f.end.value = toLocalInput(end);
     f.bucket_minutes.value = info.bucket_minutes;
-    if (info.default_user) f.username.value = info.default_user;
     $("apps").innerHTML = info.applications.map((a) => `<option value="${esc(a)}">`).join("");
-    if (info.demo) { $("mode").textContent = "· demo data"; f.application.value = info.applications[0] || ""; }
   } catch (e) { $("error").textContent = "Could not load settings: " + e; }
 }
 

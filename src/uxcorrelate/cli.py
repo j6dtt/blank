@@ -23,11 +23,8 @@ def parse_duration(text: str) -> timedelta:
     return {"m": timedelta(minutes=n), "h": timedelta(hours=n), "d": timedelta(days=n)}[unit]
 
 
-def build_sources(settings, demo: bool):
+def build_sources(settings):
     """Return (aternity, netim, default_start, default_end)."""
-    if demo:
-        from .demo import demo_sources
-        return demo_sources(settings)
     from .aternity import AternityClient
     from .netim import NetimClient
     aternity = AternityClient(settings.aternity)
@@ -40,17 +37,15 @@ def cmd_investigate(args) -> int:
     settings = load_settings(args.config)
     if args.bucket:
         settings.bucket_minutes = args.bucket
-    aternity, netim, start, end = build_sources(settings, args.demo)
+    aternity, netim, start, end = build_sources(settings)
     if args.end:
         end = parse_time(args.end)
     if args.start:
         start = parse_time(args.start)
     elif args.last:
         start = end - args.last
-    user = args.user or (None if args.device or not args.demo else "jdoe")
-    app = args.app or ("CRM Portal" if args.demo else None)
-    req = InvestigationRequest(start=start, end=end, username=user,
-                               device=args.device, application=app)
+    req = InvestigationRequest(start=start, end=end, username=args.user,
+                               device=args.device, application=args.app)
     result = investigate(req, aternity, netim, settings)
     output = json.dumps(result, indent=2) if args.json else render_text(result)
     if args.out:
@@ -65,7 +60,7 @@ def cmd_investigate(args) -> int:
 def cmd_serve(args) -> int:
     import uvicorn
     from .web import create_app
-    uvicorn.run(create_app(args.config, demo=args.demo), host=args.host, port=args.port)
+    uvicorn.run(create_app(args.config), host=args.host, port=args.port)
     return 0
 
 
@@ -91,6 +86,25 @@ def cmd_netim_check(args) -> int:
     return 0
 
 
+def cmd_verify(args) -> int:
+    from .aternity import AternityClient
+    from .netim import NetimClient
+    from .verify import Check, render_checks, verify_aternity, verify_netim
+    settings = load_settings(args.config)
+    checks: list[Check] = []
+    for system, base_url, run, client_cls, cfg in (
+        ("Aternity", settings.aternity.base_url, verify_aternity, AternityClient, settings.aternity),
+        ("NetIM", settings.netim.base_url, verify_netim, NetimClient, settings.netim),
+    ):
+        if not base_url:
+            checks.append(Check(system, "base_url", False, "Not set.",
+                                f"Set {system.lower()}.base_url in config.yaml."))
+            continue
+        checks += run(settings, client_cls(cfg))
+    print(render_checks(checks))
+    return 1 if any(c.ok is False for c in checks) else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="uxcorrelate", description=__doc__)
     p.add_argument("-c", "--config", help="YAML config file (or set UXCORRELATE_CONFIG)")
@@ -106,13 +120,11 @@ def main(argv: list[str] | None = None) -> int:
     inv.add_argument("--bucket", type=int, help="correlation bucket size in minutes")
     inv.add_argument("--json", action="store_true", help="emit JSON instead of text")
     inv.add_argument("-o", "--out", help="write the report to a file")
-    inv.add_argument("--demo", action="store_true", help="use built-in synthetic data")
     inv.set_defaults(func=cmd_investigate)
 
     srv = sub.add_parser("serve", help="run the web UI and REST API")
     srv.add_argument("--host", default="127.0.0.1")
     srv.add_argument("--port", type=int, default=8080)
-    srv.add_argument("--demo", action="store_true", help="use built-in synthetic data")
     srv.set_defaults(func=cmd_serve)
 
     smp = sub.add_parser("aternity-sample", help="print sample rows of an Aternity OData entity")
@@ -125,6 +137,9 @@ def main(argv: list[str] | None = None) -> int:
     chk.add_argument("--top", type=int, default=20)
     chk.add_argument("--metric-classes", action="store_true", help="also dump metric classes")
     chk.set_defaults(func=cmd_netim_check)
+
+    ver = sub.add_parser("verify", help="check every configured name against live Aternity and NetIM")
+    ver.set_defaults(func=cmd_verify)
 
     args = p.parse_args(argv)
     try:

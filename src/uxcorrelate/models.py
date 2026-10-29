@@ -31,7 +31,6 @@ class DeviceHealthSample:
     cpu: float | None = None
     memory: float | None = None
     disk_queue: float | None = None
-    wifi_signal: float | None = None  # dBm
     network_latency: float | None = None  # ms
 
 

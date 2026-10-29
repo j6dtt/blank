@@ -1,4 +1,4 @@
-"""Synthetic Aternity + NetIM sources for trying the tool without live systems.
+"""Synthetic Aternity + NetIM sources for the engine tests.
 
 Scenario: user `jdoe` on laptop LT-JDOE-01 at Branch-Denver uses "CRM Portal"
 (server 10.100.5.20 in the data center). Between +60 and +105 minutes into the
@@ -12,8 +12,8 @@ from __future__ import annotations
 import random
 from datetime import datetime, timedelta, timezone
 
-from .config import NetimMetric, Settings, Topology
-from .models import (
+from uxcorrelate.config import NetimMetric, Settings, Topology
+from uxcorrelate.models import (
     DeviceHealthSample, EndpointInfo, MetricSample, NetimAlert, NetimDevice,
     NetimInterface, UserSample,
 )
@@ -83,7 +83,6 @@ class DemoAternity:
                 cpu=96.0 if _in(m, CPU_SPIKE) else self.rng.uniform(15, 40),
                 memory=self.rng.uniform(55, 70),
                 disk_queue=self.rng.uniform(0.1, 0.6),
-                wifi_signal=self.rng.uniform(-58, -50),
                 network_latency=self.rng.uniform(180, 260) if _in(m, INCIDENT) else self.rng.uniform(20, 40),
             ))
         return out

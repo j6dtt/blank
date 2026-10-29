@@ -1,0 +1,367 @@
+"""Check a live configuration against what Aternity and NetIM actually report.
+
+Runs on the live host and needs nothing back from it: every result is on
+screen, and every FAIL says what to change there.
+
+- Aternity: every configured data source and column is looked up in the
+  tenant's own OData `$metadata`; topology names are looked up in recent data;
+  numeric columns are sampled so units can be compared with the thresholds.
+- NetIM: devices, interfaces, every configured metric class and metric, and
+  one real metric fetch each. When a response cannot be read, its key names
+  (never values) are printed so the parser in src/ can be fixed on the spot.
+"""
+
+from __future__ import annotations
+
+import difflib
+import textwrap
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from statistics import median
+from typing import Any
+
+from .aternity import AternityClient, odata_quote, odata_time
+from .config import Settings
+from .http import ApiError
+from .models import to_float
+from .netim import NetimClient, _items
+
+CODE_FIX = "edit {file} in ./src/uxcorrelate, then: docker compose restart"
+
+
+@dataclass
+class Check:
+    system: str
+    item: str
+    ok: bool | None  # None = information only
+    message: str
+    fix: str = ""
+    paste: str = ""  # YAML to put in config.yaml
+
+
+def _closest(name: str, choices) -> list[str]:
+    return difflib.get_close_matches(name, list(choices), n=3, cutoff=0.5)
+
+
+def _closest_text(hits: list[str]) -> str:
+    return f" Closest names: {', '.join(hits)}." if hits else ""
+
+
+def _yaml(path: list[str], value: str) -> str:
+    """Nested YAML for one setting, e.g. aternity > fields > activities > cpu."""
+    return "\n".join(f"{'  ' * i}{k}:" for i, k in enumerate(path[:-1])) + \
+        f"\n{'  ' * (len(path) - 1)}{path[-1]}: {value}"
+
+
+def _keys(data: Any) -> str:
+    if isinstance(data, list):
+        data = data[0] if data else {}
+    return ", ".join(sorted(data)) if isinstance(data, dict) else type(data).__name__
+
+
+# ---------------------------------------------------------------- Aternity
+def parse_odata_metadata(xml_text: str) -> dict[str, set[str]]:
+    """Return {entity set name: {property names}} from an OData $metadata document."""
+    root = ET.fromstring(xml_text)
+    types: dict[str, set[str]] = {}
+    for el in root.iter():
+        if el.tag.endswith("}EntityType") or el.tag == "EntityType":
+            props = {p.get("Name") for p in el if p.tag.endswith("Property") and p.get("Name")}
+            types[el.get("Name")] = props
+    sets: dict[str, set[str]] = {}
+    for el in root.iter():
+        if el.tag.endswith("}EntitySet") or el.tag == "EntitySet":
+            type_name = (el.get("EntityType") or "").rsplit(".", 1)[-1]
+            sets[el.get("Name")] = types.get(type_name, set())
+    return sets
+
+
+def check_schema(settings: Settings, schema: dict[str, set[str]]) -> list[Check]:
+    """Every configured Aternity data source and column against a $metadata schema."""
+    cfg = settings.aternity
+    checks = []
+    for key, entity in cfg.entities.items():
+        if entity not in schema:
+            hits = _closest(entity, schema)
+            known = _closest_text(hits) or (f" Published: {', '.join(sorted(schema))}." if len(schema) <= 20 else "")
+            checks.append(Check("Aternity", f"entities.{key}", False,
+                                f"Data source '{entity}' does not exist.{known}",
+                                paste=_yaml(["aternity", "entities", key], hits[0]) if hits else ""))
+            continue
+        checks.append(Check("Aternity", f"entities.{key}", True, f"Data source '{entity}' exists."))
+        columns = schema[entity]
+        for logical, column in cfg.fields.get(key, {}).items():
+            if column in columns:
+                checks.append(Check("Aternity", f"fields.{key}.{logical}", True,
+                                    f"Column '{column}' exists in {entity}."))
+                continue
+            hits = _closest(column, columns)
+            checks.append(Check("Aternity", f"fields.{key}.{logical}", False,
+                                f"Column '{column}' is not in {entity}.{_closest_text(hits)}",
+                                paste=_yaml(["aternity", "fields", key, logical], hits[0]) if hits else ""))
+    return checks
+
+
+def _value_ranges(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
+    """Min / median / max of numeric columns over the last day, next to their thresholds."""
+    th = settings.thresholds
+    limits = {
+        ("activities", "response_time"): f"response_time_s {th.response_time_s}",
+        ("activities", "cpu"): f"device_cpu {th.device_cpu}",
+        ("activities", "memory"): f"device_memory {th.device_memory}",
+        ("activities", "disk_queue"): f"disk_queue {th.disk_queue}",
+        ("activities", "network_latency"): f"client_network_latency_ms {th.client_network_latency_ms}",
+    }
+    cfg = settings.aternity
+    end = datetime.now(timezone.utc)
+    checks = []
+    for key in ("activities",):
+        entity, fields = cfg.entities.get(key), cfg.fields.get(key, {})
+        if entity not in schema or fields.get("timestamp") not in schema[entity]:
+            continue
+        flt = f"{fields['timestamp']} ge {odata_time(end - timedelta(days=1))}"
+        try:
+            rows = client.query(entity, flt, top=200)
+        except ApiError as exc:
+            checks.append(Check("Aternity", f"values in {entity}", False, f"Could not read rows: {exc}"))
+            continue
+        if not rows:
+            checks.append(Check("Aternity", f"values in {entity}", None, "No rows in the last day."))
+            continue
+        for (k, logical), limit in limits.items():
+            column = fields.get(logical)
+            if k != key or column not in schema[entity]:
+                continue
+            values = [v for v in (to_float(r.get(column)) for r in rows) if v is not None]
+            if values:
+                checks.append(Check("Aternity", f"values {column}", None,
+                                    f"min {min(values):g}, median {median(values):g}, max {max(values):g} "
+                                    f"over {len(values)} rows; threshold {limit}. Check the units match."))
+    return checks
+
+
+def verify_aternity(settings: Settings, client: AternityClient) -> list[Check]:
+    cfg = settings.aternity
+    try:
+        schema = parse_odata_metadata(client.http.request("GET", "/$metadata", headers={"Accept": "application/xml"}).text)
+    except (ApiError, ET.ParseError) as exc:
+        return [Check("Aternity", "connection", False, f"Could not read $metadata: {exc}",
+                      "Check aternity.base_url, aternity.username and ATERNITY_PASSWORD "
+                      "(the REST API access token).")]
+    checks = [Check("Aternity", "connection", True,
+                    f"Connected; the tenant publishes {len(schema)} data sources.")]
+    checks += check_schema(settings, schema)
+
+    # topology names must match Aternity spellings exactly
+    act, f = cfg.entities.get("activities"), cfg.fields.get("activities", {})
+    since = odata_time(datetime.now(timezone.utc) - timedelta(days=7))
+    for kind, logical, names in (("Application", "application", settings.topology.applications),
+                                 ("Location", "location", settings.topology.sites)):
+        column = f.get(logical)
+        if act not in schema or column not in schema[act]:
+            continue
+        for name in names:
+            flt = f"{column} eq {odata_quote(name)} and {f['timestamp']} ge {since}"
+            try:
+                found = client.query(act, flt, top=1)
+            except ApiError as exc:
+                checks.append(Check("Aternity", f"topology: {name}", False, f"Lookup failed: {exc}"))
+                continue
+            checks.append(Check("Aternity", f"topology: {name}", bool(found),
+                                f"{kind} '{name}' {'found' if found else 'not found'} in Aternity "
+                                "activity of the last 7 days.",
+                                "" if found else f"Spell it exactly as Aternity shows it ({column})."))
+    return checks + _value_ranges(settings, client, schema)
+
+
+# ---------------------------------------------------------------- NetIM
+def parse_metric_classes(data: Any) -> dict[str, set[str]]:
+    """Return {metric class id/name: {metric names}} from NetIM's metric-class list."""
+    classes: dict[str, set[str]] = {}
+    for item in _items(data):
+        if not isinstance(item, dict):
+            continue
+        metrics = metric_names(item)
+        for k in ("id", "name"):
+            if item.get(k):
+                classes[str(item[k])] = metrics
+    return classes
+
+
+def metric_names(metric_class: Any) -> set[str]:
+    """Metric ids and names of one metric class (its `metrics` list)."""
+    names: set[str] = set()
+    if not isinstance(metric_class, dict):
+        return names
+    # a plain list, or NetIM's paged {"items": [...], "meta": {...}}
+    for m in _items(metric_class.get("metrics")):
+        for name in ([m.get("id"), m.get("name")] if isinstance(m, dict) else [m]):
+            if name:
+                names.add(str(name))
+    return names
+
+
+def verify_netim(settings: Settings, client: NetimClient) -> list[Check]:
+    cfg = settings.netim
+    try:
+        devices = client.devices()
+    except ApiError as exc:
+        return [Check("NetIM", "connection", False, f"Could not list devices: {exc}",
+                      "Check netim.base_url, netim.username, NETIM_PASSWORD and netim.api_prefix. "
+                      "The account must be a local NetIM user, not SAML or TACACS.")]
+    checks = [Check("NetIM", "connection", True, f"Connected; NetIM has {len(devices)} devices.")]
+    if devices and not any(d.ip_address for d in devices):
+        raw = client.http.get_json(f"{cfg.api_prefix}/devices", params={"limit": 1})
+        checks.append(Check("NetIM", "device addresses", False,
+                            f"No device address could be read. Keys in a device: {_keys(_items(raw))}.",
+                            CODE_FIX.format(file="netim.py (devices)")))
+
+    by_name = {d.name.lower(): d for d in devices}
+    by_ip = {d.ip_address for d in devices if d.ip_address}
+    topo = settings.topology
+    wanted = [(n, f"site '{site}'") for site, ns in topo.sites.items() for n in ns]
+    wanted += [(n, "always_include") for n in topo.always_include]
+    for name, where in wanted:
+        ok = name.lower() in by_name
+        checks.append(Check("NetIM", f"topology: {name}", ok,
+                            f"Device '{name}' ({where}) {'found' if ok else 'is not in NetIM'}."
+                            f"{'' if ok else _closest_text(_closest(name, [d.name for d in devices]))}",
+                            "" if ok else "Use the device name exactly as NetIM shows it."))
+    for app, servers in topo.applications.items():
+        for server in servers:
+            ok = server in by_ip or server.lower() in by_name
+            checks.append(Check("NetIM", f"topology: {server}", True if ok else None,
+                                f"Server '{server}' for '{app}' is a NetIM device." if ok else
+                                f"Server '{server}' for '{app}' is not a NetIM device; "
+                                "only the network in front of it will be checked."))
+
+    # interfaces with IP addresses are how users and servers are placed on the network
+    sample_itf = None
+    for d in devices[:20]:
+        try:
+            itfs = client.interfaces(d.id)
+        except ApiError as exc:
+            checks.append(Check("NetIM", "interfaces", False, f"Could not list interfaces: {exc}",
+                                "Check netim.api_prefix."))
+            break
+        with_ip = [i for i in itfs if i.ip_addresses]
+        if with_ip:
+            sample_itf = with_ip[0]
+            checks.append(Check("NetIM", "interfaces", True,
+                                f"Interface addresses read, e.g. {d.name}:{sample_itf.name}."))
+            break
+    else:
+        if devices:
+            raw = _items(client.http.get_json(f"{cfg.api_prefix}/devices/{devices[0].id}/interfaces",
+                                              params={"limit": 1}))
+            checks.append(Check("NetIM", "interfaces", False,
+                                "No interface IP address could be read on the first 20 devices, so "
+                                f"users cannot be placed on the network. Keys in an interface: {_keys(raw)}.",
+                                CODE_FIX.format(file="netim.py (_parse_ip_entries / interfaces)")))
+
+    try:
+        classes = parse_metric_classes(client.metric_classes())
+    except ApiError as exc:
+        classes = {}
+        checks.append(Check("NetIM", "metric classes", False, f"Could not list metric classes: {exc}"))
+    if classes:
+        ids = sorted({c for c in classes if c.isupper() or "_" in c})
+        checks.append(Check("NetIM", "metric classes", None,
+                            f"{len(ids)} classes: {', '.join(ids)}."))
+
+    end = datetime.now(timezone.utc)
+    start = end - timedelta(hours=1)
+    sample_device = devices[0] if devices else None
+    corrected = {m.key: {"metric_class": m.metric_class, "metric": m.metric} for m in cfg.metrics}
+    for metric in cfg.metrics:
+        item = f"metrics.{metric.key}"
+        try:
+            names = metric_names(client.metric_class(metric.metric_class))
+        except ApiError:
+            hits = _closest(metric.metric_class, classes)
+            checks.append(Check("NetIM", item, False,
+                                f"Metric class '{metric.metric_class}' does not exist.{_closest_text(hits)}"))
+            if hits:
+                corrected[metric.key]["metric_class"] = hits[0]
+            continue
+        if names and metric.metric not in names:
+            hits = _closest(metric.metric, names)
+            checks.append(Check("NetIM", item, False,
+                                f"Metric '{metric.metric}' is not in {metric.metric_class}. "
+                                f"It has: {', '.join(sorted(names))}."))
+            if hits:
+                corrected[metric.key]["metric"] = hits[0]
+            continue
+        target = sample_itf if metric.object_type == "INTERFACE" else sample_device
+        if target is None:
+            checks.append(Check("NetIM", item, None, f"No {metric.object_type.lower()} to test with."))
+            continue
+        client.warnings.clear()
+        samples = client.metrics(metric, [target.id], start, end)
+        if client.warnings:
+            checks.append(Check("NetIM", item, False, client.warnings[0],
+                                "Check netim.metric_data_path."))
+        elif samples:
+            checks.append(Check("NetIM", item, True,
+                                f"{metric.metric_class}/{metric.metric}: {len(samples)} samples in the "
+                                f"last hour from {target.name}."))
+        else:
+            from .netim import metric_request_body
+            raw = client.http.post_json(cfg.metric_data_path,
+                                        metric_request_body(metric, [target.id], start, end))
+            inner = raw.get("metricData") if isinstance(raw, dict) else None
+            checks.append(Check("NetIM", item, None,
+                                f"{metric.metric_class}/{metric.metric}: no samples read from {target.name} "
+                                f"in the last hour. Reply keys: {_keys(raw)}"
+                                f"{'; metricData keys: ' + _keys(inner) if isinstance(inner, dict) else ''}. "
+                                "If the device is polled, the reply layout differs: "
+                                + CODE_FIX.format(file="netim.py (parse_metric_response)")))
+    client.warnings.clear()
+    if any(corrected[m.key] != {"metric_class": m.metric_class, "metric": m.metric} for m in cfg.metrics):
+        lines = ["netim:", "  metrics:"]
+        for m in cfg.metrics:
+            lines += [f"    - key: {m.key}", f'      label: "{m.label}"',
+                      f"      object_type: {m.object_type}",
+                      f"      metric_class: {corrected[m.key]['metric_class']}",
+                      f"      metric: {corrected[m.key]['metric']}",
+                      f"      threshold: {m.threshold:g}"]
+        checks.append(Check("NetIM", "corrected metrics", None,
+                            "Closest real names for the metrics above (netim.metrics replaces the "
+                            "whole default list, so all of them are listed).", paste="\n".join(lines)))
+
+    if cfg.alerts_path:
+        client.alerts(start, end)
+        ok = not client.warnings
+        checks.append(Check("NetIM", "alerts", ok,
+                            "Active alerts can be read." if ok else client.warnings[0],
+                            "" if ok else 'Fix netim.alerts_path, or set it to "" to skip alerts.'))
+        client.warnings.clear()
+    else:
+        checks.append(Check("NetIM", "alerts", None,
+                            "Off (netim.alerts_path is empty). NetIM's HELP > API Documentation "
+                            "shows the active-alerts path if you want them."))
+    return checks
+
+
+def render_checks(checks: list[Check]) -> str:
+    mark = {True: "OK  ", False: "FAIL", None: "--  "}
+    lines = []
+    for system in ("Aternity", "NetIM"):
+        rows = [c for c in checks if c.system == system]
+        if not rows:
+            continue
+        lines.append(f"{system}:")
+        for c in rows:
+            lines.append(f"  {mark[c.ok]} {c.item}")
+            lines += textwrap.wrap(c.message, 72, initial_indent="       ", subsequent_indent="       ")
+            if c.ok is False and c.fix:
+                lines += textwrap.wrap(c.fix, 72, initial_indent="       fix: ",
+                                       subsequent_indent="            ")
+            if c.paste:
+                lines.append("       put in config.yaml (under the existing top-level key):")
+                lines += [f"         {line}" for line in c.paste.splitlines()]
+    failed = sum(c.ok is False for c in checks)
+    lines.append("")
+    lines.append(f"{failed} problem(s) found." if failed else "All checks passed.")
+    return "\n".join(lines)
