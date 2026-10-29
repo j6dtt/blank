@@ -25,9 +25,13 @@ import yaml
 # API 2.0 $metadata (tests/fixtures/aternity_metadata_v2.xml); the contract
 # tests fail if one is not. Each activity row also carries the device's CPU,
 # memory, disk queue, round-trip time, IP and location at that moment.
+# health_events: crashes, hangs and errors on the device (one row per event).
+# app_usage: per-application UXI, crashes and hang time.
 DEFAULT_ATERNITY_ENTITIES = {
     "activities": "BUSINESS_ACTIVITIES_RAW",
     "inventory": "DEVICE_INVENTORY",
+    "health_events": "DEVICE_HEALTH_RAW",
+    "app_usage": "APPLICATIONS_RAW",
 }
 
 # logical name -> Aternity OData column
@@ -55,6 +59,24 @@ DEFAULT_ATERNITY_FIELDS = {
         "ip_address": "DEVICE_IP_ADDRESS",
         "location": "BUSINESS_LOCATION",
         "os": "OS_NAME",
+    },
+    "health_events": {
+        "timestamp": "TIMEFRAME",
+        "device": "DEVICE_NAME",
+        "application": "APPLICATION_NAME",
+        "category": "HEALTH_EVENT_CATEGORY",
+        "name": "HEALTH_EVENT_NAME",
+        "component": "HEALTH_EVENT_COMPONENT",
+        "severity": "HEALTH_EVENT_SEVERITY",
+        "count": "HEALTH_EVENT_VOLUME",
+    },
+    "app_usage": {
+        "timestamp": "TIMEFRAME",
+        "device": "DEVICE_NAME",
+        "application": "APPLICATION_NAME",
+        "uxi": "APPLICATION_UXI_AVG",
+        "crashes": "APPLICATION_CRASHES_TOTAL",
+        "hang_time": "APPLICATION_HANG_TIME_TOTAL",
     },
 }
 
@@ -122,8 +144,6 @@ class Thresholds:
     response_time_s: float = 3.0
     # ...or the application-specific value below, if present.
     response_time_s_by_app: dict[str, float] = field(default_factory=dict)
-    # ...or UXI (0-100 style score) falls below this.
-    uxi_min: float = 70.0
     device_cpu: float = 85.0
     device_memory: float = 90.0
     disk_queue: float = 2.0

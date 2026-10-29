@@ -161,7 +161,9 @@ function render(d) {
   const conf = $("vConf");
   conf.textContent = `confidence ${s.confidence.toFixed(2)}`;
   conf.style.background = s.confidence >= 0.6 ? "var(--bad)" : s.confidence >= 0.25 ? "var(--warn)" : "var(--muted)";
-  $("vHead").textContent = `${s.headline} ${s.samples} samples, ${s.degraded_samples} degraded.`;
+  const uxi = s.uxi_avg == null ? "UXI n/a" : `UXI avg ${s.uxi_avg}, lowest ${s.uxi_min}`;
+  $("vHead").textContent = `${s.headline} ${s.samples} samples, ${s.degraded_samples} degraded. `
+    + `${uxi}; ${s.health_events ?? 0} device health event(s).`;
   $("scores").innerHTML = Object.entries(d.scores).map(([k, v]) => `
     <div class="score"><div>${esc(v.label)}<div class="muted" style="font-size:11px">overlap ${v.overlap.toFixed(2)} · time share ${v.breakdown_share == null ? "n/a" : v.breakdown_share.toFixed(2)}</div></div>
     <div class="bar"><div style="width:${v.score * 100}%;background:${COLORS[k]}"></div></div><div>${v.score.toFixed(2)}</div></div>`).join("");

@@ -101,3 +101,33 @@ def test_aternity_query_keeps_dollar_signs_literal():
     client.query("BUSINESS_ACTIVITIES_RAW", "USERNAME eq 'a b' and TIMEFRAME ge 2026-10-28T18:21:45Z", top=5)
     assert seen == ["/aternity.odata/v2.0/BUSINESS_ACTIVITIES_RAW?$format=json"
                     "&$filter=USERNAME%20eq%20'a%20b'%20and%20TIMEFRAME%20ge%202026-10-28T18:21:45Z&$top=5"]
+
+
+def test_aternity_health_events_and_uxi_and_their_failures():
+    def handler(request: httpx.Request):
+        flt = request.url.params["$filter"]
+        if request.url.path.endswith("/DEVICE_HEALTH_RAW"):
+            assert "DEVICE_NAME eq 'LT1'" in flt
+            return httpx.Response(200, json={"value": [
+                {"TIMEFRAME": "2026-10-27T10:05:00Z", "HEALTH_EVENT_CATEGORY": "Crash",
+                 "HEALTH_EVENT_NAME": "Application crash", "HEALTH_EVENT_COMPONENT": "OUTLOOK.EXE",
+                 "HEALTH_EVENT_VOLUME": 2}]})
+        if request.url.path.endswith("/APPLICATIONS_RAW"):
+            assert "APPLICATION_NAME eq 'CRM'" in flt
+            return httpx.Response(200, json={"value": [
+                {"TIMEFRAME": "2026-10-27T10:00:00Z", "APPLICATION_NAME": "CRM",
+                 "APPLICATION_UXI_AVG": "6.4", "APPLICATION_CRASHES_TOTAL": 1}]})
+        return httpx.Response(404)
+
+    cfg = AternityConfig(base_url="https://aternity.test/aternity.odata/v2.0")
+    client = AternityClient(cfg, transport=httpx.MockTransport(handler))
+    events = client.health_events("LT1", START, END)
+    assert events[0].category == "Crash" and events[0].component == "OUTLOOK.EXE" and events[0].count == 2
+    usage = client.app_usage("LT1", START, END, application="CRM")
+    assert usage[0].uxi == 6.4 and usage[0].crashes == 1
+
+    # a missing data source is a warning, never an aborted investigation
+    client.cfg.entities["health_events"] = "NOT_THERE"
+    client.http.retries = 0
+    assert client.health_events("LT1", START, END) == []
+    assert "device health events unavailable" in client.warnings[0]

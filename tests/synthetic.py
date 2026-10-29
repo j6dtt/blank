@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 from uxcorrelate.config import NetimMetric, Settings, Topology
 from uxcorrelate.models import (
-    DeviceHealthSample, EndpointInfo, MetricSample, NetimAlert, NetimDevice,
+    AppUsageSample, DeviceHealthSample, EndpointInfo, HealthEvent, MetricSample, NetimAlert, NetimDevice,
     NetimInterface, UserSample,
 )
 
@@ -71,7 +71,6 @@ class DemoAternity:
                 activity="Open Account", response_time=round(rt, 3),
                 client_time=round(client, 3), network_time=round(network, 3),
                 backend_time=round(backend, 3),
-                uxi=round(max(0.0, 100 - rt * 8), 1),
             ))
         return out
 
@@ -86,6 +85,17 @@ class DemoAternity:
                 network_latency=self.rng.uniform(180, 260) if _in(m, INCIDENT) else self.rng.uniform(20, 40),
             ))
         return out
+
+    def health_events(self, device, start, end):
+        # one application crash during the CPU spike (the user was fine then)
+        return [HealthEvent(timestamp=t, device=device, application="Outlook", category="Crash",
+                            name="Application crash", component="OUTLOOK.EXE", count=1)
+                for t, m in self._minutes(start, end, 5) if _in(m, CPU_SPIKE)][:1]
+
+    def app_usage(self, device, start, end, application=None):
+        return [AppUsageSample(timestamp=t, device=device, application="CRM Portal",
+                               uxi=3.5 if _in(m, INCIDENT) else 8.5)
+                for t, m in self._minutes(start, end, 5)]
 
     def endpoint_info(self, device):
         return EndpointInfo(device=device, ip_address="10.20.30.45",

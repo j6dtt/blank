@@ -32,7 +32,11 @@ Evidence during degraded intervals:
    *degraded* when an activity is slower than the response-time threshold.
 2. **Endpoint (Aternity).** The same activity rows carry the device's CPU,
    memory, disk queue, round-trip time, IP address and location at that
-   moment.
+   moment. Device health events (crashes, hangs, errors) come from
+   `DEVICE_HEALTH_RAW`, and each app's UXI, crashes and hang time from
+   `APPLICATIONS_RAW`. Events, crashes and hangs count as client-device
+   evidence; UXI is shown as Aternity reports it and does not change the
+   verdict.
 3. **Path mapping (NetIM API).** Maps the user and the application onto NetIM
    objects:
    | role | how it is found |
@@ -169,7 +173,7 @@ back to dev.
   in it; for a missing one it prints the closest real name **as YAML to
   paste into `config.yaml`**. Every `topology` application and location must
   have activity in the last 7 days. Then it prints the min / median / max of
-  response time, CPU, memory, disk queue and round-trip time
+  response time, CPU, memory, disk queue, round-trip time and UXI
   over the last day next to each threshold, so you can see the units match.
 - **NetIM:** it logs in and lists devices; every `topology` device must be
   one of them. It checks interface IP addresses can be read (that is how

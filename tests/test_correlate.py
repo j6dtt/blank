@@ -90,3 +90,14 @@ def test_client_verdict_without_netim():
     assert result["summary"]["verdict"] == "client"
     assert result["scores"]["client"]["overlap"] == 1.0
     assert any("NetIM not configured" in w for w in result["warnings"])
+
+
+def test_health_events_and_uxi_reach_the_result():
+    result, _ = run_demo()
+    s = result["summary"]
+    assert s["health_events"] == 1 and s["uxi_min"] == 3.5 and s["uxi_avg"] is not None
+    assert result["summary"]["verdict"] == "network"  # the crash came while the user was fine
+    crash = [a for b in result["timeline"] for a in b["client"] if a["source"] == "Aternity event"]
+    assert crash and crash[0]["metric"] == "Crash / Application crash (OUTLOOK.EXE)"
+    slow = [b["avg_uxi"] for b in result["timeline"] if b["degraded"]]
+    assert slow and set(slow) == {3.5}

@@ -112,11 +112,12 @@ def _value_ranges(settings: Settings, client: AternityClient, schema: dict[str, 
         ("activities", "memory"): f"device_memory {th.device_memory}",
         ("activities", "disk_queue"): f"disk_queue {th.disk_queue}",
         ("activities", "network_latency"): f"client_network_latency_ms {th.client_network_latency_ms}",
+        ("app_usage", "uxi"): "none (UXI is shown as Aternity reports it)",
     }
     cfg = settings.aternity
     end = datetime.now(timezone.utc)
     checks = []
-    for key in ("activities",):
+    for key in ("activities", "app_usage"):
         entity, fields = cfg.entities.get(key), cfg.fields.get(key, {})
         if entity not in schema or fields.get("timestamp") not in schema[entity]:
             continue

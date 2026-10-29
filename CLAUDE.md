@@ -60,7 +60,8 @@ unset `<REQUIRED>` base URLs.
   Keep names configurable in `config.py`, never hard-code them elsewhere,
   and keep parsing tolerant of missing or unknown fields. Never put example
   values that look real (hosts, apps, sites) in `config.example.yaml`.
-- A failing NetIM metric or alerts call must not abort an investigation.
+- A failing NetIM metric or alerts call, or an optional Aternity source
+  (health events, app UXI), must not abort an investigation.
   It goes into `netim.warnings` / `aternity.warnings`, which `investigate()` copies into the result.
 - Every timestamp is a timezone-aware UTC datetime. Use `models.parse_time`,
   which accepts ISO strings and epoch seconds or milliseconds.

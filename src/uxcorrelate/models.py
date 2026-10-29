@@ -19,7 +19,6 @@ class UserSample:
     client_time: float | None = None
     network_time: float | None = None
     backend_time: float | None = None
-    uxi: float | None = None
 
 
 @dataclass
@@ -32,6 +31,32 @@ class DeviceHealthSample:
     memory: float | None = None
     disk_queue: float | None = None
     network_latency: float | None = None  # ms
+
+
+@dataclass
+class HealthEvent:
+    """One Aternity device health event (crash, hang, error...)."""
+
+    timestamp: datetime
+    device: str
+    application: str | None = None
+    category: str | None = None
+    name: str | None = None
+    component: str | None = None
+    severity: str | None = None
+    count: float | None = None
+
+
+@dataclass
+class AppUsageSample:
+    """Aternity per-application experience on one device: UXI, crashes, hang time."""
+
+    timestamp: datetime
+    device: str
+    application: str
+    uxi: float | None = None
+    crashes: float | None = None
+    hang_time: float | None = None
 
 
 @dataclass

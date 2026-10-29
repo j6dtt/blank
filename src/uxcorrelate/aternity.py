@@ -14,8 +14,10 @@ from urllib.parse import quote
 import httpx
 
 from .config import AternityConfig
-from .http import RestClient
-from .models import DeviceHealthSample, EndpointInfo, UserSample, parse_time, to_float
+from .http import ApiError, RestClient
+from .models import (
+    AppUsageSample, DeviceHealthSample, EndpointInfo, HealthEvent, UserSample, parse_time, to_float,
+)
 
 
 def odata_quote(value: str) -> str:
@@ -100,7 +102,6 @@ class AternityClient:
                 client_time=to_float(row.get(f.get("client_time", ""))),
                 network_time=to_float(row.get(f.get("network_time", ""))),
                 backend_time=to_float(row.get(f.get("backend_time", ""))),
-                uxi=to_float(row.get(f.get("uxi", ""))),
             ))
             self._activity_health.setdefault(dev, []).append(DeviceHealthSample(
                 timestamp=ts,
@@ -120,6 +121,62 @@ class AternityClient:
     def device_health(self, device: str, start: datetime, end: datetime) -> list[DeviceHealthSample]:
         """Device context (CPU, memory, disk queue, round-trip time) from the activity rows."""
         return [h for h in self._activity_health.get(device, []) if start <= h.timestamp <= end]
+
+    def _optional(self, key: str, what: str, flt: str) -> list[dict]:
+        """Rows of an optional data source; a failure becomes a warning, not an abort."""
+        if key not in self.cfg.entities or key not in self.cfg.fields:
+            return []
+        try:
+            return self.query(self.cfg.entities[key], flt)
+        except ApiError as exc:
+            self.warnings.append(f"Aternity {what} unavailable: {exc}")
+            return []
+
+    def health_events(self, device: str, start: datetime, end: datetime) -> list[HealthEvent]:
+        """Crashes, hangs and errors on the device (all applications)."""
+        key = "health_events"
+        f = self.cfg.fields.get(key, {})
+        if not f:
+            return []
+        rows = self._optional(key, "device health events",
+                              f"{self._time_filter(key, start, end)} and {f['device']} eq {odata_quote(device)}")
+        out = []
+        for row in rows:
+            ts = parse_time(row.get(f["timestamp"]))
+            if ts is not None:
+                out.append(HealthEvent(
+                    timestamp=ts, device=device,
+                    application=row.get(f.get("application", "")) or None,
+                    category=row.get(f.get("category", "")) or None,
+                    name=row.get(f.get("name", "")) or None,
+                    component=row.get(f.get("component", "")) or None,
+                    severity=row.get(f.get("severity", "")) or None,
+                    count=to_float(row.get(f.get("count", ""))),
+                ))
+        return out
+
+    def app_usage(self, device: str, start: datetime, end: datetime,
+                  application: str | None = None) -> list[AppUsageSample]:
+        """Per-application UXI, crashes and hang time on the device."""
+        key = "app_usage"
+        f = self.cfg.fields.get(key, {})
+        if not f:
+            return []
+        flt = f"{self._time_filter(key, start, end)} and {f['device']} eq {odata_quote(device)}"
+        if application:
+            flt += f" and {f['application']} eq {odata_quote(application)}"
+        out = []
+        for row in self._optional(key, "application UXI data", flt):
+            ts = parse_time(row.get(f["timestamp"]))
+            if ts is not None:
+                out.append(AppUsageSample(
+                    timestamp=ts, device=device,
+                    application=str(row.get(f.get("application", ""), "")),
+                    uxi=to_float(row.get(f.get("uxi", ""))),
+                    crashes=to_float(row.get(f.get("crashes", ""))),
+                    hang_time=to_float(row.get(f.get("hang_time", ""))),
+                ))
+        return out
 
     def endpoint_info(self, device: str) -> EndpointInfo:
         """IP and location as seen on the activity rows, else from the inventory."""

@@ -20,6 +20,9 @@ def render_text(result: dict) -> str:
         f"  {summ['headline']}",
         f"  Samples: {summ['samples']}, degraded: {summ['degraded_samples']}, "
         f"degraded intervals: {summ['degraded_intervals']}",
+        f"  Aternity UXI: "
+        + (f"avg {summ['uxi_avg']}, lowest {summ['uxi_min']}" if summ.get("uxi_avg") is not None else "n/a")
+        + f"; device health events: {summ.get('health_events', 0)}",
         "",
         "Domain scores (score | overlap with degraded intervals | Aternity time share):",
     ]

@@ -2,7 +2,8 @@
 
 1. Pull the user's Aternity activity for the window and flag degraded time buckets.
 2. Endpoint context (Aternity): CPU, memory, disk queue, round-trip time, IP and
-   location from the activity rows.
+   location from the activity rows; device health events; per-app UXI, crashes
+   and hang time.
 3. Map the user and application onto NetIM objects:
      client-gateway      L3 interface whose subnet contains the endpoint IP
      site                devices configured for the endpoint's Aternity location
@@ -28,7 +29,7 @@ from typing import Protocol
 
 from .config import NetimMetric, Settings
 from .models import (
-    DeviceHealthSample, EndpointInfo, MappedObject, MetricSample, NetimAlert,
+    AppUsageSample, DeviceHealthSample, HealthEvent, EndpointInfo, MappedObject, MetricSample, NetimAlert,
     NetimDevice, NetimInterface, UserSample,
 )
 
@@ -69,6 +70,9 @@ class AternitySource(Protocol):
     def user_activity(self, start: datetime, end: datetime, username: str | None = None,
                       device: str | None = None, application: str | None = None) -> list[UserSample]: ...
     def device_health(self, device: str, start: datetime, end: datetime) -> list[DeviceHealthSample]: ...
+    # optional (a source without them simply has no events / UXI):
+    #   health_events(device, start, end) -> list[HealthEvent]
+    #   app_usage(device, start, end, application) -> list[AppUsageSample]
     def endpoint_info(self, device: str) -> EndpointInfo: ...
 
 
@@ -196,9 +200,7 @@ def map_netim_objects(netim: NetimSource, endpoints: list[EndpointInfo], applica
 def _is_degraded(s: UserSample, settings: Settings) -> bool:
     th = settings.thresholds
     rt_limit = th.response_time_s_by_app.get(s.application, th.response_time_s)
-    if s.response_time is not None and s.response_time > rt_limit:
-        return True
-    return s.uxi is not None and s.uxi < th.uxi_min
+    return s.response_time is not None and s.response_time > rt_limit
 
 
 def _endpoint_anomalies(h: DeviceHealthSample, settings: Settings) -> list[tuple[str, dict]]:
@@ -218,6 +220,25 @@ def _endpoint_anomalies(h: DeviceHealthSample, settings: Settings) -> list[tuple
         if (cmp == ">" and value > limit) or (cmp == "<" and value < limit):
             out.append((domain, {"source": "Aternity", "object": h.device, "metric": label,
                                  "value": round(value, 2), "threshold": limit, "cmp": cmp}))
+    return out
+
+
+def _event_anomaly(e: HealthEvent) -> dict:
+    """A device health event is evidence by itself (no threshold): it happened."""
+    what = " / ".join(x for x in (e.category, e.name) if x) or "Health event"
+    where = e.component or e.application
+    return {"source": "Aternity event", "object": e.device,
+            "metric": f"{what} ({where})" if where else what,
+            "value": e.count if e.count is not None else 1, "threshold": None}
+
+
+def _usage_anomalies(u: AppUsageSample) -> list[dict]:
+    """Application crashes and hang time on the device."""
+    out = []
+    for label, value in (("App crashes", u.crashes), ("App hang time", u.hang_time)):
+        if value:
+            out.append({"source": "Aternity", "object": u.device, "metric": f"{label} ({u.application})",
+                        "value": round(value, 2), "threshold": 0, "cmp": ">"})
     return out
 
 
@@ -245,6 +266,14 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
     # 2. endpoint
     endpoints = [aternity.endpoint_info(d) for d in device_names]
     health = [h for d in device_names for h in aternity.device_health(d, req.start, req.end)]
+    events: list[HealthEvent] = []
+    usage: list[AppUsageSample] = []
+    for d in device_names:
+        if hasattr(aternity, "health_events"):
+            events += aternity.health_events(d, req.start, req.end)
+        if hasattr(aternity, "app_usage"):
+            usage += aternity.app_usage(d, req.start, req.end, req.application)
+    log.info("Aternity: %d device health events, %d application UXI rows", len(events), len(usage))
     warnings.extend(getattr(aternity, "warnings", []))
 
     # 3/4. infrastructure
@@ -272,12 +301,19 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
         warnings.append("Aternity returned no activity for this user/device/application in the window.")
 
     # bucketize
-    buckets: dict[datetime, dict] = defaultdict(lambda: {"samples": [], **{d: [] for d in DOMAINS}})
+    buckets: dict[datetime, dict] = defaultdict(lambda: {"samples": [], "uxi": [], **{d: [] for d in DOMAINS}})
     for s in samples:
         buckets[_bucket(s.timestamp, minutes)]["samples"].append(s)
     for h in health:
         for domain, a in _endpoint_anomalies(h, settings):
             buckets[_bucket(h.timestamp, minutes)][domain].append(a)
+    for e in events:
+        buckets[_bucket(e.timestamp, minutes)]["client"].append(_event_anomaly(e))
+    for u in usage:
+        b = buckets[_bucket(u.timestamp, minutes)]
+        b["client"] += _usage_anomalies(u)
+        if u.uxi is not None:
+            b["uxi"].append(u.uxi)
 
     metric_defs = {m.key: m for m in settings.netim.metrics}
     obj_index = {(m.object_type, m.object_id): m for m in mapped}
@@ -309,7 +345,7 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
         b = buckets[t]
         ss = b["samples"]
         rts = [s.response_time for s in ss if s.response_time is not None]
-        uxis = [s.uxi for s in ss if s.uxi is not None]
+        uxis = b["uxi"]
         is_deg = any(_is_degraded(s, settings) for s in ss)
         if is_deg:
             degraded.add(t)
@@ -356,6 +392,7 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
             headline = (f"{len(degraded)} degraded interval(s); most likely cause: "
                         f"{DOMAIN_LABELS[verdict]} (score {confidence:.2f}).")
 
+    all_uxi = [u.uxi for u in usage if u.uxi is not None]
     log.info("Done in %.0f s: %s", time.monotonic() - started, headline)
     return {
         "request": {
@@ -370,6 +407,10 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
             "samples": len(samples),
             "degraded_samples": len(deg_samples),
             "degraded_intervals": len(degraded),
+            # Aternity's own UXI for the window (as Aternity reports it), and event count
+            "uxi_avg": round(mean(all_uxi), 1) if all_uxi else None,
+            "uxi_min": round(min(all_uxi), 1) if all_uxi else None,
+            "health_events": len(events),
         },
         "scores": scores,
         "evidence": evidence,
