@@ -294,21 +294,33 @@ def _start_up_parts(settings: Settings, client: AternityClient, schema: dict[str
     if not timed:
         return checks
     top = max(timed, key=lambda r: to_float(r.get(bf["duration"])))
-    dev = top.get(bf["device"])
-    try:
-        mine = client.query(ce, f"{cf['timestamp']} ge {odata_time(since - timedelta(hours=2))} and "
-                                f"{cf['device']} eq {odata_quote(str(dev))}", top=200)
+    dev = str(top.get(bf["device"]))
+    since = since - timedelta(hours=2)
+    try:  # every row of that PC in the window, put in time order here
+        mine_b = client.query(be, f"{bf['timestamp']} ge {odata_time(since)} and {bf['device']} eq {odata_quote(dev)}",
+                              select=[bf[k] for k in ("timestamp", "started", "type", "duration") if bf.get(k)])
+        mine_c = client.query(ce, f"{cf['timestamp']} ge {odata_time(since)} and {cf['device']} eq {odata_quote(dev)}",
+                              select=[cf[k] for k in ("timestamp", "type", "degradation") if cf.get(k)])
     except ApiError as exc:
-        mine, checks[0].message = [], checks[0].message + f" Could not read that PC's parts: {exc.reason or exc}"
-    when = parse_time(top.get(bf["timestamp"]))
-    near = sorted(mine, key=lambda r: abs(((parse_time(r.get(cf["timestamp"])) or when) - when).total_seconds())
-                  if when else 0)
-    checks.append(Check("Aternity", "slowest start-up and its parts", None,
+        checks.append(Check("Aternity", "slowest start-up and its parts", None,
+                            f"Could not read that PC's rows: {exc.reason or exc}"))
+        return checks
+    order = lambda r, f: str(r.get(f["timestamp"]))  # noqa: E731
+    checks.append(Check("Aternity", "slowest start-up's PC: its start-ups", None,
                         f"Slowest start-up read: {_raw(top, bf, ('timestamp', 'started', 'device', 'type', 'duration'))}. "
-                        f"Parts rows for that PC in the last day: {len(mine)}"
-                        + (", nearest in time first:" if mine else "."),
-                        rows=[_raw(r, cf, ("timestamp", "type", "component", "duration", "degradation"))
-                              for r in near[:6]]))
+                        f"All {len(mine_b)} start-up row(s) of that PC since {odata_time(since)}, in time order:",
+                        rows=[_raw(r, bf, ("timestamp", "started", "type", "duration"))
+                              for r in sorted(mine_b, key=lambda r: order(r, bf))[:20]]))
+    groups: dict[str, list] = {}
+    for r in sorted(mine_c, key=lambda r: order(r, cf)):
+        groups.setdefault(order(r, cf), []).append(r)
+    checks.append(Check("Aternity", "slowest start-up's PC: its parts", None,
+                        f"All {len(mine_c)} parts row(s) of that PC since {odata_time(since)}, grouped by "
+                        f"{cf['timestamp']} ({len(groups)} different value(s)), in time order:",
+                        rows=[f"{t}: {len(rs)} row(s), {sum(1 for r in rs if (to_float(r.get(cf.get('degradation', ''))) or 0) > 0)}"
+                              " longer than normal; types: " + ", ".join(
+                                  f"{k} ({n})" for k, n in Counter(str(r.get(cf.get("type", ""))) for r in rs).most_common())
+                              for t, rs in list(groups.items())[:20]]))
     return checks
 
 
@@ -329,10 +341,27 @@ def _change_log(settings: Settings, client: AternityClient, schema: dict[str, se
     for r in rows:
         sample.setdefault(str(r.get(f.get("change", ""))), r)
     others = sorted(c for c in schema[entity] if any(w in c for w in ("VERSION", "CHANGE", "TYPE", "ACTION")))
+    # does one change show up as two rows (e.g. a removal and an install) of the same
+    # software on the same PC, and at the same second?
+    key = lambda r: (r.get(f.get("device", "")), r.get(f.get("name", "")))  # noqa: E731
+    by_sw: dict[tuple, list] = {}
+    for r in rows:
+        by_sw.setdefault(key(r), []).append(r)
+    same, hour, alone = Counter(), Counter(), Counter()
+    for r in rows:
+        t, kind = parse_time(r.get(f["timestamp"])), str(r.get(f.get("change", "")))
+        other = [o for o in by_sw[key(r)] if str(o.get(f.get("change", ""))) != kind]
+        gaps = [abs((parse_time(o.get(f["timestamp"])) - t).total_seconds()) for o in other
+                if t and parse_time(o.get(f["timestamp"]))]
+        (same if gaps and min(gaps) == 0 else hour if gaps and min(gaps) <= 3600 else alone)[kind] += 1
+    pairs = ("Rows with a row of another change type for the same software on the same PC: at the same second: "
+             + (", ".join(f"{k} {n}" for k, n in same.most_common()) or "none")
+             + "; within an hour: " + (", ".join(f"{k} {n}" for k, n in hour.most_common()) or "none")
+             + "; none: " + (", ".join(f"{k} {n}" for k, n in alone.most_common()) or "none") + ".")
     return [Check("Aternity", "software change log", None,
                   f"{entity}, last 14 days: {len(rows)} row(s){' (first 300)' if len(rows) == 300 else ''}. "
                   "Change types: " + (", ".join(f"{k} ({n})" for k, n in kinds.most_common()) or "none")
-                  + ". Its version/change/type columns: " + ", ".join(others) + ". One row per change type:",
+                  + ". Its version/change/type columns: " + ", ".join(others) + ". " + pairs + " One row per change type:",
                   rows=[_raw(r, f, ("timestamp", "name", "change", "version", "version_before")) for r in sample.values()])]
 
 

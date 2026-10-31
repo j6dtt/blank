@@ -174,33 +174,39 @@ def test_verify_shows_how_start_up_parts_and_the_change_log_are_filled():
         path, flt = request.url.path, request.url.params.get("$filter", "")
         if path.endswith("/WINDOWS_MACHINE_BOOTS"):
             return httpx.Response(200, json={"value": [
-                {"TIMEFRAME": "2026-10-30T08:00:00Z", "DEVICE_NAME": "WS-A", "MEASUREMENT_TYPE": "Boot",
-                 "MEASUREMENT_DURATION_AVG": 40},
-                {"TIMEFRAME": "2026-10-30T09:00:00Z", "DEVICE_NAME": "WS-B", "MEASUREMENT_TYPE": "Logon",
-                 "MEASUREMENT_DURATION_AVG": 90}]})
+                {"TIMEFRAME": "2026-10-30T09:05:00Z", "MEASUREMENT_START_TIMESTAMP": "2026-10-30T09:00:00Z",
+                 "DEVICE_NAME": "WS-B", "MEASUREMENT_TYPE": "Logon", "MEASUREMENT_DURATION_AVG": 90},
+                {"TIMEFRAME": "2026-10-30T08:00:00Z", "DEVICE_NAME": "WS-B", "MEASUREMENT_TYPE": "Boot",
+                 "MEASUREMENT_DURATION_AVG": 40}]})
         if path.endswith("/MACHINE_BOOT_COMPONENTS"):
-            rows = [{"TIMEFRAME": "2026-10-30T09:00:00Z", "DEVICE_NAME": "WS-B", "MEASUREMENT_TYPE": "Logon Phase",
-                     "MEASUREMENT_COMPONENT": "Profile", "MEASUREMENT_DURATION_AVG": 50,
-                     "MEASUREMENT_DEGRADATION_TIME": 30}]
-            return httpx.Response(200, json={"value": rows if "WS-B" in flt or "DEVICE_NAME" not in flt else []})
-        if path.endswith("/INSTALLED_SOFTWARE_CHANGE_LOG"):
+            part = lambda t, typ, deg: {"TIMEFRAME": t, "DEVICE_NAME": "WS-B", "MEASUREMENT_TYPE": typ,  # noqa: E731
+                                        "MEASUREMENT_DURATION_AVG": 5, "MEASUREMENT_DEGRADATION_TIME": deg}
             return httpx.Response(200, json={"value": [
-                {"INSTALLED_SW_CHANGE_TIMESTAMP": "2026-10-29T10:00:00Z", "INSTALLED_SW_NAME": "Viewer",
-                 "INSTALLED_SW_CHANGE_TYPE": "Upgraded", "INSTALLED_SW_VERSION": "2.0",
-                 "INSTALLED_SW_VERSION_BEFORE_CHANGE": "1.0"}] * 2})
+                part("2026-10-30T09:05:00Z", "Phase X", 3), part("2026-10-30T08:00:00Z", "Driver Y", None),
+                part("2026-10-30T08:00:00Z", "Driver Y", None), part("2026-10-30T09:05:00Z", "Phase Z", None)]})
+        if path.endswith("/INSTALLED_SOFTWARE_CHANGE_LOG"):
+            row = lambda t, kind, v: {"INSTALLED_SW_CHANGE_TIMESTAMP": t, "DEVICE_NAME": "WS-B",  # noqa: E731
+                                      "INSTALLED_SW_NAME": "Viewer", "INSTALLED_SW_CHANGE_TYPE": kind,
+                                      "INSTALLED_SW_VERSION": v, "INSTALLED_SW_VERSION_BEFORE_CHANGE": "N/A"}
+            return httpx.Response(200, json={"value": [
+                row("2026-10-29T10:00:00Z", "Removed", "1.0"), row("2026-10-29T10:00:00Z", "Added", "2.0"),
+                {**row("2026-10-20T10:00:00Z", "Added", "5.0"), "INSTALLED_SW_NAME": "Editor"}]})
         return httpx.Response(404)
 
     settings = Settings()
     settings.aternity.base_url = "https://aternity.test/odata"
     client = AternityClient(settings.aternity, transport=httpx.MockTransport(handler))
     schema = parse_odata_metadata((Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
-    parts = _start_up_parts(settings, client, schema)
-    assert "Types: Logon Phase (1)" in parts[0].message and "WINDOWS_MACHINE_BOOTS: Boot (1), Logon (1)" in parts[0].message
-    assert "device='WS-B'" in parts[1].message and "duration=90" in parts[1].message
-    assert parts[1].rows == ["timestamp='2026-10-30T09:00:00Z', type='Logon Phase', component='Profile', "
-                             "duration=50, degradation=30"]
+    summary, starts, parts = _start_up_parts(settings, client, schema)
+    assert "Types: Driver Y (2), Phase X (1), Phase Z (1)" in summary.message
+    assert "WINDOWS_MACHINE_BOOTS: Logon (1), Boot (1)" in summary.message
+    assert "type='Logon', duration=90" in starts.message
+    assert starts.rows[0].startswith("timestamp='2026-10-30T08:00:00Z'")  # time order
+    assert parts.rows == ["2026-10-30T08:00:00Z: 2 row(s), 0 longer than normal; types: Driver Y (2)",
+                          "2026-10-30T09:05:00Z: 2 row(s), 1 longer than normal; types: Phase X (1), Phase Z (1)"]
     log = _change_log(settings, client, schema)[0]
-    assert "Change types: Upgraded (2)" in log.message and "INSTALLED_SW_VERSION_BEFORE_CHANGE" in log.message
-    assert log.rows == ["timestamp='2026-10-29T10:00:00Z', name='Viewer', change='Upgraded', version='2.0', "
-                        "version_before='1.0'"]
+    assert "Change types: Added (2), Removed (1)" in log.message
+    assert "at the same second: Removed 1, Added 1; within an hour: none; none: Added 1." in log.message
+    assert log.rows[0] == ("timestamp='2026-10-29T10:00:00Z', name='Viewer', change='Removed', version='1.0', "
+                           "version_before='N/A'")
     assert "· timestamp='2026-10-29" in render_checks([log])
