@@ -20,11 +20,12 @@ def problem_text(g: dict) -> str:
     """One problem row as a sentence (without the count)."""
     obj, what, worst, limit = g["object"], g["what"], g["worst"], g["limit"]
     if g["source"] == "Aternity" and g["app"]:
-        m = re.match(r"(.+) (crashed|not responding \(s\))$", what)
+        m = re.match(r"(.+) (crashed|not responding)$", what)
         if m and m.group(2) == "crashed":
             return f"{m.group(1)} crashed on {obj}"
         if m:
-            return f"{m.group(1)} was not responding on {obj} (up to {worst} s)"
+            # APPLICATION_HANG_TIME_TOTAL's unit is not documented: shown as Aternity gives it
+            return f"{m.group(1)} was not responding on {obj} (Aternity hang time up to {worst})"
     if g["source"] == "Aternity event":
         return f"Health event on {obj}: {what}"
     if g["source"] == "Aternity start-up":

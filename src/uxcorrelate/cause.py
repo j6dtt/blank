@@ -25,6 +25,7 @@ from .models import parse_time
 log = logging.getLogger("uxcorrelate")
 CHANGES_BEFORE = timedelta(days=14)  # how far back "what changed" looks
 EXPLAIN = 3  # the problems at the most slow actions get explained
+EVENT = "Aternity event"  # a device health event (correlate._event_problem)
 METRIC = {"CPU %": ("CPU", "cpu", "%"), "Memory %": ("memory", "memory", "%"), "Disk queue": ("disk I/O", "io", "")}
 
 
@@ -63,7 +64,7 @@ def explain(aternity, groups: list[dict], events: list, window: timedelta, start
         log.info("Looking for the cause: %s", g["text"])
         why = {"failure": None, "others": None, "changes": [], "processes": [], "text": [], "todo": []}
         times = g["_times"]
-        if g["app"]:
+        if g["app"] or g["source"] == EVENT:
             _failure(aternity, g, events, times, window, start, end, why)
         else:
             _processes(aternity, g, times, window, why)
@@ -73,9 +74,21 @@ def explain(aternity, groups: list[dict], events: list, window: timedelta, start
             done[(g["object"], g["app"])] = why
 
 
+def _event_what(e) -> str:
+    """The problem text of a health event, as correlate._event_problem builds it."""
+    from .correlate import _event_problem
+    return _event_problem(e)["what"]
+
+
 def _failure(aternity, g, events, times, window, start, end, why) -> None:
+    """Where it failed, from the health events behind the problem: for an app, its
+    crashes and hangs; for any other event (a background process, low memory, a
+    blue screen, a failing disk), that event itself."""
     dev, app = g["object"], g["app"]
-    mine = [e for e in events if e.device == dev and e.application == app]
+    if g["source"] == EVENT:
+        mine = [e for e in events if e.device == dev and e.application == app and _event_what(e) == g["what"]]
+    else:
+        mine = [e for e in events if e.device == dev and e.application == app]
     near = [e for e in mine if _near(e.timestamp, times, window)]
     if not mine:
         why["text"].append(f"Aternity recorded no crash or hang details for {app} on {dev}, only the count.")
@@ -83,27 +96,39 @@ def _failure(aternity, g, events, times, window, start, end, why) -> None:
     use = near or mine
     where = Counter(_where(e) for e in use).most_common(1)[0][0]
     kind = Counter((e.category, e.name) for e in use if _where(e) == where).most_common(1)[0][0]
-    last = max((e for e in use if _where(e) == where and (e.category, e.name) == kind), key=lambda e: e.timestamp)
+    these = [e for e in use if _where(e) == where and (e.category, e.name) == kind]
+    last = max(these, key=lambda e: e.timestamp)
+    error = Counter(e.error for e in these if e.error).most_common(1)
+    error = error[0][0] if error else None
     why["failure"] = {"category": kind[0], "name": kind[1], "component": where[0], "component_version": where[1], "sub_component": where[2],
-                      "sub_component_version": where[3], "exception": last.exception, "error": last.error,
+                      "sub_component_version": where[3], "exception": last.exception, "error": error,
                       "details": (last.details or "")[:300] or None, "events": len(use), "at_slow_actions": bool(near)}
-    err = last.exception or last.error
-    why["text"].append(f"{app} failed in {_module(where)}" + (f": {err}" if err else "")
+    err = last.exception or error
+    what = " / ".join(x for x in kind if x) or "failure"
+    subject = f"{app} failed" if app else f"Aternity recorded {what} on {dev}"
+    place = f" in {_module(where)}" if where[0] or where[2] else ""
+    why["text"].append(f"{subject}{place}" + (f": {err}" if err else "")
                        + ("" if near else " (from its events in this window, not at the slow actions)") + ".")
     if last.details:
-        why["text"].append(f"Aternity's details: {last.details[:300]}")
+        why["text"].append(f"Aternity's details: {' '.join(last.details.split())[:300]}")
     module = where[2] or where[0]
     if module:
-        why["todo"].append(f"On {dev}: look at {_module(where)}, where {app} failed "
+        why["todo"].append(f"On {dev}: look at {_module(where)}, where {app or what} failed "
                            "(repair or update it; if it is an add-in, try without it).")
 
-    # only this PC, or everyone on the same version?
-    if not hasattr(aternity, "app_health_events"):
+    # only this PC, or others too? Found by the app, else by the process that failed.
+    if app and hasattr(aternity, "app_health_events"):
+        found = aternity.app_health_events(app, start, end)
+    elif not app and where[0] and hasattr(aternity, "component_health_events"):
+        found = aternity.component_health_events(where[0], start, end)
+    else:
         return
-    # the same failure: the same kind (Aternity's category and name, e.g. a hang) in the same place
-    same = [e for e in aternity.app_health_events(app, start, end)
-            if e.device != dev and (e.component, e.sub_component) == (where[0], where[2])
-            and (e.category, e.name) == kind]
+    # the same failure: the same kind (Aternity's category and name, e.g. a hang), the same
+    # process, the same module when Aternity knows it, the same error when both have one
+    same = [e for e in found
+            if e.device != dev and e.component == where[0] and (e.category, e.name) == kind
+            and (where[2] is None or e.sub_component == where[2])
+            and (error is None or e.error is None or e.error == error)]
     version = lambda e: (e.sub_component_version if where[2] else e.component_version) or "unknown version"  # noqa: E731
     pcs: dict[str, dict] = {}
     for e in sorted(same, key=lambda e: e.timestamp):
@@ -115,14 +140,14 @@ def _failure(aternity, g, events, times, window, start, end, why) -> None:
         p["last"] = _iso(e.timestamp)
     versions = Counter(p["version"] for p in pcs.values())
     # shown under "Who else is affected?" (one place), not in the why lines
-    what = " / ".join(x for x in kind if x) or "failure"
-    why["others"] = {"app": app, "what": f"{app} {what} in {_module(where)}", "pcs": len(pcs),
+    named = f"{app} {what}" if app else what
+    why["others"] = {"app": app, "what": f"{named}{place}" + (f", error {error}" if error else ""), "pcs": len(pcs),
                      "this_version": (where[3] if where[2] else where[1]) or "unknown version",
                      "versions": dict(versions.most_common(5)),
                      "list": sorted(pcs.values(), key=lambda p: (-p["times"], p["device"]))[:100]}
     if not pcs:
         return
-    why["todo"].append(f"{len(pcs)} other PCs fail the same way: treat it as a {module} problem "
+    why["todo"].append(f"{len(pcs)} other PCs fail the same way: treat it as a {module or app} problem "
                        f"(version, update, vendor), not this PC alone.")
 
 

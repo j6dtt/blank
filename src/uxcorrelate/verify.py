@@ -219,6 +219,10 @@ def _value_ranges(settings: Settings, client: AternityClient, schema: dict[str, 
             if k != key or column not in schema[entity]:
                 continue
             values = [v for v in (to_float(r.get(column)) for r in rows) if v is not None]
+            if not values:
+                checks.append(Check("Aternity", f"values {column}", None,
+                                    f"No values in {len(rows)} rows of the last day: nothing is checked against "
+                                    f"{limit}."))
             if values:
                 checks.append(Check("Aternity", f"values {column}", None,
                                     f"min {min(values):g}, median {median(values):g}, max {max(values):g} "
@@ -286,7 +290,7 @@ def _health_events(settings: Settings, client: AternityClient, schema: dict[str,
         return []
     since = datetime.now(timezone.utc) - timedelta(days=7)
     try:
-        rows = client.query(entity, f"{f['timestamp']} ge {odata_time(since)}", top=1000)
+        rows = client.query(entity, f"{f['timestamp']} ge {odata_time(since)}", top=1000, raw=True)
     except ApiError as exc:
         return [Check("Aternity", "health events", None, f"Could not read them: {exc.reason or exc}")]
     kind = lambda r: f"{r.get(f.get('category', ''))} / {r.get(f.get('name', ''))}"  # noqa: E731
@@ -318,7 +322,7 @@ def _app_usage(settings: Settings, client: AternityClient, schema: dict[str, set
         return []
     since = datetime.now(timezone.utc) - timedelta(days=1)
     try:
-        rows = client.query(entity, f"{f['timestamp']} ge {odata_time(since)}", top=1000)
+        rows = client.query(entity, f"{f['timestamp']} ge {odata_time(since)}", top=1000, raw=True)
     except ApiError as exc:
         return [Check("Aternity", "application crashes, hang time, UXI", None, f"Could not read them: {exc.reason or exc}")]
     lines = []
@@ -349,8 +353,8 @@ def _start_up_parts(settings: Settings, client: AternityClient, schema: dict[str
     end = datetime.now(timezone.utc)
     since = end - timedelta(days=1)
     try:
-        boots = client.query(be, f"{bf['timestamp']} ge {odata_time(since)}", top=500)
-        parts = client.query(ce, f"{cf['timestamp']} ge {odata_time(since)}", top=500)
+        boots = client.query(be, f"{bf['timestamp']} ge {odata_time(since)}", top=500, raw=True)
+        parts = client.query(ce, f"{cf['timestamp']} ge {odata_time(since)}", top=500, raw=True)
     except ApiError as exc:
         return [Check("Aternity", "start-up parts", None, f"Could not read start-up rows: {exc.reason or exc}")]
     types = Counter(str(r.get(cf.get("type", ""))) for r in parts)
@@ -370,9 +374,9 @@ def _start_up_parts(settings: Settings, client: AternityClient, schema: dict[str
     since = since - timedelta(hours=2)
     try:  # every row of that PC in the window, put in time order here
         mine_b = client.query(be, f"{bf['timestamp']} ge {odata_time(since)} and {bf['device']} eq {odata_quote(dev)}",
-                              select=[bf[k] for k in ("timestamp", "started", "type", "duration") if bf.get(k)])
+                              select=[bf[k] for k in ("timestamp", "started", "type", "duration") if bf.get(k)], raw=True)
         mine_c = client.query(ce, f"{cf['timestamp']} ge {odata_time(since)} and {cf['device']} eq {odata_quote(dev)}",
-                              select=[cf[k] for k in ("timestamp", "type", "degradation") if cf.get(k)])
+                              select=[cf[k] for k in ("timestamp", "type", "degradation") if cf.get(k)], raw=True)
     except ApiError as exc:
         checks.append(Check("Aternity", "slowest start-up and its parts", None,
                             f"Could not read that PC's rows: {exc.reason or exc}"))
@@ -405,7 +409,7 @@ def _change_log(settings: Settings, client: AternityClient, schema: dict[str, se
         return []
     since = datetime.now(timezone.utc) - timedelta(days=14)
     try:
-        rows = client.query(entity, f"{f['timestamp']} ge {odata_time(since)}", top=300)
+        rows = client.query(entity, f"{f['timestamp']} ge {odata_time(since)}", top=300, raw=True)
     except ApiError as exc:
         return [Check("Aternity", "software change log", None, f"Could not read it: {exc.reason or exc}")]
     kinds = Counter(str(r.get(f.get("change", ""))) for r in rows)

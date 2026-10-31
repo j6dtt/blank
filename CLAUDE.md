@@ -67,7 +67,11 @@ unset `<REQUIRED>` base URLs.
   (`INSTALLED_SOFTWARE_CHANGE_LOG`), busiest processes for CPU/memory/disk
   (`RAW_DATA_TOP_PROCESSES`). "Same failure" = same category+name, same
   component and sub-component (version shown, not matched); see
-  `docs/who-else-is-affected.md`. Each finding is a sentence about a record;
+  `docs/who-else-is-affected.md`. Every health event kind gets a why (an
+  event with no app, e.g. a background process, low memory, a blue screen,
+  counts at any slow action; who else is found by its process). Same
+  failure also needs the same error code when both have one; the module
+  only when Aternity knows it. Each finding is a sentence about a record;
   a source with nothing says so. A hang and its own health event share one
   cause.
 - `answer.py`: the plain-language answer at the top of the page and the
@@ -107,6 +111,10 @@ unset `<REQUIRED>` base URLs.
 - A failing NetIM metric or alerts call, or an optional Aternity source
   (health events, app UXI), must not abort an investigation.
   It goes into `netim.warnings` / `aternity.warnings`, which `investigate()` copies into the result.
+- Aternity writes "N/A" for no value: `AternityClient.query` turns it into
+  None (verify reads `raw=True` to show values as sent). A module named
+  "unknown (Dll)" / version "0.0.0.0" is no module. App hang time
+  (APPLICATION_HANG_TIME_TOTAL) has no documented unit: never print one.
 - Every timestamp is a timezone-aware UTC datetime. Use `models.parse_time`,
   which accepts ISO strings and epoch seconds or milliseconds.
 - Role → domain mapping lives in `ROLE_DOMAIN`. When a device is mapped twice,

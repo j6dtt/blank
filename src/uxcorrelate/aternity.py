@@ -9,12 +9,13 @@ access token (or password) generated in Aternity settings.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime
 from urllib.parse import quote
 
 import httpx
 
-from .config import NO_VALUE, AternityConfig
+from .config import NO_VALUE, UNKNOWN_VALUE, AternityConfig
 from .http import ApiError, RestClient
 from .models import (
     AppUsageSample, BootComponent, BootSample, DeviceHealthSample, EndpointInfo, HealthEvent, ProcessSample,
@@ -22,6 +23,11 @@ from .models import (
 )
 
 log = logging.getLogger("uxcorrelate")
+
+
+def _bare(value) -> str:
+    """A value without Aternity's bracketed label: "unknown (Dll)" -> "unknown"."""
+    return re.sub(r"\s*\([^()]*\)$", "", str(value or "")).strip()
 
 
 def odata_quote(value: str) -> str:
@@ -45,7 +51,19 @@ class AternityClient:
 
     # -- generic OData -------------------------------------------------
     def query(self, entity: str, filter: str | None = None, top: int | None = None,
-              orderby: str | None = None, select: list[str] | None = None) -> list[dict]:
+              orderby: str | None = None, select: list[str] | None = None, raw: bool = False) -> list[dict]:
+        """Rows of a data source. Aternity's "N/A" (no value) becomes None, unless
+        raw (verify shows values exactly as sent)."""
+        rows = self._query(entity, filter, top, orderby, select)
+        if not raw:
+            for row in rows:
+                for k, v in row.items():
+                    if v in NO_VALUE:
+                        row[k] = None
+        return rows
+
+    def _query(self, entity: str, filter: str | None, top: int | None, orderby: str | None,
+               select: list[str] | None) -> list[dict]:
         params: dict[str, str] = {"$format": "json"}
         if filter:
             params["$filter"] = filter
@@ -101,12 +119,12 @@ class AternityClient:
             ts = parse_time(row.get(f["timestamp"]))
             if ts is None:
                 continue
-            dev = str(row.get(f["device"], ""))
+            dev = str(row.get(f["device"]) or "")
             samples.append(UserSample(
                 timestamp=ts,
-                username=str(row.get(f["username"], "")),
+                username=str(row.get(f["username"]) or ""),
                 device=dev,
-                application=str(row.get(f["application"], "")),
+                application=str(row.get(f["application"]) or ""),
                 location=row.get(f.get("location", "")) or None,
                 activity=row.get(f.get("activity", "")),
                 response_time=to_float(row.get(f.get("response_time", ""))),
@@ -150,9 +168,9 @@ class AternityClient:
             if ts is not None:
                 out.append(UserSample(
                     timestamp=ts,
-                    username=str(row.get(f["username"], "")),
-                    device=str(row.get(f["device"], "")),
-                    application=str(row.get(f["application"], "")),
+                    username=str(row.get(f["username"]) or ""),
+                    device=str(row.get(f["device"]) or ""),
+                    application=str(row.get(f["application"]) or ""),
                     location=row.get(f.get("location", "")) or None,
                     ip_address=row.get(f.get("ip_address", "")) or None,
                     response_time=to_float(row.get(f.get("response_time", ""))),
@@ -180,7 +198,7 @@ class AternityClient:
             ts = parse_time(row.get(f["timestamp"]))
             if ts is not None:
                 out.append(BootSample(
-                    timestamp=ts, device=str(row.get(f["device"], "")),
+                    timestamp=ts, device=str(row.get(f["device"]) or ""),
                     username=row.get(f.get("username", "")) or None,
                     location=row.get(f.get("location", "")) or None,
                     ip_address=row.get(f.get("ip_address", "")) or None,
@@ -199,7 +217,7 @@ class AternityClient:
             if ts is not None:
                 get = lambda k: (row.get(f[k]) or None) if f.get(k) else None  # noqa: E731
                 out.append(BootComponent(
-                    timestamp=ts, device=str(row.get(f["device"], "")), type=get("type"),
+                    timestamp=ts, device=str(row.get(f["device"]) or ""), type=get("type"),
                     component=get("component"), start_type=get("start_type"),
                     duration=to_float(get("duration")), degradation=to_float(get("degradation")),
                     username=get("username"), location=get("location"),
@@ -260,12 +278,13 @@ class AternityClient:
             if ts is None:
                 continue
             get = lambda k: (row.get(f[k]) or None) if f.get(k) else None  # noqa: E731
+            known = lambda k: None if _bare(get(k)).lower() in UNKNOWN_VALUE else get(k)  # noqa: E731
             out.append(HealthEvent(
-                timestamp=ts, device=str(row.get(f["device"], "")),
+                timestamp=ts, device=str(row.get(f["device"]) or ""),
                 application=get("application"), username=get("username"), category=get("category"), name=get("name"),
-                component=get("component"), severity=get("severity"), count=to_float(get("count")),
-                component_version=get("component_version"), sub_component=get("sub_component"),
-                sub_component_version=get("sub_component_version"), exception=get("exception"),
+                component=known("component"), severity=get("severity"), count=to_float(get("count")),
+                component_version=known("component_version"), sub_component=known("sub_component"),
+                sub_component_version=known("sub_component_version"), exception=get("exception"),
                 error=get("error"), details=get("details"),
             ))
         return out
@@ -285,8 +304,21 @@ class AternityClient:
             return []
         return self._events(f"{self._time_filter('health_events', start, end)} and "
                             f"{f['application']} eq {odata_quote(application)}", "health events of other PCs",
-                            ["timestamp", "device", "username", "application", "category", "name", "component", "count",
-                             "component_version", "sub_component", "sub_component_version"])
+                            self.EVERYWHERE)
+
+    # what "who else had the same failure" needs from every PC
+    EVERYWHERE = ["timestamp", "device", "username", "application", "category", "name", "component", "count",
+                  "component_version", "sub_component", "sub_component_version", "error"]
+
+    def component_health_events(self, component: str, start: datetime, end: datetime) -> list[HealthEvent]:
+        """One process's health events on every device, for events with no application
+        (a background process): is it only this PC?"""
+        f = self.cfg.fields.get("health_events", {})
+        if not f or not f.get("component"):
+            return []
+        return self._events(f"{self._time_filter('health_events', start, end)} and "
+                            f"{f['component']} eq {odata_quote(component)}", "health events of other PCs",
+                            self.EVERYWHERE)
 
     def software_changes(self, device: str, start: datetime, end: datetime) -> list[SoftwareChange]:
         """Installs, updates and removals on the device in the window."""
@@ -301,9 +333,8 @@ class AternityClient:
             ts = parse_time(row.get(f["timestamp"]))
             if ts is not None:
                 get = lambda k: (row.get(f[k]) or None) if f.get(k) else None  # noqa: E731
-                ver = lambda k: None if get(k) in NO_VALUE else get(k)  # noqa: E731
                 out.append(SoftwareChange(timestamp=ts, device=device, name=get("name"), change=get("change"),
-                                          version=ver("version"), version_before=ver("version_before"),
+                                          version=get("version"), version_before=get("version_before"),
                                           vendor=get("vendor")))
         return out
 
@@ -343,7 +374,7 @@ class AternityClient:
             if ts is not None:
                 out.append(AppUsageSample(
                     timestamp=ts, device=device,
-                    application=str(row.get(f.get("application", ""), "")),
+                    application=str(row.get(f.get("application", "")) or ""),
                     uxi=to_float(row.get(f.get("uxi", ""))),
                     crashes=to_float(row.get(f.get("crashes", ""))),
                     hang_time=to_float(row.get(f.get("hang_time", ""))),

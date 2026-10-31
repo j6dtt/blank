@@ -249,3 +249,23 @@ def test_verify_shows_how_health_events_and_app_crashes_are_filled():
                              "not zero: min 2, median 2, max 2")
     assert usage.rows[1] == "hang_time (APPLICATION_HANG_TIME_TOTAL): 1 row(s) with a value, 0 not zero"
     assert usage.rows[-1].startswith("A row with a crash or hang: timestamp='2026-10-30T09:00:00Z', application='Editor'")
+
+
+def test_verify_says_when_a_checked_column_has_no_values():
+    from pathlib import Path
+    from uxcorrelate.verify import _value_ranges
+
+    def handler(request):
+        if request.url.path.endswith("/BUSINESS_ACTIVITIES_RAW"):
+            return httpx.Response(200, json={"value": [
+                {"TIMEFRAME": "2026-10-30T09:00:00Z", "HRC_CPU_UTIL": 40, "NETWORK_RTT_AVG": None}] * 3})
+        return httpx.Response(200, json={"value": []})
+
+    settings = Settings()
+    settings.aternity.base_url = "https://aternity.test/odata"
+    client = AternityClient(settings.aternity, transport=httpx.MockTransport(handler))
+    schema = parse_odata_metadata((Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
+    msgs = {c.item: c.message for c in _value_ranges(settings, client, schema)}
+    assert msgs["values NETWORK_RTT_AVG"] == ("No values in 3 rows of the last day: nothing is checked against "
+                                              "client_network_latency_ms 150.0.")
+    assert msgs["values HRC_CPU_UTIL"].startswith("min 40, median 40, max 40 over 3 rows")

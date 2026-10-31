@@ -55,6 +55,9 @@ DISK_FREE_COLUMNS = {"free_percent": "FREE_SPACE_PERCENT", "free_space": "OS_FRE
 # "Installed" row (the new one) of the same software on the same PC, at the
 # same second. `uxcorrelate verify` counts those pairs.
 NO_VALUE = ("N/A",)
+# A live DEVICE_HEALTH_RAW names a module it could not identify "unknown (Dll)",
+# version "0.0.0.0 (DLL Version)": the part before the bracketed label is checked.
+UNKNOWN_VALUE = ("unknown", "0.0.0.0")
 SOFTWARE_REMOVED = ("Uninstalled",)
 
 # logical name -> Aternity OData column

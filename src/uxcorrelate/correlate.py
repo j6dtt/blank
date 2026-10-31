@@ -331,7 +331,7 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
             events += aternity.health_events(d, req.start, req.end)
         if hasattr(aternity, "app_usage"):
             for u in aternity.app_usage(d, req.start, req.end, req.application):
-                for what, value in (("crashed", u.crashes), ("not responding (s)", u.hang_time)):
+                for what, value in (("crashed", u.crashes), ("not responding", u.hang_time)):
                     if value:
                         problems.append(_problem(u.timestamp, "pc", "Aternity", u.device,
                                                  f"{u.application} {what}", round(value, 2), app=u.application))

@@ -109,7 +109,7 @@ def test_a_crash_of_another_app_is_not_blamed():
     by_app = {g["app"]: g for g in result["problems"]}
     assert by_app["Notepad"]["slow_actions"] == 0
     assert by_app["ERP"]["slow_actions"] == 1
-    assert result["answer"]["title"] == "Likely: ERP was not responding on PC1 (up to 12.0 s)"
+    assert result["answer"]["title"] == "Likely: ERP was not responding on PC1 (Aternity hang time up to 12.0)"
 
 
 def test_aternity_status_decides_what_is_slow():
@@ -296,3 +296,57 @@ def test_a_removal_and_an_install_at_the_same_second_read_as_one_update():
         ("Helper", "Installed", None, "1.4"), ("Viewer", "updated", "3.1", "3.2"), ("Editor", "Uninstalled", None, "7.0")]
     assert "Viewer updated 3.1 → 3.2 (same name as the failing part)" in ch["text"]
     assert "Editor Uninstalled 7.0" in ch["text"]
+
+
+class Background(StubAternity):
+    """No app on these events (as on a live Aternity): a background process crashes on PC1
+    at amy's slow ERP actions, with a module Aternity could not name; PC1 is also low on memory."""
+    at = T0 + timedelta(minutes=40)
+
+    def health_events(self, device, start, end):
+        return [HealthEvent(self.at, "PC1", None, "amy", "Background Process", "Background Process Crash",
+                            "agent.exe (Process)", component_version="7.2 (Process Version)",
+                            error="c0000005 (Exception)", details="Fault Offset:0001"),
+                HealthEvent(self.at + timedelta(minutes=2), "PC1", None, "amy", "System", "Low Memory Pagefaults",
+                            details="Page Faults: 900\nPercent Remaining Memory: 3.1%")]
+
+    def component_health_events(self, component, start, end):
+        crash = lambda dev, err, sub=None: HealthEvent(  # noqa: E731
+            self.at, dev, None, "u", "Background Process", "Background Process Crash", component,
+            component_version="7.2 (Process Version)", sub_component=sub, error=err)
+        return [crash("PC2", "c0000005 (Exception)", "x.dll (Dll)"),  # module known there: still the same failure
+                crash("PC3", "c0000005 (Exception)"),
+                crash("PC4", "c0000409 (Exception)")]  # another error: not the same failure
+
+
+def test_events_without_an_app_count_and_get_a_why():
+    result = amy(erp(lambda i: i in (8, 9)), source=Background)  # slow at 09:40 and 09:45
+    texts = {g["text"]: g for g in result["problems"]}
+    crash = next(g for t, g in texts.items() if "Background Process Crash" in t)
+    memory = next(g for t, g in texts.items() if "Low Memory" in t)
+    assert crash["slow_actions"] == 2 and memory["slow_actions"] == 2  # no app: they count at any slow action
+    why = crash["why"]
+    assert why["text"][0] == ("Aternity recorded Background Process / Background Process Crash on PC1 in "
+                              "agent.exe (Process) 7.2 (Process Version): c0000005 (Exception).")
+    assert why["others"]["pcs"] == 2 and [p["device"] for p in why["others"]["list"]] == ["PC2", "PC3"]
+    assert why["others"]["what"].endswith(", error c0000005 (Exception)")
+    assert "Aternity's details: Page Faults: 900 Percent Remaining Memory: 3.1%" in memory["why"]["text"]
+
+
+def test_aternity_n_a_and_unknown_modules_are_no_value():
+    import httpx
+    from uxcorrelate.aternity import AternityClient
+    from uxcorrelate.config import AternityConfig
+
+    def handler(request):
+        return httpx.Response(200, json={"value": [
+            {"TIMEFRAME": "2026-10-28T09:40:00Z", "DEVICE_NAME": "PC1", "APPLICATION_NAME": "N/A",
+             "HEALTH_EVENT_CATEGORY": "Background Process", "HEALTH_EVENT_NAME": "Background Process Crash",
+             "HEALTH_EVENT_COMPONENT": "agent.exe (Process)", "HEALTH_EVENT_SUB_COMPONENT": "unknown (Dll)",
+             "HEALTH_EVENT_SUB_COMPONENT_VERSION": "0.0.0.0 (DLL Version)", "HEALTH_EVENT_EXCEPTION_TYPE": "N/A"}]})
+
+    client = AternityClient(AternityConfig(base_url="https://aternity.test/odata"), transport=httpx.MockTransport(handler))
+    e = client.health_events("PC1", T0, T0 + timedelta(hours=1))[0]
+    assert (e.application, e.sub_component, e.sub_component_version, e.exception) == (None, None, None, None)
+    assert e.component == "agent.exe (Process)"
+    assert client.query("DEVICE_HEALTH_RAW", raw=True)[0]["APPLICATION_NAME"] == "N/A"  # verify sees it as sent
