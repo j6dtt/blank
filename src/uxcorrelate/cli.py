@@ -74,6 +74,13 @@ def cmd_logons(args) -> int:
 def cmd_serve(args) -> int:
     import uvicorn
     from .web import create_app
+
+    class NoHealthCheck(logging.Filter):  # the container's own check of the page, every 30 s
+        def filter(self, record):
+            a = record.args
+            return not (isinstance(a, tuple) and len(a) >= 3 and str(a[0]).startswith("127.0.0.1")
+                        and a[2] == "/")
+    logging.getLogger("uvicorn.access").addFilter(NoHealthCheck())
     uvicorn.run(create_app(args.config), host=args.host, port=args.port)
     return 0
 

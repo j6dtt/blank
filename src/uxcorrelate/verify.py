@@ -155,9 +155,18 @@ def _disk_elsewhere(settings: Settings, schema: dict[str, set[str]]) -> list[Che
                 return [Check("Aternity", "free disk space", False,
                               f"Free disk space is published in {entity} ({column}). Read it from there:",
                               paste=paste)]
+    cols = set(DISK_FREE_COLUMNS.values())
+    others = sorted(e for e, c in schema.items() if c & cols)
+    if not others:
+        return [Check("Aternity", "free disk space", None,
+                      "No published data source has free disk space (" + ", ".join(sorted(cols))
+                      + "), so nearly full disks are not checked.")]
     return [Check("Aternity", "free disk space", None,
-                  "No published data source has free disk space (" + ", ".join(DISK_FREE_COLUMNS.values())
-                  + "), so nearly full disks are not checked.")]
+                  "None of the data sources this tool reads has free disk space, so nearly full disks are "
+                  "not checked. Published elsewhere (" + ", ".join(sorted(cols)) + "): " + ", ".join(others[:15])
+                  + (f" (+{len(others) - 15} more)" if len(others) > 15 else "")
+                  + ". To use one, its time and device columns are needed in src/uxcorrelate/config.py "
+                  "(disk_space).")]
 
 
 def _value_ranges(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
