@@ -17,7 +17,7 @@ import difflib
 import textwrap
 import xml.etree.ElementTree as ET
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from statistics import median
 from typing import Any
@@ -25,7 +25,7 @@ from typing import Any
 from .aternity import AternityClient, odata_quote, odata_time
 from .config import DISK_FREE_COLUMNS, Settings
 from .http import ApiError
-from .models import to_float
+from .models import parse_time, to_float
 from .netim import NetimClient, _items
 
 CODE_FIX = "edit {file} in ./src/uxcorrelate, then: docker compose restart"
@@ -39,6 +39,7 @@ class Check:
     message: str
     fix: str = ""
     paste: str = ""  # YAML to put in config.yaml
+    rows: list[str] = field(default_factory=list)  # sample rows, one per line
 
 
 def _closest(name: str, choices) -> list[str]:
@@ -256,7 +257,83 @@ def verify_aternity(settings: Settings, client: AternityClient) -> list[Check]:
                                 f"{kind} '{name}' {'found' if found else 'not found'} in Aternity "
                                 "activity of the last 7 days.",
                                 "" if found else f"Spell it exactly as Aternity shows it ({column})."))
-    return checks + _value_ranges(settings, client, schema)
+    return checks + _value_ranges(settings, client, schema) + _start_up_parts(settings, client, schema) \
+        + _change_log(settings, client, schema)
+
+
+def _raw(row: dict, fields: dict, keys) -> str:
+    """One row as 'key=value' for the configured columns, values exactly as Aternity sent them."""
+    return ", ".join(f"{k}={row.get(fields[k])!r}" for k in keys if fields.get(k))
+
+
+def _start_up_parts(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
+    """How Aternity fills the start-up parts: are there parts for the slowest
+    start-up of the last day, and under which type names?"""
+    cfg = settings.aternity
+    be, ce = cfg.entities.get("boots"), cfg.entities.get("boot_components")
+    bf, cf = cfg.fields.get("boots", {}), cfg.fields.get("boot_components", {})
+    if be not in schema or ce not in schema or not bf.get("duration") or not cf.get("device"):
+        return []
+    end = datetime.now(timezone.utc)
+    since = end - timedelta(days=1)
+    try:
+        boots = client.query(be, f"{bf['timestamp']} ge {odata_time(since)}", top=500)
+        parts = client.query(ce, f"{cf['timestamp']} ge {odata_time(since)}", top=500)
+    except ApiError as exc:
+        return [Check("Aternity", "start-up parts", None, f"Could not read start-up rows: {exc.reason or exc}")]
+    types = Counter(str(r.get(cf.get("type", ""))) for r in parts)
+    slow = sum(1 for r in parts if (to_float(r.get(cf.get("degradation", ""))) or 0) > 0)
+    checks = [Check("Aternity", "start-up parts", None,
+                    f"{ce}, last day: {len(parts)} row(s){' (first 500)' if len(parts) == 500 else ''} on "
+                    f"{len({r.get(cf['device']) for r in parts})} PC(s), {slow} longer than normal. Types: "
+                    + (", ".join(f"{k} ({n})" for k, n in types.most_common()) or "none")
+                    + ". Start-up types in " + be + ": "
+                    + (", ".join(f"{k} ({n})" for k, n in Counter(str(r.get(bf.get("type", ""))) for r in boots)
+                                 .most_common()) or "none") + ".")]
+    timed = [r for r in boots if to_float(r.get(bf["duration"])) is not None]
+    if not timed:
+        return checks
+    top = max(timed, key=lambda r: to_float(r.get(bf["duration"])))
+    dev = top.get(bf["device"])
+    try:
+        mine = client.query(ce, f"{cf['timestamp']} ge {odata_time(since - timedelta(hours=2))} and "
+                                f"{cf['device']} eq {odata_quote(str(dev))}", top=200)
+    except ApiError as exc:
+        mine, checks[0].message = [], checks[0].message + f" Could not read that PC's parts: {exc.reason or exc}"
+    when = parse_time(top.get(bf["timestamp"]))
+    near = sorted(mine, key=lambda r: abs(((parse_time(r.get(cf["timestamp"])) or when) - when).total_seconds())
+                  if when else 0)
+    checks.append(Check("Aternity", "slowest start-up and its parts", None,
+                        f"Slowest start-up read: {_raw(top, bf, ('timestamp', 'started', 'device', 'type', 'duration'))}. "
+                        f"Parts rows for that PC in the last day: {len(mine)}"
+                        + (", nearest in time first:" if mine else "."),
+                        rows=[_raw(r, cf, ("timestamp", "type", "component", "duration", "degradation"))
+                              for r in near[:6]]))
+    return checks
+
+
+def _change_log(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
+    """How Aternity fills the software change log: change types, and what the
+    version columns hold for each."""
+    cfg = settings.aternity
+    entity, f = cfg.entities.get("software_changes"), cfg.fields.get("software_changes", {})
+    if entity not in schema or not f.get("timestamp"):
+        return []
+    since = datetime.now(timezone.utc) - timedelta(days=14)
+    try:
+        rows = client.query(entity, f"{f['timestamp']} ge {odata_time(since)}", top=300)
+    except ApiError as exc:
+        return [Check("Aternity", "software change log", None, f"Could not read it: {exc.reason or exc}")]
+    kinds = Counter(str(r.get(f.get("change", ""))) for r in rows)
+    sample = {}
+    for r in rows:
+        sample.setdefault(str(r.get(f.get("change", ""))), r)
+    others = sorted(c for c in schema[entity] if any(w in c for w in ("VERSION", "CHANGE", "TYPE", "ACTION")))
+    return [Check("Aternity", "software change log", None,
+                  f"{entity}, last 14 days: {len(rows)} row(s){' (first 300)' if len(rows) == 300 else ''}. "
+                  "Change types: " + (", ".join(f"{k} ({n})" for k, n in kinds.most_common()) or "none")
+                  + ". Its version/change/type columns: " + ", ".join(others) + ". One row per change type:",
+                  rows=[_raw(r, f, ("timestamp", "name", "change", "version", "version_before")) for r in sample.values()])]
 
 
 # ---------------------------------------------------------------- NetIM
@@ -445,6 +522,8 @@ def render_checks(checks: list[Check]) -> str:
             if c.paste:
                 lines.append("       put in config.yaml (under the existing top-level key):")
                 lines += [f"         {line}" for line in c.paste.splitlines()]
+            for row in c.rows:
+                lines += textwrap.wrap(row, 72, initial_indent="       · ", subsequent_indent="         ")
     failed = sum(c.ok is False for c in checks)
     lines.append("")
     lines.append(f"{failed} problem(s) found." if failed else "All checks passed.")

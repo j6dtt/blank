@@ -164,3 +164,43 @@ def test_metric_names_reads_netims_paged_metrics_list():
     # live NetIM wraps a class's metrics as {"items": [...], "meta": {...}}
     cls = {"id": "IFC_UTIL", "metrics": {"items": [{"id": "utilizationIn"}], "meta": {"total": 1}}}
     assert parse_metric_classes([cls]) == {"IFC_UTIL": {"utilizationIn"}}
+
+
+def test_verify_shows_how_start_up_parts_and_the_change_log_are_filled():
+    from pathlib import Path
+    from uxcorrelate.verify import _change_log, _start_up_parts
+
+    def handler(request):
+        path, flt = request.url.path, request.url.params.get("$filter", "")
+        if path.endswith("/WINDOWS_MACHINE_BOOTS"):
+            return httpx.Response(200, json={"value": [
+                {"TIMEFRAME": "2026-10-30T08:00:00Z", "DEVICE_NAME": "WS-A", "MEASUREMENT_TYPE": "Boot",
+                 "MEASUREMENT_DURATION_AVG": 40},
+                {"TIMEFRAME": "2026-10-30T09:00:00Z", "DEVICE_NAME": "WS-B", "MEASUREMENT_TYPE": "Logon",
+                 "MEASUREMENT_DURATION_AVG": 90}]})
+        if path.endswith("/MACHINE_BOOT_COMPONENTS"):
+            rows = [{"TIMEFRAME": "2026-10-30T09:00:00Z", "DEVICE_NAME": "WS-B", "MEASUREMENT_TYPE": "Logon Phase",
+                     "MEASUREMENT_COMPONENT": "Profile", "MEASUREMENT_DURATION_AVG": 50,
+                     "MEASUREMENT_DEGRADATION_TIME": 30}]
+            return httpx.Response(200, json={"value": rows if "WS-B" in flt or "DEVICE_NAME" not in flt else []})
+        if path.endswith("/INSTALLED_SOFTWARE_CHANGE_LOG"):
+            return httpx.Response(200, json={"value": [
+                {"INSTALLED_SW_CHANGE_TIMESTAMP": "2026-10-29T10:00:00Z", "INSTALLED_SW_NAME": "Viewer",
+                 "INSTALLED_SW_CHANGE_TYPE": "Upgraded", "INSTALLED_SW_VERSION": "2.0",
+                 "INSTALLED_SW_VERSION_BEFORE_CHANGE": "1.0"}] * 2})
+        return httpx.Response(404)
+
+    settings = Settings()
+    settings.aternity.base_url = "https://aternity.test/odata"
+    client = AternityClient(settings.aternity, transport=httpx.MockTransport(handler))
+    schema = parse_odata_metadata((Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
+    parts = _start_up_parts(settings, client, schema)
+    assert "Types: Logon Phase (1)" in parts[0].message and "WINDOWS_MACHINE_BOOTS: Boot (1), Logon (1)" in parts[0].message
+    assert "device='WS-B'" in parts[1].message and "duration=90" in parts[1].message
+    assert parts[1].rows == ["timestamp='2026-10-30T09:00:00Z', type='Logon Phase', component='Profile', "
+                             "duration=50, degradation=30"]
+    log = _change_log(settings, client, schema)[0]
+    assert "Change types: Upgraded (2)" in log.message and "INSTALLED_SW_VERSION_BEFORE_CHANGE" in log.message
+    assert log.rows == ["timestamp='2026-10-29T10:00:00Z', name='Viewer', change='Upgraded', version='2.0', "
+                        "version_before='1.0'"]
+    assert "· timestamp='2026-10-29" in render_checks([log])
