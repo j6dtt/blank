@@ -39,6 +39,7 @@ from .answer import build_answer, problem_text
 from .cause import explain
 from .impact import who_else
 from .logons import logon_report
+from .normal import compare_actions
 from .models import (
     DeviceHealthSample, HealthEvent, EndpointInfo, MappedObject, MetricSample, NetimAlert,
     NetimDevice, NetimInterface, UserSample, parse_time,
@@ -264,6 +265,9 @@ def _startup_why(g: dict, started_up, logons: dict) -> dict:
         todo.append(f"On {g['object']}: look at {slow['component']}"
                     + (f" ({slow['type']})" if slow["type"] != slow["component"] else "") + ", the slowest part of "
                     f"its start-up; the Slow start-ups tab shows it on every PC.")
+    if st.get("changes_since"):
+        todo.append(f"On {g['object']}: check what changed just before its start-ups got longer "
+                    f"({', '.join(st['changes_since'][:4])}).")
     if st["cause"] is not None:
         c = logons["causes"][st["cause"]]
         where = ", ".join(f"{k} {n}" for k, n in c["by_location"].items())
@@ -271,7 +275,11 @@ def _startup_why(g: dict, started_up, logons: dict) -> dict:
                     + (f" ({where})" if where else "") + ": the Slow start-ups tab lists them.")
     if not text:
         text.append("Aternity recorded no breakdown for this start-up.")
-    return {"failure": None, "others": None, "changes": [], "processes": [], "text": text, "todo": todo}
+    # only the timing links it to the slow actions: no part longer than normal, and
+    # not longer than the PC's own earlier start-ups
+    weak = not slow and not st.get("unusual")
+    return {"failure": None, "others": None, "changes": [], "processes": [], "text": text, "todo": todo,
+            "weak": weak}
 
 
 def _event_problem(e: HealthEvent) -> dict:
@@ -337,6 +345,7 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
                                                  f"{u.application} {what}", round(value, 2), app=u.application))
                 if u.uxi is not None:
                     uxi.append(u.uxi)
+    usage = [p for p in problems if p["app"]]  # crashes and hangs from app_usage
     problems += [_event_problem(e) for e in events]
     log.info("Aternity: %d device health events", len(events))
     warnings.extend(getattr(aternity, "warnings", []))
@@ -386,6 +395,19 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
     explain(aternity, groups, events, window, req.start, req.end)
     for g in groups:
         g.pop("_times")
+    normal = compare_actions(aternity, slow, req.start, req.end, req.username, lambda s: is_slow(s, settings))
+    th = settings.thresholds
+    measured = [s for s in slow if any(v is not None for v in (s.cpu, s.memory, s.disk_queue))]
+    top = lambda k: max((getattr(s, k) for s in measured if getattr(s, k) is not None), default=None)  # noqa: E731
+    checked = {
+        "devices": device_names,
+        "pc": {"measured": len(measured), "cpu": top("cpu"), "memory": top("memory"),
+               "disk_queue": top("disk_queue"),
+               "limits": {"cpu": th.device_cpu, "memory": th.device_memory, "disk_queue": th.disk_queue}},
+        "events": [len(events), sum(1 for p in problems if p["source"] == "Aternity event" and p["slow"])],
+        "crashes_hangs": [len(usage), sum(1 for p in usage if p["slow"])],
+        "start_ups": [len(started_up), sum(1 for p in started_up if p["slow"])],
+    }
     by_kind = {k: len({i for p in problems if p["kind"] == k for i in p["slow"]}) for k in KINDS}
 
     user_location = next((e.location for e in endpoints if e.location), None) or \
@@ -399,7 +421,7 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
                       None if req.username else req.device, user_ip, user_location)
     warnings.extend(w for w in getattr(aternity, "warnings", []) if w not in warnings)
     answer = build_answer(groups, samples, slow, req.username or req.device, impact, netim is not None,
-                          mapped, user_ip, logons, minutes, _time_split(slow))
+                          mapped, user_ip, logons, minutes, _time_split(slow), normal, checked)
     log.info("Done in %.0f s: %s", time.monotonic() - started, answer["title"])
     return {
         "request": {

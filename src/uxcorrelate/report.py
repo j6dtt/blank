@@ -58,6 +58,13 @@ def _answer_lines(a: dict, who: str) -> list[str]:
             if x.get("why"):
                 lines.append("    Why:")
                 lines += [f"      * {w}" for w in x["why"]]
+    if a.get("normal"):
+        lines += ["", "Compared with normal:"]
+        for c in a["normal"]:
+            lines.append(f"  - {c[0]}")
+            lines += [f"      {x}" for x in c[1:]]
+    if a.get("checked"):
+        lines += ["", "What was checked:"] + [f"  - {x}" for x in a["checked"]]
     if a["todo"]:
         lines += ["", "What to do:"] + [f"  - {x}" for x in a["todo"]]
     return lines

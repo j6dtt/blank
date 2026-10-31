@@ -91,6 +91,15 @@ Investigate tab, top to bottom:
   network problem: the other slow users and the network point they share.
 - **What we found, and why**: each problem at the slow actions, with what
   caused it underneath.
+- **Compared with normal**: each slow app + activity (e.g. an app's
+  launch) next to its own normal: how long it usually takes for this user
+  (last 30 days) and for other users at the same time, on how many days
+  Aternity marked most of its runs slow and since when, what changed on the
+  PC between the last normal day and the first slow one, and the PC's CPU,
+  memory and disk queue at those actions next to their usual.
+- **What was checked**: what else was looked at, with counts (PC values
+  and their limits, health events, crashes and hangs, start-ups, network),
+  so "nothing found" says what is ruled out.
 - **What to do**: steps from those causes.
 - **Timeline**: every action (red = slow) and every problem (faded = not
   near a slow action). Hover for date, time and value.
@@ -295,6 +304,7 @@ src/uxcorrelate/
   aternity.py    Aternity OData client
   netim.py       NetIM REST client + tolerant metric parsing
   correlate.py   mapping, problems, matching to slow actions
+  normal.py      each slow action next to its own normal and what changed
   verify.py      checks the config against live Aternity / NetIM
   report.py      text report
   cli.py         command line

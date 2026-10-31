@@ -98,7 +98,7 @@ def test_pc_cpu_without_netim():
     a = result["answer"]
     assert a["title"] == "Likely: PC1: CPU reached 99.0% (limit 85.0)" and result["problems"][0]["slow_actions"] == 4
     assert any("NetIM is not configured" in w for w in result["warnings"])
-    assert any(f["text"].startswith("The network was not checked: NetIM is not configured") for f in a["found"])
+    assert "Network: not checked, NetIM is not configured." in a["checked"]
 
 
 def test_a_crash_of_another_app_is_not_blamed():
@@ -261,7 +261,9 @@ def test_an_app_opened_during_a_slow_logon_is_explained_by_the_logon():
     assert top["source"] == "Aternity start-up" and top["slow_actions"] == 1
     assert result["answer"]["title"] == "Likely: PC1 was starting up: Logon 105.0 s (usual 34.0 s)"
     why = top["why"]["text"]
-    assert why[0] == "Most of the extra time: Group Policy took 60.0 s, 45.0 s longer than normal (Logon)."
+    assert why[0] == ("Logon took 105.0 s, longer than 9 in 10 of PC1's 5 earlier start-ups in the last 30 days "
+                      "(up to 34.0 s); the one before, Oct 27, took 34.0 s.")
+    assert why[1] == "Most of the extra time: Group Policy took 60.0 s, 45.0 s longer than normal (Logon)."
     assert why[-1].startswith("Group Policy was longer than normal on 3 PC(s) in this window (HQ 3)")
     assert len(result["problems"]) == 1  # the 30 s logon at 10:40 was near no slow action: not a problem
 
@@ -351,3 +353,79 @@ def test_aternity_n_a_and_unknown_modules_are_no_value():
     assert (e.application, e.sub_component, e.sub_component_version, e.exception) == (None, None, None, None)
     assert e.component == "agent.exe (Process)"
     assert client.query("DEVICE_HEALTH_RAW", raw=True)[0]["APPLICATION_NAME"] == "N/A"  # verify sees it as sent
+
+
+class Usual(Starting):
+    """amy's logon at 09:21 took 105 s, but her PC always takes about that: no part was slow."""
+    def boots(self, start, end, **k):
+        if start < T0 - timedelta(days=1):
+            return [BootSample(T0 - timedelta(days=d), "PC1", "amy", "HQ", type="Logon", duration=100.0 + d)
+                    for d in range(1, 9)]
+        return [BootSample(T0 + timedelta(minutes=21), "PC1", "amy", "HQ", type="Logon", duration=105.0)]
+
+    def boot_components(self, *a, **k):
+        return []
+
+
+def test_a_normal_start_up_is_only_possibly_the_cause_and_has_no_dead_end_step():
+    result = amy(erp(lambda i: i == 5), source=Usual)
+    a = result["answer"]
+    assert a["level"] == "possible" and a["title"].startswith("Possibly: PC1 was starting up")
+    assert "Only the timing links them" in a["reason"]
+    assert result["problems"][0]["why"]["text"][0] == (
+        "Logon (105.0 s) was normal for PC1: 9 in 10 of its 8 earlier start-ups in the last 30 days took up to 108.1 s.")
+    assert not any("Slow start-ups tab" in t for t in a["todo"])
+    assert a["todo"][-1].startswith("Nothing measured explains it")
+
+
+def test_what_was_checked_is_listed_with_counts():
+    result = amy(erp(lambda i: i == 3), [DeviceHealthSample(T0 + timedelta(minutes=50), "PC1", cpu=99.0)])
+    assert result["answer"]["checked"] == [
+        "PC: Aternity gave no CPU, memory or disk queue for the slow actions.",
+        "Health events on PC1: 0 in the window, 0 within 5 min of a slow action.",
+        "App crashes and hangs on PC1: 0 in the window, 0 within 5 min of a slow action.",
+        "Start-ups on PC1: 0 in the window, 0 within 5 min of a slow action.",
+        "Network: not checked, NetIM is not configured.",
+    ]
+
+
+class Billing(StubAternity):
+    """lee on NB-12: "Open Invoice" took 2 s until 10 days ago, 9 s since; an agent
+    was updated the evening before. Other users take 2.1 s."""
+    def history(self, start, end, username=None, device=None):
+        if username:  # lee's last 30 days, twice a day
+            return [UserSample(T0 - timedelta(days=d, hours=h), "lee", "NB-12", "Billing", "Open Invoice",
+                               response_time=9.0 if d <= 10 else 2.0, cpu=20.0, memory=50.0, disk_queue=0.1)
+                    for d in range(1, 31) for h in (2, 6)]
+        return [UserSample(T0 + timedelta(minutes=m), u, f"NB-{u}", "Billing", "Open Invoice", response_time=2.1)
+                for m in (10, 40) for u in ("ana", "raj", "zoe")] + \
+            [UserSample(T0 + timedelta(minutes=10), "lee", "NB-12", "Billing", "Open Invoice", response_time=9.0)]
+
+    activity_history = lambda self, app, act, start, end, **k: self.history(start, end, **k)  # noqa: E731
+
+    def software_changes(self, device, start, end):
+        t = T0 - timedelta(days=10, hours=12)
+        rows = [SoftwareChange(t, device, "Print Agent", "Uninstalled", "4.1"),
+                SoftwareChange(t, device, "Print Agent", "Installed", "4.2")]
+        return [c for c in rows if start <= c.timestamp <= end]
+
+
+def test_each_slow_action_is_compared_with_its_own_normal_and_what_changed():
+    samples = [UserSample(T0 + timedelta(minutes=10 * i), "lee", "NB-12", "Billing", "Open Invoice",
+                          response_time=9.0, cpu=35.0, memory=72.0, disk_queue=0.3) for i in range(3)]
+    result = investigate(InvestigationRequest(start=T0, end=T0 + timedelta(hours=2), username="lee"),
+                         Billing(samples), None, Settings())
+    a = result["answer"]
+    assert a["normal"] == [[
+        "Billing Open Invoice took 9.0 s at its 3 slow action(s) (slowest 9.0 s).",
+        "Usually 2.0 s for lee (typical of 60 in the last 30 days).",
+        "Other users at the same time: typical 2.1 s (3 users).",
+        "Aternity marked most runs slow on 10 of the 30 days lee used it in the last 30 days, every day since Oct 18.",
+        "Changed on NB-12 between Oct 17 and Oct 18: Oct 17 Print Agent updated 4.1 → 4.2.",
+        "NB-12 at those slow actions: CPU up to 35.0 % (usually 20.0 %), memory up to 72.0 % (usually 50.0 %), "
+        "disk queue up to 0.3 (usually 0.1).",
+    ]]
+    assert "On NB-12: check what changed before Billing Open Invoice became slow (Print Agent)." in a["todo"]
+    assert a["level"] == "possible" and a["title"] == "Possibly: what changed on NB-12 before Billing Open Invoice became slow"
+    assert a["reason"].endswith("every day since Oct 18. Changed on NB-12 between Oct 17 and Oct 18: "
+                                "Oct 17 Print Agent updated 4.1 → 4.2.")

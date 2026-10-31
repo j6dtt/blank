@@ -122,6 +122,12 @@
       </div>
     </section>
     <section class="panel" style="margin-top:16px"><h2>What we found, and why</h2><ul id="aFound"></ul></section>
+    <section class="panel" id="normalBox" style="margin-top:16px" hidden>
+      <h2>Compared with normal</h2><ul id="aNormal"></ul>
+    </section>
+    <section class="panel" id="checkedBox" style="margin-top:16px" hidden>
+      <h2>What was checked</h2><ul id="aChecked"></ul>
+    </section>
     <section class="panel" style="margin-top:16px"><h2>What to do</h2><ul id="aTodo"></ul><div id="warns"></div></section>
     <section class="panel" style="margin-top:16px">
       <h2>Timeline</h2>
@@ -325,6 +331,12 @@ function render(d) {
   $("aFound").innerHTML = a.found.map((x) => `<li>${esc(x.text)}${x.count ? `: <b>${esc(x.count)}</b>, from ${hm(x.when)}` : ""}`
     + (x.why && x.why.length ? `<div class="why"><b>Why:</b><ul>${x.why.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></div>` : "")
     + "</li>").join("") || "<li class='muted'>Nothing found.</li>";
+  // each slow app + activity next to its own normal: first line, then the details
+  const normal = a.normal || [], checked = a.checked || [];
+  $("normalBox").hidden = !normal.length;
+  $("aNormal").innerHTML = normal.map((c) => `<li><b>${esc(c[0])}</b><ul>${c.slice(1).map((x) => `<li>${esc(x)}</li>`).join("")}</ul></li>`).join("");
+  $("checkedBox").hidden = !checked.length;
+  $("aChecked").innerHTML = checked.map((x) => `<li>${esc(x)}</li>`).join("");
   $("aTodo").innerHTML = a.todo.map((x) => `<li>${esc(x)}</li>`).join("") || "<li class='muted'>Nothing to do.</li>";
   $("warns").innerHTML = d.warnings.map((w) => `<p class="warn">⚠ ${esc(w)}</p>`).join("");
 

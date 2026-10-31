@@ -22,7 +22,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from statistics import median, quantiles
 
-from .cause import changes_before
+from .cause import _day, changes_before, changes_between
 from .models import BootComponent, BootSample, parse_time
 
 log = logging.getLogger("uxcorrelate")
@@ -31,6 +31,7 @@ COMPONENTS_FOR = 20  # look up what took the time for the N slowest start-ups
 WHY_FOR = 10  # look for the cause of the N slowest
 MAIN_CAUSES = 3
 SAME_START = timedelta(hours=1)  # rows of one device this close are one start-up
+MIN_HISTORY = 5  # earlier start-ups needed to say what is normal for a PC
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -119,12 +120,14 @@ def logon_report(aternity, start: datetime, end: datetime, username: str | None 
     sort_type = types[-1]
 
     usual: dict[tuple[str, str], float] = {}
+    hist: dict[tuple[str, str], list[tuple]] = defaultdict(list)  # (time, duration) per PC and type
     if username or device:  # one person: compare with their own last 30 days
-        hist: dict[tuple[str, str], list[float]] = defaultdict(list)
         for b in aternity.boots(start - timedelta(days=BASELINE_DAYS), start, username=username, device=device):
             if b.duration is not None:
-                hist[(b.device, _type(b))].append(b.duration)
-        usual = {k: median(v) for k, v in hist.items()}
+                hist[(b.device, _type(b))].append((_when(b), b.duration))
+        usual = {k: median(d for _, d in v) for k, v in hist.items()}
+        for b in samples:  # the window's own start-ups, for "since when"
+            hist[(b.device, _type(b))].append((_when(b), b.duration))
 
     def key(st):  # slowest by the type with the largest typical value, else by its largest value
         by = {_type(b): b.duration for b in st}
@@ -150,8 +153,11 @@ def logon_report(aternity, start: datetime, end: datetime, username: str | None 
             "time": _iso(_when(first)), "username": next((b.username for b in st if b.username), None),
             "device": first.device, "location": next((b.location for b in st if b.location), None),
             "values": values, "components": _components_of(parts.get(i, [])) if i < COMPONENTS_FOR else [],
-            "why": [], "cause": None,
+            "why": [], "cause": None, "unusual": None, "changes_since": [],
         })
+    if username or device:
+        for st in items[:WHY_FOR]:
+            _against_history(aternity, st, hist, unit)
 
     causes = _causes(aternity, items[:WHY_FOR], start, end, unit)
 
@@ -173,6 +179,44 @@ def logon_report(aternity, start: datetime, end: datetime, username: str | None 
     }
 
 
+def _p90(values: list[float]) -> float:
+    return round(quantiles(values, n=10)[-1], 1)
+
+
+def _against_history(aternity, st: dict, hist: dict, unit: str) -> None:
+    """The start-up next to the PC's own earlier ones (last 30 days and the window):
+    since when that type has been longer than 9 in 10 of the ones before, and what
+    changed on the PC just before. The rule: the earliest point from which every
+    start-up, up to this one, was longer than 9 in 10 of those before it."""
+    u, dev, t = f" {unit}" if unit else "", st["device"], parse_time(st["time"])
+    for typ, v in st["values"].items():
+        rows = sorted(r for r in hist.get((dev, typ), []) if r[0] < t)
+        if len(rows) < MIN_HISTORY:
+            st["why"].append(f"{dev} has only {len(rows)} earlier {typ} in the last {BASELINE_DAYS} days: "
+                             "too few to say what is normal for it.")
+            continue
+        seq, times = [d for _, d in rows] + [v["duration"]], [w for w, _ in rows] + [t]
+        k = next((k for k in range(MIN_HISTORY, len(seq)) if min(seq[k:]) > _p90(seq[:k])), None)
+        if k is None:
+            st["unusual"] = bool(st["unusual"])
+            st["why"].append(f"{typ} ({v['duration']}{u}) was normal for {dev}: 9 in 10 of its {len(rows)} earlier "
+                             f"start-ups in the last {BASELINE_DAYS} days took up to {_p90(seq[:-1])}{u}.")
+            continue
+        st["unusual"] = True
+        if k == len(rows):
+            st["why"].append(f"{typ} took {v['duration']}{u}, longer than 9 in 10 of {dev}'s {len(rows)} earlier "
+                             f"start-ups in the last {BASELINE_DAYS} days (up to {_p90(seq[:-1])}{u}); the one "
+                             f"before, {_day(times[k - 1])}, took {seq[k - 1]}{u}.")
+        else:
+            st["why"].append(f"Since {_day(times[k])}, every {typ} on {dev} took longer than 9 in 10 of those "
+                             f"before: typical {round(median(seq[:k]), 1)}{u} before, "
+                             f"{round(median(seq[k:]), 1)}{u} since ({len(seq) - k} since, {k} before).")
+        ch = changes_between(aternity, dev, times[k - 1], times[k])
+        if ch["text"]:
+            st["why"].append(ch["text"])
+        st["changes_since"] += [c["name"] for c in ch["changes"] if c["name"] and c["name"] not in st["changes_since"]]
+
+
 def _causes(aternity, starts: list[dict], start: datetime, end: datetime, unit: str) -> list[dict]:
     """Why each of the slowest start-ups was slow, and the parts behind several of them."""
     u = f" {unit}" if unit else ""
@@ -191,6 +235,8 @@ def _causes(aternity, starts: list[dict], start: datetime, end: datetime, unit: 
                              + (f" ({slow['type']})." if slow["type"] != slow["component"] else "."))
             keys[(slow["type"], slow["component"])] += 1
             st["cause_key"] = (slow["type"], slow["component"])
+        if st.get("unusual"):
+            continue  # what changed before it got longer is already said
         ch = changes_before(aternity, st["device"], parse_time(st["time"]),
                             [slow["component"]] if slow else [], "slow part", "slow start-up")
         if ch["text"]:

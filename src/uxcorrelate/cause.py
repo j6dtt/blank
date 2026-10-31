@@ -190,15 +190,34 @@ def changes_before(aternity, device: str, when, names, part: str, event: str) ->
         return out
     shown = sorted(out["changes"], key=lambda c: not c["related"])[:3]
     out["text"] = (f"Changed on {device} in the {CHANGES_BEFORE.days} days before {_day(when)}: " + "; ".join(
-        f"{_day(parse_time(c['time']))} {c['name']} {c['change'] or 'changed'}"
-        + (f" {c['version_before']} → {c['version']}" if c["version_before"] and c["version"] else
-           f" {c['version']}" if c["version"] else "")
-        + (f" (same name as the {part})" if c["related"] else "") for c in shown)
+        change_text(c) + (f" (same name as the {part})" if c["related"] else "") for c in shown)
         + (f" (+{len(rows) - 3} more)" if len(rows) > 3 else "") + ".")
     rel = next((c for c in out["changes"] if c["related"]), None)
     if rel:
         out["todo"] = f"Check the {rel['name']} change of {rel['time'][:10]} on {device}: it came before the {event}."
     return out
+
+
+def change_text(c: dict) -> str:
+    """One change as a phrase: "Oct 26 Teams updated 1.0 → 2.0"."""
+    t = c["time"] if not isinstance(c["time"], str) else parse_time(c["time"])
+    return (f"{_day(t)} {c['name']} {c['change'] or 'changed'}"
+            + (f" {c['version_before']} → {c['version']}" if c["version_before"] and c["version"] else
+               f" {c['version']}" if c["version"] else ""))
+
+
+def changes_between(aternity, device: str, after, before) -> dict:
+    """What changed on `device` between the last normal time and the first slow one:
+    {"changes": [...], "text": sentence}."""
+    if not hasattr(aternity, "software_changes"):
+        return {"changes": [], "text": None}
+    rows = _updates(aternity.software_changes(device, after, before))
+    span = f"between {_day(after)} and {_day(before)}" if _day(after) != _day(before) else f"on {_day(after)}"
+    if not rows:
+        return {"changes": [], "text": f"Nothing was installed, updated or removed on {device} {span}."}
+    return {"changes": [{**c, "time": _iso(c["time"])} for c in rows[:8]],
+            "text": f"Changed on {device} {span}: " + "; ".join(change_text(c) for c in rows[:4])
+            + (f" (+{len(rows) - 4} more)" if len(rows) > 4 else "") + "."}
 
 
 def _updates(rows) -> list[dict]:

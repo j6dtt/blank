@@ -22,6 +22,10 @@ class UserSample:
     network_time: float | None = None
     backend_time: float | None = None
     status: str | None = None  # Aternity's own verdict on the activity (SLA_STATUS)
+    # the PC at that action, from the same activity row
+    cpu: float | None = None
+    memory: float | None = None
+    disk_queue: float | None = None
 
 
 @dataclass

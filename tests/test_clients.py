@@ -168,6 +168,28 @@ def test_aternity_n_a_is_no_version():
     assert c.timestamp == datetime(2026, 10, 27, 14, 0, tzinfo=timezone.utc)  # local offset read as UTC
 
 
+def test_one_activity_history_asks_only_for_what_it_compares():
+    seen = []
+
+    def handler(request: httpx.Request):
+        seen.append(request.url.params)
+        return httpx.Response(200, json={"value": [
+            {"TIMEFRAME": "2026-10-27T10:00:00Z", "USERNAME": "lee", "DEVICE_NAME": "NB-12",
+             "ACTIVITY_RESPONSE_TIME": 9.5, "SLA_STATUS": "Major", "HRC_CPU_UTIL": 41.0,
+             "HRC_PHYSICAL_MEMORY_UTIL": "N/A", "HRC_DISK_QUEUE_LENGTH": 0.2}]})
+
+    client = AternityClient(AternityConfig(base_url="https://aternity.test/odata"),
+                            transport=httpx.MockTransport(handler))
+    s = client.activity_history("Billing", "Open Invoice", START, END, username="lee")[0]
+    flt = seen[0]["$filter"]
+    assert "APPLICATION_NAME eq 'Billing'" in flt and "ACTIVITY_NAME eq 'Open Invoice'" in flt
+    assert "USERNAME eq 'lee'" in flt and "DEVICE_NAME eq" not in flt
+    assert seen[0]["$select"].split(",") == ["TIMEFRAME", "USERNAME", "DEVICE_NAME", "ACTIVITY_RESPONSE_TIME",
+                                             "SLA_STATUS", "HRC_CPU_UTIL", "HRC_PHYSICAL_MEMORY_UTIL",
+                                             "HRC_DISK_QUEUE_LENGTH"]
+    assert (s.response_time, s.status, s.cpu, s.memory, s.disk_queue) == (9.5, "Major", 41.0, None, 0.2)
+
+
 def test_failures_are_told_without_urls_or_raw_replies(caplog):
     import logging
 

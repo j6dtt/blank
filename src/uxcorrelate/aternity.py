@@ -132,6 +132,9 @@ class AternityClient:
                 network_time=to_float(row.get(f.get("network_time", ""))),
                 backend_time=to_float(row.get(f.get("backend_time", ""))),
                 status=row.get(f.get("status", "")) or None,
+                cpu=to_float(row.get(f.get("cpu", ""))),
+                memory=to_float(row.get(f.get("memory", ""))),
+                disk_queue=to_float(row.get(f.get("disk_queue", ""))),
             ))
             self._activity_health.setdefault(dev, []).append(DeviceHealthSample(
                 timestamp=ts,
@@ -179,6 +182,33 @@ class AternityClient:
                     backend_time=to_float(row.get(f.get("backend_time", ""))),
                     status=row.get(f.get("status", "")) or None,
                 ))
+        return out
+
+    def activity_history(self, application: str, activity: str | None, start: datetime, end: datetime,
+                         username: str | None = None, device: str | None = None) -> list[UserSample]:
+        """One application's activity (e.g. its launch) in the window: for one user or
+        PC, or for everyone (to compare a slow action with its own normal)."""
+        key = "activities"
+        f = self.cfg.fields[key]
+        clauses = [self._time_filter(key, start, end), f"{f['application']} eq {odata_quote(application)}"]
+        if activity and f.get("activity"):
+            clauses.append(f"{f['activity']} eq {odata_quote(activity)}")
+        if username:
+            clauses.append(f"{f['username']} eq {odata_quote(username)}")
+        elif device:
+            clauses.append(f"{f['device']} eq {odata_quote(device)}")
+        logical = ("timestamp", "username", "device", "response_time", "status", "cpu", "memory", "disk_queue")
+        rows = self.query(self.cfg.entities[key], " and ".join(clauses), select=[f[k] for k in logical if f.get(k)])
+        out = []
+        for row in rows:
+            ts = parse_time(row.get(f["timestamp"]))
+            if ts is not None:
+                num = lambda k: to_float(row.get(f.get(k, "")))  # noqa: E731
+                out.append(UserSample(
+                    timestamp=ts, username=str(row.get(f["username"]) or ""),
+                    device=str(row.get(f["device"]) or ""), application=application, activity=activity,
+                    response_time=num("response_time"), status=row.get(f.get("status", "")) or None,
+                    cpu=num("cpu"), memory=num("memory"), disk_queue=num("disk_queue")))
         return out
 
     def boots(self, start: datetime, end: datetime, username: str | None = None,

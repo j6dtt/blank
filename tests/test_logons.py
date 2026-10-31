@@ -78,3 +78,29 @@ def test_parts_go_to_the_start_up_before_them_whatever_their_type():
     assert by_type["Sign-in"]["why"][0] == "Aternity recorded no breakdown for this start-up."
     assert by_type["Full Start"]["why"][0] == ("Aternity measured no part as longer than normal; the longest was "
                                                "Phase: After Start (310.0 s).")
+
+
+def test_a_start_up_says_since_when_it_is_longer_and_what_changed_just_before():
+    from uxcorrelate.models import SoftwareChange
+    day = lambda d, m=0: START - timedelta(days=d) + timedelta(minutes=m)  # noqa: E731
+
+    class Lab:  # LAB-7: Sign-in about 20 s, about 70 s since 6 days ago; a VPN client came the day before
+        def boots(self, start, end, **k):
+            if start < START - timedelta(days=1):
+                return [BootSample(day(d), "LAB-7", "pat", "Lab", type="Sign-in", duration=20.0 + d % 3)
+                        for d in range(30, 10, -2)] + \
+                    [BootSample(day(d), "LAB-7", "pat", "Lab", type="Sign-in", duration=70.0 + d) for d in (6, 4, 2, 1)]
+            return [BootSample(START + timedelta(minutes=30), "LAB-7", "pat", "Lab", type="Sign-in", duration=75.0)]
+
+        def software_changes(self, device, start, end):
+            c = SoftwareChange(day(7, 600), device, "VPN Client", "Installed", "9.0")
+            return [c] if start <= c.timestamp <= end else []
+
+    lg = logon_report(Lab(), START, END, device="LAB-7", unit="s")
+    st = lg["starts"][0]
+    assert st["unusual"] is True and st["changes_since"] == ["VPN Client"]
+    assert st["why"][0] == ("Since Oct 22, every Sign-in on LAB-7 took longer than 9 in 10 of those before: "
+                            "typical 21.0 s before, 74.0 s since (5 since, 10 before).")
+    assert st["why"][1] == "Changed on LAB-7 between Oct 16 and Oct 22: Oct 21 VPN Client Installed 9.0."
+    assert st["why"][2] == "Aternity recorded no breakdown for this start-up."
+    assert len(st["why"]) == 3  # the 14-day change list is not repeated

@@ -55,6 +55,17 @@ unset `<REQUIRED>` base URLs.
   from `boot_unit` (inferred as seconds from live values, not documented).
   Used by "What the user felt", the "Slow start-ups" tab
   (`/api/logon-jobs`) and the `logons` CLI command.
+- `normal.py`: each slow app + activity next to its own normal (user's
+  30 days, other users at the same time), days where Aternity marked most
+  runs slow and since when, the change log between the last normal day and
+  the first slow one, and CPU/memory/disk queue at those actions vs usual.
+  With no problem at the slow actions, a change before "since" makes the
+  answer "Possibly: what changed on <PC>…". `logons.py` does the same for
+  start-ups: since when every start-up of a type took longer than 9 in 10
+  of those before it (earliest such point; 5 earlier start-ups needed), and
+  the changes just before. A start-up with no slow part that is normal for
+  its PC is "weak": "Possibly", never "Likely". The answer's "checked" list
+  says what was ruled out, with counts.
 - `impact.py`: "who else" — other users of the same apps in the user's slow
   intervals, grouped by the NetIM gateway (or /24) they sit behind and
   compared with the same hours on previous days ("unusual" = more slow
