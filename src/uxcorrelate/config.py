@@ -35,6 +35,9 @@ import yaml
 # disk_space: free space of a device's disk over time (a nearly full disk). Off:
 # the live tenant publishes no such source (only a "now" value in the inventory).
 # To turn it on, set aternity.entities.disk_space; verify then checks it.
+# remote_display: on a virtual desktop (VDI), the delay the user feels between
+# their own device and the desktop, per session (protocol, client device and
+# its subnet). Read only by `verify` so far.
 DEFAULT_ATERNITY_ENTITIES = {
     "activities": "BUSINESS_ACTIVITIES_RAW",
     "inventory": "DEVICE_INVENTORY",
@@ -44,7 +47,22 @@ DEFAULT_ATERNITY_ENTITIES = {
     "boot_components": "MACHINE_BOOT_COMPONENTS",
     "software_changes": "INSTALLED_SOFTWARE_CHANGE_LOG",
     "top_processes": "RAW_DATA_TOP_PROCESSES",
+    "remote_display": "REMOTE_DISPLAY_LATENCY_RAW",
 }
+
+# VDI and desktop-management columns on the sources already read (all in a real
+# $metadata). Only `verify` reads them, to show how a live tenant fills them.
+VDI_COLUMNS = {
+    "activities": {"virtualization": "VIRTUALIZATION", "client_device": "CLIENT_DEVICE_NAME",
+                   "client_type": "CLIENT_DEVICE_TYPE", "display_latency": "ACTIVITY_REMOTE_DISPLAY_LATENCY_AVG",
+                   "used_remotely": "DEVICE_USED_REMOTELY", "image_build": "DEVICE_IMAGE_BUILD_NUMBER"},
+    "boots": {"image_build": "DEVICE_IMAGE_BUILD_NUMBER"},
+    "inventory": {"sccm_client": "SCCM_CLIENT_VERSION", "image_build": "DEVICE_IMAGE_BUILD_NUMBER"},
+}
+# `verify` lists every published data source with a process column (which ones
+# could tell the busiest processes), and its time column
+PROCESS_COLUMN = "PROCESS_NAME"
+TIME_COLUMNS = ("TIMEFRAME", "MEASUREMENT_START_TIMESTAMP")
 
 # Aternity's free-disk columns, for `verify` to find another source of them when
 # disk_space's own is not published (e.g. OS_FREE_DISK_SPACE comes with many
@@ -60,6 +78,10 @@ NO_VALUE = ("N/A",)
 # version "0.0.0.0 (DLL Version)": the part before the bracketed label is checked.
 UNKNOWN_VALUE = ("unknown", "0.0.0.0")
 SOFTWARE_REMOVED = ("Uninstalled",)
+# A live change log writes an update as two rows, the removal of the old version
+# and the install of the new one, up to a few minutes apart (Edge: 2 min); some
+# updates are one "Updated" row. Rows of one software this close are one change.
+SOFTWARE_UPDATE_GAP_MIN = 10
 
 # logical name -> Aternity OData column
 DEFAULT_ATERNITY_FIELDS = {
@@ -154,6 +176,18 @@ DEFAULT_ATERNITY_FIELDS = {
         "memory": "PRC_PHYSICAL_MEMORY_UTIL_AVG",
         "io_read": "PRC_IO_READ_RATE",
         "io_write": "PRC_IO_WRITE_RATE",
+    },
+    "remote_display": {
+        "timestamp": "TIMEFRAME",
+        "device": "DEVICE_NAME",
+        "username": "USERNAME",
+        "client_device": "CLIENT_DEVICE_NAME",
+        "client_type": "CLIENT_DEVICE_TYPE",
+        "client_subnet": "CLIENT_DEVICE_SUBNET",
+        "virtualization": "VIRTUALIZATION",
+        "protocol": "REMOTE_DISPLAY_PROTOCOL",
+        "latency": "REMOTE_DISPLAY_LATENCY_AVG",
+        "status": "SLA_STATUS",
     },
     # free_percent, or free_space in the unit of inventory.total_disk (e.g. a
     # data source with OS_FREE_DISK_SPACE); `uxcorrelate verify` says which

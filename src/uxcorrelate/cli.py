@@ -110,7 +110,7 @@ def cmd_netim_check(args) -> int:
 def cmd_verify(args) -> int:
     from .aternity import AternityClient
     from .netim import NetimClient
-    from .verify import Check, render_checks, verify_aternity, verify_netim
+    from .verify import Check, render_checks, verify_aternity, verify_client_subnets, verify_netim
     settings = load_settings(args.config)
     checks: list[Check] = []
     for system, base_url, run, client_cls, cfg in (
@@ -122,6 +122,8 @@ def cmd_verify(args) -> int:
                                 f"Set {system.lower()}.base_url in config.yaml."))
             continue
         checks += run(settings, client_cls(cfg))
+    if settings.aternity.base_url and settings.netim.base_url:
+        checks += verify_client_subnets(settings, AternityClient(settings.aternity), NetimClient(settings.netim))
     print(render_checks(checks))
     return 1 if any(c.ok is False for c in checks) else 0
 

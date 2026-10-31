@@ -286,3 +286,82 @@ def test_verify_says_when_a_checked_column_has_no_values():
     assert msgs["values NETWORK_RTT_AVG"] == ("No values in 3 rows of the last day: nothing is checked against "
                                               "client_network_latency_ms 150.0.")
     assert msgs["values HRC_CPU_UTIL"].startswith("min 40, median 40, max 40 over 3 rows")
+
+
+def test_verify_shows_how_virtual_desktops_are_filled():
+    from pathlib import Path
+    from uxcorrelate.verify import _change_log, _process_sources, _remote_display, _vdi, verify_client_subnets
+
+    def handler(request):
+        path, flt = request.url.path, request.url.params.get("$filter", "")
+        if path.endswith("/BUSINESS_ACTIVITIES_RAW"):
+            row = lambda u, d, v: {"TIMEFRAME": "2026-10-30T09:00:00Z", "USERNAME": u, "DEVICE_NAME": d,  # noqa: E731
+                                   "VIRTUALIZATION": v, "ACTIVITY_REMOTE_DISPLAY_LATENCY_AVG": 40}
+            if "USERNAME eq 'ann'" in flt:  # a pooled user: another desktop each day
+                return httpx.Response(200, json={"value": [{"DEVICE_NAME": "VD-1"}, {"DEVICE_NAME": "VD-2"}]})
+            if "DEVICE_NAME eq 'VD-1'" in flt:
+                return httpx.Response(200, json={"value": [{"USERNAME": "ann"}, {"USERNAME": "bob"}]})
+            if "eq" in flt:
+                return httpx.Response(200, json={"value": [{"DEVICE_NAME": "LT-9", "USERNAME": "cy"}]})
+            return httpx.Response(200, json={"value": [row("ann", "VD-1", "Virtual"), row("cy", "LT-9", "N/A")]})
+        if path.endswith("/DEVICE_INVENTORY"):
+            return httpx.Response(200, json={"value": [{"DEVICE_NAME": "VD-1", "SCCM_CLIENT_VERSION": "5.0"}]})
+        if path.endswith("/REMOTE_DISPLAY_LATENCY_RAW"):
+            return httpx.Response(200, json={"value": [
+                {"TIMEFRAME": "2026-10-30T09:00:00Z", "DEVICE_NAME": "VD-1", "REMOTE_DISPLAY_PROTOCOL": "P1",
+                 "CLIENT_DEVICE_SUBNET": "10.0.0.0", "REMOTE_DISPLAY_LATENCY_AVG": 80, "SLA_STATUS": "Minor"},
+                {"TIMEFRAME": "2026-10-30T09:05:00Z", "DEVICE_NAME": "VD-2", "REMOTE_DISPLAY_PROTOCOL": "P1",
+                 "CLIENT_DEVICE_SUBNET": "172.16.5.0", "REMOTE_DISPLAY_LATENCY_AVG": 20, "SLA_STATUS": "Normal"}]})
+        if path.endswith("/WINDOWS_MACHINE_BOOTS"):
+            return httpx.Response(200, json={"value": [
+                {"TIMEFRAME": "2026-10-18T22:05:00Z", "MEASUREMENT_START_TIMESTAMP": "2026-10-18T22:01:00Z",
+                 "MEASUREMENT_TYPE": "Boot", "DEVICE_IMAGE_BUILD_NUMBER": "B7"}]})
+        if path.endswith("/INSTALLED_SOFTWARE_CHANGE_LOG"):
+            row = lambda t, kind, d="VD-1": {"INSTALLED_SW_CHANGE_TIMESTAMP": t, "DEVICE_NAME": d,  # noqa: E731
+                                             "INSTALLED_SW_NAME": "Editor", "INSTALLED_SW_CHANGE_TYPE": kind,
+                                             "INSTALLED_SW_VERSION": "8.9"}
+            if "le" in flt:  # the same minute on every PC
+                return httpx.Response(200, json={"value": [row("2026-10-17T15:40:00Z", "Uninstalled", d)
+                                                           for d in ("VD-1", "VD-3", "VD-4")]})
+            return httpx.Response(200, json={"value": [row("2026-10-17T15:40:00Z", "Uninstalled"),
+                                                       row("2026-10-18T22:00:00Z", "Installed")]})
+        if path.endswith("/APPLICATION_RESOURCES_HOURLY"):
+            return httpx.Response(200, json={"value": [{"TIMEFRAME": "2026-10-30T09:00:00Z"}]})
+        return httpx.Response(200, json={"value": []})
+
+    settings = Settings()
+    settings.aternity.base_url = "https://aternity.test/odata"
+    settings.netim.base_url = "https://netim.test:8543"
+    client = AternityClient(settings.aternity, transport=httpx.MockTransport(handler))
+    schema = parse_odata_metadata((Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
+
+    cols, *_, values, pooled, mgmt = _vdi(settings, client, schema)
+    assert cols.message.startswith("Published: VIRTUALIZATION, CLIENT_DEVICE_NAME")
+    assert "virtualization (VIRTUALIZATION): 'Virtual' 1, 'N/A' 1" in values.rows
+    assert "display_latency (ACTIVITY_REMOTE_DISPLAY_LATENCY_AVG): 2 with a value; min 40, median 40, max 40" in values.rows
+    assert pooled.rows[0] == ("VIRTUALIZATION 'Virtual': user ann worked on 2 PC(s) in 14 days "
+                              "('VD-1' 1, 'VD-2' 1); PC VD-1 was used by 2 user(s).")
+    assert mgmt.rows == ["sccm_client (SCCM_CLIENT_VERSION): '5.0' 1", "image_build (DEVICE_IMAGE_BUILD_NUMBER): None 1"]
+
+    (rd,) = _remote_display(settings, client, schema)
+    assert "protocol (REMOTE_DISPLAY_PROTOCOL): 'P1' 2" in rd.rows
+    assert "status (SLA_STATUS): 'Minor' 1, 'Normal' 1" in rd.rows
+
+    *_, back = _change_log(settings, client, schema)
+    assert back.item == "put-backs on VD-1"
+    assert back.rows[0] == ("'Editor' '8.9': Uninstalled 2026-10-17T15:40:00Z, nearest start-up 1821 min after "
+                            "('Boot'); Installed 2026-10-18T22:00:00Z, nearest start-up 1 min after ('Boot')")
+    assert back.rows[1].startswith("Image builds (DEVICE_IMAGE_BUILD_NUMBER) in its 1 start-ups: 'B7' 1x")
+    assert back.rows[2] == ("Within 1 min of 2026-10-17T15:40:00Z: 2 other PC(s) have change-log rows, "
+                            "2 of them for 'Editor'.")
+
+    (proc,) = _process_sources(client, schema)
+    assert proc.message == "Published data sources with PROCESS_NAME: 4:"
+    assert any(r.startswith("APPLICATION_RESOURCES_HOURLY: time column TIMEFRAME, device column yes, "
+                            "rows in the last day: yes") for r in proc.rows)
+
+    netim = NetimClient(settings.netim, transport=httpx.MockTransport(netim_handler))
+    (subnets,) = verify_client_subnets(settings, client, netim)
+    assert "client_device (CLIENT_DEVICE_NAME): 0 different" in rd.rows
+    assert "of the 2 most used, 1 inside a NetIM interface's subnet" in subnets.message
+    assert subnets.rows == ["'10.0.0.0' (1 row(s)): inside den-rtr01 Gi0/1", "'172.16.5.0' (1 row(s)): no NetIM subnet"]

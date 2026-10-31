@@ -503,3 +503,27 @@ def test_the_text_report_fits_a_narrow_terminal():
     assert max(len(line) for line in text.splitlines()) <= WIDTH
     # a wrapped line continues under its own text
     assert "      * Logon took 94.0 s, longer than 9 in 10 of LT-JDOE-01's 30\n        earlier" in text
+
+
+def test_the_change_log_reads_like_the_live_one():
+    # shapes seen on a live Aternity: an update as two rows 2 min apart, one "Updated" row,
+    # the same version removed and put back a day later, and a plain removal
+    from uxcorrelate.cause import changes_between
+    day = lambda d, h, m, s=0: datetime(2026, 10, d, h, m, s, tzinfo=timezone.utc)  # noqa: E731
+
+    class Log:
+        def software_changes(self, device, start, end):
+            rows = [SoftwareChange(day(19, 16, 55, 19), device, "Web Viewer", "Uninstalled", "154.0"),
+                    SoftwareChange(day(19, 16, 57, 16), device, "Web Viewer", "Installed", "155.0"),
+                    SoftwareChange(day(19, 16, 7), device, "Mail Client", "Updated", "7.2"),
+                    SoftwareChange(day(17, 19, 40), device, "Text Editor", "Uninstalled", "8.9"),
+                    SoftwareChange(day(18, 23, 0), device, "Text Editor", "Installed", "8.9"),
+                    SoftwareChange(day(18, 9, 0), device, "Old Agent", "Uninstalled", "3.0")]
+            return [c for c in rows if start <= c.timestamp <= end]
+
+    ch = changes_between(Log(), "WS-4", day(17, 0, 0), day(20, 0, 0))
+    assert ch["text"] == ("Changed on WS-4 between Oct 17 and Oct 20: Oct 19 Web Viewer updated 154.0 → 155.0; "
+                          "Oct 19 Mail Client Updated 7.2; Oct 18 Old Agent Uninstalled 3.0; "
+                          "Oct 17 Text Editor removed, then put back at 8.9 (Oct 18).")
+    # what is different afterwards: the put-back is told, not counted as a change to check
+    assert [c["name"] for c in ch["changes"]] == ["Web Viewer", "Mail Client", "Old Agent"]

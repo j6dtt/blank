@@ -19,7 +19,7 @@ import logging
 from collections import Counter
 from datetime import timedelta
 
-from .config import SOFTWARE_REMOVED
+from .config import SOFTWARE_REMOVED, SOFTWARE_UPDATE_GAP_MIN
 from .models import parse_time
 
 log = logging.getLogger("uxcorrelate")
@@ -206,8 +206,9 @@ def changes_before(aternity, device: str, when, names, part: str, event: str) ->
     rows = _updates(aternity.software_changes(device, when - CHANGES_BEFORE, when))
     names = {n.lower().rsplit(".", 1)[0] for n in names if n}
     for c in rows[:8]:
-        related = bool(c["name"]) and any(n in c["name"].lower() or c["name"].lower() in n for n in names)
-        out["changes"].append({**c, "time": _iso(c["time"]), "related": related})
+        related = (bool(c["name"]) and not c.get("back")
+                   and any(n in c["name"].lower() or c["name"].lower() in n for n in names))
+        out["changes"].append({**_as_iso(c), "related": related})
     if not rows:
         out["text"] = (f"Nothing was installed, updated or removed on {device} in the "
                        f"{CHANGES_BEFORE.days} days before {_day(when)}.")
@@ -222,12 +223,20 @@ def changes_before(aternity, device: str, when, names, part: str, event: str) ->
     return out
 
 
+def _as_iso(c: dict) -> dict:
+    return {**c, "time": _iso(c["time"]), **({"until": _iso(c["until"])} if c.get("until") else {})}
+
+
 def change_text(c: dict) -> str:
     """One change as a phrase: "Oct 26 Teams updated 1.0 → 2.0"."""
     t = c["time"] if not isinstance(c["time"], str) else parse_time(c["time"])
+    until = c.get("until")
+    if until is not None:
+        until = parse_time(until) if isinstance(until, str) else until
     return (f"{_day(t)} {c['name']} {c['change'] or 'changed'}"
             + (f" {c['version_before']} → {c['version']}" if c["version_before"] and c["version"] else
-               f" {c['version']}" if c["version"] else ""))
+               f" {c['version']}" if c["version"] else "")
+            + (f" ({_day(until)})" if until else ""))
 
 
 def changes_between(aternity, device: str, after, before) -> dict:
@@ -239,31 +248,54 @@ def changes_between(aternity, device: str, after, before) -> dict:
     span = f"between {_day(after)} and {_day(before)}" if _day(after) != _day(before) else f"on {_day(after)}"
     if not rows:
         return {"changes": [], "text": f"Nothing was installed, updated or removed on {device} {span}."}
-    return {"changes": [{**c, "time": _iso(c["time"])} for c in rows[:8]],
+    # "changes" = what is different afterwards; a same-version put-back is only told
+    return {"changes": [_as_iso(c) for c in rows if not c.get("back")][:8],
             "text": f"Changed on {device} {span}: " + "; ".join(change_text(c) for c in rows[:4])
             + (f" (+{len(rows) - 4} more)" if len(rows) > 4 else "") + "."}
 
 
 def _updates(rows) -> list[dict]:
-    """The change log as changes, newest first: a removal and an install of the same
-    software at the same second are one update (old version -> new version)."""
-    out, used = [], set()
-    for c in sorted(rows, key=lambda c: c.timestamp, reverse=True):
-        if id(c) in used:
-            continue
+    """The change log as changes: real changes first, newest first.
+    - A removal and an install of one software within SOFTWARE_UPDATE_GAP_MIN are
+      one change: "updated" (old -> new version), or "reinstalled" (same version).
+    - A removal and a later install of the same version (or an install and a later
+      removal), further apart, change nothing in the end: one line marked "back",
+      listed last. On a live Aternity these come on many PCs at the same minutes.
+    - Anything else stays as Aternity logged it."""
+    gap = timedelta(minutes=SOFTWARE_UPDATE_GAP_MIN)
+    rows = sorted(rows, key=lambda c: c.timestamp)
+    used: set[int] = set()
+    real, back = [], []
+
+    def other_half(c, near: bool):
         removed = c.change in SOFTWARE_REMOVED
-        pair = next((o for o in rows if id(o) not in used and o is not c and o.name == c.name
-                     and o.timestamp == c.timestamp and (o.change in SOFTWARE_REMOVED) != removed), None)
-        if pair:
-            old, new = (c, pair) if removed else (pair, c)
-            used |= {id(c), id(pair)}
-            out.append({"time": c.timestamp, "name": c.name, "change": "updated",
-                        "version": new.version, "version_before": old.version})
-        else:
-            used.add(id(c))
-            out.append({"time": c.timestamp, "name": c.name, "change": c.change,
-                        "version": c.version, "version_before": c.version_before})
-    return out
+        return next((o for o in rows if id(o) not in used and o is not c and o.name == c.name
+                     and o.change != "Updated" and c.change != "Updated"
+                     and (o.change in SOFTWARE_REMOVED) != removed and o.timestamp >= c.timestamp
+                     and (o.timestamp - c.timestamp <= gap if near else o.version == c.version)), None)
+
+    for near in (True, False):
+        for c in rows:
+            if id(c) in used:
+                continue
+            o = other_half(c, near)
+            if o is None:
+                continue
+            used |= {id(c), id(o)}
+            old, new = (c, o) if c.change in SOFTWARE_REMOVED else (o, c)
+            if near:
+                same = old.version == new.version
+                real.append({"time": o.timestamp, "name": c.name, "change": "reinstalled" if same else "updated",
+                             "version": new.version, "version_before": None if same else old.version})
+            else:
+                back.append({"time": c.timestamp, "until": o.timestamp, "name": c.name, "back": True,
+                             "change": ("removed, then put back" if c.change in SOFTWARE_REMOVED
+                                        else "installed, then removed again") + " at",
+                             "version": c.version, "version_before": None})
+    real += [{"time": c.timestamp, "name": c.name, "change": c.change, "version": c.version,
+              "version_before": c.version_before} for c in rows if id(c) not in used]
+    real.sort(key=lambda c: c["time"], reverse=True)
+    return real + sorted(back, key=lambda c: c["time"], reverse=True)
 
 
 def _changes(aternity, g, first, why) -> None:

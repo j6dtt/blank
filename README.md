@@ -240,6 +240,18 @@ back to dev.
   configured class and metric (printing the class's real metric names), and
   fetches each metric for real for the last hour. Corrections come as one
   `netim.metrics` block to paste.
+- **Virtual desktops (VDI):** which VDI and desktop-management columns
+  the tenant publishes and how they are filled; for one user per kind of
+  desktop, how many PCs they used in 14 days and how many users their PC
+  had (one desktop each, or pooled); the remote display latency source
+  (protocols, Aternity's status, the users' own device subnets) and, with
+  NetIM set too, whether those subnets are inside a NetIM subnet (it reads
+  every NetIM device's interfaces, about half a minute).
+- **Put-backs:** for software removed and put back at the same version on
+  a PC, the PC's nearest start-up each time, its image builds, and how many
+  other PCs have change-log rows in the same minute.
+- **Process data:** every published data source with a process column,
+  whether it has rows, and its CPU/memory/IO columns.
 - **A reply it cannot read** (device addresses, interface addresses, metric
   data): it prints the reply's key names, never values, and which function
   in `./src/uxcorrelate/netim.py` to fix. Edit it there and run

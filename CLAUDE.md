@@ -48,8 +48,11 @@ unset `<REQUIRED>` base URLs.
   at or before it, within an hour; part types never equal start-up types
   on a live Aternity, so types are not compared). Why: the part with the most Aternity degradation,
   software changes before (`cause.changes_before`; "N/A" = no version,
-  an "Uninstalled" + "Installed" row of the same software at the same
-  second = one update), and main causes =
+  change log read by `cause._updates`: an "Uninstalled" + "Installed" row
+  of one software within `SOFTWARE_UPDATE_GAP_MIN` = one update (or
+  reinstall); further apart at the same version = "removed, then put back",
+  told last and never a change to check; "Updated" is one row), and main
+  causes =
   that part longer than normal on every PC (`boot_component_everywhere`).
   No "slow" threshold, no assumed type names. Unit
   from `boot_unit` (inferred as seconds from live values, not documented).
@@ -103,6 +106,13 @@ unset `<REQUIRED>` base URLs.
   same second, and prints each with its nearest one (removals, or updates
   whose rows are minutes apart?). The first 300 rows of all PCs cover only
   a short span, so pairing is judged per PC.
+  For software put back at the same version: the PC's nearest start-up,
+  its image builds, other PCs in that minute. VDI (`VDI_COLUMNS`,
+  `remote_display` in `config.py`, read only by verify so far): which
+  columns are filled, pooled or one desktop per user, remote display
+  latency, and (`verify_client_subnets`, run by the CLI when both systems
+  are set) whether the users' own device subnets are in NetIM. "Process
+  data" lists every source with `PROCESS_COLUMN`.
   A missing optional source (`OPTIONAL`) is a note saying what
   is skipped, not a FAIL; a wrong name gets paste-ready YAML only when the
   real name is very close. It checks every configured Aternity data source/column (against

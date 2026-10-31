@@ -23,7 +23,8 @@ from statistics import median
 from typing import Any
 
 from .aternity import AternityClient, odata_quote, odata_time
-from .config import DISK_FREE_COLUMNS, Settings
+from .config import (DISK_FREE_COLUMNS, PROCESS_COLUMN, SOFTWARE_UPDATE_GAP_MIN, TIME_COLUMNS, VDI_COLUMNS,
+                     Settings)
 from .http import ApiError
 from .models import parse_time, to_float
 from .netim import NetimClient, _items
@@ -93,6 +94,7 @@ OPTIONAL = {
     "software_changes": "what changed on the PC before a problem",
     "top_processes": "the busiest processes behind CPU, memory or disk problems",
     "disk_space": "nearly full disks",
+    "remote_display": "the delay a virtual desktop user feels (remote display latency)",
 }
 
 
@@ -263,7 +265,8 @@ def verify_aternity(settings: Settings, client: AternityClient) -> list[Check]:
                                 "" if found else f"Spell it exactly as Aternity shows it ({column})."))
     return checks + _value_ranges(settings, client, schema) + _health_events(settings, client, schema) \
         + _app_usage(settings, client, schema) + _start_up_parts(settings, client, schema) \
-        + _change_log(settings, client, schema)
+        + _change_log(settings, client, schema) + _vdi(settings, client, schema) \
+        + _remote_display(settings, client, schema) + _process_sources(client, schema)
 
 
 def _raw(row: dict, fields: dict, keys) -> str:
@@ -463,7 +466,233 @@ def _change_log(settings: Settings, client: AternityClient, schema: dict[str, se
                   + ("  ->  none in 14 days" if near is None else
                      f"  ->  {near[0] / 60:.0f} min apart: " + _raw(near[1], f, ("timestamp", "change", "version")))
                   for r, near in lone[:6]]))
+        out += _put_backs(settings, client, schema, str(dev), lone)
     return out
+
+
+def _put_backs(settings: Settings, client: AternityClient, schema: dict[str, set[str]], dev: str,
+               lone: list[tuple]) -> list[Check]:
+    """A software removed and put back at the same version, further apart than an
+    update: did the PC start up then, with which image build, and did other PCs
+    have change-log rows in the same minute (an image refresh or a pushed change)?"""
+    cfg = settings.aternity
+    f, bf = cfg.fields.get("software_changes", {}), cfg.fields.get("boots", {})
+    gap = SOFTWARE_UPDATE_GAP_MIN * 60
+    pairs = [(r, near[1]) for r, near in lone if near and near[0] > gap
+             and r.get(f.get("version", "")) == near[1].get(f.get("version", ""))
+             and str(r.get(f["timestamp"])) < str(near[1].get(f["timestamp"]))]
+    if not pairs:
+        return []
+    be, since = cfg.entities.get("boots"), datetime.now(timezone.utc) - timedelta(days=15)
+    image = VDI_COLUMNS["boots"]["image_build"]
+    boots, lines = [], []
+    if be in schema and bf.get("device") and bf.get("timestamp"):
+        cols = [bf[k] for k in ("timestamp", "started", "type") if bf.get(k)] + ([image] if image in schema[be] else [])
+        try:
+            boots = client.query(be, f"{bf['timestamp']} ge {odata_time(since)} and {bf['device']} eq {odata_quote(dev)}",
+                                 select=cols, top=1000, raw=True)
+        except ApiError as exc:
+            lines.append(f"Its start-ups could not be read: {exc.reason or exc}")
+    starts = [(parse_time(r.get(bf.get("started", ""))) or parse_time(r.get(bf["timestamp"])), r) for r in boots]
+    starts = [(t, r) for t, r in starts if t]
+
+    def nearest(t):
+        if not t or not starts:
+            return "no start-up in 15 days"
+        d, r = min((((t - b).total_seconds(), r) for b, r in starts), key=lambda x: abs(x[0]))
+        return f"nearest start-up {abs(d) / 60:.0f} min {'before' if d >= 0 else 'after'} ({r.get(bf.get('type', ''))!r})"
+
+    for r, back in pairs[:4]:
+        t1, t2 = parse_time(r.get(f["timestamp"])), parse_time(back.get(f["timestamp"]))
+        lines.append(f"{r.get(f.get('name', ''))!r} {r.get(f.get('version', ''))!r}: "
+                     f"{r.get(f.get('change', ''))} {r.get(f['timestamp'])}, {nearest(t1)}; "
+                     f"{back.get(f.get('change', ''))} {back.get(f['timestamp'])}, {nearest(t2)}")
+    if image in (schema.get(be) or set()):
+        seen: dict[str, list] = {}
+        for t, b in sorted(starts, key=lambda x: x[0]):
+            seen.setdefault(str(b.get(image)), []).append(t)
+        lines.append(f"Image builds ({image}) in its {len(starts)} start-ups: " + "; ".join(
+            f"{k!r} {len(ts)}x, {ts[0]:%b %d %H:%M} to {ts[-1]:%b %d %H:%M}" for k, ts in seen.items()))
+    # the same minute on other PCs
+    t = parse_time(pairs[0][0].get(f["timestamp"]))
+    if t:
+        entity = cfg.entities["software_changes"]
+        try:
+            near = client.query(entity, f"{f['timestamp']} ge {odata_time(t - timedelta(minutes=1))} and "
+                                f"{f['timestamp']} le {odata_time(t + timedelta(minutes=1))}",
+                                select=[f["timestamp"], f["device"], f["name"]], top=5000, raw=True)
+            pcs = {str(x.get(f["device"])) for x in near} - {dev}
+            same = {str(x.get(f["device"])) for x in near if x.get(f["name"]) == pairs[0][0].get(f["name"])} - {dev}
+            lines.append(f"Within 1 min of {pairs[0][0].get(f['timestamp'])}: {len(pcs)} other PC(s) have change-log "
+                         f"rows, {len(same)} of them for {pairs[0][0].get(f['name'])!r}"
+                         + (" (first 5000 rows)" if len(near) == 5000 else "") + ".")
+        except ApiError as exc:
+            lines.append(f"Other PCs at that minute could not be read: {exc.reason or exc}")
+    return [Check("Aternity", f"put-backs on {dev}", None,
+                  f"{len(pairs)} software removed and put back at the same version more than "
+                  f"{SOFTWARE_UPDATE_GAP_MIN} min later. The first {min(4, len(pairs))}, each time with "
+                  "the PC's nearest start-up:", rows=lines)]
+
+
+def _values(rows: list[dict], column: str, n: int = 8) -> str:
+    """The values of one column as sent, most common first."""
+    c = Counter(repr(r.get(column)) for r in rows)
+    return ", ".join(f"{k} {v}" for k, v in c.most_common(n)) + (f" (+{len(c) - n} more)" if len(c) > n else "")
+
+
+def _spread(rows: list[dict], column: str) -> str:
+    vals = [v for v in (to_float(r.get(column)) for r in rows) if v is not None]
+    return (f"{len(vals)} with a value; min {min(vals):g}, median {median(vals):g}, max {max(vals):g}"
+            if vals else "no values")
+
+
+def _vdi(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
+    """Virtual desktops: which VDI and desktop-management columns are published and
+    how they are filled, and whether a user keeps one desktop (persistent) or gets
+    another each time (pooled)."""
+    cfg = settings.aternity
+    out, have = [], {}
+    for key, cols in VDI_COLUMNS.items():
+        entity = cfg.entities.get(key)
+        if entity not in schema:
+            continue
+        have[key] = {k: c for k, c in cols.items() if c in schema[entity]}
+        gone = [c for c in cols.values() if c not in schema[entity]]
+        out.append(Check("Aternity", f"VDI columns in {entity}", None,
+                         "Published: " + (", ".join(have[key].values()) or "none")
+                         + (". Not published: " + ", ".join(gone) if gone else "") + "."))
+    end = datetime.now(timezone.utc)
+    act, f = cfg.entities.get("activities"), cfg.fields.get("activities", {})
+    vdi = have.get("activities", {})
+    if vdi and f.get("timestamp"):
+        try:
+            rows = client.query(act, f"{f['timestamp']} ge {odata_time(end - timedelta(days=1))}", top=1000,
+                                select=[f[k] for k in ("timestamp", "username", "device")] + list(vdi.values()), raw=True)
+        except ApiError as exc:
+            return out + [Check("Aternity", "VDI values", None, f"Could not read them: {exc.reason or exc}")]
+        lines = [f"{k} ({c}): " + (_spread(rows, c) if k == "display_latency" else _values(rows, c))
+                 for k, c in vdi.items()]
+        out.append(Check("Aternity", f"VDI values in {act}", None,
+                         f"Last day: {len(rows)} row(s){' (first 1000)' if len(rows) == 1000 else ''} on "
+                         f"{len({r.get(f['device']) for r in rows})} PC(s). Values as sent, most common first:",
+                         rows=lines))
+        # one user per kind of desktop (each VIRTUALIZATION value): their PCs over 14 days,
+        # and the users of that PC
+        kind = vdi.get("virtualization")
+        picks: dict[str, dict] = {}
+        for r in rows:
+            if r.get(f["username"]) and r.get(f["device"]):
+                picks.setdefault(repr(r.get(kind)) if kind else "", r)
+        since = odata_time(end - timedelta(days=14))
+        lines = []
+        for k, r in list(picks.items())[:3]:
+            user, dev = str(r[f["username"]]), str(r[f["device"]])
+            try:
+                pcs = client.query(act, f"{f['timestamp']} ge {since} and {f['username']} eq {odata_quote(user)}",
+                                   select=[f["device"]], top=5000, raw=True)
+                users = client.query(act, f"{f['timestamp']} ge {since} and {f['device']} eq {odata_quote(dev)}",
+                                     select=[f["username"]], top=5000, raw=True)
+            except ApiError as exc:
+                lines.append(f"{user}: could not read: {exc.reason or exc}")
+                continue
+            cut = lambda x: " (first 5000 rows)" if len(x) == 5000 else ""  # noqa: E731
+            lines.append(f"{kind} {k}: user {user} worked on {len({x.get(f['device']) for x in pcs})} PC(s) in "
+                         f"14 days ({_values(pcs, f['device'], 4)}){cut(pcs)}; PC {dev} was used by "
+                         f"{len({x.get(f['username']) for x in users})} user(s){cut(users)}.")
+        if lines:
+            out.append(Check("Aternity", "one desktop per user, or pooled?", None,
+                             "One user per kind of desktop seen above, their last 14 days:", rows=lines))
+    inv, fi = cfg.entities.get("inventory"), cfg.fields.get("inventory", {})
+    mgmt = have.get("inventory", {})
+    if mgmt and fi.get("device"):
+        try:
+            rows = client.query(inv, None, top=1000, select=[fi["device"]] + list(mgmt.values()), raw=True)
+        except ApiError as exc:
+            return out + [Check("Aternity", f"management values in {inv}", None, f"Could not read them: {exc.reason or exc}")]
+        out.append(Check("Aternity", f"management values in {inv}", None,
+                         f"{len(rows)} device(s){' (first 1000)' if len(rows) == 1000 else ''}. Values as sent:",
+                         rows=[f"{k} ({c}): {_values(rows, c)}" for k, c in mgmt.items()]))
+    return out
+
+
+def _remote_display(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
+    """How the remote display latency source is filled (the leg from the user's
+    own device to the virtual desktop)."""
+    cfg = settings.aternity
+    entity, f = cfg.entities.get("remote_display"), cfg.fields.get("remote_display", {})
+    if entity not in schema or f.get("timestamp") not in schema[entity]:
+        return []
+    cols = {k: c for k, c in f.items() if c in schema[entity]}
+    try:
+        rows = client.query(entity, f"{f['timestamp']} ge {odata_time(datetime.now(timezone.utc) - timedelta(days=1))}",
+                            top=1000, select=list(cols.values()), raw=True)
+    except ApiError as exc:
+        return [Check("Aternity", "remote display latency", None, f"Could not read it: {exc.reason or exc}")]
+    lines = [f"{k} ({c}): " + (_spread(rows, c) if k == "latency" else
+                               f"{len({r.get(c) for r in rows} - {None, '', 'N/A'})} different" if k in ("device", "username", "client_device")
+                               else _values(rows, c, 10))
+             for k, c in cols.items() if k != "timestamp"]
+    if rows:
+        lines.append("One row: " + _raw(rows[0], f, list(cols)))
+    return [Check("Aternity", "remote display latency", None,
+                  f"{entity}, last day: {len(rows)} row(s){' (first 1000)' if len(rows) == 1000 else ''}. "
+                  "Values as sent, most common first:", rows=lines)]
+
+
+def _process_sources(client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
+    """Every published data source with a process column: which could tell the
+    busiest processes on a PC, and does it have rows?"""
+    found = sorted(e for e, cols in schema.items() if PROCESS_COLUMN in cols)
+    lines = []
+    for e in found[:10]:
+        t = next((c for c in TIME_COLUMNS if c in schema[e]), None)
+        has = "DEVICE_NAME" in schema[e]
+        n = "-"
+        if t:
+            try:
+                n = "yes" if client.query(e, f"{t} ge {odata_time(datetime.now(timezone.utc) - timedelta(days=1))}",
+                                          top=1, select=[t], raw=True) else "none"
+            except ApiError as exc:
+                n = f"could not read ({exc.reason or exc})"
+        cpu = sorted(c for c in schema[e] if c.startswith("PRC_") and any(w in c for w in ("CPU", "MEMORY", "IO_")))
+        lines.append(f"{e}: time column {t or 'none'}, device column {'yes' if has else 'no'}, rows in the last "
+                     f"day: {n}; CPU/memory/IO columns: {', '.join(cpu) or 'none'}")
+    return [Check("Aternity", "process data", None,
+                  f"Published data sources with {PROCESS_COLUMN}: {len(found)}" + (":" if found else
+                  ". No source can tell which process used the CPU, memory or disk."), rows=lines)]
+
+
+def verify_client_subnets(settings: Settings, aternity: AternityClient, netim: NetimClient) -> list[Check]:
+    """Do the subnets of the users' own devices (where a virtual desktop is used
+    from) fall in a NetIM subnet? Reads every NetIM device's interfaces."""
+    from .correlate import _subnet_contains
+    cfg = settings.aternity
+    entity, f = cfg.entities.get("remote_display"), cfg.fields.get("remote_display", {})
+    if not f.get("client_subnet"):
+        return []
+    try:
+        rows = aternity.query(entity, f"{f['timestamp']} ge {odata_time(datetime.now(timezone.utc) - timedelta(days=1))}",
+                              top=1000, select=[f["client_subnet"]])
+        devices = netim.devices()
+        netim.read_interfaces(devices)
+    except ApiError as exc:
+        return [Check("NetIM", "users' own subnets", None, f"Not checked: {exc.reason or exc}")]
+    subnets = Counter(str(r[f["client_subnet"]]) for r in rows if r.get(f["client_subnet"]))
+    itfs = []
+    for d in devices:
+        try:
+            itfs += [(d, i) for i in netim.interfaces(d.id) if i.ip_addresses]
+        except ApiError:
+            continue  # read_interfaces already skipped it
+    lines, inside = [], 0
+    for sub, n in subnets.most_common(15):
+        hit = next(((d, i) for d, i in itfs if _subnet_contains(i.ip_addresses, sub.split("/")[0])), None)
+        inside += bool(hit)
+        lines.append(f"{sub!r} ({n} row(s)): " + (f"inside {hit[0].name} {hit[1].name}" if hit else "no NetIM subnet"))
+    return [Check("NetIM", "users' own subnets", None,
+                  f"{entity} ({f['client_subnet']}), last day: {len(subnets)} subnet(s); of the "
+                  f"{min(15, len(subnets))} most used, {inside} inside a NetIM interface's subnet "
+                  f"({len(itfs)} interfaces with an address on {len(devices)} devices):", rows=lines)]
 
 
 def _unpaired(rows: list[dict], f: dict) -> list[tuple]:
