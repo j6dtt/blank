@@ -434,29 +434,53 @@ def _change_log(settings: Settings, client: AternityClient, schema: dict[str, se
              + (", ".join(f"{k} {n}" for k, n in same.most_common()) or "none")
              + "; within an hour: " + (", ".join(f"{k} {n}" for k, n in hour.most_common()) or "none")
              + "; none: " + (", ".join(f"{k} {n}" for k, n in alone.most_common()) or "none") + ".")
-    cols = ("timestamp", "device", "name", "change", "version")
-    # a row with no row of another change type at the same second: is it a real removal
-    # (or install), or is its other half there at another time? Its nearest other half:
-    lone = []
-    for r in rows:
-        t, kind = parse_time(r.get(f["timestamp"])), str(r.get(f.get("change", "")))
-        other = [(abs((parse_time(o.get(f["timestamp"])) - t).total_seconds()), o) for o in by_sw[key(r)]
-                 if str(o.get(f.get("change", ""))) != kind and t and parse_time(o.get(f["timestamp"]))]
-        if not other or min(s for s, _ in other) > 0:
-            near = min(other, key=lambda x: x[0]) if other else None
-            lone.append(_raw(r, f, cols) + ("  ->  nearest other change of it: none in these rows" if near is None else
-                                            f"  ->  nearest other change of it, {near[0] / 60:.0f} min apart: "
-                                            + _raw(near[1], f, ("timestamp", "change", "version"))))
     out = [Check("Aternity", "software change log", None,
                  f"{entity}, last 14 days: {len(rows)} row(s){' (first 300)' if len(rows) == 300 else ''}. "
                  "Change types: " + (", ".join(f"{k} ({n})" for k, n in kinds.most_common()) or "none")
                  + ". Its version/change/type columns: " + ", ".join(others) + ". " + pairs + " One row per change type:",
                  rows=[_raw(r, f, ("timestamp", "name", "change", "version", "version_before")) for r in sample.values()])]
-    if lone:
-        out.append(Check("Aternity", "software change log, rows without a pair", None,
-                         f"{len(lone)} row(s) have no row of another change type for the same software on the same PC "
-                         "at the same second. The first 8, each with its nearest other change of that software:",
-                         rows=lone[:8]))
+    # Is a row with no other half at the same second a real removal (or install), or
+    # is its other half at another time? The first rows mix every PC in a short span,
+    # so look at whole PCs: each PC's full 14 days.
+    devices = list(dict.fromkeys(r.get(f["device"]) for r, _ in _unpaired(rows, f) if r.get(f.get("device", ""))))
+    for dev in devices[:3]:
+        try:
+            mine = client.query(entity, f"{f['timestamp']} ge {odata_time(since)} and "
+                                f"{f['device']} eq {odata_quote(str(dev))}", top=1000, raw=True)
+        except ApiError as exc:
+            out.append(Check("Aternity", f"software change log of {dev}", None, f"Could not read it: {exc.reason or exc}"))
+            continue
+        lone = _unpaired(mine, f)
+        gaps = Counter("none in 14 days" if near is None else "within 10 min" if near[0] <= 600
+                       else "within a day" if near[0] <= 86400 else "more than a day apart" for _, near in lone)
+        out.append(Check(
+            "Aternity", f"software change log of {dev}", None,
+            f"All its rows of the last 14 days: {len(mine)}{' (first 1000)' if len(mine) == 1000 else ''}; "
+            f"{len(lone)} without a row of another change type for the same software at the same second. "
+            "Their nearest other change of that software: " + (", ".join(f"{k} {n}" for k, n in gaps.most_common())
+                                                               or "-") + ". The first 6:",
+            rows=[_raw(r, f, ("timestamp", "name", "change", "version"))
+                  + ("  ->  none in 14 days" if near is None else
+                     f"  ->  {near[0] / 60:.0f} min apart: " + _raw(near[1], f, ("timestamp", "change", "version")))
+                  for r, near in lone[:6]]))
+    return out
+
+
+def _unpaired(rows: list[dict], f: dict) -> list[tuple]:
+    """Rows with no row of another change type for the same software on the same PC at
+    the same second, each with its nearest such row: (row, (seconds, row) or None)."""
+    by_sw: dict[tuple, list] = {}
+    for r in rows:
+        by_sw.setdefault((r.get(f.get("device", "")), r.get(f.get("name", ""))), []).append(r)
+    out = []
+    for r in sorted(rows, key=lambda r: str(r.get(f["timestamp"]))):
+        t, kind = parse_time(r.get(f["timestamp"])), str(r.get(f.get("change", "")))
+        other = [(abs((parse_time(o.get(f["timestamp"])) - t).total_seconds()), o)
+                 for o in by_sw[(r.get(f.get("device", "")), r.get(f.get("name", "")))]
+                 if str(o.get(f.get("change", ""))) != kind and t and parse_time(o.get(f["timestamp"]))]
+        near = min(other, key=lambda x: x[0]) if other else None
+        if near is None or near[0] > 0:
+            out.append((r, near))
     return out
 
 

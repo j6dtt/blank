@@ -98,9 +98,11 @@ unset `<REQUIRED>` base URLs.
   felt" names each PC the user worked on. The CLI report wraps at 72. Keep it
   free of scores and jargon. The page has one timeline and one problems
   list; don't add views that repeat them.
-- `verify.py`: the change log section also prints rows with no other-type
-  row of the same software at the same second, with the nearest one (are
-  they removals, or updates whose rows are minutes apart?).
+- `verify.py`: the change log section also reads the whole 14 days of up to
+  3 PCs that have rows with no other-type row of the same software at the
+  same second, and prints each with its nearest one (removals, or updates
+  whose rows are minutes apart?). The first 300 rows of all PCs cover only
+  a short span, so pairing is judged per PC.
   A missing optional source (`OPTIONAL`) is a note saying what
   is skipped, not a FAIL; a wrong name gets paste-ready YAML only when the
   real name is very close. It checks every configured Aternity data source/column (against

@@ -170,8 +170,11 @@ def test_verify_shows_how_start_up_parts_and_the_change_log_are_filled():
     from pathlib import Path
     from uxcorrelate.verify import _change_log, _start_up_parts
 
+    seen = []
+
     def handler(request):
         path, flt = request.url.path, request.url.params.get("$filter", "")
+        seen.append(flt)
         if path.endswith("/WINDOWS_MACHINE_BOOTS"):
             return httpx.Response(200, json={"value": [
                 {"TIMEFRAME": "2026-10-30T09:05:00Z", "MEASUREMENT_START_TIMESTAMP": "2026-10-30T09:00:00Z",
@@ -207,21 +210,22 @@ def test_verify_shows_how_start_up_parts_and_the_change_log_are_filled():
     assert starts.rows[0].startswith("timestamp='2026-10-30T08:00:00Z'")  # time order
     assert parts.rows == ["2026-10-30T08:00:00Z: 2 row(s), 0 longer than normal; types: Driver Y (2)",
                           "2026-10-30T09:05:00Z: 2 row(s), 1 longer than normal; types: Phase X (1), Phase Z (1)"]
-    log, lone = _change_log(settings, client, schema)
+    log, pc = _change_log(settings, client, schema)
     assert "Change types: Added (3), Removed (2)" in log.message
     assert "at the same second: Removed 1, Added 1; within an hour: Removed 1, Added 1; none: Added 1." in log.message
-    assert lone.message.startswith("3 row(s) have no row of another change type")
-    assert lone.rows == [
-        "timestamp='2026-10-20T10:00:00Z', device='WS-B', name='Editor', change='Added', version='5.0'"
-        "  ->  nearest other change of it: none in these rows",
-        "timestamp='2026-10-25T10:00:00Z', device='WS-B', name='Browser', change='Removed', version='3.0'"
-        "  ->  nearest other change of it, 7 min apart: timestamp='2026-10-25T10:07:00Z', change='Added', "
-        "version='3.1'",
-        "timestamp='2026-10-25T10:07:00Z', device='WS-B', name='Browser', change='Added', version='3.1'"
-        "  ->  nearest other change of it, 7 min apart: timestamp='2026-10-25T10:00:00Z', change='Removed', "
-        "version='3.0'"]
     assert log.rows[0] == ("timestamp='2026-10-29T10:00:00Z', name='Viewer', change='Removed', version='1.0', "
                            "version_before='N/A'")
+    # the PC's whole 14 days, not a slice of all PCs
+    assert "DEVICE_NAME eq 'WS-B'" in seen[-1]
+    assert pc.item == "software change log of WS-B"
+    assert pc.message.startswith("All its rows of the last 14 days: 5; 3 without a row of another change type")
+    assert "Their nearest other change of that software: within 10 min 2, none in 14 days 1." in pc.message
+    assert pc.rows == [
+        "timestamp='2026-10-20T10:00:00Z', name='Editor', change='Added', version='5.0'  ->  none in 14 days",
+        "timestamp='2026-10-25T10:00:00Z', name='Browser', change='Removed', version='3.0'  ->  7 min apart: "
+        "timestamp='2026-10-25T10:07:00Z', change='Added', version='3.1'",
+        "timestamp='2026-10-25T10:07:00Z', name='Browser', change='Added', version='3.1'  ->  7 min apart: "
+        "timestamp='2026-10-25T10:00:00Z', change='Removed', version='3.0'"]
     assert "· timestamp='2026-10-29" in render_checks([log])
 
 
