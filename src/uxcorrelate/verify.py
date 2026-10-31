@@ -113,6 +113,7 @@ def _value_ranges(settings: Settings, client: AternityClient, schema: dict[str, 
         ("activities", "memory"): f"device_memory {th.device_memory}",
         ("activities", "disk_queue"): f"disk_queue {th.disk_queue}",
         ("activities", "network_latency"): f"client_network_latency_ms {th.client_network_latency_ms}",
+        ("activities", "free_disk"): f"free_disk_percent {th.free_disk_percent} (of the inventory's disk size)",
         ("app_usage", "uxi"): "none (UXI is shown as Aternity reports it)",
         ("boots", "duration"): "none (compared with medians; this shows the units)",
     }
@@ -133,6 +134,14 @@ def _value_ranges(settings: Settings, client: AternityClient, schema: dict[str, 
             checks.append(Check("Aternity", f"values in {entity}", None, "No rows in the last day."))
             continue
         kinds = Counter(str(r.get(fields.get("type", ""))) for r in rows if r.get(fields.get("type", "")))
+        status = fields.get("status")
+        if key == "activities" and status in schema[entity]:
+            seen = Counter(str(r[status]) for r in rows if r.get(status))
+            now = ", ".join(th.slow_status) or "not set (slow = over response_time_s)"
+            checks.append(Check("Aternity", f"values {status}", None,
+                                ("Activity status values seen: " + ", ".join(f"{k} ({n})" for k, n in seen.most_common())
+                                 if seen else "No activity status values in the last day.")
+                                + f". thresholds.slow_status: {now}. List the values that mean slow there."))
         if key == "boots" and kinds:
             checks.append(Check("Aternity", f"values {fields['type']}", None,
                                 "Measurement types seen: " + ", ".join(f"{k} ({n})" for k, n in kinds.most_common())

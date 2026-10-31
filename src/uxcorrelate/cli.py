@@ -65,7 +65,8 @@ def cmd_logons(args) -> int:
     end = parse_time(args.end) if args.end else datetime.now(timezone.utc)
     start = parse_time(args.start) if args.start else end - (args.last or timedelta(hours=24))
     result = logon_report(AternityClient(settings.aternity), start, end, username=args.user,
-                          device=args.device, location=args.location, top=args.top)
+                          device=args.device, location=args.location, top=args.top,
+                          unit=settings.boot_unit)
     print(json.dumps(result, indent=2) if args.json else render_logons(result))
     return 0
 
@@ -130,7 +131,7 @@ def main(argv: list[str] | None = None) -> int:
     inv.add_argument("--start", help="ISO-8601 start time (UTC if no offset)")
     inv.add_argument("--end", help="ISO-8601 end time (default: now)")
     inv.add_argument("--last", type=parse_duration, help="window length ending at --end, e.g. 4h")
-    inv.add_argument("--bucket", type=int, help="correlation bucket size in minutes")
+    inv.add_argument("--bucket", type=int, help="a problem counts for a slow action up to this many minutes before or after it")
     inv.add_argument("--json", action="store_true", help="emit JSON instead of text")
     inv.add_argument("-o", "--out", help="write the report to a file")
     inv.set_defaults(func=cmd_investigate)

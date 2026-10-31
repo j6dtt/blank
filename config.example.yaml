@@ -26,13 +26,21 @@ topology:
   always_include: []        # NetIM devices to check every time (core, firewall)
 
 thresholds:
-  response_time_s: 3.0      # an activity slower than this is "degraded"
+  # Aternity's activity status values that mean slow; `uxcorrelate verify`
+  # lists the values your tenant uses. Empty: slow = over response_time_s.
+  slow_status: []
+  response_time_s: 3.0      # only while slow_status is empty
   response_time_s_by_app: {}  # "<Aternity app>": seconds
   device_cpu: 85
   device_memory: 90
+  disk_queue: 2
+  free_disk_percent: 10     # OS drive free space under this % is a problem
   client_network_latency_ms: 150
 
+# a problem counts for a slow action up to this many minutes before or after it
 bucket_minutes: 5
+# unit of boot and logon durations, shown next to them
+boot_unit: s
 
 # --- Only if `uxcorrelate verify` reports a wrong name ----------------
 # The Aternity data sources and columns, NetIM API paths and NetIM metrics

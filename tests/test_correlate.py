@@ -5,9 +5,12 @@ import pytest
 from uxcorrelate.config import Settings
 from uxcorrelate.correlate import InvestigationRequest, investigate
 from synthetic import CPU_SPIKE, INCIDENT, DemoAternity, DemoNetim, demo_sources
-from uxcorrelate.models import DeviceHealthSample, UserSample
+from uxcorrelate.models import (
+    AppUsageSample, DeviceHealthSample, EndpointInfo, HealthEvent, ProcessSample, SoftwareChange, UserSample,
+)
 
 NOW = datetime(2026, 10, 28, 12, 0, tzinfo=timezone.utc)
+T0 = datetime(2026, 10, 28, 9, 0, tzinfo=timezone.utc)
 
 
 def run_demo(**overrides):
@@ -19,19 +22,46 @@ def run_demo(**overrides):
     return investigate(req, aternity, netim, settings), start
 
 
-def test_demo_points_at_network():
-    result, start = run_demo()
-    summary = result["summary"]
-    assert summary["verdict"] == "network"
-    assert summary["confidence"] > 0.6
-    assert result["scores"]["network"]["overlap"] == 1.0
-    assert result["scores"]["client"]["score"] < 0.25
-    objects = {e["object"] for e in result["evidence"]}
-    assert "den-br-rtr01:Gi0/1 (WAN-MPLS)" in objects
+class StubAternity:
+    def __init__(self, samples, health=(), usage=(), disk=None):
+        self.samples, self.health, self.usage, self.disk = samples, list(health), list(usage), disk
 
-    degraded = [t for t in result["timeline"] if t["degraded"]]
-    first = datetime.fromisoformat(degraded[0]["time"].replace("Z", "+00:00"))
-    assert first == start + timedelta(minutes=INCIDENT[0])
+    def user_activity(self, *a, **k):
+        return self.samples
+
+    def device_health(self, *a, **k):
+        return self.health
+
+    def app_usage(self, *a, **k):
+        return self.usage
+
+    def disk_total(self, device):
+        return self.disk
+
+    def endpoint_info(self, device):
+        return EndpointInfo(device=device)
+
+
+def amy(samples, health=(), usage=(), disk=None, settings=None, source=StubAternity):
+    return investigate(InvestigationRequest(start=T0, end=T0 + timedelta(hours=2), username="amy"),
+                       source(samples, health, usage, disk), None, settings or Settings())
+
+
+def erp(bad):
+    """24 ERP actions 5 min apart; the bad ones take 6 s, mostly on the PC."""
+    return [UserSample(T0 + timedelta(minutes=5 * i), "amy", "PC1", "ERP", response_time=6.0 if bad(i) else 1.0,
+                       client_time=5.0 if bad(i) else 0.3, network_time=0.3, backend_time=0.4)
+            for i in range(24)]
+
+
+def test_demo_points_at_the_branch_wan():
+    result, start = run_demo()
+    a, top = result["answer"], result["problems"][0]
+    assert a["level"] == "likely"
+    assert a["title"].startswith("Likely: den-br-rtr01:Gi0/1 (WAN-MPLS): Interface utilization")
+    assert top["kind"] == "network" and top["slow_actions"] == top["of_slow"] == result["summary"]["slow"] == 23
+    first_slow = min(t for t, rt, slow, app in result["timeline"]["actions"] if slow)
+    assert datetime.fromisoformat(first_slow.replace("Z", "+00:00")) == start + timedelta(minutes=INCIDENT[0])
 
 
 def test_mapping_roles():
@@ -48,75 +78,66 @@ def test_window_without_incident_reports_none():
     _, start = run_demo()
     result, _ = run_demo(start=start + timedelta(minutes=CPU_SPIKE[0] - 20),
                          end=start + timedelta(minutes=CPU_SPIKE[1] + 10))
-    assert result["summary"]["verdict"] == "none"
-    # the CPU spike is still visible on the timeline, just not blamed
-    assert any(t["client"] for t in result["timeline"])
+    assert result["answer"]["level"] == "none"
+    # the CPU spike is still listed, just not blamed
+    cpu = [g for g in result["problems"] if g["what"] == "CPU %"]
+    assert cpu and cpu[0]["slow_actions"] == 0
 
 
 def test_requires_user_or_device():
-    settings = Settings()
     with pytest.raises(ValueError):
         investigate(InvestigationRequest(start=NOW - timedelta(hours=1), end=NOW),
-                    DemoAternity(NOW), DemoNetim(NOW), settings)
+                    DemoAternity(NOW), DemoNetim(NOW), Settings())
 
 
-class StubAternity:
-    def __init__(self, samples, health):
-        self.samples, self.health = samples, health
-
-    def user_activity(self, *a, **k):
-        return self.samples
-
-    def device_health(self, *a, **k):
-        return self.health
-
-    def endpoint_info(self, device):
-        from uxcorrelate.models import EndpointInfo
-        return EndpointInfo(device=device)
+def test_pc_cpu_without_netim():
+    bad = lambda i: 8 <= i < 12  # noqa: E731
+    health = [DeviceHealthSample(T0 + timedelta(minutes=5 * i), "PC1", cpu=99.0 if bad(i) else 20.0, memory=50.0)
+              for i in range(24)]
+    result = amy(erp(bad), health)
+    a = result["answer"]
+    assert a["title"] == "Likely: PC1: CPU reached 99.0% (limit 85.0)" and result["problems"][0]["slow_actions"] == 4
+    assert any("NetIM is not configured" in w for w in result["warnings"])
+    assert any(f["text"].startswith("The network was not checked: NetIM is not configured") for f in a["found"])
 
 
-def test_client_verdict_without_netim():
-    t0 = datetime(2026, 10, 28, 9, 0, tzinfo=timezone.utc)
-    samples, health = [], []
-    for i in range(24):
-        t = t0 + timedelta(minutes=5 * i)
-        bad = 8 <= i < 12
-        samples.append(UserSample(t, "amy", "PC1", "ERP", response_time=6.0 if bad else 1.0,
-                                  client_time=5.0 if bad else 0.3, network_time=0.3, backend_time=0.4))
-        health.append(DeviceHealthSample(t, "PC1", cpu=99.0 if bad else 20.0, memory=50.0))
+def test_a_crash_of_another_app_is_not_blamed():
+    # seen on prod: a Notepad crash was blamed for slow Outlook
+    at = T0 + timedelta(minutes=40)
+    usage = [AppUsageSample(at, "PC1", "Notepad", crashes=2), AppUsageSample(at, "PC1", "ERP", hang_time=12.0)]
+    result = amy(erp(lambda i: i == 8), usage=usage)
+    by_app = {g["app"]: g for g in result["problems"]}
+    assert by_app["Notepad"]["slow_actions"] == 0
+    assert by_app["ERP"]["slow_actions"] == 1
+    assert result["answer"]["title"] == "Likely: ERP was not responding on PC1 (up to 12.0 s)"
+
+
+def test_aternity_status_decides_what_is_slow():
     settings = Settings()
-    result = investigate(InvestigationRequest(start=t0, end=t0 + timedelta(hours=2), username="amy"),
-                         StubAternity(samples, health), None, settings)
-    assert result["summary"]["verdict"] == "client"
-    assert result["scores"]["client"]["overlap"] == 1.0
-    assert any("NetIM not configured" in w for w in result["warnings"])
+    settings.thresholds.slow_status = ["Major"]
+    samples = [UserSample(T0 + timedelta(minutes=5 * i), "amy", "PC1", "ERP", response_time=9.0,
+                          status="Major" if i == 2 else "Normal") for i in range(6)]
+    result = amy(samples, settings=settings)
+    assert result["summary"]["slow"] == 1 and result["summary"]["slow_rule"] == "Aternity marked it Major"
 
 
-def test_health_events_and_uxi_reach_the_result():
-    result, _ = run_demo()
-    s = result["summary"]
-    assert s["health_events"] == 1 and s["uxi_min"] == 3.5 and s["uxi_avg"] is not None
-    assert result["summary"]["verdict"] == "network"  # the crash came while the user was fine
-    crash = [a for b in result["timeline"] for a in b["client"] if a["source"] == "Aternity event"]
-    assert crash and crash[0]["metric"] == "Crash / Application crash (OUTLOOK.EXE)"
-    slow = [b["avg_uxi"] for b in result["timeline"] if b["degraded"]]
-    assert slow and set(slow) == {3.5}
+def test_a_nearly_full_disk_is_a_pc_problem():
+    bad = lambda i: 8 <= i < 12  # noqa: E731
+    health = [DeviceHealthSample(T0 + timedelta(minutes=5 * i), "PC1", free_disk=3.0 if bad(i) else 40.0)
+              for i in range(24)]
+    result = amy(erp(bad), health, disk=100.0)
+    top = result["problems"][0]
+    assert top["kind"] == "pc" and top["worst"] == 3.0 and top["slow_actions"] == 4
+    assert result["answer"]["title"] == "Likely: PC1's disk was nearly full (3.0% free, limit 10.0%)"
 
 
-def test_aternity_time_split_alone_is_not_a_verdict():
-    # one slow activity, nothing measured lined up with it (seen on prod)
-    t0 = datetime(2026, 10, 28, 9, 0, tzinfo=timezone.utc)
-    samples = [UserSample(t0 + timedelta(minutes=5 * i), "amy", "PC1", "ERP",
-                          response_time=38.0 if i == 3 else 0.5,
-                          client_time=38.0 if i == 3 else 0.2, network_time=0.0, backend_time=0.0)
-               for i in range(24)]
-    health = [DeviceHealthSample(t0 + timedelta(minutes=5 * 10), "PC1", cpu=99.0)]  # later, not during
-    result = investigate(InvestigationRequest(start=t0, end=t0 + timedelta(hours=2), username="amy"),
-                         StubAternity(samples, health), None, Settings())
-    s = result["summary"]
-    assert s["verdict"] == "inconclusive" and s["confidence"] == 0.0
-    assert "Aternity counts 100% of the slow time as client device time" in s["headline"]
-    assert result["answer"]["title"] == "Not sure what caused it"
+def test_nothing_near_the_slow_actions_says_so():
+    # one slow action; the CPU problem came 35 minutes later
+    result = amy(erp(lambda i: i == 3), [DeviceHealthSample(T0 + timedelta(minutes=50), "PC1", cpu=99.0)])
+    a = result["answer"]
+    assert a["level"] == "unsure" and a["title"] == "Cause not found"
+    assert "Aternity measured most of the slow time on the PC" in a["reason"]
+    assert result["problems"][0]["slow_actions"] == 0
 
 
 def test_who_else_finds_the_common_network_point_and_compares_with_earlier_days():
@@ -134,32 +155,83 @@ def test_who_else_finds_the_common_network_point_and_compares_with_earlier_days(
 
 def test_answer_is_plain_language():
     a = run_demo()[0]["answer"]
-    assert a["level"] == "likely" and a["title"] == "Likely: the network"
-    assert a["just_them"].startswith("No: 20 of 50 other CRM Portal users were slow (40%)")
-    assert "share one network point: den-br-rtr01 Gi0/0 (LAN)" in a["just_them"]
+    assert a["who_else"].startswith("20 of 50 other CRM Portal users were slow (40%)")
+    assert "share one network point: den-br-rtr01 Gi0/0 (LAN)" in a["who_else"]
     assert a["todo"][0].startswith("Many users are slow behind den-br-rtr01")
-    assert a["found"][0]["text"].startswith("den-br-rtr01:Gi0/1 (WAN-MPLS): Interface utilization")
+    assert a["found"][0]["count"] == "at 23 of 23 slow actions"
     assert a["time_went"]["network"] > 0.8 and a["felt"]["slow_actions"] == 23
+    assert any("other problem(s) happened only at other times" in f["text"] for f in a["found"])
 
 
 def test_who_else_says_when_only_this_user_is_slow():
-    t0 = datetime(2026, 10, 28, 9, 0, tzinfo=timezone.utc)
-    samples = [UserSample(t0 + timedelta(minutes=5 * i), "amy", "PC1", "ERP", location="HQ",
-                          response_time=6.0 if i == 3 else 1.0) for i in range(24)]
-
     class WithPeers(StubAternity):
         def app_activity(self, applications, start, end):
             return [UserSample(start, f"u{n}", f"P{n}", "ERP", location="HQ", response_time=1.0)
                     for n in range(10)]
 
-    result = investigate(InvestigationRequest(start=t0, end=t0 + timedelta(hours=2), username="amy"),
-                         WithPeers(samples, []), None, Settings())
+    result = amy(erp(lambda i: i == 3), source=WithPeers)
     assert result["impact"]["slow"] == 0
-    assert result["answer"]["just_them"] == "Yes: none of the 10 other ERP users were slow."
-    assert result["answer"]["level"] == "unsure"
+    assert result["answer"]["who_else"] == "Only this user: none of the 10 other ERP users were slow."
 
 
-def test_investigation_includes_the_users_logons():
-    result, _ = run_demo()
-    lg = result["logons"]
-    assert lg["total"] == 1 and lg["slowest"][0]["username"] == "jdoe"
+def test_the_users_slowest_start_up_is_in_what_they_felt():
+    f = run_demo()[0]["answer"]["felt"]
+    assert f["logon"]["username"] == "jdoe" and f["logon"]["values"]["Logon"]["duration"] == 94.0
+    assert f["logon_unit"] == "s"
+
+
+class Traced(StubAternity):
+    """amy's ERP hangs in scanner.dll 2.1, updated the day before; three other PCs on 2.1 hang too."""
+    at = T0 + timedelta(minutes=40)
+
+    def health_events(self, device, start, end):
+        return [HealthEvent(self.at, "PC1", "ERP", "amy", "Hang", "Application hang", "erp.exe", count=1,
+                            component_version="5.0", sub_component="scanner.dll", sub_component_version="2.1",
+                            exception="Not responding")]
+
+    def app_health_events(self, application, start, end):
+        same = [HealthEvent(self.at, f"PC{n}", "ERP", f"u{n}", "Hang", "Application hang", component="erp.exe",
+                            sub_component="scanner.dll", sub_component_version="2.1") for n in (2, 3, 4)]
+        return same + [HealthEvent(self.at, "PC9", "ERP", "u9", "Crash", component="erp.exe", sub_component="other.dll"),
+                       # same place, another kind of failure: not the same failure
+                       HealthEvent(self.at, "PC8", "ERP", "u8", "Crash", "Application crash", component="erp.exe",
+                                   sub_component="scanner.dll", sub_component_version="2.1")]
+
+    def software_changes(self, device, start, end):
+        return [SoftwareChange(T0 - timedelta(days=1), "PC1", "Scanner", "Updated", "2.1", "2.0"),
+                SoftwareChange(T0 - timedelta(days=3), "PC1", "Some Viewer", "Installed", "9")]
+
+
+def test_a_hang_is_traced_to_its_module_the_change_before_it_and_other_pcs():
+    usage = [AppUsageSample(Traced.at, "PC1", "ERP", hang_time=12.0)]
+    result = amy(erp(lambda i: i == 8), usage=usage, source=Traced)
+    why = result["problems"][0]["why"]
+    assert why["failure"]["sub_component"] == "scanner.dll" and why["failure"]["at_slow_actions"]
+    assert why["text"][0] == "ERP failed in scanner.dll 2.1 (inside erp.exe 5.0): Not responding."
+    others = why["others"]
+    assert others["pcs"] == 3 and others["versions"] == {"2.1": 3} and others["this_version"] == "2.1"
+    assert [p["device"] for p in others["list"]] == ["PC2", "PC3", "PC4"] and others["list"][0]["username"] == "u2"
+    assert why["changes"][0]["related"] and not why["changes"][1]["related"]
+    assert any("Oct 27 Scanner Updated 2.0 → 2.1 (same name as the failing part)" in t for t in why["text"])
+    a = result["answer"]
+    assert "ERP failed in scanner.dll 2.1" in a["reason"] and a["found"][0]["why"] == why["text"]
+    assert any(t.startswith("Check the Scanner change of 2026-10-27") for t in a["todo"])
+    assert len([f for f in a["found"] if f["why"]]) == 1  # the hang and its health event: one finding
+    # "who else is affected" is about the same failure, and it is said only there
+    assert a["who_else"] == ("3 other PC(s) had the same failure (ERP Hang / Application hang in scanner.dll 2.1 "
+                              "(inside erp.exe 5.0)), all on 2.1. This PC has 2.1.")
+    assert not any("other PC" in t for t in why["text"])
+
+
+def test_a_cpu_problem_names_the_busiest_process():
+    class Busy(StubAternity):
+        def top_processes(self, device, start, end):
+            return [ProcessSample(T0 + timedelta(minutes=5 * i), "PC1", p, cpu=c)
+                    for i in range(8, 12) for p, c in (("scan.exe", 80.0), ("erp.exe", 10.0))]
+
+    bad = lambda i: 8 <= i < 12  # noqa: E731
+    health = [DeviceHealthSample(T0 + timedelta(minutes=5 * i), "PC1", cpu=99.0 if bad(i) else 20.0)
+              for i in range(24)]
+    why = amy(erp(bad), health, source=Busy)["problems"][0]["why"]
+    assert why["processes"][0] == {"process": "scan.exe", "value": 80.0}
+    assert why["text"][0] == "Busiest processes then: scan.exe (CPU 80.0%), erp.exe (CPU 10.0%)."

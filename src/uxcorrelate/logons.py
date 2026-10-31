@@ -1,24 +1,36 @@
-"""Slow boots and logons from Aternity (WINDOWS_MACHINE_BOOTS + MACHINE_BOOT_COMPONENTS).
+"""Slow start-ups (boots and logons) from Aternity (WINDOWS_MACHINE_BOOTS +
+MACHINE_BOOT_COMPONENTS).
 
-No "slow" threshold is assumed: each boot/logon is compared with the median of
-its own type (as Aternity names it) in the same search, and, for one user or
-device, with that device's own last 30 days. Durations are in Aternity's units;
-`uxcorrelate verify` prints their range and the measurement types it sees.
+Aternity stores one row per measurement (its MEASUREMENT_TYPE names them, e.g.
+a boot, a logon, a total). Rows of the same device within an hour of each
+other, with no type repeated, are one start-up: one row on the page with a
+column per type. No "slow" threshold is assumed: each type shows its typical
+value (median) and 1-in-10 slowest (90th percentile), and, for one user or
+device, each value is shown next to that device's own last 30 days.
+
+Why (the slowest start-ups): the part Aternity measured as most "longer than
+normal" (its degradation time), what was installed or updated on the PC in
+the days before, and who else is affected: the other PCs where that same
+part was longer than normal in the window, by location. Those are the main
+causes at the top of the page.
 """
 
 from __future__ import annotations
 
 import logging
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from statistics import median, quantiles
 
-from .models import BootComponent, BootSample
+from .cause import changes_before
+from .models import BootComponent, BootSample, parse_time
 
 log = logging.getLogger("uxcorrelate")
 BASELINE_DAYS = 30
-COMPONENTS_FOR = 10  # look up what slowed the N slowest
-MATCH_WINDOW = timedelta(hours=1)  # a component row belongs to the nearest boot within this
+COMPONENTS_FOR = 20  # look up what took the time for the N slowest start-ups
+WHY_FOR = 10  # look for the cause of the N slowest
+MAIN_CAUSES = 3
+SAME_START = timedelta(hours=1)  # rows of one device this close are one start-up
 
 
 def _iso(dt: datetime | None) -> str | None:
@@ -27,86 +39,171 @@ def _iso(dt: datetime | None) -> str | None:
 
 def _stats(values: list[float]) -> dict:
     p90 = quantiles(values, n=10)[-1] if len(values) >= 2 else values[0]
-    return {"count": len(values), "median": round(median(values), 2),
-            "p90": round(p90, 2), "max": round(max(values), 2)}
+    return {"count": len(values), "typical": round(median(values), 1),
+            "p90": round(p90, 1), "max": round(max(values), 1)}
 
 
-def _by_type(samples: list[BootSample]) -> dict[str, list[float]]:
-    out: dict[str, list[float]] = defaultdict(list)
-    for b in samples:
-        if b.duration is not None:
-            out[b.type or "(no type)"].append(b.duration)
-    return out
+def _when(b: BootSample) -> datetime:
+    return b.started or b.timestamp
 
 
-def _components_of(b: BootSample, comps: list[BootComponent], top: int = 5) -> list[dict]:
-    mine = [c for c in comps if c.device == b.device and c.type == b.type
-            and abs(c.timestamp - b.timestamp) <= MATCH_WINDOW]
-    if not mine:
-        return []
-    nearest = min(mine, key=lambda c: abs(c.timestamp - b.timestamp)).timestamp
-    mine = [c for c in mine if c.timestamp == nearest]
-    mine.sort(key=lambda c: (-(c.degradation or 0), -(c.duration or 0)))
-    return [{"component": c.component, "start_type": c.start_type,
-             "duration": c.duration, "degradation": c.degradation} for c in mine[:top]]
+def _type(b) -> str:
+    return b.type or "(no type)"
+
+
+def group_starts(samples: list[BootSample]) -> list[list[BootSample]]:
+    """Rows of one device within SAME_START of the first, no type twice, as one start-up."""
+    starts: list[list[BootSample]] = []
+    for b in sorted(samples, key=lambda b: (b.device, _when(b))):
+        cur = starts[-1] if starts else None
+        if (cur and cur[0].device == b.device and _when(b) - _when(cur[0]) <= SAME_START
+                and _type(b) not in {_type(x) for x in cur}):
+            cur.append(b)
+        else:
+            starts.append([b])
+    return starts
+
+
+def _components_of(start: list[BootSample], comps: list[BootComponent], top: int = 8) -> list[dict]:
+    """The components Aternity recorded for this start-up (nearest record per type)."""
+    out = []
+    for b in start:
+        mine = [c for c in comps if c.device == b.device and _type(c) == _type(b)
+                and abs(c.timestamp - b.timestamp) <= SAME_START]
+        if not mine:
+            continue
+        nearest = min(mine, key=lambda c: abs(c.timestamp - b.timestamp)).timestamp
+        out += [c for c in mine if c.timestamp == nearest]
+    out.sort(key=lambda c: (-(c.degradation or 0), -(c.duration or 0)))
+    return [{"type": _type(c), "component": c.component, "duration": c.duration,
+             "degradation": c.degradation} for c in out[:top]]
 
 
 def logon_report(aternity, start: datetime, end: datetime, username: str | None = None,
-                 device: str | None = None, location: str | None = None, top: int = 100) -> dict:
-    """The slowest boots/logons in the window, per-type and per-location medians,
-    and what slowed the slowest ones."""
+                 device: str | None = None, location: str | None = None, top: int = 100,
+                 unit: str = "") -> dict:
+    """Start-ups in the window, slowest first, with what took the time."""
+    empty = {"start": _iso(start), "end": _iso(end), "unit": unit, "total": 0, "types": [], "starts": [],
+             "by_location": [], "causes": [], "filters": {"username": username, "device": device, "location": location},
+             "warnings": list(getattr(aternity, "warnings", []))}
     if not hasattr(aternity, "boots"):
-        return {"total": 0, "types": [], "slowest": [], "by_location": []}
+        return empty
     scope = ", ".join(f"{k} {v}" for k, v in (("user", username), ("device", device),
                                               ("location", location)) if v) or "everyone"
     log.info("Aternity: reading boots and logons for %s", scope)
     samples = [b for b in aternity.boots(start, end, username=username, device=device, location=location)
                if b.duration is not None]
-    types = _by_type(samples)
-    medians = {t: median(v) for t, v in types.items()}
+    if not samples:
+        empty["warnings"] = list(getattr(aternity, "warnings", []))
+        return empty
+
+    per_type: dict[str, list[float]] = defaultdict(list)
+    for b in samples:
+        per_type[_type(b)].append(b.duration)
+    # smallest typical first: the parts before the total
+    types = sorted(per_type, key=lambda t: median(per_type[t]))
+    sort_type = types[-1]
 
     usual: dict[tuple[str, str], float] = {}
     if username or device:  # one person: compare with their own last 30 days
-        history = aternity.boots(start - timedelta(days=BASELINE_DAYS), start, username=username, device=device)
         hist: dict[tuple[str, str], list[float]] = defaultdict(list)
-        for b in history:
+        for b in aternity.boots(start - timedelta(days=BASELINE_DAYS), start, username=username, device=device):
             if b.duration is not None:
-                hist[(b.device, b.type or "(no type)")].append(b.duration)
+                hist[(b.device, _type(b))].append(b.duration)
         usual = {k: median(v) for k, v in hist.items()}
 
-    slowest = sorted(samples, key=lambda b: -b.duration)[:top]
+    def key(st):  # slowest by the type with the largest typical value, else by its largest value
+        by = {_type(b): b.duration for b in st}
+        return (-(by.get(sort_type) or 0), -max(by.values()))
+
+    starts = sorted(group_starts(samples), key=key)
+    shown = starts[:top]
     comps = []
-    if slowest and hasattr(aternity, "boot_components"):
-        devices = list(dict.fromkeys(b.device for b in slowest[:COMPONENTS_FOR]))
-        log.info("Aternity: reading what slowed the %d slowest", min(len(slowest), COMPONENTS_FOR))
-        comps = aternity.boot_components(devices, start - MATCH_WINDOW, end + MATCH_WINDOW)
+    if shown and hasattr(aternity, "boot_components"):
+        devices = list(dict.fromkeys(st[0].device for st in shown[:COMPONENTS_FOR]))
+        log.info("Aternity: reading what slowed the %d slowest start-ups", min(len(shown), COMPONENTS_FOR))
+        comps = aternity.boot_components(devices, start - SAME_START, end + SAME_START)
 
     items = []
-    for i, b in enumerate(slowest):
-        t = b.type or "(no type)"
-        u = usual.get((b.device, t))
+    for i, st in enumerate(shown):
+        first = min(st, key=_when)
+        values = {}
+        for b in st:
+            u = usual.get((b.device, _type(b)))
+            values[_type(b)] = {"duration": round(b.duration, 1), "usual": None if u is None else round(u, 1)}
         items.append({
-            "time": _iso(b.started or b.timestamp), "username": b.username, "device": b.device,
-            "location": b.location, "type": t, "duration": round(b.duration, 2),
-            "x_median": round(b.duration / medians[t], 1) if medians.get(t) else None,
-            "usual": None if u is None else round(u, 2),
-            "x_usual": round(b.duration / u, 1) if u else None,
-            "components": _components_of(b, comps) if i < COMPONENTS_FOR else [],
+            "time": _iso(_when(first)), "username": next((b.username for b in st if b.username), None),
+            "device": first.device, "location": next((b.location for b in st if b.location), None),
+            "values": values, "components": _components_of(st, comps) if i < COMPONENTS_FOR else [],
+            "why": [], "cause": None,
         })
 
-    groups: dict[tuple[str, str], list[float]] = defaultdict(list)
+    causes = _causes(aternity, items[:WHY_FOR], start, end, unit)
+
+    groups: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
     for b in samples:
-        groups[(b.type or "(no type)", b.location or "(unknown)")].append(b.duration)
-    by_location = sorted(({"type": t, "location": loc, **_stats(v)} for (t, loc), v in groups.items()),
-                         key=lambda g: (g["type"], -g["median"]))
-    log.info("Aternity: %d boots/logons found", len(samples))
+        groups[b.location or "(no location)"][_type(b)].append(b.duration)
+    by_location = sorted(({"location": loc, "count": max(len(v) for v in tv.values()),
+                           "typical": {t: round(median(v), 1) for t, v in tv.items()}}
+                          for loc, tv in groups.items()),
+                         key=lambda g: -(g["typical"].get(sort_type) or 0))
+    log.info("Aternity: %d start-ups (%d measurements) found", len(starts), len(samples))
     return {
-        "start": _iso(start), "end": _iso(end),
-        "filters": {"username": username, "device": device, "location": location},
-        "total": len(samples),
-        "types": [{"type": t, **_stats(v)} for t, v in sorted(types.items())],
-        "slowest": items,
-        "by_location": by_location,
+        **empty,
+        "total": len(starts), "measurements": len(samples),
+        "types": [{"type": t, **_stats(per_type[t])} for t in types],
+        "sort_type": sort_type, "starts": items, "by_location": by_location[:20], "causes": causes,
         "baseline_days": BASELINE_DAYS if (username or device) else None,
         "warnings": list(getattr(aternity, "warnings", [])),
     }
+
+
+def _causes(aternity, starts: list[dict], start: datetime, end: datetime, unit: str) -> list[dict]:
+    """Why each of the slowest start-ups was slow, and the parts behind several of them."""
+    u = f" {unit}" if unit else ""
+    keys: Counter = Counter()
+    for st in starts:
+        slow = next((c for c in st["components"] if c["degradation"]), None)
+        if not st["components"]:
+            st["why"].append("Aternity recorded no parts for this start-up.")
+        elif slow is None:
+            c = max(st["components"], key=lambda c: c["duration"] or 0)
+            st["why"].append(f"Aternity measured no part as longer than normal; the longest was "
+                             f"{c['component']} ({c['duration']}{u}).")
+        else:
+            st["why"].append(f"Most of the extra time: {slow['component']} took {slow['duration']}{u}, "
+                             f"{slow['degradation']}{u} longer than normal ({slow['type']}).")
+            keys[(slow["type"], slow["component"])] += 1
+            st["cause_key"] = (slow["type"], slow["component"])
+        ch = changes_before(aternity, st["device"], parse_time(st["time"]),
+                            [slow["component"]] if slow else [], "slow part", "slow start-up")
+        if ch["text"]:
+            st["why"].append(ch["text"])
+
+    causes = []
+    for (typ, comp), n in keys.most_common(MAIN_CAUSES):
+        if not hasattr(aternity, "boot_component_everywhere"):
+            break
+        log.info("Aternity: who else had %s slower than normal", comp)
+        rows = [c for c in aternity.boot_component_everywhere(comp, typ, start, end) if c.degradation]
+        pcs: dict[str, dict] = {}
+        for c in sorted(rows, key=lambda c: c.timestamp):
+            p = pcs.setdefault(c.device, {"device": c.device, "username": None, "location": None, "times": 0,
+                                          "worst": 0.0})
+            p["username"] = c.username or p["username"]
+            p["location"] = c.location or p["location"]
+            p["times"] += 1
+            p["worst"] = round(max(p["worst"], c.degradation), 1)
+            p["last"] = _iso(c.timestamp)
+        where = Counter(p["location"] or "(no location)" for p in pcs.values())
+        causes.append({"type": typ, "component": comp, "slowest_starts": n, "times": len(rows), "pcs": len(pcs),
+                       "by_location": dict(where.most_common(5)),
+                       "list": sorted(pcs.values(), key=lambda p: (-p["times"], -p["worst"]))[:100]})
+    for st in starts:
+        key = st.pop("cause_key", None)
+        st["cause"] = next((i for i, c in enumerate(causes) if (c["type"], c["component"]) == key), None)
+        if st["cause"] is not None:
+            c = causes[st["cause"]]
+            st["why"].append(f"Same cause as main cause {st['cause'] + 1} above ({c['component']}): "
+                             "see there who else is affected.")
+    return causes

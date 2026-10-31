@@ -16,7 +16,8 @@ import httpx
 from .config import AternityConfig
 from .http import ApiError, RestClient
 from .models import (
-    AppUsageSample, BootComponent, BootSample, DeviceHealthSample, EndpointInfo, HealthEvent, UserSample, parse_time, to_float,
+    AppUsageSample, BootComponent, BootSample, DeviceHealthSample, EndpointInfo, HealthEvent, ProcessSample,
+    SoftwareChange, UserSample, parse_time, to_float,
 )
 
 
@@ -109,6 +110,7 @@ class AternityClient:
                 client_time=to_float(row.get(f.get("client_time", ""))),
                 network_time=to_float(row.get(f.get("network_time", ""))),
                 backend_time=to_float(row.get(f.get("backend_time", ""))),
+                status=row.get(f.get("status", "")) or None,
             ))
             self._activity_health.setdefault(dev, []).append(DeviceHealthSample(
                 timestamp=ts,
@@ -116,6 +118,7 @@ class AternityClient:
                 cpu=to_float(row.get(f.get("cpu", ""))),
                 memory=to_float(row.get(f.get("memory", ""))),
                 disk_queue=to_float(row.get(f.get("disk_queue", ""))),
+                free_disk=to_float(row.get(f.get("free_disk", ""))),
                 network_latency=to_float(row.get(f.get("network_latency", ""))),
             ))
             ip, loc = row.get(f.get("ip_address", "")), row.get(f.get("location", ""))
@@ -135,7 +138,7 @@ class AternityClient:
         f = self.cfg.fields[key]
         apps = " or ".join(f"{f['application']} eq {odata_quote(a)}" for a in applications)
         logical = ("timestamp", "username", "device", "application", "location", "ip_address",
-                   "response_time", "client_time", "network_time", "backend_time")
+                   "response_time", "client_time", "network_time", "backend_time", "status")
         select = [f[k] for k in logical if f.get(k)]
         rows = self.query(self.cfg.entities[key], f"{self._time_filter(key, start, end)} and ({apps})",
                           select=select)
@@ -154,6 +157,7 @@ class AternityClient:
                     client_time=to_float(row.get(f.get("client_time", ""))),
                     network_time=to_float(row.get(f.get("network_time", ""))),
                     backend_time=to_float(row.get(f.get("backend_time", ""))),
+                    status=row.get(f.get("status", "")) or None,
                 ))
         return out
 
@@ -184,58 +188,128 @@ class AternityClient:
                 ))
         return out
 
-    def boot_components(self, devices: list[str], start: datetime, end: datetime) -> list[BootComponent]:
-        """What the boots/logons of these devices spent their time on."""
+    def _components(self, flt: str, what: str) -> list[BootComponent]:
         key = "boot_components"
         f = self.cfg.fields.get(key, {})
-        if not f or not devices:
-            return []
-        devs = " or ".join(f"{f['device']} eq {odata_quote(d)}" for d in devices)
         out = []
-        for row in self._optional(key, "boot/logon components", f"{self._time_filter(key, start, end)} and ({devs})",
-                                  select=[c for c in f.values() if c]):
+        for row in self._optional(key, what, flt, select=[c for c in f.values() if c]):
             ts = parse_time(row.get(f["timestamp"]))
             if ts is not None:
+                get = lambda k: (row.get(f[k]) or None) if f.get(k) else None  # noqa: E731
                 out.append(BootComponent(
-                    timestamp=ts, device=str(row.get(f["device"], "")),
-                    type=row.get(f.get("type", "")) or None,
-                    component=row.get(f.get("component", "")) or None,
-                    start_type=row.get(f.get("start_type", "")) or None,
-                    duration=to_float(row.get(f.get("duration", ""))),
-                    degradation=to_float(row.get(f.get("degradation", ""))),
+                    timestamp=ts, device=str(row.get(f["device"], "")), type=get("type"),
+                    component=get("component"), start_type=get("start_type"),
+                    duration=to_float(get("duration")), degradation=to_float(get("degradation")),
+                    username=get("username"), location=get("location"),
                 ))
         return out
 
-    def _optional(self, key: str, what: str, flt: str, select: list[str] | None = None) -> list[dict]:
+    def boot_components(self, devices: list[str], start: datetime, end: datetime) -> list[BootComponent]:
+        """What the boots/logons of these devices spent their time on."""
+        f = self.cfg.fields.get("boot_components", {})
+        if not f or not devices:
+            return []
+        devs = " or ".join(f"{f['device']} eq {odata_quote(d)}" for d in devices)
+        return self._components(f"{self._time_filter('boot_components', start, end)} and ({devs})",
+                                "boot/logon components")
+
+    def boot_component_everywhere(self, component: str, type: str | None, start: datetime,
+                                  end: datetime) -> list[BootComponent]:
+        """One boot/logon component on every device (who else has it slow?)."""
+        f = self.cfg.fields.get("boot_components", {})
+        if not f or not f.get("component"):
+            return []
+        flt = f"{self._time_filter('boot_components', start, end)} and {f['component']} eq {odata_quote(component)}"
+        if type and f.get("type"):
+            flt += f" and {f['type']} eq {odata_quote(type)}"
+        return self._components(flt, "boot/logon components of other PCs")
+
+    def _optional(self, key: str, what: str, flt: str, select: list[str] | None = None,
+                  top: int | None = None) -> list[dict]:
         """Rows of an optional data source; a failure becomes a warning, not an abort."""
         if key not in self.cfg.entities or key not in self.cfg.fields:
             return []
         try:
-            return self.query(self.cfg.entities[key], flt, select=select)
+            return self.query(self.cfg.entities[key], flt, select=select, top=top)
         except ApiError as exc:
             self.warnings.append(f"Aternity {what} unavailable: {exc}")
             return []
 
-    def health_events(self, device: str, start: datetime, end: datetime) -> list[HealthEvent]:
-        """Crashes, hangs and errors on the device (all applications)."""
+    def _events(self, flt: str, what: str, logical: list[str] | None = None) -> list[HealthEvent]:
         key = "health_events"
         f = self.cfg.fields.get(key, {})
         if not f:
             return []
-        rows = self._optional(key, "device health events",
-                              f"{self._time_filter(key, start, end)} and {f['device']} eq {odata_quote(device)}")
+        select = [f[k] for k in (logical or f) if f.get(k)]
         out = []
-        for row in rows:
+        for row in self._optional(key, what, flt, select=select):
+            ts = parse_time(row.get(f["timestamp"]))
+            if ts is None:
+                continue
+            get = lambda k: (row.get(f[k]) or None) if f.get(k) else None  # noqa: E731
+            out.append(HealthEvent(
+                timestamp=ts, device=str(row.get(f["device"], "")),
+                application=get("application"), username=get("username"), category=get("category"), name=get("name"),
+                component=get("component"), severity=get("severity"), count=to_float(get("count")),
+                component_version=get("component_version"), sub_component=get("sub_component"),
+                sub_component_version=get("sub_component_version"), exception=get("exception"),
+                error=get("error"), details=get("details"),
+            ))
+        return out
+
+    def health_events(self, device: str, start: datetime, end: datetime) -> list[HealthEvent]:
+        """Crashes, hangs and errors on the device (all applications), with where they failed."""
+        f = self.cfg.fields.get("health_events", {})
+        if not f:
+            return []
+        return self._events(f"{self._time_filter('health_events', start, end)} and "
+                            f"{f['device']} eq {odata_quote(device)}", "device health events")
+
+    def app_health_events(self, application: str, start: datetime, end: datetime) -> list[HealthEvent]:
+        """One application's health events on every device (is it only this PC?)."""
+        f = self.cfg.fields.get("health_events", {})
+        if not f or not f.get("application"):
+            return []
+        return self._events(f"{self._time_filter('health_events', start, end)} and "
+                            f"{f['application']} eq {odata_quote(application)}", "health events of other PCs",
+                            ["timestamp", "device", "username", "application", "category", "name", "component", "count",
+                             "component_version", "sub_component", "sub_component_version"])
+
+    def software_changes(self, device: str, start: datetime, end: datetime) -> list[SoftwareChange]:
+        """Installs, updates and removals on the device in the window."""
+        key = "software_changes"
+        f = self.cfg.fields.get(key, {})
+        if not f:
+            return []
+        out = []
+        for row in self._optional(key, "software changes",
+                                  f"{self._time_filter(key, start, end)} and {f['device']} eq {odata_quote(device)}",
+                                  select=[c for c in f.values() if c]):
             ts = parse_time(row.get(f["timestamp"]))
             if ts is not None:
-                out.append(HealthEvent(
-                    timestamp=ts, device=device,
-                    application=row.get(f.get("application", "")) or None,
-                    category=row.get(f.get("category", "")) or None,
-                    name=row.get(f.get("name", "")) or None,
-                    component=row.get(f.get("component", "")) or None,
-                    severity=row.get(f.get("severity", "")) or None,
-                    count=to_float(row.get(f.get("count", ""))),
+                get = lambda k: (row.get(f[k]) or None) if f.get(k) else None  # noqa: E731
+                out.append(SoftwareChange(timestamp=ts, device=device, name=get("name"), change=get("change"),
+                                          version=get("version"), version_before=get("version_before"),
+                                          vendor=get("vendor")))
+        return out
+
+    def top_processes(self, device: str, start: datetime, end: datetime) -> list[ProcessSample]:
+        """The busiest processes on the device in the window."""
+        key = "top_processes"
+        f = self.cfg.fields.get(key, {})
+        if not f:
+            return []
+        out = []
+        for row in self._optional(key, "top processes",
+                                  f"{self._time_filter(key, start, end)} and {f['device']} eq {odata_quote(device)}",
+                                  select=[c for c in f.values() if c]):
+            ts = parse_time(row.get(f["timestamp"]))
+            name = row.get(f.get("process", ""))
+            if ts is not None and name:
+                out.append(ProcessSample(
+                    timestamp=ts, device=device, process=str(name), application=row.get(f.get("application", "")) or None,
+                    cpu=to_float(row.get(f.get("cpu", ""))), memory=to_float(row.get(f.get("memory", ""))),
+                    io_read=to_float(row.get(f.get("io_read", ""))), io_write=to_float(row.get(f.get("io_write", ""))),
                 ))
         return out
 
@@ -261,6 +335,15 @@ class AternityClient:
                     hang_time=to_float(row.get(f.get("hang_time", ""))),
                 ))
         return out
+
+    def disk_total(self, device: str) -> float | None:
+        """Size of the device's OS drive, from the inventory (None if unknown)."""
+        f = self.cfg.fields.get("inventory", {})
+        if not f.get("total_disk"):
+            return None
+        rows = self._optional("inventory", "device disk size", f"{f['device']} eq {odata_quote(device)}",
+                              select=[f["device"], f["total_disk"]], top=1)
+        return to_float(rows[0].get(f["total_disk"])) if rows else None
 
     def endpoint_info(self, device: str) -> EndpointInfo:
         """IP and location as seen on the activity rows, else from the inventory."""

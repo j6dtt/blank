@@ -24,11 +24,14 @@ import yaml
 # Aternity data sources and columns. Every name below is in a real Aternity
 # API 2.0 $metadata (tests/fixtures/aternity_metadata_v2.xml); the contract
 # tests fail if one is not. Each activity row also carries the device's CPU,
-# memory, disk queue, round-trip time, IP and location at that moment.
+# memory, disk queue, free disk space, round-trip time, IP and location at
+# that moment; the inventory has the OS drive's size.
 # health_events: crashes, hangs and errors on the device (one row per event).
 # app_usage: per-application UXI, crashes and hang time.
 # boots: one row per Windows boot or logon (MEASUREMENT_TYPE says which).
 # boot_components: what each boot/logon spent its time on.
+# software_changes: installs, updates and removals per device (the "what changed").
+# top_processes: the busiest processes on a device over time (who used the CPU/disk).
 DEFAULT_ATERNITY_ENTITIES = {
     "activities": "BUSINESS_ACTIVITIES_RAW",
     "inventory": "DEVICE_INVENTORY",
@@ -36,6 +39,8 @@ DEFAULT_ATERNITY_ENTITIES = {
     "app_usage": "APPLICATIONS_RAW",
     "boots": "WINDOWS_MACHINE_BOOTS",
     "boot_components": "MACHINE_BOOT_COMPONENTS",
+    "software_changes": "INSTALLED_SOFTWARE_CHANGE_LOG",
+    "top_processes": "RAW_DATA_TOP_PROCESSES",
 }
 
 # logical name -> Aternity OData column
@@ -50,9 +55,11 @@ DEFAULT_ATERNITY_FIELDS = {
         "client_time": "ACTIVITY_CLIENT_TIME",
         "network_time": "ACTIVITY_NETWORK_TIME",
         "backend_time": "ACTIVITY_BACKEND_TIME",
+        "status": "SLA_STATUS",
         "cpu": "HRC_CPU_UTIL",
         "memory": "HRC_PHYSICAL_MEMORY_UTIL",
         "disk_queue": "HRC_DISK_QUEUE_LENGTH",
+        "free_disk": "OS_FREE_DISK_SPACE",
         "network_latency": "NETWORK_RTT_AVG",
         "ip_address": "DEVICE_IP_ADDRESS",
         "location": "BUSINESS_LOCATION",
@@ -63,16 +70,26 @@ DEFAULT_ATERNITY_FIELDS = {
         "ip_address": "DEVICE_IP_ADDRESS",
         "location": "BUSINESS_LOCATION",
         "os": "OS_NAME",
+        "total_disk": "OS_TOTAL_DISK_SPACE",
     },
     "health_events": {
         "timestamp": "TIMEFRAME",
         "device": "DEVICE_NAME",
+        "username": "USERNAME",
         "application": "APPLICATION_NAME",
         "category": "HEALTH_EVENT_CATEGORY",
         "name": "HEALTH_EVENT_NAME",
         "component": "HEALTH_EVENT_COMPONENT",
         "severity": "HEALTH_EVENT_SEVERITY",
         "count": "HEALTH_EVENT_VOLUME",
+        # where it failed: the component (e.g. the program) and the sub-component
+        # (e.g. the module inside it), their versions, and Aternity's error text
+        "component_version": "HEALTH_EVENT_COMPONENT_VERSION",
+        "sub_component": "HEALTH_EVENT_SUB_COMPONENT",
+        "sub_component_version": "HEALTH_EVENT_SUB_COMPONENT_VERSION",
+        "exception": "HEALTH_EVENT_EXCEPTION_TYPE",
+        "error": "HEALTH_EVENT_ERROR",
+        "details": "HEALTH_EVENT_DETAILS",
     },
     "app_usage": {
         "timestamp": "TIMEFRAME",
@@ -95,10 +112,31 @@ DEFAULT_ATERNITY_FIELDS = {
     "boot_components": {
         "timestamp": "TIMEFRAME",
         "device": "DEVICE_NAME",
+        "username": "USERNAME",
+        "location": "BUSINESS_LOCATION",
         "type": "MEASUREMENT_TYPE",
         "component": "MEASUREMENT_COMPONENT",
         "duration": "MEASUREMENT_DURATION_AVG",
         "degradation": "MEASUREMENT_DEGRADATION_TIME",
+    },
+    "software_changes": {
+        "timestamp": "INSTALLED_SW_CHANGE_TIMESTAMP",
+        "device": "DEVICE_NAME",
+        "name": "INSTALLED_SW_NAME",
+        "change": "INSTALLED_SW_CHANGE_TYPE",
+        "version": "INSTALLED_SW_VERSION",
+        "version_before": "INSTALLED_SW_VERSION_BEFORE_CHANGE",
+        "vendor": "INSTALLED_SW_VENDOR",
+    },
+    "top_processes": {
+        "timestamp": "MEASUREMENT_START_TIMESTAMP",
+        "device": "DEVICE_NAME",
+        "process": "PROCESS_NAME",
+        "application": "APPLICATION_NAME",
+        "cpu": "PRC_CPU_UTIL_AVG",
+        "memory": "PRC_PHYSICAL_MEMORY_UTIL_AVG",
+        "io_read": "PRC_IO_READ_RATE",
+        "io_write": "PRC_IO_WRITE_RATE",
     },
 }
 
@@ -162,13 +200,18 @@ class NetimConfig:
 
 @dataclass
 class Thresholds:
-    # A user sample is degraded if response time exceeds this (seconds)...
+    # An activity is slow when Aternity's own status for it (SLA_STATUS) is one
+    # of these values. `uxcorrelate verify` lists the values your tenant uses.
+    slow_status: list[str] = field(default_factory=list)
+    # Only while slow_status is empty: slow = response time above this (seconds)
+    # or the application-specific value below.
     response_time_s: float = 3.0
-    # ...or the application-specific value below, if present.
     response_time_s_by_app: dict[str, float] = field(default_factory=dict)
     device_cpu: float = 85.0
     device_memory: float = 90.0
     disk_queue: float = 2.0
+    # OS drive free space (activity row) / its size (inventory), in percent
+    free_disk_percent: float = 10.0
     client_network_latency_ms: float = 150.0
 
 
@@ -190,7 +233,10 @@ class Settings:
     netim: NetimConfig = field(default_factory=NetimConfig)
     thresholds: Thresholds = field(default_factory=Thresholds)
     topology: Topology = field(default_factory=Topology)
+    # a problem counts for a slow action recorded up to this many minutes before or after it
     bucket_minutes: int = 5
+    # unit of WINDOWS_MACHINE_BOOTS durations, shown next to them
+    boot_unit: str = "s"
 
 
 def _merge_dataclass(obj: Any, data: dict[str, Any]) -> None:
@@ -220,6 +266,8 @@ def load_settings(path: str | os.PathLike | None = None) -> Settings:
         _merge_dataclass(settings.topology, raw.get("topology"))
         if "bucket_minutes" in raw:
             settings.bucket_minutes = int(raw["bucket_minutes"])
+        if "boot_unit" in raw:
+            settings.boot_unit = str(raw["boot_unit"])
         if metrics is not None:
             settings.netim.metrics = [NetimMetric(**m) for m in metrics]
 

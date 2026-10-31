@@ -1,127 +1,167 @@
 """The plain-language answer at the top of an investigation.
 
-Everything here is written for a help-desk reader: no scores, no "overlap".
-Times are returned as ISO strings next to the text, so the UI can show them
-in the reader's time zone and the CLI in UTC.
+Everything here is written for a help-desk reader: plain counts ("at 3 of 4
+slow actions"), no scores. Times are returned as ISO strings next to the
+text, so the UI can show them in the reader's time zone and the CLI in UTC.
 """
 
 from __future__ import annotations
 
 import re
 
-LEVELS = {"likely": "Likely", "possible": "Possibly", "unsure": "Not sure", "none": "No slowness found"}
+WHERE = {"pc": "on the PC", "network": "on the network", "server": "on the application's servers"}
 
 
 def _pct(v: float | None) -> str:
     return "?" if v is None else f"{v:.0%}"
 
 
-def _finding(e: dict, slow_moments: int, thresholds) -> tuple[str, str | None]:
-    """(sentence, todo) for one evidence row."""
-    obj, metric, worst, limit = e["object"], e["metric"], e["worst"], e["threshold"]
-    matched = f"matches {e['degraded_intervals_matched']} of {slow_moments} slow moments"
-    m = re.match(r"App (hang time|crashes) \((.+)\)", metric)
-    if m:
-        app = m.group(2)
-        if m.group(1) == "crashes":
-            return f"{app} crashed on {obj} ({matched})", f"On {obj}: check {app} (add-ins, updates) and its crash history."
-        return f"{app} was not responding on {obj} ({matched})", f"On {obj}: check {app} (add-ins, updates, mailbox or file size) and restart it."
-    if e["source"] == "Aternity event":
-        return f"Device health event on {obj}: {metric} ({matched})", f"On {obj}: open the device's health events in Aternity."
-    if e["source"] == "NetIM alert":
-        return f"NetIM alert on {obj}: {metric} ({matched})", f"Check the NetIM alert on {obj}."
-    if e["source"] == "NetIM":
-        return (f"{obj}: {metric} reached {worst} (limit {limit}) ({matched})",
-                f"Check what is loading {obj} during the slow moments (top talkers, errors).")
-    if metric.startswith("Endpoint network latency"):
-        return (f"{obj}'s network round trip reached {worst} ms (limit {limit}) ({matched})",
-                f"Check {obj}'s connection: VPN, Wi-Fi or home network, and its route to the servers.")
-    what = metric.replace(" %", "")
-    return (f"{obj} {what} reached {worst} (limit {limit}) ({matched})",
-            f"On {obj}: find which process used the {what.lower()} at that time.")
+def problem_text(g: dict) -> str:
+    """One problem row as a sentence (without the count)."""
+    obj, what, worst, limit = g["object"], g["what"], g["worst"], g["limit"]
+    if g["source"] == "Aternity" and g["app"]:
+        m = re.match(r"(.+) (crashed|not responding \(s\))$", what)
+        if m and m.group(2) == "crashed":
+            return f"{m.group(1)} crashed on {obj}"
+        if m:
+            return f"{m.group(1)} was not responding on {obj} (up to {worst} s)"
+    if g["source"] == "Aternity event":
+        return f"Health event on {obj}: {what}"
+    if g["source"] == "NetIM alert":
+        return f"NetIM alert on {obj}: {what}"
+    if what.startswith("Network round trip"):
+        return f"{obj}'s network round trip reached {worst} ms (limit {limit})"
+    if what.startswith("Free disk space"):
+        return f"{obj}'s disk was nearly full ({worst}% free, limit {limit}%)"
+    if what == "Disk queue":
+        return f"{obj}'s disk could not keep up (queue {worst}, limit {limit})"
+    if g["source"] == "NetIM":
+        return f"{obj}: {what} reached {worst} (limit {limit})"
+    return f"{obj}: {what.replace(' %', '')} reached {worst}{'%' if '%' in what else ''} (limit {limit})"
 
 
-def build_answer(verdict: str, scores: dict, evidence: list[dict], degraded: int, samples: list,
-                 slow: list, who: str, impact: dict | None, mapped: list, logons: dict | None,
-                 thresholds) -> dict:
-    # how sure: measured evidence for most slow moments, some, or none
-    overlap = scores.get(verdict, {}).get("overlap", 0) if verdict in scores else 0
-    if verdict == "none":
-        level = "none"
-    elif verdict == "inconclusive" or overlap == 0:
-        level = "unsure"
-    else:
-        level = "likely" if overlap > 0.5 else "possible"
+def _todo(g: dict) -> str:
+    obj = g["object"]
+    if g["source"] == "Aternity" and g["app"]:
+        return f"On {obj}: check {g['app']} (add-ins, updates, file or mailbox size) and its history in Aternity."
+    if g["source"] == "Aternity event":
+        return f"On {obj}: open the device's health events in Aternity."
+    if g["source"] == "NetIM alert":
+        return f"Check the NetIM alert on {obj}."
+    if g["source"] == "NetIM":
+        return f"Check what is loading {obj} at those times (top talkers, errors)."
+    if g["what"].startswith("Network round trip"):
+        return f"Check {obj}'s connection: VPN or home network, and its route to the servers."
+    if g["what"].startswith("Free disk space"):
+        return f"On {obj}: free up disk space on the system drive."
+    if g["what"] == "Disk queue":
+        return f"On {obj}: find which process was using the disk at those times (antivirus scan, updates, sync)."
+    return f"On {obj}: find which process used the {g['what'].replace(' %', '').lower()} at those times."
 
+
+def build_answer(problems: list[dict], samples: list, slow: list, who: str, impact: dict | None,
+                 netim_on: bool, mapped: list, user_ip: str | None, logons: dict | None,
+                 minutes: int, split: dict | None) -> dict:
+    n = len(slow)
+    at_slow = [g for g in problems if g["slow_actions"]]
     found, todo = [], []
-    # the verdict's own evidence first; a named NetIM device says more than the PC's own view
-    ranked = sorted(evidence, key=lambda e: (e["domain"] != verdict, not e["source"].startswith("NetIM"),
-                                             -e["coverage"]))
-    for e in ranked[:5]:
-        text, step = _finding(e, degraded, thresholds)
-        found.append({"text": text, "when": e["first"], "domain": e["domain"]})
-        if step and step not in todo:
-            todo.append(step)
-    if degraded:
-        if not mapped:
-            found.append({"text": "The network on this PC's path could not be checked: "
-                                  "its subnet is not in NetIM.", "when": None, "domain": "network"})
-        elif not any(e["domain"] == "network" for e in evidence):
-            found.append({"text": f"Nothing wrong found on the network path ({len(mapped)} NetIM objects checked).",
-                          "when": None, "domain": "network"})
+    for g in at_slow[:6]:
+        why = g.get("why") or {}
+        if why.get("same_as_above"):
+            continue  # e.g. a hang's own health event: already explained above
+        found.append({"text": g["text"], "count": f"at {g['slow_actions']} of {n} slow actions",
+                      "when": g["first"], "kind": g["kind"], "why": why.get("text", [])})
+        for step in why.get("todo") or [_todo(g)]:
+            if step not in todo:
+                todo.append(step)
+    other = len(problems) - len(at_slow)
+    if other and n:
+        found.append({"text": f"{other} other problem(s) happened only at other times, not near a slow action.",
+                      "count": None, "when": None, "kind": None, "why": []})
+    if n and not any(g["kind"] == "network" for g in at_slow):
+        if not netim_on:
+            text = "The network was not checked: NetIM is not configured."
+        elif not mapped:
+            text = (f"The network was not checked: this PC's address ({user_ip or 'unknown'}) "
+                    "is not in any NetIM subnet.")
+        else:
+            text = f"Nothing wrong on the network path at those times ({len(mapped)} NetIM objects checked)."
+        found.append({"text": text, "count": None, "when": None, "kind": "network", "why": []})
 
-    # who else, in one sentence
-    just_them = None
-    if impact:
+    # who else is affected? For an application failure: the other PCs with the same failure.
+    # Otherwise: other users of the same apps who were slow at the same times.
+    same = next(((g.get("why") or {}).get("others") for g in at_slow
+                 if (g.get("why") or {}).get("others") and not g["why"].get("same_as_above")), None)
+    who_else = None
+    if same:
+        n_pcs = same["pcs"]
+        if not n_pcs:
+            who_else = f"Only this PC: no other PC had {same['what']} in this window."
+        else:
+            versions = same["versions"]
+            spread = (f"all on {next(iter(versions))}" if len(versions) == 1
+                      else ", ".join(f"{k} on {v}" for v, k in list(versions.items())[:3]))
+            who_else = (f"{n_pcs} other PC(s) had the same failure ({same['what']}), {spread}. "
+                         f"This PC has {same['this_version']}.")
+    elif impact:
         apps = ", ".join(impact["applications"])
-        n, k = impact["users"], impact["slow"]
-        if not n:
-            just_them = f"Nobody else used {apps} at that time."
+        users, k = impact["users"], impact["slow"]
+        if not users:
+            who_else = f"Nobody else used {apps} at those times."
         elif not k:
-            just_them = f"Yes: none of the {n} other {apps} users were slow."
+            who_else = f"Only this user: none of the {users} other {apps} users were slow."
         elif impact["unusual"]:
-            just_them = (f"No: {k} of {n} other {apps} users were slow ({_pct(impact['rate'])}), more than on "
+            who_else = (f"{k} of {users} other {apps} users were slow ({_pct(impact['rate'])}), more than on "
                          f"any of the last {impact['baseline_days']} days (at most {_pct(impact['usual_rate'])}).")
         elif impact["unusual"] is False:
-            just_them = (f"Mostly: {k} of {n} other {apps} users were slow ({_pct(impact['rate'])}), "
+            who_else = (f"{k} of {users} other {apps} users were slow ({_pct(impact['rate'])}), "
                          f"as usual at this hour (up to {_pct(impact['usual_rate'])} on previous days).")
         else:
-            just_them = f"{k} of {n} other {apps} users were slow ({_pct(impact['rate'])}); no earlier days to compare."
+            who_else = f"{k} of {users} other {apps} users were slow ({_pct(impact['rate'])}); no earlier days to compare."
         cp = impact["common_point"]
         if cp:
-            just_them += f" {cp['slow']} of the {k} slow users share one network point: {cp['name']}."
+            who_else += f" {cp['slow']} of the {k} slow users share one network point: {cp['name']}."
             todo.insert(0, f"Many users are slow behind {cp['name']}: check it first.")
         elif impact["unusual"]:
             todo.insert(0, f"Many {apps} users are slow at once: check the {apps} service and its servers.")
 
-    # title
-    top = next((e for e in ranked if e["domain"] == verdict), None)
-    if level == "none":
-        title, reason = LEVELS["none"], "No action took longer than the limit in this window."
-    elif level == "unsure":
-        title = f"{LEVELS['unsure']} what caused it"
-        reason = "Nothing measured lined up with the slow moments."
+    # title: the problem seen at the most slow actions; "likely" when that is more than half
+    top = at_slow[0] if at_slow else None
+    if not n:
+        level, title = "none", "No slow actions found"
+        reason = "Nothing was slow in this window."
+    elif top is None:
+        level, title = "unsure", "Cause not found"
+        reason = f"No problem was recorded within {minutes} min of any of the {n} slow actions."
+        if split:
+            side = max(split, key=split.get)
+            reason += f" Aternity measured most of the slow time {WHERE[side]} ({_pct(split[side])})."
     else:
-        where = {"client": f"{who}'s PC", "network": "the network", "backend": "the application's servers"}[verdict]
-        title = f"{LEVELS[level]}: {where}"
-        reason = found[0]["text"] if found else ""
-    if not todo and degraded:
+        level = "likely" if top["slow_actions"] * 2 > n else "possible"
+        title = f"{'Likely' if level == 'likely' else 'Possibly'}: {top['text']}"
+        reason = f"It happened within {minutes} min of {top['slow_actions']} of the {n} slow actions."
+        if (top.get("why") or {}).get("text"):
+            reason += " " + top["why"]["text"][0]
+    if not todo and n:
         todo.append(f"Nothing measured explains it: ask {who} what they were doing, and look at the device in Aternity.")
 
-    shares = {d: s.get("breakdown_share") for d, s in scores.items()}
     worst = max((s for s in slow if s.response_time is not None), key=lambda s: s.response_time, default=None)
+    per_app: dict[str, int] = {}
+    for s in slow:
+        per_app[s.application] = per_app.get(s.application, 0) + 1
+    iso = lambda t: t.isoformat().replace("+00:00", "Z")  # noqa: E731
     felt = {
-        "actions": len(samples), "slow_actions": len(slow),
-        "first": min(s.timestamp for s in slow).isoformat().replace("+00:00", "Z") if slow else None,
-        "last": max(s.timestamp for s in slow).isoformat().replace("+00:00", "Z") if slow else None,
+        "actions": len(samples), "slow_actions": n,
+        "apps": sorted(per_app.items(), key=lambda kv: -kv[1])[:5],
+        "first": iso(min(s.timestamp for s in slow)) if slow else None,
+        "last": iso(max(s.timestamp for s in slow)) if slow else None,
         "slowest": None if worst is None else {
             "app": worst.application, "activity": worst.activity, "seconds": round(worst.response_time, 1),
-            "when": worst.timestamp.isoformat().replace("+00:00", "Z")},
-        "logon": (logons or {}).get("slowest", [None])[0] if (logons or {}).get("slowest") else None,
+            "when": iso(worst.timestamp)},
+        "logon": (logons or {}).get("starts", [None])[0] if (logons or {}).get("starts") else None,
+        "logon_unit": (logons or {}).get("unit"),
     }
     return {
-        "level": level, "title": title, "reason": reason, "felt": felt,
-        "time_went": None if all(v is None for v in shares.values()) else
-        {"pc": shares.get("client"), "network": shares.get("network"), "server": shares.get("backend")},
-        "just_them": just_them, "found": found, "todo": todo,
+        "level": level, "title": title, "reason": reason, "felt": felt, "time_went": split,
+        "who_else": who_else, "same_failure": same, "found": found, "todo": todo,
     }

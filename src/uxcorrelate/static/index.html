@@ -8,7 +8,7 @@
   :root {
     --bg: #f6f7f9; --panel: #fff; --text: #1d2330; --muted: #5d6676; --border: #dde1e7;
     --accent: #2563eb; --bad: #d33c3c; --warn: #c7820a; --ok: #2f8f5b;
-    --client: #8b5cf6; --network: #0ea5e9; --backend: #f59e0b;
+    --pc: #8b5cf6; --network: #0ea5e9; --server: #f59e0b;
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #12151b; --panel: #1b2029; --text: #e6e9ef; --muted: #9aa3b2; --border: #2d3440; }
@@ -26,13 +26,15 @@
   button { padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
   button:disabled { opacity: .6; cursor: wait; }
   h2 { font-size: 15px; margin: 0 0 10px; }
-  .verdict { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
-  .verdict .label { font-size: 22px; font-weight: 700; }
   .pill { padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: #fff; }
-  .scores { display: grid; gap: 8px; margin-top: 12px; }
-  .score { display: grid; grid-template-columns: 160px 1fr 60px; gap: 10px; align-items: center; }
-  .bar { height: 10px; background: var(--border); border-radius: 5px; overflow: hidden; }
-  .bar > div { height: 100%; }
+  .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.click { cursor: pointer; }
+  tr.click:hover td { background: var(--bg); }
+  .types { display: flex; flex-wrap: wrap; gap: 10px; margin: 8px 0 12px; }
+  #aFound > li { margin-bottom: 10px; }
+  .why { margin: 6px 0 0; padding: 6px 10px; border-left: 3px solid var(--accent); background: var(--bg); }
+  .why ul { margin: 2px 0 0; padding-left: 18px; }
+  .types div { border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; }
   .muted { color: var(--muted); }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
@@ -59,7 +61,7 @@
 </head>
 <body>
 <header><h1>UX Correlator</h1><span>Aternity end-user experience × NetIM infrastructure</span>
-  <nav><button id="tabInv" class="on">Investigate</button><button id="tabLog">Slow logons</button></nav></header>
+  <nav><button id="tabInv" class="on">Investigate</button><button id="tabLog">Slow start-ups</button></nav></header>
 <main>
   <section class="panel" id="invForm">
     <form id="f">
@@ -68,7 +70,8 @@
       <label>Application<input name="application" list="apps" placeholder="optional"></label>
       <label>Start (local)<input name="start" type="datetime-local" required></label>
       <label>End (local)<input name="end" type="datetime-local" required></label>
-      <label>Bucket (min)<input name="bucket_minutes" type="number" min="1" max="60" value="5"></label>
+      <label>Match within (min)<input name="bucket_minutes" type="number" min="1" max="60" value="5"
+        title="A problem counts for a slow action recorded up to this many minutes before or after it"></label>
       <button id="go">Investigate</button>
     </form>
     <datalist id="apps"></datalist>
@@ -80,7 +83,7 @@
       <label>Location<input name="location" placeholder="optional (Aternity location)"></label>
       <label>Start (local)<input name="start" type="datetime-local" required></label>
       <label>End (local)<input name="end" type="datetime-local" required></label>
-      <button id="lgo">Find slow logons</button>
+      <button id="lgo">Find slow start-ups</button>
     </form>
     <div class="muted" style="margin-top:8px">Leave the first three empty to search everyone.</div>
   </section>
@@ -88,11 +91,14 @@
   <div id="error" class="err"></div>
   <div id="lout" hidden>
     <section class="panel">
-      <h2>Boots and logons</h2>
-      <div id="lBody"></div>
+      <div id="lHead"></div>
+      <div id="lCauses"></div>
+      <div class="tableWrap scroll" style="max-height:560px"><table id="lStarts"></table></div>
+      <p class="muted" style="font-size:12px">One row per start-up: Aternity's measurements of the same PC within
+        an hour. Click a row to see what took the time.</p>
     </section>
-    <section class="panel" style="margin-top:16px">
-      <h2>Slowest locations</h2>
+    <section class="panel" id="lLocPanel" style="margin-top:16px">
+      <h2>By location</h2>
       <div class="tableWrap scroll"><table id="lLoc"></table></div>
     </section>
   </div>
@@ -103,58 +109,47 @@
     </section>
     <div class="grid2" style="margin-top:16px">
       <section class="panel"><h2>What the user felt</h2><div id="aFelt"></div></section>
-      <section class="panel"><h2>Where the time went</h2><div id="aWent"></div></section>
+      <section class="panel" id="who">
+        <h2>Who else is affected?</h2>
+        <div id="aJust"></div>
+        <button type="button" class="link" id="whoBtn">Show who</button>
+      </section>
     </div>
-    <section class="panel" style="margin-top:16px" id="who">
-      <h2>Is it just them?</h2>
-      <div id="aJust"></div>
-      <button type="button" class="link" id="whoBtn">Show who</button>
-      <div id="whoBox" hidden>
-        <div class="grid2" style="margin-top:10px">
-          <div class="tableWrap scroll"><table id="whoGroups"></table></div>
-          <div class="tableWrap scroll"><table id="whoUsers"></table></div>
-        </div>
+    <section class="panel" id="whoBox" hidden style="margin-top:16px">
+      <div class="grid2">
+        <div class="tableWrap scroll"><table id="whoGroups"></table></div>
+        <div class="tableWrap scroll"><table id="whoUsers"></table></div>
       </div>
     </section>
-    <div class="grid2" style="margin-top:16px">
-      <section class="panel"><h2>What we found</h2><ul id="aFound"></ul></section>
-      <section class="panel"><h2>What to do</h2><ul id="aTodo"></ul><div id="warns"></div></section>
-    </div>
+    <section class="panel" style="margin-top:16px"><h2>What we found, and why</h2><ul id="aFound"></ul></section>
+    <section class="panel" style="margin-top:16px"><h2>What to do</h2><ul id="aTodo"></ul><div id="warns"></div></section>
+    <section class="panel" style="margin-top:16px">
+      <h2>Timeline</h2>
+      <div id="chart"></div>
+      <div class="legend">
+        <span><i style="background:var(--bad)"></i>Slow action</span>
+        <span><i style="background:var(--muted)"></i>Normal action</span>
+        <span><i style="background:var(--pc)"></i>PC problem</span>
+        <span><i style="background:var(--network)"></i>Network problem</span>
+        <span><i style="background:var(--server)"></i>Server problem</span>
+        <span>Faded mark = not near a slow action</span>
+      </div>
+    </section>
+    <section class="panel" style="margin-top:16px">
+      <h2>Problems found</h2>
+      <div class="tableWrap"><table id="problems"></table></div>
+      <button type="button" class="link" id="otherBtn"></button>
+      <div class="tableWrap" id="otherBox" hidden><table id="others"></table></div>
+    </section>
     <button type="button" class="link" id="detBtn" style="margin-top:12px">Details for IT ▸</button>
-    <div id="details" hidden>
-      <section class="panel" style="margin-top:12px">
-        <div class="verdict"><div class="label" id="vLabel"></div><span class="pill" id="vConf"></span></div>
-        <div id="vHead" class="muted"></div>
-        <div class="scores" id="scores"></div>
-        <p class="muted" style="font-size:12px">Score = how often a domain's measurements line up with the slow
-          moments ("overlap"), combined with Aternity's own split of the slow time ("time share").</p>
-      </section>
-      <section class="panel" style="margin-top:16px">
-        <h2>Timeline</h2>
-        <div id="chart"></div>
-        <div class="legend">
-          <span><i style="background:var(--text)"></i>Avg response time (s)</span>
-          <span><i style="background:var(--bad);opacity:.25"></i>Slow moment</span>
-          <span><i style="background:var(--client)"></i>PC problem</span>
-          <span><i style="background:var(--network)"></i>Network problem</span>
-          <span><i style="background:var(--backend)"></i>Server problem</span>
-        </div>
-      </section>
-      <section class="panel" style="margin-top:16px">
-        <h2>All measurements during slow moments</h2>
-        <div class="tableWrap"><table id="evidence"></table></div>
-      </section>
-      <section class="panel" style="margin-top:16px" id="invLogonsPanel">
-        <h2>Boots and logons</h2>
-        <div id="invLogons"></div>
-      </section>
-      <section class="panel" style="margin-top:16px"><h2>Scope</h2><div id="endpoints"></div>
-        <div class="tableWrap"><table id="objects"></table></div></section>
-    </div>
+    <section class="panel" id="details" hidden style="margin-top:12px">
+      <div id="rules"></div>
+      <div id="endpoints"></div>
+      <div class="tableWrap"><table id="objects"></table></div>
+    </section>
   </div>
 </main>
 <script>
-const COLORS = { client: "var(--client)", network: "var(--network)", backend: "var(--backend)" };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const toLocalInput = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -217,40 +212,62 @@ $("f").addEventListener("submit", (ev) => {
 
 $("lf").addEventListener("submit", (ev) => {
   ev.preventDefault();
-  runJob("api/logon-jobs", formBody(ev.target, ["username", "device", "location"]), $("lgo"), (lg) => {
-    $("lout").dataset.has = "1"; $("lout").hidden = false;
-    $("lBody").innerHTML = logonsHtml(lg, true);
-    $("lLoc").innerHTML = "<tr><th>Type</th><th>Location</th><th>Median</th><th>90% under</th><th>Measured</th></tr>"
-      + lg.by_location.slice(0, 50).map((g) => `<tr><td>${esc(g.type)}</td><td>${esc(g.location)}</td><td>${g.median}</td><td>${g.p90}</td><td>${g.count}</td></tr>`).join("");
-  });
+  runJob("api/logon-jobs", formBody(ev.target, ["username", "device", "location"]), $("lgo"), renderStarts);
 });
 
-// Shared by both modes: per-type summary, then the slowest with what slowed them.
-function logonsHtml(lg, all) {
-  if (!lg || !lg.total) return `<p class="muted">No boots or logons in the window.</p>`;
-  const t = (iso) => new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-  let h = "";
-  const top = lg.slowest[0];
-  if (all && top) {
-    // plain summary first: the slowest one, what slowed it, and the slowest place
-    const why = top.components.length ? ` Slowed most by <b>${esc(top.components[0].component)}</b>.` : "";
-    const vs = top.x_usual != null ? `${top.x_usual}× its usual` : top.x_median != null ? `${top.x_median}× the median` : "";
-    h += `<p class="atitle" style="font-size:18px">Slowest: ${esc(top.username || top.device)}'s ${esc(top.type.toLowerCase())} at ${t(top.time)} took ${top.duration}${vs ? ` (${vs})` : ""}.</p><p>${why}</p>`;
-    const locs = lg.by_location.filter((g) => g.type === top.type && g.count > 1).sort((x, y) => y.median - x.median);
-    if (locs.length > 1) h += `<p>Slowest place: <b>${esc(locs[0].location)}</b>, median ${locs[0].median} over ${locs[0].count} ${esc(top.type.toLowerCase())}s, against ${locs[locs.length - 1].median} at ${esc(locs[locs.length - 1].location)}.</p>`;
+// Slow start-ups: one sentence per Aternity type, then one row per start-up, slowest first.
+function renderStarts(lg) {
+  $("lout").dataset.has = "1"; $("lout").hidden = false;
+  const u = lg.unit ? ` ${lg.unit}` : "";
+  if (!lg.total) {
+    $("lHead").innerHTML = `<p class="muted">No boots or logons in this window.</p>`;
+    $("lStarts").innerHTML = ""; $("lLocPanel").hidden = true; return;
   }
-  h += `<p class="muted">Durations in Aternity's units. ${lg.types.map((x) => `<b>${esc(x.type)}</b>: ${x.count} measured, median ${x.median}, 90% under ${x.p90}, slowest ${x.max}`).join(" · ")}</p>`;
-  h += `<div class="tableWrap${all ? " scroll" : ""}"><table><tr><th>When</th><th>Type</th><th>Duration</th><th>vs median</th>`
-    + `${lg.baseline_days ? `<th>vs its usual (${lg.baseline_days} d)</th>` : ""}<th>User</th><th>Device</th><th>Location</th></tr>`;
-  for (const b of lg.slowest) {
-    h += `<tr><td>${t(b.time)}</td><td>${esc(b.type)}</td><td><b>${b.duration}</b></td><td>${b.x_median ?? ""}×</td>`
-      + `${lg.baseline_days ? `<td>${b.x_usual == null ? "no history" : `${b.x_usual}× (usual ${b.usual})`}</td>` : ""}`
-      + `<td>${esc(b.username ?? "")}</td><td>${esc(b.device)}</td><td>${esc(b.location ?? "")}</td></tr>`;
-    if (b.components.length) h += `<tr class="comp"><td></td><td colspan="7">Slowed by: ${b.components.map((c) =>
-      `${esc(c.component)} (degradation ${c.degradation ?? "?"}, duration ${c.duration ?? "?"})`).join(" · ")}</td></tr>`;
-  }
-  return h + "</table></div>";
+  const top = lg.starts[0], v = top.values[lg.sort_type];
+  $("lHead").innerHTML = `<div class="atitle" style="font-size:18px">Slowest: ${esc(top.username || top.device)} on ${esc(top.device)},
+    ${hm(top.time)}: ${esc(lg.sort_type)} ${v ? v.duration + u : ""}</div>
+    <p class="muted">${lg.total} start-ups. For each Aternity measurement: the typical time, and the time 1 in 10 start-ups are slower than.</p>
+    <div class="types">${lg.types.map((t) => `<div><b>${esc(t.type)}</b><br>typical <b>${t.typical}${u}</b> · 1 in 10 over ${t.p90}${u}</div>`).join("")}</div>`;
+  const types = lg.types.map((t) => t.type);
+  const cell = (x) => !x ? `<td class="muted">–</td>` : `<td class="num"><b>${x.duration}${u}</b>`
+    + (x.usual != null ? `<div class="muted">usual ${x.usual}${u}</div>` : "") + "</td>";
+  $("lStarts").innerHTML = `<tr><th></th><th>When</th><th>User</th><th>PC</th><th>Location</th>`
+    + types.map((t) => `<th>${esc(t)}${t === lg.sort_type ? " ▼" : ""}</th>`).join("") + "</tr>"
+    + lg.starts.map((st, i) => `<tr class="${st.components.length ? "click" : ""}" data-i="${i}">
+        <td>${st.components.length ? "▸" : ""}</td><td class="num">${hm(st.time)}</td><td>${esc(st.username ?? "")}</td>
+        <td>${esc(st.device)}</td><td>${esc(st.location ?? "")}</td>${types.map((t) => cell(st.values[t])).join("")}</tr>
+      <tr class="comp" id="c${i}" hidden><td></td><td colspan="${4 + types.length}">What took the time:
+        ${st.components.map((c) => `<b>${esc(c.component)}</b> ${c.duration ?? "?"}${u}`
+          + (c.degradation ? ` (${c.degradation}${u} longer than normal)` : "")
+          + ` <span class="muted">${esc(c.type)}</span>`).join(" · ")}
+        ${st.why && st.why.length ? `<div class="why"><b>Why:</b><ul>${st.why.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></div>` : ""}</td></tr>`).join("");
+  // main causes: the parts behind the slowest start-ups, and every PC where they were longer than normal
+  $("lCauses").innerHTML = lg.causes && lg.causes.length ? `<h2 style="margin-top:6px">Main causes</h2><ol>` + lg.causes.map((c, i) =>
+    `<li><b>${esc(c.component)}</b> <span class="muted">(${esc(c.type)})</span> was longer than normal on <b>${c.pcs} PC(s)</b>,
+      ${c.times} time(s) in this window; behind ${c.slowest_starts} of the slowest start-ups.
+      <span class="muted">${Object.entries(c.by_location).map(([l, n]) => `${esc(l)} ${n}`).join(", ")}</span>
+      <button type="button" class="link" data-cause="${i}">Show who ▸</button>
+      <div class="tableWrap scroll" id="cause${i}" hidden><table><tr><th>PC</th><th>User</th><th>Location</th><th>Times</th>
+        <th>Most longer than normal</th><th>Last seen</th></tr>${c.list.map((p) => `<tr><td>${esc(p.device)}</td><td>${esc(p.username ?? "")}</td>
+        <td>${esc(p.location ?? "")}</td><td class="num">${p.times}</td><td class="num">${p.worst}${u}</td><td class="num">${hm(p.last)}</td></tr>`).join("")}
+        ${c.pcs > c.list.length ? `<tr><td colspan="6" class="muted">… and ${c.pcs - c.list.length} more</td></tr>` : ""}</table></div></li>`).join("") + "</ol>" : "";
+  $("lLocPanel").hidden = lg.by_location.length < 2;
+  $("lLoc").innerHTML = `<tr><th>Location</th><th>Start-ups</th>${types.map((t) => `<th>Typical ${esc(t)}</th>`).join("")}</tr>`
+    + lg.by_location.map((g) => `<tr><td>${esc(g.location)}</td><td class="num">${g.count}</td>`
+      + types.map((t) => `<td class="num">${g.typical[t] != null ? g.typical[t] + u : "–"}</td>`).join("") + "</tr>").join("");
 }
+$("lCauses").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-cause]");
+  if (!b) return;
+  const box = $(`cause${b.dataset.cause}`); box.hidden = !box.hidden;
+  b.textContent = box.hidden ? "Show who ▸" : "Hide who ▾";
+});
+$("lStarts").addEventListener("click", (ev) => {
+  const row = ev.target.closest("tr.click");
+  if (!row) return;
+  const c = $(`c${row.dataset.i}`); c.hidden = !c.hidden;
+  row.cells[0].textContent = c.hidden ? "▸" : "▾";
+});
 
 const detail = (d) => typeof d.detail === "string" ? d.detail : JSON.stringify(d.detail);
 
@@ -273,72 +290,96 @@ async function waitFor(id, started) {
   }
 }
 
-const hm = (iso) => iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+// "Oct 27, 08:45 AM", and a range drops the repeated day: "Oct 27, 08:45 AM–09:10 AM"
+const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const span = (a, b) => !b || a === b ? hm(a)
+  : new Date(a).toDateString() === new Date(b).toDateString() ? `${hm(a)}–${clock(b)}` : `${hm(a)} – ${hm(b)}`;
+const hm = (iso) => iso ? new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
 const LEVEL_COLOR = { likely: "var(--bad)", possible: "var(--warn)", unsure: "var(--muted)", none: "var(--ok)" };
+const KIND = { pc: ["PC", "var(--pc)"], network: ["Network", "var(--network)"], server: ["Server", "var(--server)"] };
+const pill = (k) => `<span class="pill" style="background:${KIND[k][1]}">${KIND[k][0]}</span>`;
 
 function render(d) {
   $("out").hidden = false; $("out").dataset.has = "1";
   const a = d.answer, s = d.summary;
-  // the answer, in plain words
   $("aCard").style.borderLeft = `6px solid ${LEVEL_COLOR[a.level]}`;
   $("aTitle").textContent = a.title;
   $("aReason").textContent = a.reason;
+
   const f = a.felt;
   let felt = f.slow_actions
-    ? `<p><b>${f.slow_actions}</b> slow of ${f.actions} actions, ${hm(f.first)}–${hm(f.last)}.</p>`
+    ? `<p><b>${f.slow_actions}</b> of their ${f.actions} actions were slow`
+      + ` (${f.apps.map(([app, n]) => `${esc(app)} ${n}`).join(", ")}), between ${span(f.first, f.last)}.</p>`
     : `<p>No slow actions (${f.actions} measured).</p>`;
-  if (f.slowest) felt += `<p>Slowest: <b>${f.slowest.seconds} s</b> in ${esc(f.slowest.app)}${f.slowest.activity ? ` (${esc(f.slowest.activity)})` : ""} at ${hm(f.slowest.when)}.</p>`;
-  if (f.logon) felt += `<p>Slowest ${esc(f.logon.type.toLowerCase())}: <b>${f.logon.duration}</b> at ${hm(f.logon.time)}${f.logon.usual != null ? `, usually ${f.logon.usual}` : ""} <span class="muted">(Aternity's units)</span>.</p>`;
-  $("aFelt").innerHTML = felt;
+  if (f.slowest) felt += `<p>Slowest: <b>${f.slowest.seconds} s</b> in ${esc(f.slowest.app)}${f.slowest.activity ? ` (${esc(f.slowest.activity)})` : ""}, ${hm(f.slowest.when)}.</p>`;
   const tw = a.time_went;
-  $("aWent").innerHTML = tw ? [["PC", "pc", "client"], ["Network", "network", "network"], ["Server", "server", "backend"]].map(([label, k, c]) =>
-    `<div class="score"><div>${label}</div><div class="bar"><div style="width:${(tw[k] || 0) * 100}%;background:${COLORS[c]}"></div></div><div>${tw[k] == null ? "" : Math.round(tw[k] * 100) + "%"}</div></div>`).join("")
-    + `<p class="muted" style="font-size:12px">Aternity's split of the slow actions' time.</p>`
-    : `<p class="muted">Aternity gave no split for these actions.</p>`;
-  renderWho(d.impact, a.just_them);
-  $("aFound").innerHTML = a.found.map((x) => `<li>${esc(x.text)}${x.when ? `, from ${hm(x.when)}` : ""}</li>`).join("") || "<li class='muted'>Nothing measured.</li>";
+  if (tw) felt += `<p>Aternity measured the slow time: PC ${Math.round(tw.pc * 100)}%, network ${Math.round(tw.network * 100)}%, server ${Math.round(tw.server * 100)}%.</p>`;
+  if (f.logon) {
+    const u = f.logon_unit ? ` ${f.logon_unit}` : "";
+    felt += `<p>Slowest start-up: ${hm(f.logon.time)} on ${esc(f.logon.device)}: ` + Object.entries(f.logon.values).map(([t, v]) =>
+      `${esc(t)} <b>${v.duration}${u}</b>${v.usual != null ? ` (usual ${v.usual}${u})` : ""}`).join(", ") + ".</p>";
+  }
+  $("aFelt").innerHTML = felt;
+  renderWho(d.impact, a.who_else, a.same_failure, d.request);
+  // each finding, then what caused it (Aternity's own records)
+  $("aFound").innerHTML = a.found.map((x) => `<li>${esc(x.text)}${x.count ? `: <b>${esc(x.count)}</b>, from ${hm(x.when)}` : ""}`
+    + (x.why && x.why.length ? `<div class="why"><b>Why:</b><ul>${x.why.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></div>` : "")
+    + "</li>").join("") || "<li class='muted'>Nothing found.</li>";
   $("aTodo").innerHTML = a.todo.map((x) => `<li>${esc(x)}</li>`).join("") || "<li class='muted'>Nothing to do.</li>";
   $("warns").innerHTML = d.warnings.map((w) => `<p class="warn">⚠ ${esc(w)}</p>`).join("");
 
-  // details for IT
-  $("vLabel").textContent = s.verdict === "none" ? "No degradation found" : s.verdict_label;
-  const conf = $("vConf");
-  conf.textContent = `score ${s.confidence.toFixed(2)}`;
-  conf.style.background = LEVEL_COLOR[a.level];
-  const uxi = s.uxi_avg == null ? "UXI n/a" : `UXI avg ${s.uxi_avg}, lowest ${s.uxi_min}`;
-  $("vHead").textContent = `${s.headline} ${s.samples} samples, ${s.degraded_samples} slow. `
-    + `${uxi}; ${s.health_events ?? 0} device health event(s).`;
-  $("scores").innerHTML = Object.entries(d.scores).map(([k, v]) => `
-    <div class="score"><div>${esc(v.label)}<div class="muted" style="font-size:11px">overlap ${v.overlap.toFixed(2)} · time share ${v.breakdown_share == null ? "n/a" : v.breakdown_share.toFixed(2)}</div></div>
-    <div class="bar"><div style="width:${v.score * 100}%;background:${COLORS[k]}"></div></div><div>${v.score.toFixed(2)}</div></div>`).join("");
-  $("invLogonsPanel").hidden = !(d.logons && d.logons.total);
-  $("invLogons").innerHTML = logonsHtml(d.logons, false);
   $("chart").innerHTML = chart(d.timeline, d.request);
-  $("evidence").innerHTML = d.evidence.length
-    ? `<tr><th>Slow moments</th><th>Where</th><th>Source</th><th>Object</th><th>Measurement</th><th>Worst</th><th>Limit</th><th>When</th></tr>` +
-      d.evidence.map((e) => `<tr><td>${(e.coverage * 100).toFixed(0)}%</td>
-        <td><span class="pill" style="background:${COLORS[e.domain]}">${esc({ client: "PC", network: "network", backend: "server" }[e.domain])}</span></td>
-        <td>${esc(e.source)}</td><td>${esc(e.object)}${e.role ? `<div class="muted">${esc(e.role)}</div>` : ""}</td>
-        <td>${esc(e.metric)}</td><td>${e.worst ?? ""}</td><td>${e.threshold ?? ""}</td>
-        <td class="muted">${hm(e.first)}–${hm(e.last)}</td></tr>`).join("")
-    : `<tr><td class="muted">Nothing measured was out of line during the slow moments.</td></tr>`;
+  // problems at slow actions; the rest behind a button
+  const row = (g) => `<tr><td class="num">${g.slow_actions ? `<b>${g.slow_actions} of ${g.of_slow}</b>` : `${g.times}×`}</td>
+    <td>${pill(g.kind)}</td><td>${esc(g.text)}</td><td class="muted num">${span(g.first, g.last)}</td></tr>`;
+  const at = d.problems.filter((g) => g.slow_actions), other = d.problems.filter((g) => !g.slow_actions);
+  $("problems").innerHTML = at.length
+    ? `<tr><th>At slow actions</th><th>Where</th><th>Problem</th><th>When</th></tr>` + at.map(row).join("")
+    : `<tr><td class="muted">No problem was recorded within ${d.request.bucket_minutes} min of a slow action.</td></tr>`;
+  $("otherBtn").hidden = !other.length; $("otherBox").hidden = true;
+  $("otherBtn").textContent = `Show ${other.length} problem(s) at other times ▸`;
+  $("others").innerHTML = `<tr><th>Times</th><th>Where</th><th>Problem</th><th>When</th></tr>` + other.map(row).join("");
+
+  $("rules").innerHTML = `<p>Slow = ${esc(s.slow_rule)}.<br>A problem counts for a slow action recorded up to
+    ${d.request.bucket_minutes} min before or after it. A crash, hang or health event of one application counts only
+    for that application.<br>Aternity UXI: ${s.uxi_avg == null ? "n/a" : `avg ${s.uxi_avg}, lowest ${s.uxi_min}`}.</p>`;
   $("endpoints").innerHTML = d.endpoints.map((e) =>
     `<p><b>${esc(e.device)}</b> <span class="muted">ip ${esc(e.ip_address || "?")} · ${esc(e.location || "no location in Aternity")} · ${esc(e.os || "")}</span></p>`).join("");
   $("objects").innerHTML = d.mapped_objects.length
-    ? `<tr><th>Role</th><th>Type</th><th>NetIM object</th><th>Why</th></tr>` + d.mapped_objects.map((m) =>
-        `<tr><td>${esc(m.role)}</td><td>${esc(m.object_type)}</td><td>${esc(m.name)}</td><td class="muted">${esc(m.reason)}</td></tr>`).join("")
-    : `<tr><td class="muted">No NetIM objects on this PC's path.</td></tr>`;
+    ? `<tr><th>NetIM object checked</th><th>Why</th></tr>` + d.mapped_objects.map((m) =>
+        `<tr><td>${esc(m.name)}</td><td class="muted">${esc(m.reason)}</td></tr>`).join("")
+    : `<tr><td class="muted">No NetIM object on this PC's path: the network was not checked.</td></tr>`;
 }
+$("otherBtn").addEventListener("click", () => {
+  const box = $("otherBox"); box.hidden = !box.hidden;
+  $("otherBtn").textContent = $("otherBtn").textContent.replace(/[▸▾]/, box.hidden ? "▸" : "▾");
+});
 
-// Is it just them: the sentence, then (on "Show who") network points and the slow users.
-function renderWho(im, sentence) {
-  $("who").hidden = !im;
+// Who else is affected: the sentence, then (on "Show who") who else has the same issue:
+// for an application failure, the other PCs with the same failure; otherwise the
+// other slow users of the same apps and the network points they sit behind.
+function renderWho(im, sentence, same, req) {
+  $("who").hidden = !(im || same);
+  $("whoBox").hidden = true; $("whoBtn").textContent = "Show who";
+  if (same) {
+    $("aJust").innerHTML = `<p>${esc(sentence)}</p><p class="muted" style="font-size:12px">Searched: every PC's `
+      + `health events for ${esc(same.app)}, ${span(req.start, req.end)}: the same kind of failure in the same place.</p>`;
+    $("whoBtn").hidden = !same.pcs; $("whoGroups").parentElement.hidden = true;
+    $("whoUsers").parentElement.style.gridColumn = "1 / -1";
+    const more = same.pcs > same.list.length ? `<tr><td colspan="5" class="muted">… and ${same.pcs - same.list.length} more</td></tr>` : "";
+    $("whoUsers").innerHTML = "<tr><th>PC</th><th>User</th><th>Version</th><th>Times</th><th>Last seen</th></tr>"
+      + same.list.map((p) => `<tr><td>${esc(p.device)}</td><td>${esc(p.username ?? "")}</td><td>${esc(p.version)}`
+        + `${p.version === same.this_version ? "" : ` <span class="muted">(this PC: ${esc(same.this_version)})</span>`}</td>`
+        + `<td class="num">${p.times}</td><td class="num">${hm(p.last)}</td></tr>`).join("") + more;
+    return;
+  }
   if (!im) return;
+  $("whoBtn").hidden = false; $("whoGroups").parentElement.hidden = false;
+  $("whoUsers").parentElement.style.gridColumn = "";
   $("aJust").innerHTML = `<p>${esc(sentence)}</p><p class="muted" style="font-size:12px">Compared: other users of `
-    + `${esc(im.applications.join(", "))}, ${hm(im.start)}–${hm(im.end)}`
+    + `${esc(im.applications.join(", "))}, ${span(im.start, im.end)}`
     + `${im.baseline_days ? `, and the same hours on the ${im.baseline_days} previous days` : ""}.`
     + `${im.netim_index_ready ? "" : " NetIM index not ready yet: users are grouped by subnet only."}</p>`;
-  $("whoBox").hidden = true; $("whoBtn").textContent = "Show who";
   $("whoGroups").innerHTML = "<tr><th>Network point</th><th>Slow</th><th>Usually</th></tr>" + im.groups.map((g) =>
     `<tr${g.includes_user ? ' style="font-weight:600"' : ""}><td>${esc(g.name)}${g.includes_user ? " ← this user" : ""}</td>`
     + `<td>${g.slow} of ${g.users}</td><td>${g.usual_rate == null ? "?" : `up to ${Math.round(g.usual_rate * 100)}%`}</td></tr>`).join("");
@@ -358,43 +399,38 @@ $("detBtn").addEventListener("click", () => {
   $("detBtn").textContent = box.hidden ? "Details for IT ▸" : "Details for IT ▾";
 });
 
-// x is time across the whole requested window; the line breaks where a bucket has no activity
+// x = time across the requested window; dots = actions (red = slow); lanes = problems
 function chart(tl, req) {
-  if (!tl.length) return `<p class="muted">No data in window.</p>`;
-  const W = 1100, H = 240, L = 64, R = 10, T = 10, laneH = 10, B = 24 + 3 * (laneH + 4);
-  const plotH = H - T - B, bms = req.bucket_minutes * 60000;
-  const t0 = Math.min(new Date(req.start).getTime(), new Date(tl[0].time).getTime());
-  const slot = (b) => Math.floor((new Date(b.time).getTime() - t0) / bms);
-  const n = Math.max(1, Math.ceil((new Date(req.end).getTime() - t0) / bms), slot(tl[tl.length - 1]) + 1);
-  const step = (W - L - R) / n, x = (i) => L + (i + 0.5) * step;
-  const rts = tl.map((b) => b.avg_response_time).filter((v) => v != null);
-  const max = Math.max(1, ...rts) * 1.1;
+  if (!tl.actions.length && !tl.marks.length) return `<p class="muted">No data in window.</p>`;
+  const W = 1100, H = 260, L = 70, R = 10, T = 10, laneH = 12, gap = 6, B = 26 + 3 * (laneH + gap);
+  const plotH = H - T - B;
+  const t0 = new Date(req.start).getTime(), t1 = new Date(req.end).getTime();
+  const x = (iso) => L + ((new Date(iso).getTime() - t0) / (t1 - t0)) * (W - L - R);
+  const max = Math.max(1, ...tl.actions.map((a) => a[1] ?? 0)) * 1.1;
   const y = (v) => T + plotH - (v / max) * plotH;
-  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Response time timeline">`;
-  tl.forEach((b) => { if (b.degraded) svg += `<rect x="${L + slot(b) * step}" y="${T}" width="${Math.max(step, 3)}" height="${plotH}" fill="var(--bad)" opacity=".18"><title>${esc(b.time)} degraded</title></rect>`; });
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Actions and problems over time">`;
   for (let k = 0; k <= 4; k++) {
     const v = (max / 4) * k;
-    svg += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--border)"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v.toFixed(1)}</text>`;
+    svg += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--border)"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v.toFixed(0)} s</text>`;
   }
-  let path = "", prev = null;
-  tl.forEach((b) => {
-    if (b.avg_response_time == null) return;
-    const i = slot(b), px = x(i).toFixed(1), py = y(b.avg_response_time).toFixed(1);
-    path += `${prev === i - 1 ? "L" : "M"}${px},${py}`;
-    svg += `<circle cx="${px}" cy="${py}" r="2.5" fill="var(--text)"><title>${esc(new Date(b.time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))}: ${b.avg_response_time} s, ${b.samples} activities${b.avg_uxi != null ? `, UXI ${b.avg_uxi}` : ""}</title></circle>`;
-    prev = i;
+  for (const [t, rt, slow, app] of tl.actions) {
+    if (rt == null) continue;
+    svg += `<circle cx="${x(t).toFixed(1)}" cy="${y(rt).toFixed(1)}" r="${slow ? 3.5 : 2.5}" fill="${slow ? "var(--bad)" : "var(--muted)"}"`
+      + ` opacity="${slow ? 1 : 0.6}"><title>${esc(hm(t))}: ${esc(app)} ${rt} s${slow ? " (slow)" : ""}</title></circle>`;
+  }
+  ["pc", "network", "server"].forEach((k, j) => {
+    const ly = T + plotH + 8 + j * (laneH + gap);
+    svg += `<text x="${L - 6}" y="${ly + 10}" text-anchor="end">${KIND[k][0]}</text>`
+      + `<line x1="${L}" x2="${W - R}" y1="${ly + laneH / 2}" y2="${ly + laneH / 2}" stroke="var(--border)"/>`;
+    for (const [t, kind, label, near] of tl.marks) {
+      if (kind !== k) continue;
+      svg += `<rect x="${(x(t) - 1.5).toFixed(1)}" y="${ly}" width="3" height="${laneH}" fill="${KIND[k][1]}" opacity="${near ? 1 : 0.25}">`
+        + `<title>${esc(hm(t))}${near ? " (near a slow action)" : ""}\n${esc(label)}</title></rect>`;
+    }
   });
-  svg += `<path d="${path}" fill="none" stroke="var(--text)" stroke-width="1.8"/>`;
-  ["client", "network", "backend"].forEach((d, j) => {
-    const ly = T + plotH + 6 + j * (laneH + 4);
-    svg += `<text x="${L - 6}" y="${ly + 9}" text-anchor="end">${d}</text>`;
-    tl.forEach((b) => {
-      if (b[d].length) svg += `<rect x="${L + slot(b) * step + 0.5}" y="${ly}" width="${Math.max(2, step - 1)}" height="${laneH}" fill="${COLORS[d]}"><title>${esc(b.time)}\n${b[d].map((a) => esc(`${a.object}: ${a.metric} ${a.value ?? ""}`)).join("\n")}</title></rect>`;
-    });
-  });
-  const every = Math.ceil(n / 8);
-  for (let i = 0; i < n; i += every) {
-    svg += `<text x="${L + i * step}" y="${H - 4}">${new Date(t0 + i * bms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</text>`;
+  for (let i = 0; i <= 6; i++) {
+    const t = new Date(t0 + ((t1 - t0) * i) / 6).toISOString();
+    svg += `<text x="${x(t)}" y="${H - 6}" text-anchor="${i === 0 ? "start" : i === 6 ? "end" : "middle"}">${esc(hm(t))}</text>`;
   }
   return svg + "</svg>";
 }

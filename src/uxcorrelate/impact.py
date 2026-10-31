@@ -113,7 +113,7 @@ def who_else(aternity, netim, apps: list[str], degraded: set[datetime], minutes:
         return None
     start, end = min(degraded), max(degraded) + timedelta(minutes=minutes)
     log.info("Aternity: comparing with other users of %s, %s to %s UTC", ", ".join(apps),
-             start.strftime("%H:%M"), end.strftime("%H:%M"))
+             start.strftime("%Y-%m-%d %H:%M"), end.strftime("%Y-%m-%d %H:%M"))
     users = _per_user(aternity.app_activity(apps, start, end), who, device, degraded, bucket, is_slow)
 
     nets, ready = gateway_index(netim)

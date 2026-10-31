@@ -145,7 +145,8 @@ def create_app(config_path: str | None = None) -> FastAPI:
         try:
             settings, aternity, _ = sources()
             return logon_report(aternity, utc(body.start), utc(body.end), username=body.username or None,
-                                device=body.device or None, location=body.location or None)
+                                device=body.device or None, location=body.location or None,
+                                unit=settings.boot_unit)
         except ApiError as exc:
             raise HTTPException(502, str(exc))
 

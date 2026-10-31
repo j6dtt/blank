@@ -126,11 +126,18 @@ class DemoAternity:
                 day += timedelta(days=1)
         return out
 
-    def boot_components(self, devices, start, end):
+    def _components(self, start, end):
+        # slow Denver logons: Group Policy takes 45 s longer than normal
         return [BootComponent(timestamp=b.timestamp, device=b.device, type="Logon", component=c,
-                              duration=d, degradation=g)
-                for b in self.boots(start, end) if b.device in devices and b.duration > 60
+                              duration=d, degradation=g, username=b.username, location=b.location)
+                for b in self.boots(start, end) if b.duration > 60
                 for c, d, g in (("Group Policy", 55.0, 45.0), ("User profile", 20.0, 5.0))]
+
+    def boot_components(self, devices, start, end):
+        return [c for c in self._components(start, end) if c.device in devices]
+
+    def boot_component_everywhere(self, component, type, start, end):
+        return [c for c in self._components(start, end) if c.component == component and c.type == type]
 
     def health_events(self, device, start, end):
         # one application crash during the CPU spike (the user was fine then)

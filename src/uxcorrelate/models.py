@@ -21,6 +21,7 @@ class UserSample:
     client_time: float | None = None
     network_time: float | None = None
     backend_time: float | None = None
+    status: str | None = None  # Aternity's own verdict on the activity (SLA_STATUS)
 
 
 @dataclass
@@ -32,6 +33,7 @@ class DeviceHealthSample:
     cpu: float | None = None
     memory: float | None = None
     disk_queue: float | None = None
+    free_disk: float | None = None  # OS drive, in Aternity's unit (same as EndpointInfo.total_disk)
     network_latency: float | None = None  # ms
 
 
@@ -42,11 +44,45 @@ class HealthEvent:
     timestamp: datetime
     device: str
     application: str | None = None
+    username: str | None = None
     category: str | None = None
     name: str | None = None
     component: str | None = None
     severity: str | None = None
     count: float | None = None
+    component_version: str | None = None
+    sub_component: str | None = None
+    sub_component_version: str | None = None
+    exception: str | None = None
+    error: str | None = None
+    details: str | None = None
+
+
+@dataclass
+class SoftwareChange:
+    """One install, update or removal on a device, as Aternity logged it."""
+
+    timestamp: datetime
+    device: str
+    name: str | None = None
+    change: str | None = None  # Aternity's change type, as it names it
+    version: str | None = None
+    version_before: str | None = None
+    vendor: str | None = None
+
+
+@dataclass
+class ProcessSample:
+    """One process's resource use on a device at one time (Aternity's values)."""
+
+    timestamp: datetime
+    device: str
+    process: str
+    application: str | None = None
+    cpu: float | None = None
+    memory: float | None = None
+    io_read: float | None = None
+    io_write: float | None = None
 
 
 @dataclass
@@ -84,6 +120,8 @@ class BootComponent:
     type: str | None = None
     component: str | None = None
     start_type: str | None = None
+    username: str | None = None
+    location: str | None = None
     duration: float | None = None
     degradation: float | None = None
 
@@ -94,6 +132,7 @@ class EndpointInfo:
     ip_address: str | None = None
     location: str | None = None
     os: str | None = None
+    total_disk: float | None = None  # OS drive size, in Aternity's unit
 
 
 @dataclass

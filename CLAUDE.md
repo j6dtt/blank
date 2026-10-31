@@ -30,24 +30,45 @@ unset `<REQUIRED>` base URLs.
   follows `@odata.nextLink`.
 - `netim.py`: NetIM client (devices, interfaces, metric data, alerts).
   `parse_metric_response` accepts several response shapes.
-- `correlate.py`: the core. It maps endpoints and apps to NetIM objects
-  (roles), groups samples into time buckets, flags anomalies, and scores the
-  domains. The data sources are the `AternitySource`/`NetimSource` protocols.
-- `logons.py`: slow boots/logons (`WINDOWS_MACHINE_BOOTS`,
-  `MACHINE_BOOT_COMPONENTS`): the slowest, per-type and per-location
-  medians, what slowed them, and a device's own 30-day usual. No "slow"
-  threshold and no assumed type names or units. Used by the investigation
-  result (`logons`) and by the "Slow logons" tab (`/api/logon-jobs`) and
-  the `logons` CLI command.
+- `correlate.py`: the core. Slow = Aternity's own `SLA_STATUS` in
+  `thresholds.slow_status` (else over `response_time_s`). It maps endpoints
+  and apps to NetIM objects (roles), collects problems (PC values over their
+  limits incl. a nearly full disk, health events, app crashes/hangs, NetIM
+  values and alerts) and counts the slow actions each one was within
+  `bucket_minutes` of. An app's crash/hang/event counts only for that app.
+  No scores: the answer is plain counts. The data sources are the
+  `AternitySource`/`NetimSource` protocols.
+- `logons.py`: slow start-ups (`WINDOWS_MACHINE_BOOTS`,
+  `MACHINE_BOOT_COMPONENTS`). Rows of one device within an hour, no type
+  twice, are one start-up (one row, a column per Aternity type). Per type:
+  typical and 90th percentile; per row: the device's own 30-day usual and
+  what took the time. Why: the part with the most Aternity degradation,
+  software changes before (`cause.changes_before`), and main causes =
+  that part longer than normal on every PC (`boot_component_everywhere`).
+  No "slow" threshold, no assumed type names. Unit
+  from `boot_unit` (inferred as seconds from live values, not documented).
+  Used by "What the user felt", the "Slow start-ups" tab
+  (`/api/logon-jobs`) and the `logons` CLI command.
 - `impact.py`: "who else" — other users of the same apps in the user's slow
   intervals, grouped by the NetIM gateway (or /24) they sit behind and
   compared with the same hours on previous days ("unusual" = more slow
   than any of those days; common point = an unusual group holding more
   than half the slow users). This NetIM grouping is what Aternity can't do.
+- `cause.py`: the main point of an investigation, "why". For the problems
+  at the most slow actions: where the app failed (component, module,
+  versions, error, from `DEVICE_HEALTH_RAW`), other PCs failing the same
+  way, software changes in the 14 days before
+  (`INSTALLED_SOFTWARE_CHANGE_LOG`), busiest processes for CPU/memory/disk
+  (`RAW_DATA_TOP_PROCESSES`). "Same failure" = same category+name, same
+  component and sub-component (version shown, not matched); see
+  `docs/who-else-is-affected.md`. Each finding is a sentence about a record;
+  a source with nothing says so. A hang and its own health event share one
+  cause.
 - `answer.py`: the plain-language answer at the top of the page and the
-  CLI report (title, what the user felt, where the time went, is it just
-  them, what we found, what to do). Keep it free of scores and jargon;
-  scores and tables live under "Details for IT".
+  CLI report (title, what the user felt, who else is affected, what we found,
+  what to do), plus `problem_text`, the sentence for each problem. Keep it
+  free of scores and jargon. The page has one timeline and one problems
+  list; don't add views that repeat them.
 - `verify.py` checks every configured Aternity data source/column (against
   OData `$metadata`), NetIM metric class/metric (against NetIM's list, then
   one real fetch) and topology name, and prints the closest real names.

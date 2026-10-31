@@ -1,19 +1,26 @@
 """Correlation engine.
 
-1. Pull the user's Aternity activity for the window and flag degraded time buckets.
-2. Endpoint context (Aternity): CPU, memory, disk queue, round-trip time, IP and
-   location from the activity rows; device health events; per-app UXI, crashes
-   and hang time.
+1. Pull the user's Aternity activity for the window. An activity is slow when
+   Aternity's own status says so (thresholds.slow_status), else when it is over
+   the configured response time.
+2. Problems on the PC (Aternity): CPU, memory, disk queue, round-trip time from
+   the activity rows (incl. free disk space); device health events; per-app
+   crashes and hang time.
 3. Map the user and application onto NetIM objects:
      client-gateway      L3 interface whose subnet contains the endpoint IP
      site                devices configured for the endpoint's Aternity location
      app-server          NetIM device matching an application server name/IP
      app-server-network  L3 interface whose subnet contains an application server IP
      always              devices configured in topology.always_include
-4. Pull NetIM metrics and alerts for those objects and flag anomalous buckets.
-5. Score each domain (client device / network / application backend) by how well
-   its anomalies line up with the degraded buckets, blended with Aternity's
-   client/network/backend response-time breakdown.
+4. Pull NetIM metrics and alerts for those objects; values over their limit are
+   problems on the network or the application's servers.
+5. A problem counts for a slow action when it was recorded within
+   `bucket_minutes` before or after it. A crash, hang or health event of one
+   application counts only for that application's slow actions. The answer is
+   plain counts: "Outlook hung during 3 of 4 slow actions". No scores.
+6. For the problems at the most slow actions, cause.py looks for what caused
+   them: where the application failed, whether other PCs fail the same way,
+   what changed on the PC before, and the busiest processes.
 """
 
 from __future__ import annotations
@@ -21,35 +28,31 @@ from __future__ import annotations
 import ipaddress
 import logging
 import time
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from statistics import mean
 from typing import Protocol
 
 from .config import NetimMetric, Settings
-from .answer import build_answer
+from .answer import build_answer, problem_text
+from .cause import explain
 from .impact import who_else
 from .logons import logon_report
 from .models import (
-    AppUsageSample, DeviceHealthSample, HealthEvent, EndpointInfo, MappedObject, MetricSample, NetimAlert,
+    DeviceHealthSample, HealthEvent, EndpointInfo, MappedObject, MetricSample, NetimAlert,
     NetimDevice, NetimInterface, UserSample,
 )
 
 log = logging.getLogger("uxcorrelate")
 
-DOMAINS = ("client", "network", "backend")
-DOMAIN_LABELS = {
-    "client": "Client device",
-    "network": "Network",
-    "backend": "Application backend",
-}
+KINDS = ("pc", "network", "server")  # where a problem is
 ROLE_DOMAIN = {
     "client-gateway": "network",
     "site": "network",
     "app-server-network": "network",
     "always": "network",
-    "app-server": "backend",
+    "app-server": "server",
 }
 
 
@@ -183,293 +186,232 @@ def map_netim_objects(netim: NetimSource, endpoints: list[EndpointInfo], applica
 
 
 # ---------------------------------------------------------------- engine
-def _is_degraded(s: UserSample, settings: Settings) -> bool:
+def is_slow(s: UserSample, settings: Settings) -> bool:
     th = settings.thresholds
-    rt_limit = th.response_time_s_by_app.get(s.application, th.response_time_s)
-    return s.response_time is not None and s.response_time > rt_limit
+    if th.slow_status:
+        return s.status in th.slow_status
+    limit = th.response_time_s_by_app.get(s.application, th.response_time_s)
+    return s.response_time is not None and s.response_time > limit
 
 
-def _endpoint_anomalies(h: DeviceHealthSample, settings: Settings) -> list[tuple[str, dict]]:
-    """Aternity device-health anomalies as (domain, anomaly) pairs."""
+def slow_rule(settings: Settings) -> str:
     th = settings.thresholds
-    checks = [
-        ("client", h.cpu, th.device_cpu, ">", "CPU %"),
-        ("client", h.memory, th.device_memory, ">", "Memory %"),
-        ("client", h.disk_queue, th.disk_queue, ">", "Disk queue"),
-        # latency measured from the endpoint points at the network, not the device
-        ("network", h.network_latency, th.client_network_latency_ms, ">", "Endpoint network latency ms"),
-    ]
+    if th.slow_status:
+        return f"Aternity marked it {' or '.join(th.slow_status)}"
+    return (f"it took over {th.response_time_s:g} s"
+            + (" (other limits for some apps)" if th.response_time_s_by_app else "")
+            + "; set thresholds.slow_status to use Aternity's own status")
+
+
+def _problem(t, kind, source, obj, what, value=None, limit=None, app=None, until=None) -> dict:
+    return {"t": t, "until": until or t, "kind": kind, "source": source, "object": obj, "what": what,
+            "value": value, "limit": limit, "app": app}
+
+
+def _pc_problems(h: DeviceHealthSample, settings: Settings, disk_size: float | None) -> list[dict]:
+    """CPU, memory, disk queue, free disk space and round trip from an activity row,
+    over (or under) their limits."""
+    th = settings.thresholds
     out = []
-    for domain, value, limit, cmp, label in checks:
-        if value is None:
-            continue
-        if (cmp == ">" and value > limit) or (cmp == "<" and value < limit):
-            out.append((domain, {"source": "Aternity", "object": h.device, "metric": label,
-                                 "value": round(value, 2), "threshold": limit, "cmp": cmp}))
+    if h.free_disk is not None and disk_size:
+        free = 100 * h.free_disk / disk_size
+        if free < th.free_disk_percent:
+            out.append(_problem(h.timestamp, "pc", "Aternity", h.device, "Free disk space %",
+                                round(free, 1), th.free_disk_percent))
+    for kind, value, limit, what in (("pc", h.cpu, th.device_cpu, "CPU %"),
+                                     ("pc", h.memory, th.device_memory, "Memory %"),
+                                     ("pc", h.disk_queue, th.disk_queue, "Disk queue"),
+                                     # measured from the PC, but it is the network's round trip
+                                     ("network", h.network_latency, th.client_network_latency_ms,
+                                      "Network round trip ms")):
+        if value is not None and value > limit:
+            out.append(_problem(h.timestamp, kind, "Aternity", h.device, what, round(value, 2), limit))
     return out
 
 
-def _event_anomaly(e: HealthEvent) -> dict:
-    """A device health event is evidence by itself (no threshold): it happened."""
+def _event_problem(e: HealthEvent) -> dict:
+    """A device health event is a problem by itself: it happened. One with an
+    application counts only for that application's slow actions."""
     what = " / ".join(x for x in (e.category, e.name) if x) or "Health event"
     where = e.component or e.application
-    return {"source": "Aternity event", "object": e.device,
-            "metric": f"{what} ({where})" if where else what,
-            "value": e.count if e.count is not None else 1, "threshold": None}
+    return _problem(e.timestamp, "pc", "Aternity event", e.device, f"{what} ({where})" if where else what,
+                    e.count if e.count is not None else 1, app=e.application)
 
 
-def _usage_anomalies(u: AppUsageSample) -> list[dict]:
-    """Application crashes and hang time on the device."""
-    out = []
-    for label, value in (("App crashes", u.crashes), ("App hang time", u.hang_time)):
-        if value:
-            out.append({"source": "Aternity", "object": u.device, "metric": f"{label} ({u.application})",
-                        "value": round(value, 2), "threshold": 0, "cmp": ">"})
-    return out
+def _matches(p: dict, s: UserSample, window: timedelta) -> bool:
+    return (p["app"] is None or p["app"] == s.application) and \
+        p["t"] - window <= s.timestamp <= p["until"] + window
 
 
 def investigate(req: InvestigationRequest, aternity: AternitySource, netim: NetimSource | None,
                 settings: Settings) -> dict:
     req.validate()
     minutes = settings.bucket_minutes
+    window = timedelta(minutes=minutes)
     warnings: list[str] = []
     started = time.monotonic()
     who = ", ".join(f"{k} {v}" for k, v in (("user", req.username), ("device", req.device),
                                             ("app", req.application)) if v)
     log.info("Investigating %s, %s to %s UTC", who, req.start.strftime("%Y-%m-%d %H:%M"),
-             req.end.strftime("%H:%M"))
+             req.end.strftime("%Y-%m-%d %H:%M"))
 
     # 1. user experience
-    samples = aternity.user_activity(req.start, req.end, username=req.username,
-                                     device=req.device, application=req.application)
+    samples = sorted(aternity.user_activity(req.start, req.end, username=req.username,
+                                            device=req.device, application=req.application),
+                     key=lambda s: s.timestamp)
     if req.device:
         device_names = [req.device]
     else:
         device_names = [d for d, _ in Counter(s.device for s in samples if s.device).most_common(3)]
+    slow = [s for s in samples if is_slow(s, settings)]
+    log.info("Aternity: %d actions, %d slow, device(s): %s", len(samples), len(slow),
+             ", ".join(device_names) or "none")
+    if settings.thresholds.slow_status and samples and not any(s.status for s in samples):
+        warnings.append("Aternity gave no status for these activities, so none counts as slow. "
+                        "Check aternity.fields.activities.status with uxcorrelate verify.")
 
-    log.info("Aternity: %d activity samples, device(s): %s", len(samples), ", ".join(device_names) or "none")
-
-    # 2. endpoint
+    # 2. problems on the PC
     endpoints = [aternity.endpoint_info(d) for d in device_names]
-    health = [h for d in device_names for h in aternity.device_health(d, req.start, req.end)]
+    problems: list[dict] = []
+    for d in device_names:
+        size = aternity.disk_total(d) if hasattr(aternity, "disk_total") else None
+        for h in aternity.device_health(d, req.start, req.end):
+            problems += _pc_problems(h, settings, size)
     events: list[HealthEvent] = []
-    usage: list[AppUsageSample] = []
+    uxi: list[float] = []
     for d in device_names:
         if hasattr(aternity, "health_events"):
             events += aternity.health_events(d, req.start, req.end)
         if hasattr(aternity, "app_usage"):
-            usage += aternity.app_usage(d, req.start, req.end, req.application)
-    log.info("Aternity: %d device health events, %d application UXI rows", len(events), len(usage))
+            for u in aternity.app_usage(d, req.start, req.end, req.application):
+                for what, value in (("crashed", u.crashes), ("not responding (s)", u.hang_time)):
+                    if value:
+                        problems.append(_problem(u.timestamp, "pc", "Aternity", u.device,
+                                                 f"{u.application} {what}", round(value, 2), app=u.application))
+                if u.uxi is not None:
+                    uxi.append(u.uxi)
+    problems += [_event_problem(e) for e in events]
+    log.info("Aternity: %d device health events", len(events))
     warnings.extend(getattr(aternity, "warnings", []))
 
     # 3/4. infrastructure
     mapped: list[MappedObject] = []
-    metric_samples: list[MetricSample] = []
-    alerts: list[NetimAlert] = []
     if netim is not None:
         mapped = map_netim_objects(netim, endpoints, req.application, settings)
         log.info("NetIM: %d objects on the user's path; reading %d metrics",
                  len(mapped), len(settings.netim.metrics))
+        obj_index = {(m.object_type, m.object_id): m for m in mapped}
         for metric in settings.netim.metrics:
             ids = [m.object_id for m in mapped if m.object_type == metric.object_type]
-            metric_samples.extend(netim.metrics(metric, ids, req.start, req.end))
-        mapped_device_ids = {m.device_id for m in mapped}
-        alerts = [a for a in netim.alerts(req.start, req.end)
-                  if a.object_id in mapped_device_ids or a.object_id in {m.object_id for m in mapped}]
+            for ms in netim.metrics(metric, ids, req.start, req.end):
+                obj = obj_index.get((ms.object_type, ms.object_id))
+                if obj is not None and metric.is_anomalous(ms.value):
+                    problems.append(_problem(ms.timestamp, ROLE_DOMAIN[obj.role], "NetIM", obj.name,
+                                             metric.label, round(ms.value, 2), metric.threshold))
+        ids = {m.device_id for m in mapped} | {m.object_id for m in mapped}
+        roles = {m.device_id: m.role for m in mapped if m.object_type == "DEVICE"}
+        for al in netim.alerts(req.start, req.end):
+            if al.object_id in ids:
+                problems.append(_problem(al.start, ROLE_DOMAIN[roles.get(al.object_id, "always")], "NetIM alert",
+                                         al.object_name, f"{al.severity}: {al.message}", until=al.end or req.end))
         warnings.extend(netim.warnings)
         netim.warnings.clear()
-        if not mapped:
-            warnings.append("No NetIM objects could be mapped to this user/application; "
-                            "network evidence is limited. Add topology hints in the config.")
     else:
-        warnings.append("NetIM not configured; network evidence comes from Aternity only.")
+        warnings.append("NetIM is not configured: the network was not checked.")
     if not samples:
         warnings.append("Aternity returned no activity for this user/device/application in the window.")
 
-    # bucketize
-    buckets: dict[datetime, dict] = defaultdict(lambda: {"samples": [], "uxi": [], **{d: [] for d in DOMAINS}})
-    for s in samples:
-        buckets[_bucket(s.timestamp, minutes)]["samples"].append(s)
-    for h in health:
-        for domain, a in _endpoint_anomalies(h, settings):
-            buckets[_bucket(h.timestamp, minutes)][domain].append(a)
-    for e in events:
-        buckets[_bucket(e.timestamp, minutes)]["client"].append(_event_anomaly(e))
-    for u in usage:
-        b = buckets[_bucket(u.timestamp, minutes)]
-        b["client"] += _usage_anomalies(u)
-        if u.uxi is not None:
-            b["uxi"].append(u.uxi)
+    # 5. which problems happened at the slow actions
+    for p in problems:
+        p["slow"] = {i for i, s in enumerate(slow) if _matches(p, s, window)}
+    groups = _group(problems, len(slow))
+    explain(aternity, groups, events, window, req.start, req.end)
+    for g in groups:
+        g.pop("_times")
+    by_kind = {k: len({i for p in problems if p["kind"] == k for i in p["slow"]}) for k in KINDS}
 
-    metric_defs = {m.key: m for m in settings.netim.metrics}
-    obj_index = {(m.object_type, m.object_id): m for m in mapped}
-    for ms in metric_samples:
-        metric = metric_defs[ms.metric_key]
-        obj = obj_index.get((ms.object_type, ms.object_id))
-        if obj is None or not metric.is_anomalous(ms.value):
-            continue
-        buckets[_bucket(ms.timestamp, minutes)][ROLE_DOMAIN[obj.role]].append({
-            "source": "NetIM", "object": obj.name, "role": obj.role, "metric": metric.label,
-            "value": round(ms.value, 2), "threshold": metric.threshold, "cmp": metric.comparison,
-        })
-    device_roles = {m.device_id: m.role for m in mapped if m.object_type == "DEVICE"}
-    for al in alerts:
-        role = device_roles.get(al.object_id, "always")
-        t = _bucket(al.start, minutes)
-        stop = al.end or req.end
-        while t <= stop and t <= req.end:
-            buckets[t][ROLE_DOMAIN[role]].append({
-                "source": "NetIM alert", "object": al.object_name, "role": role,
-                "metric": f"{al.severity}: {al.message}", "value": None, "threshold": None,
-            })
-            t += timedelta(minutes=minutes)
-
-    # timeline
-    timeline = []
-    degraded: set[datetime] = set()
-    for t in sorted(buckets):
-        b = buckets[t]
-        ss = b["samples"]
-        rts = [s.response_time for s in ss if s.response_time is not None]
-        uxis = b["uxi"]
-        is_deg = any(_is_degraded(s, settings) for s in ss)
-        if is_deg:
-            degraded.add(t)
-        timeline.append({
-            "time": _iso(t),
-            "samples": len(ss),
-            "avg_response_time": round(mean(rts), 3) if rts else None,
-            "avg_uxi": round(mean(uxis), 1) if uxis else None,
-            "degraded": is_deg,
-            **{d: b[d] for d in DOMAINS},
-        })
-
-    # scoring
-    deg_samples = [s for s in samples if _is_degraded(s, settings)]
-    shares = _breakdown_shares(deg_samples)
-    scores = {}
-    for d in DOMAINS:
-        anomalous = {t for t, b in buckets.items() if b[d]}
-        overlap = len(degraded & anomalous) / len(degraded) if degraded else 0.0
-        noise = len(anomalous - degraded) / len(anomalous) if anomalous else 0.0
-        corr = overlap * (1 - 0.3 * noise)
-        share = shares.get(d)
-        score = corr if share is None else 0.5 * corr + 0.5 * share
-        scores[d] = {
-            "label": DOMAIN_LABELS[d],
-            "score": round(score, 3),
-            "overlap": round(overlap, 3),
-            "anomalous_buckets": len(anomalous),
-            "breakdown_share": None if share is None else round(share, 3),
-        }
-
-    evidence = _evidence(buckets, degraded)
-    if not degraded:
-        verdict, confidence = "none", 0.0
-        headline = "No degraded user experience found in the selected window."
-    else:
-        verdict = max(DOMAINS, key=lambda d: scores[d]["score"])
-        confidence = scores[verdict]["score"]
-        if scores[verdict]["overlap"] == 0:
-            # Aternity's time split alone is a hint, not a verdict: nothing measured lined up
-            hint = max(shares, key=shares.get) if shares else None
-            verdict, confidence = "inconclusive", 0.0
-            headline = (f"{len(degraded)} slow interval(s), but no device, network or server "
-                        "measurement lined up with them")
-            headline += (f"; Aternity counts {shares[hint]:.0%} of the slow time as "
-                         f"{DOMAIN_LABELS[hint].lower()} time." if hint else ".")
-        elif confidence < 0.25:
-            verdict = "inconclusive"
-            headline = (f"{len(degraded)} degraded interval(s) found but no domain correlates strongly; "
-                        "widen the window or add NetIM topology hints.")
-        else:
-            headline = (f"{len(degraded)} degraded interval(s); most likely cause: "
-                        f"{DOMAIN_LABELS[verdict]} (score {confidence:.2f}).")
-
-    all_uxi = [u.uxi for u in usage if u.uxi is not None]
     user_location = next((e.location for e in endpoints if e.location), None) or \
         next((s.location for s in samples if s.location), None)
     user_ip = next((e.ip_address for e in endpoints if e.ip_address), None)
-    slow_own = [s for s in samples if _bucket(s.timestamp, minutes) in degraded and _is_degraded(s, settings)]
+    bucket = lambda t: _bucket(t, minutes)  # noqa: E731
     apps = [req.application] if req.application else \
-        [a for a, _ in Counter(s.application for s in slow_own if s.application).most_common(3)]
-    impact = who_else(aternity, netim, apps, degraded, minutes, lambda t: _bucket(t, minutes),
-                      lambda s: _is_degraded(s, settings), req.username or req.device,
+        [a for a, _ in Counter(s.application for s in slow if s.application).most_common(3)]
+    impact = who_else(aternity, netim, apps, {bucket(s.timestamp) for s in slow}, minutes, bucket,
+                      lambda s: is_slow(s, settings), req.username or req.device,
                       None if req.username else req.device, user_ip, user_location)
     warnings.extend(w for w in getattr(aternity, "warnings", []) if w not in warnings)
-    logons = logon_report(aternity, req.start, req.end, username=req.username, device=req.device, top=10)
+    logons = logon_report(aternity, req.start, req.end, username=req.username, device=req.device,
+                          unit=settings.boot_unit)
     warnings.extend(w for w in logons.pop("warnings", []) if w not in warnings)
-    answer = build_answer(verdict, scores, evidence, len(degraded), samples, deg_samples,
-                          req.username or req.device, impact, mapped, logons, settings.thresholds)
-    log.info("Done in %.0f s: %s", time.monotonic() - started, headline)
+    answer = build_answer(groups, samples, slow, req.username or req.device, impact, netim is not None,
+                          mapped, user_ip, logons, minutes, _time_split(slow))
+    log.info("Done in %.0f s: %s", time.monotonic() - started, answer["title"])
     return {
         "request": {
             "username": req.username, "device": req.device, "application": req.application,
             "start": _iso(req.start), "end": _iso(req.end), "bucket_minutes": minutes,
         },
         "summary": {
-            "verdict": verdict,
-            "verdict_label": DOMAIN_LABELS.get(verdict, verdict.title()),
-            "confidence": round(confidence, 3),
-            "headline": headline,
-            "samples": len(samples),
-            "degraded_samples": len(deg_samples),
-            "degraded_intervals": len(degraded),
-            # Aternity's own UXI for the window (as Aternity reports it), and event count
-            "uxi_avg": round(mean(all_uxi), 1) if all_uxi else None,
-            "uxi_min": round(min(all_uxi), 1) if all_uxi else None,
-            "health_events": len(events),
+            "actions": len(samples), "slow": len(slow), "slow_rule": slow_rule(settings),
+            "explained_by": by_kind,
+            # Aternity's own experience score for the window, as Aternity reports it
+            "uxi_avg": round(mean(uxi), 1) if uxi else None,
+            "uxi_min": round(min(uxi), 1) if uxi else None,
         },
         "answer": answer,
+        "problems": groups,
         "impact": impact,
-        "logons": logons,
-        "scores": scores,
-        "evidence": evidence,
+        "timeline": {
+            "actions": [[_iso(s.timestamp), s.response_time, is_slow(s, settings), s.application]
+                        for s in samples],
+            "marks": [[_iso(p["t"]), p["kind"], f"{p['object']}: {p['what']}"
+                       + (f" {p['value']}" if p["value"] is not None else ""), bool(p["slow"])]
+                      for p in sorted(problems, key=lambda p: p["t"])][:5000],
+        },
         "endpoints": [asdict(e) for e in endpoints],
         "mapped_objects": [asdict(m) for m in mapped],
-        "timeline": timeline,
         "warnings": warnings,
     }
 
 
-def _breakdown_shares(samples: list[UserSample]) -> dict[str, float]:
-    """Average fraction of response time spent in client / network / backend."""
-    acc = {d: [] for d in DOMAINS}
-    for s in samples:
-        parts = {"client": s.client_time, "network": s.network_time, "backend": s.backend_time}
-        if any(v is None for v in parts.values()):
+def _time_split(slow: list[UserSample]) -> dict | None:
+    """Aternity's own split of the slow actions' time: share on the PC, network, server."""
+    acc = {k: [] for k in KINDS}
+    for s in slow:
+        parts = {"pc": s.client_time, "network": s.network_time, "server": s.backend_time}
+        total = sum(v for v in parts.values() if v is not None)
+        if any(v is None for v in parts.values()) or total <= 0:
             continue
-        total = sum(parts.values())
-        if total <= 0:
-            continue
-        for d in DOMAINS:
-            acc[d].append(parts[d] / total)
-    return {d: mean(v) for d, v in acc.items() if v}
+        for k in KINDS:
+            acc[k].append(parts[k] / total)
+    return {k: round(mean(v), 3) for k, v in acc.items()} if acc["pc"] else None
 
 
-def _evidence(buckets: dict, degraded: set[datetime]) -> list[dict]:
-    """Group anomalies seen during degraded intervals by object+metric."""
+def _group(problems: list[dict], slow_total: int) -> list[dict]:
+    """One row per object + measurement: how many slow actions it was at, and when."""
     grouped: dict[tuple, dict] = {}
-    for t in sorted(degraded):
-        for d in DOMAINS:
-            for a in buckets[t][d]:
-                key = (d, a["source"], a["object"], a["metric"])
-                g = grouped.setdefault(key, {
-                    "domain": d, "source": a["source"], "object": a["object"],
-                    "role": a.get("role"), "metric": a["metric"], "threshold": a["threshold"],
-                    "worst": None, "intervals": set(), "first": t, "last": t,
-                })
-                g["intervals"].add(t)
-                g["last"] = t
-                if a["value"] is not None:
-                    pick = min if a.get("cmp") == "<" else max
-                    g["worst"] = a["value"] if g["worst"] is None else pick(g["worst"], a["value"])
+    for p in sorted(problems, key=lambda p: p["t"]):
+        key = (p["kind"], p["source"], p["object"], p["what"])
+        g = grouped.setdefault(key, {
+            "kind": p["kind"], "source": p["source"], "object": p["object"], "what": p["what"],
+            "app": p["app"], "limit": p["limit"], "worst": None, "slow": set(), "times": 0,
+            "first": p["t"], "last": p["until"], "_times": [], "why": None,
+        })
+        g["slow"] |= p["slow"]
+        if p["slow"]:  # when it was at a slow action; cause.py looks there
+            g["_times"].append((p["t"], p["until"]))
+        g["times"] += 1
+        g["last"] = max(g["last"], p["until"])
+        if p["value"] is not None:
+            pick = min if p["what"].startswith("Free disk") else max  # less free space is worse
+            g["worst"] = p["value"] if g["worst"] is None else pick(g["worst"], p["value"])
     out = []
     for g in grouped.values():
-        n = len(g.pop("intervals"))
-        g["degraded_intervals_matched"] = n
-        g["coverage"] = round(n / len(degraded), 3)
+        g["slow_actions"] = len(g.pop("slow"))
+        g["of_slow"] = slow_total
         g["first"], g["last"] = _iso(g["first"]), _iso(g["last"])
+        g["text"] = problem_text(g)
         out.append(g)
-    out.sort(key=lambda g: (-g["coverage"], g["domain"]))
+    # at the most slow actions first; a named NetIM object says more than the PC's own view
+    out.sort(key=lambda g: (-g["slow_actions"], not g["source"].startswith("NetIM"), -g["times"]))
     return out
