@@ -2,6 +2,21 @@
 
 from __future__ import annotations
 
+import re
+import textwrap
+
+WIDTH = 72  # report lines wrap here, for narrow terminals
+
+
+def _wrap(lines: list[str]) -> str:
+    """Long lines wrapped, each continuation under its own text (after "- ", "* ", "! ")."""
+    out = []
+    for line in lines:
+        m = re.match(r"(\s*(?:[-*!] )?)", line)
+        lead = " " * len(m.group(1))
+        out += textwrap.wrap(line, WIDTH, subsequent_indent=lead, break_on_hyphens=False) or [""]
+    return "\n".join(out)
+
 
 def _of(c: dict) -> str:
     """A start-up part's type in brackets, unless the part is named by its type."""
@@ -35,15 +50,21 @@ def _answer_lines(a: dict, who: str) -> list[str]:
         lines.append(f"  {f['slow_actions']} of their {f['actions']} actions were slow ({apps}),")
         lines.append(f"  at {_t(f['first'])}" if f["first"] == f["last"] else
                      f"  between {_t(f['first'])} and {_t(f['last'])}")
+        pcs = f.get("pcs") or []
+        if len(pcs) > 1:
+            lines.append(f"  they used {len(pcs)} PCs: "
+                         + ", ".join(f"{p['device']} ({p['slow']} of {p['actions']} slow)" for p in pcs))
         s = f["slowest"]
         if s:
             lines.append(f"  slowest: {s['seconds']} s in {s['app']}" + (f" ({s['activity']})" if s["activity"] else "")
-                         + f" at {_t(s['when'])}")
+                         + (f" on {s['device']}" if s.get("device") else "") + f" at {_t(s['when'])}")
     else:
         lines.append(f"  no slow actions ({f['actions']} measured)")
     if f["logon"]:
         unit = f" {f['logon_unit']}" if f["logon_unit"] else ""
-        lines.append(f"  slowest start-up: {_start_line(f['logon'], unit)}")
+        quiet = any(p["device"] == f["logon"]["device"] and not p["slow"] for p in f.get("pcs") or [])
+        lines.append(f"  slowest start-up: {_start_line(f['logon'], unit)}"
+                     + (" (no slow action on this PC)" if quiet else ""))
     tw = a["time_went"]
     if tw:
         lines += ["", "Where Aternity measured the slow time:"]
@@ -123,7 +144,7 @@ def render_text(result: dict) -> str:
     if result["warnings"]:
         lines += ["", "Warnings:"]
         lines += [f"  ! {w}" for w in result["warnings"]]
-    return "\n".join(lines)
+    return _wrap(lines)
 
 
 def render_logons(lg: dict) -> str:
@@ -132,7 +153,7 @@ def render_logons(lg: dict) -> str:
     who = ", ".join(f"{k} {v}" for k, v in f.items() if v) or "everyone"
     lines = [f"Start-ups (boots and logons): {who}", f"Window: {_t(lg['start'])} -> {_t(lg['end'])}", ""]
     if not lg["total"]:
-        return "\n".join(lines + ["No boots or logons in the window."])
+        return _wrap(lines + ["No boots or logons in the window."])
     lines.append(f"{lg['total']} start-ups. Typical and 1-in-10 slowest, per Aternity measurement:")
     for t in lg["types"]:
         lines.append(f"  {t['type']}: typical {t['typical']}{unit}, 1 in 10 over {t['p90']}{unit} "
@@ -160,4 +181,4 @@ def render_logons(lg: dict) -> str:
                          f"({g['count']} start-ups)")
     for w in lg.get("warnings", []):
         lines.append(f"WARNING: {w}")
-    return "\n".join(lines)
+    return _wrap(lines)

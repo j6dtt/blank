@@ -198,7 +198,9 @@ class AternityClient:
         elif device:
             clauses.append(f"{f['device']} eq {odata_quote(device)}")
         logical = ("timestamp", "username", "device", "response_time", "status", "cpu", "memory", "disk_queue")
-        rows = self.query(self.cfg.entities[key], " and ".join(clauses), select=[f[k] for k in logical if f.get(k)])
+        # a failure (e.g. a timeout on 30 days) is a warning: the investigation goes on without it
+        rows = self._optional(key, "comparison with normal", " and ".join(clauses),
+                              select=[f[k] for k in logical if f.get(k)])
         out = []
         for row in rows:
             ts = parse_time(row.get(f["timestamp"]))

@@ -190,7 +190,10 @@ def test_verify_shows_how_start_up_parts_and_the_change_log_are_filled():
                                       "INSTALLED_SW_VERSION": v, "INSTALLED_SW_VERSION_BEFORE_CHANGE": "N/A"}
             return httpx.Response(200, json={"value": [
                 row("2026-10-29T10:00:00Z", "Removed", "1.0"), row("2026-10-29T10:00:00Z", "Added", "2.0"),
-                {**row("2026-10-20T10:00:00Z", "Added", "5.0"), "INSTALLED_SW_NAME": "Editor"}]})
+                {**row("2026-10-20T10:00:00Z", "Added", "5.0"), "INSTALLED_SW_NAME": "Editor"},
+                # an update whose two rows are 7 minutes apart
+                {**row("2026-10-25T10:00:00Z", "Removed", "3.0"), "INSTALLED_SW_NAME": "Browser"},
+                {**row("2026-10-25T10:07:00Z", "Added", "3.1"), "INSTALLED_SW_NAME": "Browser"}]})
         return httpx.Response(404)
 
     settings = Settings()
@@ -204,9 +207,19 @@ def test_verify_shows_how_start_up_parts_and_the_change_log_are_filled():
     assert starts.rows[0].startswith("timestamp='2026-10-30T08:00:00Z'")  # time order
     assert parts.rows == ["2026-10-30T08:00:00Z: 2 row(s), 0 longer than normal; types: Driver Y (2)",
                           "2026-10-30T09:05:00Z: 2 row(s), 1 longer than normal; types: Phase X (1), Phase Z (1)"]
-    log = _change_log(settings, client, schema)[0]
-    assert "Change types: Added (2), Removed (1)" in log.message
-    assert "at the same second: Removed 1, Added 1; within an hour: none; none: Added 1." in log.message
+    log, lone = _change_log(settings, client, schema)
+    assert "Change types: Added (3), Removed (2)" in log.message
+    assert "at the same second: Removed 1, Added 1; within an hour: Removed 1, Added 1; none: Added 1." in log.message
+    assert lone.message.startswith("3 row(s) have no row of another change type")
+    assert lone.rows == [
+        "timestamp='2026-10-20T10:00:00Z', device='WS-B', name='Editor', change='Added', version='5.0'"
+        "  ->  nearest other change of it: none in these rows",
+        "timestamp='2026-10-25T10:00:00Z', device='WS-B', name='Browser', change='Removed', version='3.0'"
+        "  ->  nearest other change of it, 7 min apart: timestamp='2026-10-25T10:07:00Z', change='Added', "
+        "version='3.1'",
+        "timestamp='2026-10-25T10:07:00Z', device='WS-B', name='Browser', change='Added', version='3.1'"
+        "  ->  nearest other change of it, 7 min apart: timestamp='2026-10-25T10:00:00Z', change='Removed', "
+        "version='3.0'"]
     assert log.rows[0] == ("timestamp='2026-10-29T10:00:00Z', name='Viewer', change='Removed', version='1.0', "
                            "version_before='N/A'")
     assert "· timestamp='2026-10-29" in render_checks([log])

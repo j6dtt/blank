@@ -71,8 +71,10 @@ unset `<REQUIRED>` base URLs.
   compared with the same hours on previous days ("unusual" = more slow
   than any of those days; common point = an unusual group holding more
   than half the slow users). This NetIM grouping is what Aternity can't do.
-- `cause.py`: the main point of an investigation, "why". For the problems
-  at the most slow actions: where the app failed (component, module,
+- `cause.py`: the main point of an investigation, "why". For every PC
+  problem (those at slow actions first, then those at other times: a crash
+  is an issue by itself; up to `MAX_EXPLAIN`, each Aternity question asked
+  once): where the app failed (component, module,
   versions, error, from `DEVICE_HEALTH_RAW`), other PCs failing the same
   way, software changes in the 14 days before
   (`INSTALLED_SOFTWARE_CHANGE_LOG`), busiest processes for CPU/memory/disk
@@ -87,10 +89,19 @@ unset `<REQUIRED>` base URLs.
   cause.
 - `answer.py`: the plain-language answer at the top of the page and the
   CLI report (title, what the user felt, who else is affected, what we found,
-  what to do), plus `problem_text`, the sentence for each problem. Keep it
+  what to do), plus `problem_text`, the sentence for each problem. The
+  headline only counts and points ("see Who else", "Compared with normal");
+  each detail is said once, in its own section. Nothing at the slow actions
+  and other users slow as usual = "Nothing unusual found". An app usage
+  crash/hang and its health event are one row (`correlate._merge_usage`,
+  names compared without ".exe", "(Process)" or spaces). "What the user
+  felt" names each PC the user worked on. The CLI report wraps at 72. Keep it
   free of scores and jargon. The page has one timeline and one problems
   list; don't add views that repeat them.
-- `verify.py`: a missing optional source (`OPTIONAL`) is a note saying what
+- `verify.py`: the change log section also prints rows with no other-type
+  row of the same software at the same second, with the nearest one (are
+  they removals, or updates whose rows are minutes apart?).
+  A missing optional source (`OPTIONAL`) is a note saying what
   is skipped, not a FAIL; a wrong name gets paste-ready YAML only when the
   real name is very close. It checks every configured Aternity data source/column (against
   OData `$metadata`), NetIM metric class/metric (against NetIM's list, then

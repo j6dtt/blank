@@ -23,6 +23,7 @@ from .cause import _day, changes_between
 log = logging.getLogger("uxcorrelate")
 BASELINE_DAYS = 30
 PAIRS = 3  # the app + activity pairs with the most slow actions
+MIN_HISTORY = 5  # earlier runs needed to say what is normal
 PC = (("cpu", "CPU", " %"), ("memory", "memory", " %"), ("disk_queue", "disk queue", ""))
 
 
@@ -31,7 +32,8 @@ def _med(values) -> float | None:
     return round(median(values), 1) if values else None
 
 
-def compare_actions(aternity, slow: list, start, end, username: str | None, is_slow) -> list[dict]:
+def compare_actions(aternity, slow: list, start, end, username: str | None, is_slow,
+                    window: timedelta = timedelta(minutes=5)) -> list[dict]:
     """One entry per slow application + activity: sentences ("text") and steps ("todo")."""
     if not slow or not hasattr(aternity, "activity_history"):
         return []
@@ -42,20 +44,31 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
         who = username or dev
         name = f"{app} {act}" if act else app
         log.info("Aternity: how long %s usually takes for %s and for other users", name, who)
-        hist = aternity.activity_history(app, act, start - timedelta(days=BASELINE_DAYS), start,
-                                         username=username, device=None if username else dev)
+        hist = [s for s in aternity.activity_history(app, act, start - timedelta(days=BASELINE_DAYS), start,
+                                                     username=username, device=None if username else dev)
+                if s.response_time is not None]
         same = (lambda s: s.username == username) if username else (lambda s: s.device == dev)
-        others = [s for s in aternity.activity_history(app, act, start, end) if not same(s)]
-        took, usual, typ = _med(s.response_time for s in mine), _med(s.response_time for s in hist), \
-            _med(s.response_time for s in others)
+        # other users within `window` of these slow actions (the same span as "who else")
+        near = lambda s: any(abs(s.timestamp - m.timestamp) <= window for m in mine)  # noqa: E731
+        others = [s for s in aternity.activity_history(app, act, min(m.timestamp for m in mine) - window,
+                                                       max(m.timestamp for m in mine) + window)
+                  if not same(s) and near(s)]
+        enough = len(hist) >= MIN_HISTORY
+        took, typ = _med(s.response_time for s in mine), _med(s.response_time for s in others)
+        usual = _med(s.response_time for s in hist) if enough else None
         worst = max((s.response_time for s in mine if s.response_time is not None), default=None)
-        text = [f"{name} took {took} s at its {n} slow action(s) (slowest {worst} s)." if took is not None
-                else f"{name}: {n} slow action(s), Aternity gave no time for them."]
+        if took is None:
+            text = [f"{name}: {n} slow action(s), Aternity gave no time for them."]
+        elif n == 1:
+            text = [f"{name} took {took} s at its slow action."]
+        else:
+            text = [f"{name} took {took} s at its {n} slow actions (slowest {round(worst, 1)} s)."]
         text.append(f"Usually {usual} s for {who} (typical of {len(hist)} in the last {BASELINE_DAYS} days)."
-                    if usual is not None else f"No earlier {name} for {who} in the last {BASELINE_DAYS} days.")
+                    if enough else f"Only {len(hist)} earlier {name} for {who} in the last {BASELINE_DAYS} days: "
+                    "too few to say what is normal.")
         users = {s.username or s.device for s in others}
-        text.append(f"Other users at the same time: typical {typ} s ({len(users)} users)." if typ is not None
-                    else f"No other user ran {name} at the same time.")
+        text.append(f"Other users within {window.seconds // 60} min: typical {typ} s ({len(users)} users)."
+                    if typ is not None else f"No other user ran {name} within {window.seconds // 60} min.")
 
         # days on which Aternity marked most runs slow, and since when
         by_day: dict = defaultdict(list)
@@ -69,7 +82,7 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
                 break
             run.insert(0, d)
         since, changes, todo = None, [], []
-        if days:
+        if enough:
             line = (f"Aternity marked most runs slow on {len(bad)} of the {len(days)} days {who} used it "
                     f"in the last {BASELINE_DAYS} days")
             if not bad:
@@ -98,7 +111,7 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
         for key, label, unit in PC:
             top = max((getattr(s, key) for s in mine if getattr(s, key) is not None), default=None)
             if top is not None:
-                u = _med(getattr(s, key) for s in hist)
+                u = _med(getattr(s, key) for s in hist) if enough else None
                 pc.append(f"{label} up to {round(top, 1)}{unit}" + (f" (usually {u}{unit})" if u is not None else ""))
         text.append(f"{dev} at those slow actions: {', '.join(pc)}." if pc
                     else "Aternity gave no CPU, memory or disk queue for those actions.")

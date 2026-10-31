@@ -219,6 +219,18 @@ def test_netim_interfaces_of_many_devices_are_read_several_at_once():
     assert "13" not in client.cached_interfaces()  # failed: skipped, asked again when needed
 
 
+def test_a_failing_comparison_query_is_a_warning_not_an_abort():
+    def handler(request: httpx.Request):
+        return httpx.Response(500, json={"message": "query timed out"})
+
+    client = AternityClient(AternityConfig(base_url="https://aternity.test/odata"),
+                            transport=httpx.MockTransport(handler))
+    client.http.retries = 0
+    assert client.activity_history("Billing", "Open Invoice", START, END, username="lee") == []
+    assert client.warnings == ["Comparison with normal not checked: Aternity BUSINESS_ACTIVITIES_RAW gave an "
+                               "error (query timed out)."]
+
+
 def test_failures_are_told_without_urls_or_raw_replies(caplog):
     import logging
 

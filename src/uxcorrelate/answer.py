@@ -8,8 +8,14 @@ text, so the UI can show them in the reader's time zone and the CLI in UTC.
 from __future__ import annotations
 
 import re
+from datetime import datetime
 
 WHERE = {"pc": "on the PC", "network": "on the network", "server": "on the application's servers"}
+
+
+def _day(iso: str) -> str:
+    t = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    return t.strftime("%b %d").replace(" 0", " ")
 
 
 def _pct(v: float | None) -> str:
@@ -71,7 +77,7 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
     n = len(slow)
     at_slow = [g for g in problems if g["slow_actions"]]
     found, todo = [], []
-    for g in at_slow[:6]:
+    for g in at_slow:
         why = g.get("why") or {}
         if why.get("same_as_above"):
             continue  # e.g. a hang's own health event: already explained above
@@ -80,7 +86,21 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         for step in why.get("todo") or [_todo(g)]:
             if step and step not in todo:
                 todo.append(step)
-    other = len(problems) - len(at_slow)
+    later: list[str] = []
+    # crashes, hangs and health events at other times: an issue by themselves, with their why
+    elsewhere = [g for g in problems if not g["slow_actions"] and g.get("why")
+                 and not g["why"].get("same_as_above")]
+    for g in elsewhere:
+        why = g["why"]
+        text = list(why.get("text", []))
+        o = why.get("others")
+        if o:
+            text.append(f"{o['pcs']} other PC(s) had the same failure in this window." if o["pcs"]
+                        else "Only this PC had this failure in this window.")
+        found.append({"text": g["text"], "count": f"{g['times']}x, not near a slow action", "when": g["first"],
+                      "kind": g["kind"], "why": text})
+        later += [s for s in why.get("todo") or [] if s not in later]  # after the slow actions' steps
+    other = sum(1 for g in problems if not g["slow_actions"] and not g.get("why"))
     if other and n:
         found.append({"text": f"{other} other problem(s) happened only at other times, not near a slow action.",
                       "count": None, "when": None, "kind": None, "why": []})
@@ -139,6 +159,12 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
     top = at_slow[0] if at_slow else None
     lead = next(({**c, "name": f"{c['application']} {c['activity']}" if c["activity"] else c["application"]}
                  for c in normal or [] if c["since"] and c["changes"]), None)
+    # other users of the same apps were slow as often as on previous days at this hour
+    as_usual = bool(impact and impact["slow"] and impact["unusual"] is False)
+    usual_line = (f" Other {', '.join(impact['applications'])} users were slow as often as usual at this hour "
+                  "(see Who else)." if as_usual else "")
+    nothing = f"No problem was recorded within {minutes} min of any of the {n} slow actions."
+    # the details stay in their own section; the reason says where to look
     if not n:
         level, title = "none", "No slow actions found"
         reason = "Nothing was slow in this window."
@@ -146,11 +172,14 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         # nothing at the slow actions, but it became slow right after a change on the PC
         level = "possible"
         title = f"Possibly: what changed on {lead['device']} before {lead['name']} became slow"
-        reason = (f"No problem was recorded within {minutes} min of any of the {n} slow actions. "
-                  + " ".join(t for t in lead["text"] if t.startswith(("Aternity marked", "Changed on"))))
+        reason = (f"{nothing} Compared with normal shows it slow since {_day(lead['since'])} "
+                  f"and what changed on {lead['device']} just before.{usual_line}")
+    elif top is None and as_usual:
+        level, title = "unsure", "Nothing unusual found"
+        reason = nothing + usual_line
     elif top is None:
         level, title = "unsure", "Cause not found"
-        reason = f"No problem was recorded within {minutes} min of any of the {n} slow actions."
+        reason = nothing
         if split:
             side = max(split, key=split.get)
             reason += f" Aternity measured most of the slow time {WHERE[side]} ({_pct(split[side])})."
@@ -162,12 +191,12 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         if weak:
             reason += (" Only the timing links them: Aternity measured nothing in it as longer than normal, "
                        "so it may not be the cause.")
-        elif (top.get("why") or {}).get("text"):
-            reason += " " + top["why"]["text"][0]
+        reason += usual_line
     if not todo and n:
         todo.append(f"Nothing measured explains it: ask {who} what they were doing at those times "
                     "(see \"What was checked\" for what is ruled out).")
 
+    todo += [s for s in later if s not in todo]
     worst = max((s for s in slow if s.response_time is not None), key=lambda s: s.response_time, default=None)
     per_app: dict[str, int] = {}
     for s in slow:
@@ -180,7 +209,11 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         "last": iso(max(s.timestamp for s in slow)) if slow else None,
         "slowest": None if worst is None else {
             "app": worst.application, "activity": worst.activity, "seconds": round(worst.response_time, 1),
-            "when": iso(worst.timestamp)},
+            "when": iso(worst.timestamp), "device": worst.device},
+        # each PC the user worked on: actions and slow actions (a user may have several)
+        "pcs": [{"device": d, "actions": sum(1 for s in samples if s.device == d),
+                 "slow": sum(1 for s in slow if s.device == d)}
+                for d in sorted({s.device for s in samples}, key=lambda d: -sum(1 for s in slow if s.device == d))],
         "logon": (logons or {}).get("starts", [None])[0] if (logons or {}).get("starts") else None,
         "logon_unit": (logons or {}).get("unit"),
     }

@@ -315,15 +315,19 @@ function render(d) {
   const f = a.felt;
   let felt = f.slow_actions
     ? `<p><b>${f.slow_actions}</b> of their ${f.actions} actions were slow`
-      + ` (${f.apps.map(([app, n]) => `${esc(app)} ${n}`).join(", ")}), between ${span(f.first, f.last)}.</p>`
+      + ` (${f.apps.map(([app, n]) => `${esc(app)} ${n}`).join(", ")}), ${f.first === f.last ? "at" : "between"} ${span(f.first, f.last)}.</p>`
     : `<p>No slow actions (${f.actions} measured).</p>`;
-  if (f.slowest) felt += `<p>Slowest: <b>${f.slowest.seconds} s</b> in ${esc(f.slowest.app)}${f.slowest.activity ? ` (${esc(f.slowest.activity)})` : ""}, ${hm(f.slowest.when)}.</p>`;
+  const pcs = f.pcs || [];
+  if (pcs.length > 1) felt += `<p>They used ${pcs.length} PCs: ` + pcs.map((p) =>
+    `${esc(p.device)} (${p.slow} of ${p.actions} slow)`).join(", ") + ".</p>";
+  if (f.slowest) felt += `<p>Slowest: <b>${f.slowest.seconds} s</b> in ${esc(f.slowest.app)}${f.slowest.activity ? ` (${esc(f.slowest.activity)})` : ""}${f.slowest.device ? ` on ${esc(f.slowest.device)}` : ""}, ${hm(f.slowest.when)}.</p>`;
   const tw = a.time_went;
   if (tw) felt += `<p>Aternity measured the slow time: PC ${Math.round(tw.pc * 100)}%, network ${Math.round(tw.network * 100)}%, server ${Math.round(tw.server * 100)}%.</p>`;
   if (f.logon) {
     const u = f.logon_unit ? ` ${f.logon_unit}` : "";
     felt += `<p>Slowest start-up: ${hm(f.logon.time)} on ${esc(f.logon.device)}: ` + Object.entries(f.logon.values).map(([t, v]) =>
-      `${esc(t)} <b>${v.duration}${u}</b>${v.usual != null ? ` (usual ${v.usual}${u})` : ""}`).join(", ") + ".</p>";
+      `${esc(t)} <b>${v.duration}${u}</b>${v.usual != null ? ` (usual ${v.usual}${u})` : ""}`).join(", ") + "."
+      + (pcs.some((p) => p.device === f.logon.device && !p.slow) ? " No slow action on this PC." : "") + "</p>";
   }
   $("aFelt").innerHTML = felt;
   renderWho(d.impact, a.who_else, a.same_failure, d.request);

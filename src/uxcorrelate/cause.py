@@ -24,7 +24,7 @@ from .models import parse_time
 
 log = logging.getLogger("uxcorrelate")
 CHANGES_BEFORE = timedelta(days=14)  # how far back "what changed" looks
-EXPLAIN = 3  # the problems at the most slow actions get explained
+MAX_EXPLAIN = 25  # problems explained per investigation (a few Aternity calls each)
 EVENT = "Aternity event"  # a device health event (correlate._event_problem)
 METRIC = {"CPU %": ("CPU", "cpu", "%"), "Memory %": ("memory", "memory", "%"), "Disk queue": ("disk I/O", "io", "")}
 
@@ -53,25 +53,49 @@ def _module(where: tuple) -> str:
 
 
 def explain(aternity, groups: list[dict], events: list, window: timedelta, start, end) -> None:
-    """Adds g["why"] to the problems at the most slow actions."""
+    """Adds g["why"] to every problem on the PC: those at the slow actions first,
+    then those at other times (a crash is an issue by itself). Up to MAX_EXPLAIN."""
     done: dict[tuple, dict] = {}
-    for g in [g for g in groups if g["slow_actions"]][:EXPLAIN]:
-        if g["why"] or g["source"].startswith("NetIM") or g["what"].startswith("Network round trip"):
-            continue  # the network side is explained by NetIM and "who else"
+    aternity = _Once(aternity)
+    todo = [g for g in groups if not (g["why"] or g["source"].startswith("NetIM")
+                                      or g["what"].startswith("Network round trip"))]  # NetIM and "who else"
+    todo.sort(key=lambda g: not g["slow_actions"])
+    for g in todo[:MAX_EXPLAIN]:
         if g["app"] and (g["object"], g["app"]) in done:  # a hang and its health event: one cause
             g["why"] = {**done[(g["object"], g["app"])], "same_as_above": True}
             continue
         log.info("Looking for the cause: %s", g["text"])
         why = {"failure": None, "others": None, "changes": [], "processes": [], "text": [], "todo": []}
-        times = g["_times"]
+        times = g["_times"] or g["_all"]  # at the slow actions, else whenever it happened
         if g["app"] or g["source"] == EVENT:
             _failure(aternity, g, events, times, window, start, end, why)
         else:
             _processes(aternity, g, times, window, why)
         _changes(aternity, g, min(a for a, _ in times), why)
+        why["text"] += g.get("notes", [])
         g["why"] = why
         if g["app"]:
             done[(g["object"], g["app"])] = why
+
+
+class _Once:
+    """The Aternity source, asking each question once per investigation (e.g. the
+    other PCs' events of one app, for several problems of that app)."""
+    CACHED = ("app_health_events", "component_health_events", "software_changes")
+
+    def __init__(self, source):
+        self._source, self._seen = source, {}
+
+    def __getattr__(self, name):
+        fn = getattr(self._source, name)
+        if name not in self.CACHED:
+            return fn
+
+        def once(*args):
+            if (name, args) not in self._seen:
+                self._seen[(name, args)] = fn(*args)
+            return self._seen[(name, args)]
+        return once
 
 
 def _event_what(e) -> str:

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import re
 import time
 from collections import Counter
 from dataclasses import asdict, dataclass
@@ -287,8 +288,16 @@ def _event_problem(e: HealthEvent) -> dict:
     application counts only for that application's slow actions."""
     what = " / ".join(x for x in (e.category, e.name) if x) or "Health event"
     where = e.component or e.application
-    return _problem(e.timestamp, "pc", "Aternity event", e.device, f"{what} ({where})" if where else what,
-                    e.count if e.count is not None else 1, app=e.application)
+    p = _problem(e.timestamp, "pc", "Aternity event", e.device, f"{what} ({where})" if where else what,
+                 e.count if e.count is not None else 1, app=e.application)
+    p["names"] = {_norm(e.application), _norm(e.component)} - {""}  # to find its app usage row
+    p["kinds"] = {k for k in ("crash", "hang") if k in what.lower()}
+    return p
+
+
+def _norm(name: str | None) -> str:
+    """An app or process name to compare: "Snipping Tool" = "SnippingTool.exe (Process)"."""
+    return re.sub(r"\(process\)|\.exe|\s", "", (name or "").lower())
 
 
 def _matches(p: dict, s: UserSample, window: timedelta) -> bool:
@@ -394,11 +403,13 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
             g["why"] = _startup_why(g, started_up, logons)
     explain(aternity, groups, events, window, req.start, req.end)
     for g in groups:
-        g.pop("_times")
-    normal = compare_actions(aternity, slow, req.start, req.end, req.username, lambda s: is_slow(s, settings))
+        g.pop("_times"), g.pop("_all")
+    normal = compare_actions(aternity, slow, req.start, req.end, req.username, lambda s: is_slow(s, settings),
+                             window)
     th = settings.thresholds
     measured = [s for s in slow if any(v is not None for v in (s.cpu, s.memory, s.disk_queue))]
-    top = lambda k: max((getattr(s, k) for s in measured if getattr(s, k) is not None), default=None)  # noqa: E731
+    top = lambda k: max((round(getattr(s, k), 1) for s in measured if getattr(s, k) is not None),  # noqa: E731
+                        default=None)
     checked = {
         "devices": device_names,
         "pc": {"measured": len(measured), "cpu": top("cpu"), "memory": top("memory"),
@@ -464,6 +475,31 @@ def _time_split(slow: list[UserSample]) -> dict | None:
     return {k: round(mean(v), 3) for k, v in acc.items()} if acc["pc"] else None
 
 
+def _merge_usage(grouped: dict) -> None:
+    """A crash or hang counted by app usage (APPLICATIONS_RAW) and recorded as a
+    health event is one issue: one row, the health event's, with the usage count
+    as a note and both rows' links to slow actions."""
+    for key, u in list(grouped.items()):
+        m = re.match(r"(.+) (crashed|not responding)$", u["what"])
+        if u["source"] != "Aternity" or not u["app"] or not m:
+            continue
+        kind = "crash" if m.group(2) == "crashed" else "hang"
+        e = next((g for g in grouped.values() if g["source"] == "Aternity event" and g["object"] == u["object"]
+                  and _norm(u["app"]) in g["_names"] and kind in g["_kinds"]), None)
+        if e is None:
+            continue
+        e["slow"] |= u["slow"]
+        e["_times"] += u["_times"]
+        e["_all"] += u["_all"]
+        e["first"], e["last"] = min(e["first"], u["first"]), max(e["last"], u["last"])
+        # hang time has no documented unit: shown as Aternity gives it
+        e.setdefault("notes", []).append(
+            f"Aternity's app usage counted {u['_total']:g} crash(es) of {u['app']} on {u['object']} in this window."
+            if kind == "crash" else
+            f"Aternity's app usage recorded {u['app']} not responding on {u['object']} (hang time up to {u['worst']}).")
+        del grouped[key]
+
+
 def _group(problems: list[dict], slow_total: int) -> list[dict]:
     """One row per object + measurement: how many slow actions it was at, and when."""
     grouped: dict[tuple, dict] = {}
@@ -472,18 +508,26 @@ def _group(problems: list[dict], slow_total: int) -> list[dict]:
         g = grouped.setdefault(key, {
             "kind": p["kind"], "source": p["source"], "object": p["object"], "what": p["what"],
             "app": p["app"], "limit": p["limit"], "worst": None, "slow": set(), "times": 0,
-            "first": p["t"], "last": p["until"], "_times": [], "why": None,
+            "first": p["t"], "last": p["until"], "_times": [], "_all": [], "why": None, "_total": 0.0,
+            "_names": set(), "_kinds": set(),
         })
+        g["_names"] |= p.get("names", set())
+        g["_kinds"] |= p.get("kinds", set())
+        g["_total"] += p["value"] or 0
         g["slow"] |= p["slow"]
         if p["slow"]:  # when it was at a slow action; cause.py looks there
             g["_times"].append((p["t"], p["until"]))
+        g["_all"].append((p["t"], p["until"]))
         g["times"] += 1
         g["last"] = max(g["last"], p["until"])
         if p["value"] is not None:
             pick = min if p["what"].startswith("Free disk") else max  # less free space is worse
             g["worst"] = p["value"] if g["worst"] is None else pick(g["worst"], p["value"])
+    _merge_usage(grouped)
     out = []
     for g in grouped.values():
+        for k in ("_names", "_kinds", "_total"):
+            g.pop(k)
         g["slow_actions"] = len(g.pop("slow"))
         g["of_slow"] = slow_total
         g["first"], g["last"] = _iso(g["first"]), _iso(g["last"])

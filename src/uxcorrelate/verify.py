@@ -434,11 +434,30 @@ def _change_log(settings: Settings, client: AternityClient, schema: dict[str, se
              + (", ".join(f"{k} {n}" for k, n in same.most_common()) or "none")
              + "; within an hour: " + (", ".join(f"{k} {n}" for k, n in hour.most_common()) or "none")
              + "; none: " + (", ".join(f"{k} {n}" for k, n in alone.most_common()) or "none") + ".")
-    return [Check("Aternity", "software change log", None,
-                  f"{entity}, last 14 days: {len(rows)} row(s){' (first 300)' if len(rows) == 300 else ''}. "
-                  "Change types: " + (", ".join(f"{k} ({n})" for k, n in kinds.most_common()) or "none")
-                  + ". Its version/change/type columns: " + ", ".join(others) + ". " + pairs + " One row per change type:",
-                  rows=[_raw(r, f, ("timestamp", "name", "change", "version", "version_before")) for r in sample.values()])]
+    cols = ("timestamp", "device", "name", "change", "version")
+    # a row with no row of another change type at the same second: is it a real removal
+    # (or install), or is its other half there at another time? Its nearest other half:
+    lone = []
+    for r in rows:
+        t, kind = parse_time(r.get(f["timestamp"])), str(r.get(f.get("change", "")))
+        other = [(abs((parse_time(o.get(f["timestamp"])) - t).total_seconds()), o) for o in by_sw[key(r)]
+                 if str(o.get(f.get("change", ""))) != kind and t and parse_time(o.get(f["timestamp"]))]
+        if not other or min(s for s, _ in other) > 0:
+            near = min(other, key=lambda x: x[0]) if other else None
+            lone.append(_raw(r, f, cols) + ("  ->  nearest other change of it: none in these rows" if near is None else
+                                            f"  ->  nearest other change of it, {near[0] / 60:.0f} min apart: "
+                                            + _raw(near[1], f, ("timestamp", "change", "version"))))
+    out = [Check("Aternity", "software change log", None,
+                 f"{entity}, last 14 days: {len(rows)} row(s){' (first 300)' if len(rows) == 300 else ''}. "
+                 "Change types: " + (", ".join(f"{k} ({n})" for k, n in kinds.most_common()) or "none")
+                 + ". Its version/change/type columns: " + ", ".join(others) + ". " + pairs + " One row per change type:",
+                 rows=[_raw(r, f, ("timestamp", "name", "change", "version", "version_before")) for r in sample.values()])]
+    if lone:
+        out.append(Check("Aternity", "software change log, rows without a pair", None,
+                         f"{len(lone)} row(s) have no row of another change type for the same software on the same PC "
+                         "at the same second. The first 8, each with its nearest other change of that software:",
+                         rows=lone[:8]))
+    return out
 
 
 # ---------------------------------------------------------------- NetIM

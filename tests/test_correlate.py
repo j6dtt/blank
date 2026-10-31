@@ -160,7 +160,10 @@ def test_answer_is_plain_language():
     assert a["todo"][0].startswith("Many users are slow behind den-br-rtr01")
     assert a["found"][0]["count"] == "at 23 of 23 slow actions"
     assert a["time_went"]["network"] > 0.8 and a["felt"]["slow_actions"] == 23
-    assert any("other problem(s) happened only at other times" in f["text"] for f in a["found"])
+    # the problems at other times are listed with their own why, not just counted
+    elsewhere = [f["text"] for f in a["found"] if (f["count"] or "").endswith("not near a slow action")]
+    assert elsewhere == ["LT-JDOE-01: CPU reached 96.0% (limit 85.0)",
+                         "Health event on LT-JDOE-01: Crash / Application crash (OUTLOOK.EXE)"]
 
 
 def test_who_else_says_when_only_this_user_is_slow():
@@ -214,7 +217,8 @@ def test_a_hang_is_traced_to_its_module_the_change_before_it_and_other_pcs():
     assert why["changes"][0]["related"] and not why["changes"][1]["related"]
     assert any("Oct 27 Scanner Updated 2.0 → 2.1 (same name as the failing part)" in t for t in why["text"])
     a = result["answer"]
-    assert "ERP failed in scanner.dll 2.1" in a["reason"] and a["found"][0]["why"] == why["text"]
+    # the why is said once, under the finding; the headline only counts
+    assert a["reason"] == "It happened within 5 min of 1 of the 1 slow actions." and a["found"][0]["why"] == why["text"]
     assert any(t.startswith("Check the Scanner change of 2026-10-27") for t in a["todo"])
     assert len([f for f in a["found"] if f["why"]]) == 1  # the hang and its health event: one finding
     # "who else is affected" is about the same failure, and it is said only there
@@ -417,9 +421,9 @@ def test_each_slow_action_is_compared_with_its_own_normal_and_what_changed():
                          Billing(samples), None, Settings())
     a = result["answer"]
     assert a["normal"] == [[
-        "Billing Open Invoice took 9.0 s at its 3 slow action(s) (slowest 9.0 s).",
+        "Billing Open Invoice took 9.0 s at its 3 slow actions (slowest 9.0 s).",
         "Usually 2.0 s for lee (typical of 60 in the last 30 days).",
-        "Other users at the same time: typical 2.1 s (3 users).",
+        "Other users within 5 min: typical 2.1 s (3 users).",  # those at 09:40 are not near
         "Aternity marked most runs slow on 10 of the 30 days lee used it in the last 30 days, every day since Oct 18.",
         "Changed on NB-12 between Oct 17 and Oct 18: Oct 17 Print Agent updated 4.1 → 4.2.",
         "NB-12 at those slow actions: CPU up to 35.0 % (usually 20.0 %), memory up to 72.0 % (usually 50.0 %), "
@@ -427,5 +431,75 @@ def test_each_slow_action_is_compared_with_its_own_normal_and_what_changed():
     ]]
     assert "On NB-12: check what changed before Billing Open Invoice became slow (Print Agent)." in a["todo"]
     assert a["level"] == "possible" and a["title"] == "Possibly: what changed on NB-12 before Billing Open Invoice became slow"
-    assert a["reason"].endswith("every day since Oct 18. Changed on NB-12 between Oct 17 and Oct 18: "
-                                "Oct 17 Print Agent updated 4.1 → 4.2.")
+    assert a["reason"] == ("No problem was recorded within 5 min of any of the 3 slow actions. Compared with normal "
+                           "shows it slow since Oct 18 and what changed on NB-12 just before.")
+
+
+def test_a_crash_at_another_time_still_gets_its_why():
+    # ERP hangs at 09:40, but the only slow action is at 09:00: the hang is an issue by itself
+    usage = [AppUsageSample(Traced.at, "PC1", "ERP", hang_time=12.0)]
+    result = amy(erp(lambda i: i == 0), usage=usage, source=Traced)
+    a = result["answer"]
+    hang = next(f for f in a["found"] if f["count"] and "not near a slow action" in f["count"])
+    assert hang["why"][0] == "ERP failed in scanner.dll 2.1 (inside erp.exe 5.0): Not responding."
+    assert "3 other PC(s) had the same failure in this window." in hang["why"]
+    assert any(t.startswith("Check the Scanner change of 2026-10-27") for t in a["todo"])
+    assert not any(f["text"].endswith("not near a slow action.") for f in a["found"])  # nothing left unexplained
+
+
+def test_one_earlier_run_is_too_few_to_say_what_is_normal():
+    class Once(Billing):
+        def history(self, start, end, username=None, device=None):
+            rows = super().history(start, end, username=username, device=device)
+            return rows[:1] if username else rows
+
+    samples = [UserSample(T0 + timedelta(minutes=10), "lee", "NB-12", "Billing", "Open Invoice",
+                          response_time=9.004, cpu=35.04)]
+    result = investigate(InvestigationRequest(start=T0, end=T0 + timedelta(hours=2), username="lee"),
+                         Once(samples), None, Settings())
+    a = result["answer"]
+    assert a["normal"] == [[
+        "Billing Open Invoice took 9.0 s at its slow action.",
+        "Only 1 earlier Billing Open Invoice for lee in the last 30 days: too few to say what is normal.",
+        "Other users within 5 min: typical 2.1 s (3 users).",
+        "NB-12 at those slow actions: CPU up to 35.0 %.",
+    ]]
+    assert a["title"] == "Cause not found"  # no headline built on one earlier run
+    assert "highest CPU 35.0 % (limit 85.0 %)" in a["checked"][0]
+
+
+def test_one_crash_counted_by_app_usage_and_health_events_is_one_row():
+    class Snip(StubAternity):  # usage names the app, the event its process
+        def health_events(self, device, start, end):
+            return [HealthEvent(T0 + timedelta(minutes=t), "PC1", None, "amy", "Application", "Application Crash",
+                                "SnippingTool.exe (Process)", error="c0000005 (Exception)") for t in (30, 50)]
+
+    usage = [AppUsageSample(T0 + timedelta(minutes=t), "PC1", "Snipping Tool", crashes=1.0) for t in (30, 50, 70)]
+    result = amy(erp(lambda i: i == 0), usage=usage, source=Snip)
+    rows = [g for g in result["problems"] if "nipping" in g["text"]]
+    assert len(rows) == 1 and rows[0]["source"] == "Aternity event" and rows[0]["times"] == 2
+    assert "Aternity's app usage counted 3 crash(es) of Snipping Tool on PC1 in this window." in rows[0]["why"]["text"]
+    assert rows[0]["last"] == "2026-10-28T10:10:00Z"  # the usage row at 10:10 is part of it
+
+
+def test_two_pcs_are_told_apart_and_usual_slowness_is_not_blamed():
+    class Usual(StubAternity):
+        def app_activity(self, applications, start, end):  # 3 of 30 other users slow now and every day
+            return [UserSample(t.replace(second=0), f"u{i}", f"PC-{i}", "ERP", response_time=6.0 if i < 3 else 1.0)
+                    for t in (start + timedelta(minutes=1),) for i in range(30)]
+
+    samples = erp(lambda i: i == 4) + [UserSample(T0 + timedelta(minutes=7), "amy", "PC2", "ERP", response_time=1.0)]
+    result = amy(samples, source=Usual)
+    a = result["answer"]
+    assert a["felt"]["pcs"] == [{"device": "PC1", "actions": 24, "slow": 1}, {"device": "PC2", "actions": 1, "slow": 0}]
+    assert a["felt"]["slowest"]["device"] == "PC1"
+    assert a["title"] == "Nothing unusual found"
+    assert a["reason"].endswith("Other ERP users were slow as often as usual at this hour (see Who else).")
+
+
+def test_the_text_report_fits_a_narrow_terminal():
+    from uxcorrelate.report import WIDTH, render_text
+    text = render_text(run_demo()[0])
+    assert max(len(line) for line in text.splitlines()) <= WIDTH
+    # a wrapped line continues under its own text
+    assert "      * Logon took 94.0 s, longer than 9 in 10 of LT-JDOE-01's 30\n        earlier" in text
