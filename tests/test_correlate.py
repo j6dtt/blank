@@ -6,7 +6,7 @@ from uxcorrelate.config import Settings
 from uxcorrelate.correlate import InvestigationRequest, investigate
 from synthetic import CPU_SPIKE, INCIDENT, DemoAternity, DemoNetim, demo_sources
 from uxcorrelate.models import (
-    AppUsageSample, DeviceHealthSample, EndpointInfo, HealthEvent, ProcessSample, SoftwareChange, UserSample,
+    AppUsageSample, BootComponent, BootSample, DeviceHealthSample, EndpointInfo, HealthEvent, ProcessSample, SoftwareChange, UserSample,
 )
 
 NOW = datetime(2026, 10, 28, 12, 0, tzinfo=timezone.utc)
@@ -235,3 +235,48 @@ def test_a_cpu_problem_names_the_busiest_process():
     why = amy(erp(bad), health, source=Busy)["problems"][0]["why"]
     assert why["processes"][0] == {"process": "scan.exe", "value": 80.0}
     assert why["text"][0] == "Busiest processes then: scan.exe (CPU 80.0%), erp.exe (CPU 10.0%)."
+
+
+class Starting(StubAternity):
+    """amy logs on to PC1 at 09:21 (105 s, usually 34 s) and opens ERP at 09:25."""
+    def boots(self, start, end, **k):
+        if start < T0 - timedelta(days=1):  # her last 30 days
+            return [BootSample(T0 - timedelta(days=d), "PC1", "amy", "HQ", type="Logon", duration=34.0)
+                    for d in range(1, 6)]
+        return [BootSample(T0 + timedelta(minutes=21), "PC1", "amy", "HQ", type="Logon", duration=105.0),
+                BootSample(T0 + timedelta(minutes=100), "PC1", "amy", "HQ", type="Logon", duration=30.0)]
+
+    def boot_components(self, *a, **k):
+        return [BootComponent(T0 + timedelta(minutes=21), "PC1", "Logon", "Group Policy", duration=60.0,
+                              degradation=45.0)]
+
+    def boot_component_everywhere(self, *a, **k):
+        return [BootComponent(T0 + timedelta(minutes=20 + i), f"PC{i}", "Logon", "Group Policy", location="HQ",
+                              duration=50.0, degradation=30.0) for i in (1, 2, 3)]
+
+
+def test_an_app_opened_during_a_slow_logon_is_explained_by_the_logon():
+    result = amy(erp(lambda i: i == 5), source=Starting)  # ERP at 09:25, 4 min after the logon began
+    top = result["problems"][0]
+    assert top["source"] == "Aternity start-up" and top["slow_actions"] == 1
+    assert result["answer"]["title"] == "Likely: PC1 was starting up: Logon 105.0 s (usual 34.0 s)"
+    why = top["why"]["text"]
+    assert why[0] == "Most of the extra time: Group Policy took 60.0 s, 45.0 s longer than normal (Logon)."
+    assert why[-1].startswith("Group Policy was longer than normal on 3 PC(s) in this window (HQ 3)")
+    assert len(result["problems"]) == 1  # the 30 s logon at 10:40 was near no slow action: not a problem
+
+
+def test_a_missing_data_source_is_one_plain_line():
+    from uxcorrelate.aternity import AternityClient
+    from uxcorrelate.config import AternityConfig
+    import httpx
+
+    def handler(request):
+        return httpx.Response(400, text='<?xml version="1.0"?><error><code>null</code>'
+                                        "<message>View 'RAW_DATA_STORAGE' doesn't exist.</message></error>")
+    client = AternityClient(AternityConfig(base_url="https://aternity.test/odata"), transport=httpx.MockTransport(handler))
+    client.http.retries = 0
+    for dev in ("PC1", "PC2", "PC3"):
+        client.disk_space(dev, T0, T0 + timedelta(hours=1))
+    assert client.warnings == ["Free disk space not checked: this Aternity has no RAW_DATA_STORAGE data source "
+                               "(`uxcorrelate verify` shows what to change)."]

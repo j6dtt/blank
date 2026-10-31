@@ -130,7 +130,7 @@ def test_aternity_health_events_and_uxi_and_their_failures():
     client.cfg.entities["health_events"] = "NOT_THERE"
     client.http.retries = 0
     assert client.health_events("LT1", START, END) == []
-    assert "device health events unavailable" in client.warnings[0]
+    assert client.warnings[0].startswith("Device health events not checked")
 
 
 def test_free_disk_space_as_a_percent_from_either_kind_of_column():

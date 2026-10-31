@@ -8,6 +8,7 @@ access token (or password) generated in Aternity settings.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from urllib.parse import quote
 
@@ -19,6 +20,8 @@ from .models import (
     AppUsageSample, BootComponent, BootSample, DeviceHealthSample, EndpointInfo, HealthEvent, ProcessSample,
     SoftwareChange, UserSample, parse_time, to_float,
 )
+
+log = logging.getLogger("uxcorrelate")
 
 
 def odata_quote(value: str) -> str:
@@ -231,7 +234,15 @@ class AternityClient:
         try:
             return self.query(self.cfg.entities[key], flt, select=select, top=top)
         except ApiError as exc:
-            self.warnings.append(f"Aternity {what} unavailable: {exc}")
+            log.warning("Aternity: could not read %s: %s", what, exc)
+            entity = self.cfg.entities[key]
+            if "doesn't exist" in exc.reason or "does not exist" in exc.reason:
+                msg = (f"{what.capitalize()} not checked: this Aternity has no {entity} data source "
+                       "(`uxcorrelate verify` shows what to change).")
+            else:
+                msg = f"{what.capitalize()} not checked: Aternity {entity} gave an error ({exc.reason or exc.status or exc})."
+            if msg not in self.warnings:
+                self.warnings.append(msg)
             return []
 
     def _events(self, flt: str, what: str, logical: list[str] | None = None) -> list[HealthEvent]:

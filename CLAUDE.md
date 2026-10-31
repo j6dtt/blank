@@ -33,7 +33,8 @@ unset `<REQUIRED>` base URLs.
 - `correlate.py`: the core. Slow = Aternity's own `SLA_STATUS` in
   `thresholds.slow_status` (else over `response_time_s`). It maps endpoints
   and apps to NetIM objects (roles), collects problems (PC values over their
-  limits incl. a nearly full disk (`disk_space` source, % or free
+  limits incl. a start-up of the PC (start to end, kept only when a slow
+  action is in it or just after; why from `logons.py`), a nearly full disk (`disk_space` source, % or free
   space / inventory size), health events, app crashes/hangs, NetIM
   values and alerts) and counts the slow actions each one was within
   `bucket_minutes` of. An app's crash/hang/event counts only for that app.

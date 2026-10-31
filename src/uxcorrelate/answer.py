@@ -27,6 +27,8 @@ def problem_text(g: dict) -> str:
             return f"{m.group(1)} was not responding on {obj} (up to {worst} s)"
     if g["source"] == "Aternity event":
         return f"Health event on {obj}: {what}"
+    if g["source"] == "Aternity start-up":
+        return f"{obj} {what}"
     if g["source"] == "NetIM alert":
         return f"NetIM alert on {obj}: {what}"
     if what.startswith("Network round trip"):
@@ -46,6 +48,8 @@ def _todo(g: dict) -> str:
         return f"On {obj}: check {g['app']} (add-ins, updates, file or mailbox size) and its history in Aternity."
     if g["source"] == "Aternity event":
         return f"On {obj}: open the device's health events in Aternity."
+    if g["source"] == "Aternity start-up":
+        return f"On {obj}: open this start-up in the Slow start-ups tab to see what took the time."
     if g["source"] == "NetIM alert":
         return f"Check the NetIM alert on {obj}."
     if g["source"] == "NetIM":

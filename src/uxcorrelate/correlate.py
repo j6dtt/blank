@@ -41,7 +41,7 @@ from .impact import who_else
 from .logons import logon_report
 from .models import (
     DeviceHealthSample, HealthEvent, EndpointInfo, MappedObject, MetricSample, NetimAlert,
-    NetimDevice, NetimInterface, UserSample,
+    NetimDevice, NetimInterface, UserSample, parse_time,
 )
 
 log = logging.getLogger("uxcorrelate")
@@ -226,6 +226,53 @@ def _pc_problems(h: DeviceHealthSample, settings: Settings) -> list[dict]:
     return out
 
 
+START_UP = "Aternity start-up"
+SECONDS = {"s": 1, "ms": 0.001, "min": 60}
+
+
+def _startup_problems(logons: dict, unit: str) -> dict:
+    """Each start-up (boot or logon) of the PC, from its start to its end: what
+    the user runs during it or just after it is slowed by it. Keyed by id()."""
+    out = {}
+    for st in logons.get("starts", []):
+        t = parse_time(st["time"])
+        if t is None or not st["values"]:
+            continue
+        u = logons.get("unit") or ""
+        longest = max(v["duration"] for v in st["values"].values())
+        parts = ", ".join(f"{typ} {v['duration']}{' ' + u if u else ''}"
+                          + (f" (usual {v['usual']}{' ' + u if u else ''})" if v["usual"] is not None else "")
+                          for typ, v in st["values"].items())
+        p = _problem(t, "pc", START_UP, st["device"], f"was starting up: {parts}", longest,
+                     until=t + timedelta(seconds=longest * SECONDS.get(unit, 1)))
+        p["_start"] = st
+        out[id(p)] = p
+    return out.values()
+
+
+def _startup_why(g: dict, started_up, logons: dict) -> dict:
+    """Why the start-up was slow: what logons.py found (the slowest part, what
+    changed before it, and how many PCs had that part slow)."""
+    st = next(p["_start"] for p in started_up if p["object"] == g["object"] and p["what"] == g["what"])
+    text = [w for w in st["why"] if not w.startswith("Same cause as main cause")]
+    todo = []
+    if not text and st["components"]:
+        text.append("What took the time: " + ", ".join(
+            f"{c['component']} {c['duration']}" for c in st["components"][:3]) + ".")
+    slow = next((c for c in st["components"] if c["degradation"]), None)
+    if slow:
+        todo.append(f"On {g['object']}: look at {slow['component']} ({slow['type']}), the slowest part of "
+                    f"its start-up; the Slow start-ups tab shows it on every PC.")
+    if st["cause"] is not None:
+        c = logons["causes"][st["cause"]]
+        where = ", ".join(f"{k} {n}" for k, n in c["by_location"].items())
+        text.append(f"{c['component']} was longer than normal on {c['pcs']} PC(s) in this window"
+                    + (f" ({where})" if where else "") + ": the Slow start-ups tab lists them.")
+    if not text:
+        text.append("Aternity recorded no parts for this start-up.")
+    return {"failure": None, "others": None, "changes": [], "processes": [], "text": text, "todo": todo}
+
+
 def _event_problem(e: HealthEvent) -> dict:
     """A device health event is a problem by itself: it happened. One with an
     application counts only for that application's slow actions."""
@@ -320,10 +367,21 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
     if not samples:
         warnings.append("Aternity returned no activity for this user/device/application in the window.")
 
+    warnings.extend(w for w in getattr(aternity, "warnings", []) if w not in warnings)
+    logons = logon_report(aternity, req.start, req.end, username=req.username, device=req.device,
+                          unit=settings.boot_unit)
+    warnings.extend(w for w in logons.pop("warnings", []) if w not in warnings)
+    started_up = _startup_problems(logons, settings.boot_unit)
+
     # 5. which problems happened at the slow actions
-    for p in problems:
+    for p in problems + list(started_up):
         p["slow"] = {i for i, s in enumerate(slow) if _matches(p, s, window)}
+    # a start-up counts only when the user was slow during it or just after it
+    problems += [p for p in started_up if p["slow"]]
     groups = _group(problems, len(slow))
+    for g in groups:
+        if g["source"] == START_UP:
+            g["why"] = _startup_why(g, started_up, logons)
     explain(aternity, groups, events, window, req.start, req.end)
     for g in groups:
         g.pop("_times")
@@ -339,9 +397,6 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
                       lambda s: is_slow(s, settings), req.username or req.device,
                       None if req.username else req.device, user_ip, user_location)
     warnings.extend(w for w in getattr(aternity, "warnings", []) if w not in warnings)
-    logons = logon_report(aternity, req.start, req.end, username=req.username, device=req.device,
-                          unit=settings.boot_unit)
-    warnings.extend(w for w in logons.pop("warnings", []) if w not in warnings)
     answer = build_answer(groups, samples, slow, req.username or req.device, impact, netim is not None,
                           mapped, user_ip, logons, minutes, _time_split(slow))
     log.info("Done in %.0f s: %s", time.monotonic() - started, answer["title"])

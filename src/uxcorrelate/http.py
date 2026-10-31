@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 
 import httpx
@@ -10,7 +11,10 @@ RETRY_STATUS = {429, 500, 502, 503, 504}
 
 
 class ApiError(RuntimeError):
-    pass
+    def __init__(self, message: str, status: int | None = None, reason: str = ""):
+        super().__init__(message)
+        self.status = status
+        self.reason = reason  # the server's own short message, if it gave one
 
 
 class RestClient:
@@ -51,9 +55,11 @@ class RestClient:
                 time.sleep(2**attempt)
                 continue
             if response.is_error:
+                m = re.search(r"<message>(.*?)</message>|\"message\"\s*:\s*\"([^\"]*)", response.text, re.S)
                 raise ApiError(
                     f"{self.name}: {method} {response.request.url} -> "
-                    f"HTTP {response.status_code}: {response.text[:300]}"
+                    f"HTTP {response.status_code}: {response.text[:300]}",
+                    response.status_code, ((m.group(1) or m.group(2)) if m else "").strip()[:200],
                 )
             return response
         raise AssertionError("unreachable")

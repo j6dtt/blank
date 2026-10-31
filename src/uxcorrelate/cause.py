@@ -54,7 +54,7 @@ def explain(aternity, groups: list[dict], events: list, window: timedelta, start
     """Adds g["why"] to the problems at the most slow actions."""
     done: dict[tuple, dict] = {}
     for g in [g for g in groups if g["slow_actions"]][:EXPLAIN]:
-        if g["source"].startswith("NetIM") or g["what"].startswith("Network round trip"):
+        if g["why"] or g["source"].startswith("NetIM") or g["what"].startswith("Network round trip"):
             continue  # the network side is explained by NetIM and "who else"
         if g["app"] and (g["object"], g["app"]) in done:  # a hang and its health event: one cause
             g["why"] = {**done[(g["object"], g["app"])], "same_as_above": True}
