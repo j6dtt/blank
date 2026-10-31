@@ -23,7 +23,7 @@ from statistics import median
 from typing import Any
 
 from .aternity import AternityClient, odata_quote, odata_time
-from .config import Settings
+from .config import DISK_FREE_COLUMNS, Settings
 from .http import ApiError
 from .models import to_float
 from .netim import NetimClient, _items
@@ -43,6 +43,11 @@ class Check:
 
 def _closest(name: str, choices) -> list[str]:
     return difflib.get_close_matches(name, list(choices), n=3, cutoff=0.5)
+
+
+def _very_close(name: str, hit: str) -> bool:
+    """Close enough to paste as the fix (not just to show as a hint)."""
+    return difflib.SequenceMatcher(None, name, hit).ratio() >= 0.8
 
 
 def _closest_text(hits: list[str]) -> str:
@@ -78,6 +83,18 @@ def parse_odata_metadata(xml_text: str) -> dict[str, set[str]]:
     return sets
 
 
+# data sources the investigation can do without: what is skipped when one is missing
+OPTIONAL = {
+    "health_events": "crash/hang details (where an app failed, who else has the same failure)",
+    "app_usage": "app crashes, hang time and UXI",
+    "boots": "the Slow start-ups tab",
+    "boot_components": "what took the time in a start-up, and its main causes",
+    "software_changes": "what changed on the PC before a problem",
+    "top_processes": "the busiest processes behind CPU, memory or disk problems",
+    "disk_space": "nearly full disks",
+}
+
+
 def check_schema(settings: Settings, schema: dict[str, set[str]]) -> list[Check]:
     """Every configured Aternity data source and column against a $metadata schema."""
     cfg = settings.aternity
@@ -86,22 +103,61 @@ def check_schema(settings: Settings, schema: dict[str, set[str]]) -> list[Check]
         if entity not in schema:
             hits = _closest(entity, schema)
             known = _closest_text(hits) or (f" Published: {', '.join(sorted(schema))}." if len(schema) <= 20 else "")
-            checks.append(Check("Aternity", f"entities.{key}", False,
-                                f"Data source '{entity}' does not exist.{known}",
-                                paste=_yaml(["aternity", "entities", key], hits[0]) if hits else ""))
+            paste = _yaml(["aternity", "entities", key], hits[0]) if hits and _very_close(entity, hits[0]) else ""
+            if key in OPTIONAL and not paste:
+                known += f" Not published here, so this is skipped: {OPTIONAL[key]}."
+            checks.append(Check("Aternity", f"entities.{key}", False if paste or key not in OPTIONAL else None,
+                                f"Data source '{entity}' does not exist.{known}", paste=paste))
+            if key == "disk_space":
+                checks += _disk_elsewhere(settings, schema)
             continue
         checks.append(Check("Aternity", f"entities.{key}", True, f"Data source '{entity}' exists."))
         columns = schema[entity]
+        missing = False
         for logical, column in cfg.fields.get(key, {}).items():
+            if not column:
+                continue
             if column in columns:
                 checks.append(Check("Aternity", f"fields.{key}.{logical}", True,
                                     f"Column '{column}' exists in {entity}."))
                 continue
+            missing = True
             hits = _closest(column, columns)
+            paste = _yaml(["aternity", "fields", key, logical], hits[0]) if hits and _very_close(column, hits[0]) else ""
             checks.append(Check("Aternity", f"fields.{key}.{logical}", False,
-                                f"Column '{column}' is not in {entity}.{_closest_text(hits)}",
-                                paste=_yaml(["aternity", "fields", key, logical], hits[0]) if hits else ""))
+                                f"Column '{column}' is not in {entity}.{_closest_text(hits)}"
+                                + ("" if paste else " None of them is the same thing: don't use them."),
+                                paste=paste))
+        if missing and key == "disk_space":
+            checks += _disk_elsewhere(settings, schema)
     return checks
+
+
+def _disk_elsewhere(settings: Settings, schema: dict[str, set[str]]) -> list[Check]:
+    """Another published data source with free disk space, as paste-ready YAML."""
+    cfg = settings.aternity
+    inv = cfg.entities.get("inventory")
+    total = cfg.fields.get("inventory", {}).get("total_disk")
+    has_total = inv in schema and total in schema[inv]
+    for key in ("app_usage", "activities", "boots", "health_events", "boot_components", *cfg.entities):
+        entity, f = cfg.entities.get(key), cfg.fields.get(key, {})
+        if key == "disk_space" or entity not in schema or not f.get("timestamp") or not f.get("device"):
+            continue
+        cols = schema[entity]
+        if f["timestamp"] not in cols or f["device"] not in cols:
+            continue
+        for logical, column in DISK_FREE_COLUMNS.items():
+            if column in cols and (logical == "free_percent" or has_total):
+                other = "free_space" if logical == "free_percent" else "free_percent"
+                paste = (f"aternity:\n  entities:\n    disk_space: {entity}\n  fields:\n    disk_space:\n"
+                         f"      timestamp: {f['timestamp']}\n      device: {f['device']}\n"
+                         f"      {logical}: {column}\n      {other}: \"\"")
+                return [Check("Aternity", "free disk space", False,
+                              f"Free disk space is published in {entity} ({column}). Read it from there:",
+                              paste=paste)]
+    return [Check("Aternity", "free disk space", None,
+                  "No published data source has free disk space (" + ", ".join(DISK_FREE_COLUMNS.values())
+                  + "), so nearly full disks are not checked.")]
 
 
 def _value_ranges(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
@@ -113,14 +169,15 @@ def _value_ranges(settings: Settings, client: AternityClient, schema: dict[str, 
         ("activities", "memory"): f"device_memory {th.device_memory}",
         ("activities", "disk_queue"): f"disk_queue {th.disk_queue}",
         ("activities", "network_latency"): f"client_network_latency_ms {th.client_network_latency_ms}",
-        ("activities", "free_disk"): f"free_disk_percent {th.free_disk_percent} (of the inventory's disk size)",
+        ("disk_space", "free_percent"): f"free_disk_percent {th.free_disk_percent}",
+        ("disk_space", "free_space"): f"free_disk_percent {th.free_disk_percent} of inventory.total_disk",
         ("app_usage", "uxi"): "none (UXI is shown as Aternity reports it)",
         ("boots", "duration"): "none (compared with medians; this shows the units)",
     }
     cfg = settings.aternity
     end = datetime.now(timezone.utc)
     checks = []
-    for key in ("activities", "app_usage", "boots"):
+    for key in ("activities", "app_usage", "boots", "disk_space"):
         entity, fields = cfg.entities.get(key), cfg.fields.get(key, {})
         if entity not in schema or fields.get("timestamp") not in schema[entity]:
             continue
@@ -141,7 +198,8 @@ def _value_ranges(settings: Settings, client: AternityClient, schema: dict[str, 
             checks.append(Check("Aternity", f"values {status}", None,
                                 ("Activity status values seen: " + ", ".join(f"{k} ({n})" for k, n in seen.most_common())
                                  if seen else "No activity status values in the last day.")
-                                + f". thresholds.slow_status: {now}. List the values that mean slow there."))
+                                + f". thresholds.slow_status: {now}."
+                                + ("" if th.slow_status else " List the values that mean slow there.")))
         if key == "boots" and kinds:
             checks.append(Check("Aternity", f"values {fields['type']}", None,
                                 "Measurement types seen: " + ", ".join(f"{k} ({n})" for k, n in kinds.most_common())

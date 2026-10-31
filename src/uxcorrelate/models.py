@@ -33,7 +33,7 @@ class DeviceHealthSample:
     cpu: float | None = None
     memory: float | None = None
     disk_queue: float | None = None
-    free_disk: float | None = None  # OS drive, in Aternity's unit (same as EndpointInfo.total_disk)
+    free_disk: float | None = None  # free disk space, % (from AternityClient.disk_space)
     network_latency: float | None = None  # ms
 
 

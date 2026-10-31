@@ -208,16 +208,13 @@ def _problem(t, kind, source, obj, what, value=None, limit=None, app=None, until
             "value": value, "limit": limit, "app": app}
 
 
-def _pc_problems(h: DeviceHealthSample, settings: Settings, disk_size: float | None) -> list[dict]:
-    """CPU, memory, disk queue, free disk space and round trip from an activity row,
-    over (or under) their limits."""
+def _pc_problems(h: DeviceHealthSample, settings: Settings) -> list[dict]:
+    """CPU, memory, disk queue, free disk space and round trip, over (or under) their limits."""
     th = settings.thresholds
     out = []
-    if h.free_disk is not None and disk_size:
-        free = 100 * h.free_disk / disk_size
-        if free < th.free_disk_percent:
-            out.append(_problem(h.timestamp, "pc", "Aternity", h.device, "Free disk space %",
-                                round(free, 1), th.free_disk_percent))
+    if h.free_disk is not None and h.free_disk < th.free_disk_percent:
+        out.append(_problem(h.timestamp, "pc", "Aternity", h.device, "Free disk space %",
+                            round(h.free_disk, 1), th.free_disk_percent))
     for kind, value, limit, what in (("pc", h.cpu, th.device_cpu, "CPU %"),
                                      ("pc", h.memory, th.device_memory, "Memory %"),
                                      ("pc", h.disk_queue, th.disk_queue, "Disk queue"),
@@ -274,9 +271,11 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
     endpoints = [aternity.endpoint_info(d) for d in device_names]
     problems: list[dict] = []
     for d in device_names:
-        size = aternity.disk_total(d) if hasattr(aternity, "disk_total") else None
-        for h in aternity.device_health(d, req.start, req.end):
-            problems += _pc_problems(h, settings, size)
+        health = aternity.device_health(d, req.start, req.end)
+        if hasattr(aternity, "disk_space"):
+            health += aternity.disk_space(d, req.start, req.end)
+        for h in health:
+            problems += _pc_problems(h, settings)
     events: list[HealthEvent] = []
     uxi: list[float] = []
     for d in device_names:

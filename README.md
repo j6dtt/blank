@@ -30,10 +30,12 @@ Who else is affected?
    `verify` lists the status values your tenant uses. Until you set it,
    slow means over `thresholds.response_time_s`.
 2. **Problems on the PC (Aternity).** Each activity row carries the PC's
-   CPU, memory, disk queue, free disk space and network round trip at that
-   moment; a value over its limit (free space: under
-   `free_disk_percent` of the drive size from `DEVICE_INVENTORY`) is a
-   problem. Device health events (`DEVICE_HEALTH_RAW`) and each app's
+   CPU, memory, disk queue and network round trip at that moment; a value
+   over its limit is a problem. Free disk space comes from its own data
+   source (`disk_space`: `RAW_DATA_STORAGE` by default; if the tenant
+   doesn't publish it, `verify` prints where it is, e.g. `OS_FREE_DISK_SPACE`
+   as a share of the drive size from `DEVICE_INVENTORY`); under
+   `free_disk_percent` is a problem. Device health events (`DEVICE_HEALTH_RAW`) and each app's
    crashes and hang time (`APPLICATIONS_RAW`) are problems too.
 3. **Path mapping (NetIM).** The user and the application are mapped onto
    NetIM objects:

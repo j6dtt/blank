@@ -131,3 +131,22 @@ def test_aternity_health_events_and_uxi_and_their_failures():
     client.http.retries = 0
     assert client.health_events("LT1", START, END) == []
     assert "device health events unavailable" in client.warnings[0]
+
+
+def test_free_disk_space_as_a_percent_from_either_kind_of_column():
+    def handler(request: httpx.Request):
+        if request.url.path.endswith("/RAW_DATA_STORAGE"):
+            return httpx.Response(200, json={"value": [
+                {"MEASUREMENT_START_TIMESTAMP": "2026-10-27T10:00:00Z", "FREE_SPACE_PERCENT": 4.5}]})
+        if request.url.path.endswith("/APPLICATIONS_RAW"):  # free space in the inventory's unit
+            return httpx.Response(200, json={"value": [{"TIMEFRAME": "2026-10-27T10:00:00Z", "OS_FREE_DISK_SPACE": 12}]})
+        if request.url.path.endswith("/DEVICE_INVENTORY"):
+            return httpx.Response(200, json={"value": [{"DEVICE_NAME": "LT1", "OS_TOTAL_DISK_SPACE": 240}]})
+        return httpx.Response(404)
+
+    cfg = AternityConfig(base_url="https://aternity.test/aternity.odata/v2.0")
+    client = AternityClient(cfg, transport=httpx.MockTransport(handler))
+    assert [h.free_disk for h in client.disk_space("LT1", START, END)] == [4.5]
+    cfg.entities["disk_space"] = "APPLICATIONS_RAW"
+    cfg.fields["disk_space"].update(timestamp="TIMEFRAME", free_percent="", free_space="OS_FREE_DISK_SPACE")
+    assert [h.free_disk for h in client.disk_space("LT1", START, END)] == [5.0]

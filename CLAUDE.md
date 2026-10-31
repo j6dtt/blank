@@ -33,7 +33,8 @@ unset `<REQUIRED>` base URLs.
 - `correlate.py`: the core. Slow = Aternity's own `SLA_STATUS` in
   `thresholds.slow_status` (else over `response_time_s`). It maps endpoints
   and apps to NetIM objects (roles), collects problems (PC values over their
-  limits incl. a nearly full disk, health events, app crashes/hangs, NetIM
+  limits incl. a nearly full disk (`disk_space` source, % or free
+  space / inventory size), health events, app crashes/hangs, NetIM
   values and alerts) and counts the slow actions each one was within
   `bucket_minutes` of. An app's crash/hang/event counts only for that app.
   No scores: the answer is plain counts. The data sources are the
@@ -69,7 +70,9 @@ unset `<REQUIRED>` base URLs.
   what to do), plus `problem_text`, the sentence for each problem. Keep it
   free of scores and jargon. The page has one timeline and one problems
   list; don't add views that repeat them.
-- `verify.py` checks every configured Aternity data source/column (against
+- `verify.py`: a missing optional source (`OPTIONAL`) is a note saying what
+  is skipped, not a FAIL; a wrong name gets paste-ready YAML only when the
+  real name is very close. It checks every configured Aternity data source/column (against
   OData `$metadata`), NetIM metric class/metric (against NetIM's list, then
   one real fetch) and topology name, and prints the closest real names.
 - `http.py` is the shared REST client (basic auth, retries on 429/5xx);

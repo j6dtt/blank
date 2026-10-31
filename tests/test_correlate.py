@@ -23,28 +23,28 @@ def run_demo(**overrides):
 
 
 class StubAternity:
-    def __init__(self, samples, health=(), usage=(), disk=None):
-        self.samples, self.health, self.usage, self.disk = samples, list(health), list(usage), disk
+    def __init__(self, samples, health=(), usage=()):
+        self.samples, self.health, self.usage = samples, list(health), list(usage)
 
     def user_activity(self, *a, **k):
         return self.samples
 
     def device_health(self, *a, **k):
-        return self.health
+        return [h for h in self.health if h.free_disk is None]
 
     def app_usage(self, *a, **k):
         return self.usage
 
-    def disk_total(self, device):
-        return self.disk
+    def disk_space(self, *a, **k):
+        return [h for h in self.health if h.free_disk is not None]
 
     def endpoint_info(self, device):
         return EndpointInfo(device=device)
 
 
-def amy(samples, health=(), usage=(), disk=None, settings=None, source=StubAternity):
+def amy(samples, health=(), usage=(), settings=None, source=StubAternity):
     return investigate(InvestigationRequest(start=T0, end=T0 + timedelta(hours=2), username="amy"),
-                       source(samples, health, usage, disk), None, settings or Settings())
+                       source(samples, health, usage), None, settings or Settings())
 
 
 def erp(bad):
@@ -125,7 +125,7 @@ def test_a_nearly_full_disk_is_a_pc_problem():
     bad = lambda i: 8 <= i < 12  # noqa: E731
     health = [DeviceHealthSample(T0 + timedelta(minutes=5 * i), "PC1", free_disk=3.0 if bad(i) else 40.0)
               for i in range(24)]
-    result = amy(erp(bad), health, disk=100.0)
+    result = amy(erp(bad), health)
     top = result["problems"][0]
     assert top["kind"] == "pc" and top["worst"] == 3.0 and top["slow_actions"] == 4
     assert result["answer"]["title"] == "Likely: PC1's disk was nearly full (3.0% free, limit 10.0%)"

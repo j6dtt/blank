@@ -32,6 +32,7 @@ import yaml
 # boot_components: what each boot/logon spent its time on.
 # software_changes: installs, updates and removals per device (the "what changed").
 # top_processes: the busiest processes on a device over time (who used the CPU/disk).
+# disk_space: free space of a device's disk over time (a nearly full disk).
 DEFAULT_ATERNITY_ENTITIES = {
     "activities": "BUSINESS_ACTIVITIES_RAW",
     "inventory": "DEVICE_INVENTORY",
@@ -41,7 +42,13 @@ DEFAULT_ATERNITY_ENTITIES = {
     "boot_components": "MACHINE_BOOT_COMPONENTS",
     "software_changes": "INSTALLED_SOFTWARE_CHANGE_LOG",
     "top_processes": "RAW_DATA_TOP_PROCESSES",
+    "disk_space": "RAW_DATA_STORAGE",
 }
+
+# Aternity's free-disk columns, for `verify` to find another source of them when
+# disk_space's own is not published (e.g. OS_FREE_DISK_SPACE comes with many
+# data sources, in the unit of inventory.total_disk)
+DISK_FREE_COLUMNS = {"free_percent": "FREE_SPACE_PERCENT", "free_space": "OS_FREE_DISK_SPACE"}
 
 # logical name -> Aternity OData column
 DEFAULT_ATERNITY_FIELDS = {
@@ -59,7 +66,6 @@ DEFAULT_ATERNITY_FIELDS = {
         "cpu": "HRC_CPU_UTIL",
         "memory": "HRC_PHYSICAL_MEMORY_UTIL",
         "disk_queue": "HRC_DISK_QUEUE_LENGTH",
-        "free_disk": "OS_FREE_DISK_SPACE",
         "network_latency": "NETWORK_RTT_AVG",
         "ip_address": "DEVICE_IP_ADDRESS",
         "location": "BUSINESS_LOCATION",
@@ -137,6 +143,14 @@ DEFAULT_ATERNITY_FIELDS = {
         "memory": "PRC_PHYSICAL_MEMORY_UTIL_AVG",
         "io_read": "PRC_IO_READ_RATE",
         "io_write": "PRC_IO_WRITE_RATE",
+    },
+    # free_percent, or free_space in the unit of inventory.total_disk (e.g. a
+    # data source with OS_FREE_DISK_SPACE); `uxcorrelate verify` says which
+    "disk_space": {
+        "timestamp": "MEASUREMENT_START_TIMESTAMP",
+        "device": "DEVICE_NAME",
+        "free_percent": "FREE_SPACE_PERCENT",
+        "free_space": "",
     },
 }
 

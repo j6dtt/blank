@@ -118,7 +118,6 @@ class AternityClient:
                 cpu=to_float(row.get(f.get("cpu", ""))),
                 memory=to_float(row.get(f.get("memory", ""))),
                 disk_queue=to_float(row.get(f.get("disk_queue", ""))),
-                free_disk=to_float(row.get(f.get("free_disk", ""))),
                 network_latency=to_float(row.get(f.get("network_latency", ""))),
             ))
             ip, loc = row.get(f.get("ip_address", "")), row.get(f.get("location", ""))
@@ -334,6 +333,26 @@ class AternityClient:
                     crashes=to_float(row.get(f.get("crashes", ""))),
                     hang_time=to_float(row.get(f.get("hang_time", ""))),
                 ))
+        return out
+
+    def disk_space(self, device: str, start: datetime, end: datetime) -> list[DeviceHealthSample]:
+        """Free space of the device's disk over time, in % (free_disk)."""
+        key = "disk_space"
+        f = self.cfg.fields.get(key, {})
+        if not f or not (f.get("free_percent") or f.get("free_space")):
+            return []
+        size = None if f.get("free_percent") else self.disk_total(device)
+        if not f.get("free_percent") and not size:
+            return []
+        out = []
+        for row in self._optional(key, "free disk space",
+                                  f"{self._time_filter(key, start, end)} and {f['device']} eq {odata_quote(device)}",
+                                  select=[c for c in f.values() if c]):
+            ts = parse_time(row.get(f["timestamp"]))
+            free = to_float(row.get(f["free_percent"])) if f.get("free_percent") else \
+                (lambda v: None if v is None else 100 * v / size)(to_float(row.get(f["free_space"])))
+            if ts is not None and free is not None:
+                out.append(DeviceHealthSample(timestamp=ts, device=device, free_disk=free))
         return out
 
     def disk_total(self, device: str) -> float | None:

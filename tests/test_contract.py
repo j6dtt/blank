@@ -54,3 +54,18 @@ def test_netim_lists_follow_meta_next_offset():
     client = NetimClient(NetimConfig(base_url="https://netim.test:8543"), transport=httpx.MockTransport(handler))
     assert [d.name for d in client.devices()] == ["dev1", "dev2", "dev3"]
     assert seen == [0, 1, 2]
+
+
+def test_a_tenant_without_some_sources_is_told_what_is_skipped_and_where_free_disk_is():
+    # like a live tenant: no RAW_DATA_TOP_PROCESSES or RAW_DATA_STORAGE, no free disk on activities
+    schema = parse_odata_metadata((FIXTURES / "aternity_metadata_v2.xml").read_text())
+    for gone in ("RAW_DATA_TOP_PROCESSES", "RAW_DATA_STORAGE"):
+        del schema[gone]
+    schema["BUSINESS_ACTIVITIES_RAW"] = schema["BUSINESS_ACTIVITIES_RAW"] - {"OS_FREE_DISK_SPACE"}
+    checks = {c.item: c for c in check_schema(Settings(), schema)}
+    assert checks["entities.top_processes"].ok is None  # skipped, not a failure
+    assert "busiest processes" in checks["entities.top_processes"].message
+    disk = checks["free disk space"]
+    assert disk.ok is False and "disk_space: APPLICATIONS_RAW" in disk.paste
+    assert "free_space: OS_FREE_DISK_SPACE" in disk.paste and 'free_percent: ""' in disk.paste
+    assert [c.item for c in checks.values() if c.ok is False] == ["free disk space"]
