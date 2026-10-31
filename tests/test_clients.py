@@ -190,6 +190,35 @@ def test_one_activity_history_asks_only_for_what_it_compares():
     assert (s.response_time, s.status, s.cpu, s.memory, s.disk_queue) == (9.5, "Major", 41.0, None, 0.2)
 
 
+def test_netim_interfaces_of_many_devices_are_read_several_at_once():
+    import threading
+    import time
+    from uxcorrelate.models import NetimDevice
+    busy, most, lock = [0], [0], threading.Lock()
+
+    def handler(request: httpx.Request):
+        dev = request.url.path.split("/")[-2]
+        if dev == "13":
+            return httpx.Response(404, json={"message": "no such device"})
+        with lock:
+            busy[0] += 1
+            most[0] = max(most[0], busy[0])
+        time.sleep(0.05)  # a slow NetIM reply
+        with lock:
+            busy[0] -= 1
+        return httpx.Response(200, json={"items": [{"id": f"{dev}-1", "name": "Gi0/1",
+                                                    "ipAddresses": [f"10.9.{dev}.1/24"]}]})
+
+    cfg = NetimConfig(base_url="https://netim.test:8543", parallel_reads=4)
+    client = NetimClient(cfg, transport=httpx.MockTransport(handler))
+    client.http.retries = 0
+    seen = []
+    client.read_interfaces([NetimDevice(str(i), f"r{i}") for i in range(100)], lambda n, t: seen.append((n, t)))
+    assert most[0] == 4 and seen == [(50, 100), (100, 100)]
+    assert client.interfaces("42")[0].ip_addresses == ["10.9.42.1/24"]
+    assert "13" not in client.cached_interfaces()  # failed: skipped, asked again when needed
+
+
 def test_failures_are_told_without_urls_or_raw_replies(caplog):
     import logging
 

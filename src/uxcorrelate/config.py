@@ -218,6 +218,9 @@ class NetimConfig:
     # NetIM's HELP > API Documentation shows the path.
     alerts_path: str = ""
     page_size: int = 500
+    # NetIM has no call for every device's interfaces, only one per device (as in
+    # steelscript-netim); this many are read at once to find gateways
+    parallel_reads: int = 8
     metrics: list[NetimMetric] = field(
         default_factory=lambda: [NetimMetric(**m) for m in DEFAULT_NETIM_METRICS]
     )

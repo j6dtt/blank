@@ -147,9 +147,9 @@ def map_netim_objects(netim: NetimSource, endpoints: list[EndpointInfo], applica
 
     def add_gateways_for(ip: str, role: str, reason: str) -> None:
         log.info("NetIM: looking for the gateway of %s among %d devices", ip, len(devices))
-        for n, dev in enumerate(devices, 1):
-            if n % 25 == 0:
-                log.info("NetIM: checked %d of %d devices", n, len(devices))
+        if hasattr(netim, "read_interfaces"):  # several at once; nothing to read once the index is ready
+            netim.read_interfaces(devices, lambda n, total: log.info("NetIM: read %d of %d devices", n, total))
+        for dev in devices:
             for itf in netim.interfaces(dev.id):
                 if _subnet_contains(itf.ip_addresses, ip):
                     # keep an earlier role for the device (e.g. the app server itself)

@@ -75,11 +75,9 @@ def create_app(config_path: str | None = None) -> FastAPI:
                 if shared["netim"] is None:
                     shared["netim"] = fresh  # usable (cold) while it fills
                 devices = fresh.devices()
-                log.info("NetIM index: reading interfaces of %d devices", len(devices))
-                for n, dev in enumerate(devices, 1):
-                    fresh.interfaces(dev.id)
-                    if n % 50 == 0:
-                        log.info("NetIM index: %d of %d devices", n, len(devices))
+                log.info("NetIM index: reading interfaces of %d devices, %d at a time", len(devices),
+                         settings.netim.parallel_reads)
+                fresh.read_interfaces(devices, lambda n, total: log.info("NetIM index: %d of %d devices", n, total))
                 shared["netim"] = fresh
                 log.info("NetIM index ready: %d devices; investigations no longer wait for it", len(devices))
             except Exception as exc:  # NetIM down: investigations still work, only slower

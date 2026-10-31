@@ -13,6 +13,7 @@ The alerts path is not in any public Riverbed source, so it is off by default.
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 from datetime import datetime
 from typing import Any, Iterable
@@ -192,6 +193,21 @@ class NetimClient:
     def cached_interfaces(self) -> dict[str, list[NetimInterface]]:
         """Interfaces already read, by device id; never calls NetIM."""
         return dict(self._interfaces) if self._devices is not None else {}
+
+    def read_interfaces(self, devices: list[NetimDevice], progress=None) -> None:
+        """Read the interfaces of these devices, `parallel_reads` at a time (one
+        NetIM call per device). A device that fails is skipped and read again
+        when it is asked for."""
+        todo = [d.id for d in devices if d.id not in self._interfaces]
+        with ThreadPoolExecutor(max(1, self.cfg.parallel_reads)) as pool:
+            jobs = [pool.submit(self.interfaces, i) for i in todo]
+            for n, job in enumerate(jobs, 1):
+                try:
+                    job.result()
+                except ApiError as exc:
+                    log.debug("NetIM interfaces of a device not read: %s", exc)
+                if progress and n % 50 == 0:
+                    progress(n, len(todo))
 
     def interfaces(self, device_id: str) -> list[NetimInterface]:
         if device_id not in self._interfaces:
