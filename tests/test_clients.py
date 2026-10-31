@@ -150,3 +150,17 @@ def test_free_disk_space_as_a_percent_from_either_kind_of_column():
     cfg.entities["disk_space"] = "APPLICATIONS_RAW"
     cfg.fields["disk_space"].update(timestamp="TIMEFRAME", free_percent="", free_space="OS_FREE_DISK_SPACE")
     assert [h.free_disk for h in client.disk_space("LT1", START, END)] == [5.0]
+
+
+def test_aternity_n_a_is_no_version():
+    def handler(request: httpx.Request):
+        return httpx.Response(200, json={"value": [
+            {"INSTALLED_SW_CHANGE_TIMESTAMP": "2026-10-27T10:00:00-04:00", "INSTALLED_SW_NAME": "Viewer",
+             "INSTALLED_SW_CHANGE_TYPE": "Installed", "INSTALLED_SW_VERSION": "3.2",
+             "INSTALLED_SW_VERSION_BEFORE_CHANGE": "N/A"}]})
+
+    client = AternityClient(AternityConfig(base_url="https://aternity.test/odata"),
+                            transport=httpx.MockTransport(handler))
+    c = client.software_changes("LT1", START, END)[0]
+    assert (c.version, c.version_before) == ("3.2", None)
+    assert c.timestamp == datetime(2026, 10, 27, 14, 0, tzinfo=timezone.utc)  # local offset read as UTC

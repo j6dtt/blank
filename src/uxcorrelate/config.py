@@ -50,6 +50,13 @@ DEFAULT_ATERNITY_ENTITIES = {
 # data sources, in the unit of inventory.total_disk)
 DISK_FREE_COLUMNS = {"free_percent": "FREE_SPACE_PERCENT", "free_space": "OS_FREE_DISK_SPACE"}
 
+# Values seen in a live INSTALLED_SOFTWARE_CHANGE_LOG: "N/A" where a version is
+# missing; an update is an "Uninstalled" row (the old version) and an
+# "Installed" row (the new one) of the same software on the same PC, at the
+# same second. `uxcorrelate verify` counts those pairs.
+NO_VALUE = ("N/A",)
+SOFTWARE_REMOVED = ("Uninstalled",)
+
 # logical name -> Aternity OData column
 DEFAULT_ATERNITY_FIELDS = {
     "activities": {

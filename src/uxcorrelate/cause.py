@@ -19,6 +19,7 @@ import logging
 from collections import Counter
 from datetime import timedelta
 
+from .config import SOFTWARE_REMOVED
 from .models import parse_time
 
 log = logging.getLogger("uxcorrelate")
@@ -153,13 +154,11 @@ def changes_before(aternity, device: str, when, names, part: str, event: str) ->
     out = {"changes": [], "text": None, "todo": None}
     if not hasattr(aternity, "software_changes"):
         return out
-    rows = sorted(aternity.software_changes(device, when - CHANGES_BEFORE, when), key=lambda c: c.timestamp,
-                  reverse=True)
+    rows = _updates(aternity.software_changes(device, when - CHANGES_BEFORE, when))
     names = {n.lower().rsplit(".", 1)[0] for n in names if n}
     for c in rows[:8]:
-        related = bool(c.name) and any(n in c.name.lower() or c.name.lower() in n for n in names)
-        out["changes"].append({"time": _iso(c.timestamp), "name": c.name, "change": c.change, "version": c.version,
-                               "version_before": c.version_before, "related": related})
+        related = bool(c["name"]) and any(n in c["name"].lower() or c["name"].lower() in n for n in names)
+        out["changes"].append({**c, "time": _iso(c["time"]), "related": related})
     if not rows:
         out["text"] = (f"Nothing was installed, updated or removed on {device} in the "
                        f"{CHANGES_BEFORE.days} days before {_day(when)}.")
@@ -174,6 +173,28 @@ def changes_before(aternity, device: str, when, names, part: str, event: str) ->
     rel = next((c for c in out["changes"] if c["related"]), None)
     if rel:
         out["todo"] = f"Check the {rel['name']} change of {rel['time'][:10]} on {device}: it came before the {event}."
+    return out
+
+
+def _updates(rows) -> list[dict]:
+    """The change log as changes, newest first: a removal and an install of the same
+    software at the same second are one update (old version -> new version)."""
+    out, used = [], set()
+    for c in sorted(rows, key=lambda c: c.timestamp, reverse=True):
+        if id(c) in used:
+            continue
+        removed = c.change in SOFTWARE_REMOVED
+        pair = next((o for o in rows if id(o) not in used and o is not c and o.name == c.name
+                     and o.timestamp == c.timestamp and (o.change in SOFTWARE_REMOVED) != removed), None)
+        if pair:
+            old, new = (c, pair) if removed else (pair, c)
+            used |= {id(c), id(pair)}
+            out.append({"time": c.timestamp, "name": c.name, "change": "updated",
+                        "version": new.version, "version_before": old.version})
+        else:
+            used.add(id(c))
+            out.append({"time": c.timestamp, "name": c.name, "change": c.change,
+                        "version": c.version, "version_before": c.version_before})
     return out
 
 

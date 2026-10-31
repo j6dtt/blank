@@ -44,8 +44,12 @@ unset `<REQUIRED>` base URLs.
   `MACHINE_BOOT_COMPONENTS`). Rows of one device within an hour, no type
   twice, are one start-up (one row, a column per Aternity type). Per type:
   typical and 90th percentile; per row: the device's own 30-day usual and
-  what took the time. Why: the part with the most Aternity degradation,
-  software changes before (`cause.changes_before`), and main causes =
+  what took the time (a part belongs to the latest start-up row of its PC
+  at or before it, within an hour; part types never equal start-up types
+  on a live Aternity, so types are not compared). Why: the part with the most Aternity degradation,
+  software changes before (`cause.changes_before`; "N/A" = no version,
+  an "Uninstalled" + "Installed" row of the same software at the same
+  second = one update), and main causes =
   that part longer than normal on every PC (`boot_component_everywhere`).
   No "slow" threshold, no assumed type names. Unit
   from `boot_unit` (inferred as seconds from live values, not documented).

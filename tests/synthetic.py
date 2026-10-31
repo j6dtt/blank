@@ -128,7 +128,8 @@ class DemoAternity:
 
     def _components(self, start, end):
         # slow Denver logons: Group Policy takes 45 s longer than normal
-        return [BootComponent(timestamp=b.timestamp, device=b.device, type="Logon", component=c,
+        # parts carry the start-up's timestamp but their own type names (as on a live Aternity)
+        return [BootComponent(timestamp=b.timestamp, device=b.device, type="Logon Phase", component=c,
                               duration=d, degradation=g, username=b.username, location=b.location)
                 for b in self.boots(start, end) if b.duration > 60
                 for c, d, g in (("Group Policy", 55.0, 45.0), ("User profile", 20.0, 5.0))]

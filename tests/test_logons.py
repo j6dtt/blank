@@ -43,9 +43,38 @@ def test_no_boot_data_is_an_empty_report():
 def test_slow_start_ups_get_a_cause_and_who_else_is_affected():
     lg = logon_report(DemoAternity(START), START, END, unit="s")
     cause = lg["causes"][0]
-    assert (cause["component"], cause["type"], cause["pcs"]) == ("Group Policy", "Logon", 21)
+    assert (cause["component"], cause["type"], cause["pcs"]) == ("Group Policy", "Logon Phase", 21)
     assert cause["by_location"] == {"Branch-Denver": 21} and cause["list"][0]["worst"] == 45.0
     first = lg["starts"][0]
     assert first["cause"] == 0
-    assert first["why"][0] == "Most of the extra time: Group Policy took 55.0 s, 45.0 s longer than normal (Logon)."
+    assert first["why"][0] == "Most of the extra time: Group Policy took 55.0 s, 45.0 s longer than normal (Logon Phase)."
     assert first["why"][-1].startswith("Same cause as main cause 1 above (Group Policy)")
+
+
+def test_parts_go_to_the_start_up_before_them_whatever_their_type():
+    from uxcorrelate.models import BootComponent
+    boot1, boot2, logon = START + timedelta(minutes=10), START + timedelta(minutes=80), START + timedelta(minutes=170)
+
+    class Shaped:  # parts keep their own type names; services come a few minutes after the boot
+        def boots(self, start, end, **k):
+            return [BootSample(boot1, "WS-9", "kim", "Site-2", type="Full Start", duration=400.0),
+                    BootSample(boot2, "WS-9", "kim", "Site-2", type="Machine Start", duration=200.0),
+                    BootSample(logon, "WS-9", "kim", "Site-2", type="Sign-in", duration=80.0)]
+
+        def boot_components(self, devices, start, end):
+            part = lambda t, typ, comp, d: BootComponent(t, "WS-9", typ, comp, duration=d)  # noqa: E731
+            return [part(boot1, "Phase: Loader", None, 30.0), part(boot1, "Phase: After Start", None, 310.0),
+                    part(boot2, "Driver Call", "drv7", 12.0),
+                    part(boot2 + timedelta(minutes=6), "Service Call", "svcA", 40.0)]
+
+        def boot_component_everywhere(self, *a, **k):
+            return []
+
+    lg = logon_report(Shaped(), START, END, unit="s")
+    by_type = {next(iter(st["values"])): st for st in lg["starts"]}
+    assert [c["component"] for c in by_type["Full Start"]["components"]] == ["Phase: After Start", "Phase: Loader"]
+    assert [c["component"] for c in by_type["Machine Start"]["components"]] == ["svcA", "drv7"]
+    assert by_type["Sign-in"]["components"] == []
+    assert by_type["Sign-in"]["why"][0] == "Aternity recorded no breakdown for this start-up."
+    assert by_type["Full Start"]["why"][0] == ("Aternity measured no part as longer than normal; the longest was "
+                                               "Phase: After Start (310.0 s).")

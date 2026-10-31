@@ -239,11 +239,11 @@ function renderStarts(lg) {
       <tr class="comp" id="c${i}" hidden><td></td><td colspan="${4 + types.length}">What took the time:
         ${st.components.map((c) => `<b>${esc(c.component)}</b> ${c.duration ?? "?"}${u}`
           + (c.degradation ? ` (${c.degradation}${u} longer than normal)` : "")
-          + ` <span class="muted">${esc(c.type)}</span>`).join(" · ")}
+          + (c.type !== c.component ? ` <span class="muted">${esc(c.type)}</span>` : "")).join(" · ")}
         ${st.why && st.why.length ? `<div class="why"><b>Why:</b><ul>${st.why.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></div>` : ""}</td></tr>`).join("");
   // main causes: the parts behind the slowest start-ups, and every PC where they were longer than normal
   $("lCauses").innerHTML = lg.causes && lg.causes.length ? `<h2 style="margin-top:6px">Main causes</h2><ol>` + lg.causes.map((c, i) =>
-    `<li><b>${esc(c.component)}</b> <span class="muted">(${esc(c.type)})</span> was longer than normal on <b>${c.pcs} PC(s)</b>,
+    `<li><b>${esc(c.component)}</b>${c.type !== c.component ? ` <span class="muted">(${esc(c.type)})</span>` : ""} was longer than normal on <b>${c.pcs} PC(s)</b>,
       ${c.times} time(s) in this window; behind ${c.slowest_starts} of the slowest start-ups.
       <span class="muted">${Object.entries(c.by_location).map(([l, n]) => `${esc(l)} ${n}`).join(", ")}</span>
       <button type="button" class="link" data-cause="${i}">Show who ▸</button>

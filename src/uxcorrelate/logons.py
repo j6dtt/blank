@@ -64,19 +64,33 @@ def group_starts(samples: list[BootSample]) -> list[list[BootSample]]:
     return starts
 
 
-def _components_of(start: list[BootSample], comps: list[BootComponent], top: int = 8) -> list[dict]:
-    """The components Aternity recorded for this start-up (nearest record per type)."""
-    out = []
-    for b in start:
-        mine = [c for c in comps if c.device == b.device and _type(c) == _type(b)
-                and abs(c.timestamp - b.timestamp) <= SAME_START]
-        if not mine:
-            continue
-        nearest = min(mine, key=lambda c: abs(c.timestamp - b.timestamp)).timestamp
-        out += [c for c in mine if c.timestamp == nearest]
-    out.sort(key=lambda c: (-(c.degradation or 0), -(c.duration or 0)))
-    return [{"type": _type(c), "component": c.component, "duration": c.duration,
-             "degradation": c.degradation} for c in out[:top]]
+def _part_name(c: BootComponent) -> str:
+    return c.component or c.type or "(unnamed part)"
+
+
+def parts_of(starts: list[list[BootSample]], comps: list[BootComponent]) -> dict[int, list[BootComponent]]:
+    """Which start-up each part belongs to: the latest start-up row of the same PC
+    at or before the part's time, within SAME_START. Aternity gives a start-up's
+    parts its own timestamp (phases, drivers), or a few minutes after it (services);
+    their types are not the start-up's types, so types are not compared."""
+    rows = sorted(((b.timestamp, i) for i, st in enumerate(starts) for b in st),
+                  key=lambda x: x[0])
+    by_dev: dict[str, list[tuple]] = defaultdict(list)
+    for t, i in rows:
+        by_dev[starts[i][0].device].append((t, i))
+    out: dict[int, list[BootComponent]] = defaultdict(list)
+    for c in comps:
+        before = [(t, i) for t, i in by_dev.get(c.device, []) if t <= c.timestamp <= t + SAME_START]
+        if before:
+            out[max(before)[1]].append(c)
+    return out
+
+
+def _components_of(mine: list[BootComponent], top: int = 8) -> list[dict]:
+    """A start-up's parts, most "longer than normal" first, then the longest."""
+    mine = sorted(mine, key=lambda c: (-(c.degradation or 0), -(c.duration or 0)))
+    return [{"type": _type(c), "component": _part_name(c), "duration": c.duration,
+             "degradation": c.degradation} for c in mine[:top]]
 
 
 def logon_report(aternity, start: datetime, end: datetime, username: str | None = None,
@@ -118,12 +132,13 @@ def logon_report(aternity, start: datetime, end: datetime, username: str | None 
 
     starts = sorted(group_starts(samples), key=key)
     shown = starts[:top]
-    comps = []
+    comps: list[BootComponent] = []
     if shown and hasattr(aternity, "boot_components"):
         devices = list(dict.fromkeys(st[0].device for st in shown[:COMPONENTS_FOR]))
         log.info("Aternity: reading what slowed the %d slowest start-ups", min(len(shown), COMPONENTS_FOR))
         comps = aternity.boot_components(devices, start - SAME_START, end + SAME_START)
 
+    parts = parts_of(starts, comps)
     items = []
     for i, st in enumerate(shown):
         first = min(st, key=_when)
@@ -134,7 +149,7 @@ def logon_report(aternity, start: datetime, end: datetime, username: str | None 
         items.append({
             "time": _iso(_when(first)), "username": next((b.username for b in st if b.username), None),
             "device": first.device, "location": next((b.location for b in st if b.location), None),
-            "values": values, "components": _components_of(st, comps) if i < COMPONENTS_FOR else [],
+            "values": values, "components": _components_of(parts.get(i, [])) if i < COMPONENTS_FOR else [],
             "why": [], "cause": None,
         })
 
@@ -165,14 +180,15 @@ def _causes(aternity, starts: list[dict], start: datetime, end: datetime, unit: 
     for st in starts:
         slow = next((c for c in st["components"] if c["degradation"]), None)
         if not st["components"]:
-            st["why"].append("Aternity recorded no parts for this start-up.")
+            st["why"].append("Aternity recorded no breakdown for this start-up.")
         elif slow is None:
             c = max(st["components"], key=lambda c: c["duration"] or 0)
             st["why"].append(f"Aternity measured no part as longer than normal; the longest was "
                              f"{c['component']} ({c['duration']}{u}).")
         else:
             st["why"].append(f"Most of the extra time: {slow['component']} took {slow['duration']}{u}, "
-                             f"{slow['degradation']}{u} longer than normal ({slow['type']}).")
+                             f"{slow['degradation']}{u} longer than normal"
+                             + (f" ({slow['type']})." if slow["type"] != slow["component"] else "."))
             keys[(slow["type"], slow["component"])] += 1
             st["cause_key"] = (slow["type"], slow["component"])
         ch = changes_before(aternity, st["device"], parse_time(st["time"]),
@@ -185,7 +201,8 @@ def _causes(aternity, starts: list[dict], start: datetime, end: datetime, unit: 
         if not hasattr(aternity, "boot_component_everywhere"):
             break
         log.info("Aternity: who else had %s slower than normal", comp)
-        rows = [c for c in aternity.boot_component_everywhere(comp, typ, start, end) if c.degradation]
+        named = None if comp == typ else comp  # a part without a component name goes by its type
+        rows = [c for c in aternity.boot_component_everywhere(named, typ, start, end) if c.degradation]
         pcs: dict[str, dict] = {}
         for c in sorted(rows, key=lambda c: c.timestamp):
             p = pcs.setdefault(c.device, {"device": c.device, "username": None, "location": None, "times": 0,

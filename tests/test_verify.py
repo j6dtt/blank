@@ -210,3 +210,42 @@ def test_verify_shows_how_start_up_parts_and_the_change_log_are_filled():
     assert log.rows[0] == ("timestamp='2026-10-29T10:00:00Z', name='Viewer', change='Removed', version='1.0', "
                            "version_before='N/A'")
     assert "· timestamp='2026-10-29" in render_checks([log])
+
+
+def test_verify_shows_how_health_events_and_app_crashes_are_filled():
+    from pathlib import Path
+    from uxcorrelate.verify import _app_usage, _health_events
+
+    def handler(request):
+        path = request.url.path
+        if path.endswith("/DEVICE_HEALTH_RAW"):
+            ev = lambda cat, name, **cols: {"TIMEFRAME": "2026-10-30T09:00:00Z", "DEVICE_NAME": "WS-1",  # noqa: E731
+                                            "HEALTH_EVENT_CATEGORY": cat, "HEALTH_EVENT_NAME": name, **cols}
+            return httpx.Response(200, json={"value": [
+                ev("Fault", "Program Fault", APPLICATION_NAME="Editor", HEALTH_EVENT_SUB_COMPONENT="lib9.dll",
+                   HEALTH_EVENT_DETAILS="x" * 400),
+                ev("Fault", "Program Fault", APPLICATION_NAME="", HEALTH_EVENT_SUB_COMPONENT="N/A"),
+                ev("Freeze", "Program Freeze", APPLICATION_NAME="Viewer")]})
+        if path.endswith("/APPLICATIONS_RAW"):
+            return httpx.Response(200, json={"value": [
+                {"TIMEFRAME": "2026-10-30T09:00:00Z", "APPLICATION_NAME": "Editor", "APPLICATION_CRASHES_TOTAL": 2,
+                 "APPLICATION_HANG_TIME_TOTAL": 0, "APPLICATION_UXI_AVG": 6.5},
+                {"TIMEFRAME": "2026-10-30T10:00:00Z", "APPLICATION_NAME": "Viewer", "APPLICATION_CRASHES_TOTAL": 0,
+                 "APPLICATION_HANG_TIME_TOTAL": None, "APPLICATION_UXI_AVG": 9.1}]})
+        return httpx.Response(404)
+
+    settings = Settings()
+    settings.aternity.base_url = "https://aternity.test/odata"
+    client = AternityClient(settings.aternity, transport=httpx.MockTransport(handler))
+    schema = parse_odata_metadata((Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
+    kinds, rows = _health_events(settings, client, schema)
+    assert "3 row(s), 2 kind(s)" in kinds.message
+    assert kinds.rows[0].startswith("Fault / Program Fault: 2 row(s); application 1, component 0, ")
+    assert "sub_component 1," in kinds.rows[0] and "details 1," in kinds.rows[0]  # N/A and "" are not values
+    assert "category='Freeze'" in rows.rows[1] and "details=None" in rows.rows[1]
+    assert len(rows.rows[0].split("details=")[1]) <= 153
+    usage = _app_usage(settings, client, schema)[0]
+    assert usage.rows[0] == ("crashes (APPLICATION_CRASHES_TOTAL): 2 row(s) with a value, 1 not zero; "
+                             "not zero: min 2, median 2, max 2")
+    assert usage.rows[1] == "hang_time (APPLICATION_HANG_TIME_TOTAL): 1 row(s) with a value, 0 not zero"
+    assert usage.rows[-1].startswith("A row with a crash or hang: timestamp='2026-10-30T09:00:00Z', application='Editor'")

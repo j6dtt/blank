@@ -14,7 +14,7 @@ from urllib.parse import quote
 
 import httpx
 
-from .config import AternityConfig
+from .config import NO_VALUE, AternityConfig
 from .http import ApiError, RestClient
 from .models import (
     AppUsageSample, BootComponent, BootSample, DeviceHealthSample, EndpointInfo, HealthEvent, ProcessSample,
@@ -215,13 +215,16 @@ class AternityClient:
         return self._components(f"{self._time_filter('boot_components', start, end)} and ({devs})",
                                 "boot/logon components")
 
-    def boot_component_everywhere(self, component: str, type: str | None, start: datetime,
+    def boot_component_everywhere(self, component: str | None, type: str | None, start: datetime,
                                   end: datetime) -> list[BootComponent]:
-        """One boot/logon component on every device (who else has it slow?)."""
+        """One boot/logon part on every device (who else has it slow?). A part with
+        no component name (e.g. a boot phase) is found by its type alone."""
         f = self.cfg.fields.get("boot_components", {})
-        if not f or not f.get("component"):
+        if not f or not (component and f.get("component") or type and f.get("type")):
             return []
-        flt = f"{self._time_filter('boot_components', start, end)} and {f['component']} eq {odata_quote(component)}"
+        flt = self._time_filter('boot_components', start, end)
+        if component and f.get("component"):
+            flt += f" and {f['component']} eq {odata_quote(component)}"
         if type and f.get("type"):
             flt += f" and {f['type']} eq {odata_quote(type)}"
         return self._components(flt, "boot/logon components of other PCs")
@@ -298,8 +301,9 @@ class AternityClient:
             ts = parse_time(row.get(f["timestamp"]))
             if ts is not None:
                 get = lambda k: (row.get(f[k]) or None) if f.get(k) else None  # noqa: E731
+                ver = lambda k: None if get(k) in NO_VALUE else get(k)  # noqa: E731
                 out.append(SoftwareChange(timestamp=ts, device=device, name=get("name"), change=get("change"),
-                                          version=get("version"), version_before=get("version_before"),
+                                          version=ver("version"), version_before=ver("version_before"),
                                           vendor=get("vendor")))
         return out
 

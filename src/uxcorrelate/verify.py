@@ -257,13 +257,85 @@ def verify_aternity(settings: Settings, client: AternityClient) -> list[Check]:
                                 f"{kind} '{name}' {'found' if found else 'not found'} in Aternity "
                                 "activity of the last 7 days.",
                                 "" if found else f"Spell it exactly as Aternity shows it ({column})."))
-    return checks + _value_ranges(settings, client, schema) + _start_up_parts(settings, client, schema) \
+    return checks + _value_ranges(settings, client, schema) + _health_events(settings, client, schema) \
+        + _app_usage(settings, client, schema) + _start_up_parts(settings, client, schema) \
         + _change_log(settings, client, schema)
 
 
 def _raw(row: dict, fields: dict, keys) -> str:
     """One row as 'key=value' for the configured columns, values exactly as Aternity sent them."""
     return ", ".join(f"{k}={row.get(fields[k])!r}" for k in keys if fields.get(k))
+
+
+def _filled(rows: list[dict], fields: dict, keys) -> str:
+    """How many rows have a value (not empty, not N/A) in each configured column."""
+    return ", ".join(f"{k} {sum(1 for r in rows if r.get(fields[k]) not in (None, '', 'N/A'))}"
+                     for k in keys if fields.get(k))
+
+
+def _cut(value, n: int = 150):
+    return value[:n] if isinstance(value, str) else value
+
+
+def _health_events(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
+    """How Aternity fills its health events: which kinds exist (crash, hang, ...),
+    and for each, which of the columns behind "where it failed" have values."""
+    cfg = settings.aternity
+    entity, f = cfg.entities.get("health_events"), cfg.fields.get("health_events", {})
+    if entity not in schema or not f.get("timestamp"):
+        return []
+    since = datetime.now(timezone.utc) - timedelta(days=7)
+    try:
+        rows = client.query(entity, f"{f['timestamp']} ge {odata_time(since)}", top=1000)
+    except ApiError as exc:
+        return [Check("Aternity", "health events", None, f"Could not read them: {exc.reason or exc}")]
+    kind = lambda r: f"{r.get(f.get('category', ''))} / {r.get(f.get('name', ''))}"  # noqa: E731
+    kinds: dict[str, list] = {}
+    for r in rows:
+        kinds.setdefault(kind(r), []).append(r)
+    where = ("application", "component", "component_version", "sub_component", "sub_component_version",
+             "exception", "error", "details", "username")
+    checks = [Check("Aternity", "health events", None,
+                    f"{entity}, last 7 days: {len(rows)} row(s){' (first 1000)' if len(rows) == 1000 else ''}, "
+                    f"{len(kinds)} kind(s) (category / name). Per kind: rows, then how many have each column filled:",
+                    rows=[f"{k}: {len(rs)} row(s); {_filled(rs, f, where)}"
+                          for k, rs in sorted(kinds.items(), key=lambda kv: -len(kv[1]))[:25]])]
+    keys = ("timestamp", "application", "category", "name", "component", "component_version", "sub_component",
+            "sub_component_version", "exception", "error")
+    checks.append(Check("Aternity", "health events: one row per kind", None,
+                        "Values exactly as Aternity sent them (details cut to 150 characters):",
+                        rows=[_raw(rs[0], f, keys) + (f", details={_cut(rs[0].get(f['details']))!r}"
+                                                       if f.get("details") else "")
+                              for _, rs in sorted(kinds.items(), key=lambda kv: -len(kv[1]))[:12]]))
+    return checks
+
+
+def _app_usage(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
+    """What the per-application crash count, hang time and UXI hold."""
+    cfg = settings.aternity
+    entity, f = cfg.entities.get("app_usage"), cfg.fields.get("app_usage", {})
+    if entity not in schema or not f.get("timestamp"):
+        return []
+    since = datetime.now(timezone.utc) - timedelta(days=1)
+    try:
+        rows = client.query(entity, f"{f['timestamp']} ge {odata_time(since)}", top=1000)
+    except ApiError as exc:
+        return [Check("Aternity", "application crashes, hang time, UXI", None, f"Could not read them: {exc.reason or exc}")]
+    lines = []
+    for k in ("crashes", "hang_time", "uxi"):
+        if not f.get(k):
+            continue
+        vals = [v for v in (to_float(r.get(f[k])) for r in rows) if v is not None]
+        nz = [v for v in vals if v]
+        lines.append(f"{k} ({f[k]}): {len(vals)} row(s) with a value, {len(nz)} not zero"
+                     + (f"; not zero: min {min(nz):g}, median {median(nz):g}, max {max(nz):g}" if nz else ""))
+    hit = next((r for r in rows if any(to_float(r.get(f.get(k, ""))) for k in ("crashes", "hang_time"))), None)
+    if hit:
+        lines.append("A row with a crash or hang: " + _raw(hit, f, ("timestamp", "application", "crashes",
+                                                                    "hang_time", "uxi")))
+    return [Check("Aternity", "application crashes, hang time, UXI", None,
+                  f"{entity}, last day: {len(rows)} row(s){' (first 1000)' if len(rows) == 1000 else ''}:",
+                  rows=lines)]
 
 
 def _start_up_parts(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:

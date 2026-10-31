@@ -280,3 +280,19 @@ def test_a_missing_data_source_is_one_plain_line():
         client.disk_space(dev, T0, T0 + timedelta(hours=1))
     assert client.warnings == ["Free disk space not checked: this Aternity has no RAW_DATA_STORAGE data source "
                                "(`uxcorrelate verify` shows what to change)."]
+
+
+def test_a_removal_and_an_install_at_the_same_second_read_as_one_update():
+    from uxcorrelate.cause import changes_before
+
+    class Log:  # as a live change log: an update is two rows at the same second
+        def software_changes(self, device, start, end):
+            row = lambda h, name, kind, v: SoftwareChange(T0 - timedelta(hours=h), device, name, kind, v)  # noqa: E731
+            return [row(5, "Viewer", "Uninstalled", "3.1"), row(5, "Viewer", "Installed", "3.2"),
+                    row(30, "Editor", "Uninstalled", "7.0"), row(2, "Helper", "Installed", "1.4")]
+
+    ch = changes_before(Log(), "PC5", T0, ["viewer"], "failing part", "first failure")
+    assert [(c["name"], c["change"], c["version_before"], c["version"]) for c in ch["changes"]] == [
+        ("Helper", "Installed", None, "1.4"), ("Viewer", "updated", "3.1", "3.2"), ("Editor", "Uninstalled", None, "7.0")]
+    assert "Viewer updated 3.1 → 3.2 (same name as the failing part)" in ch["text"]
+    assert "Editor Uninstalled 7.0" in ch["text"]

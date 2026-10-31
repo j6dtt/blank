@@ -261,7 +261,8 @@ def _startup_why(g: dict, started_up, logons: dict) -> dict:
             f"{c['component']} {c['duration']}" for c in st["components"][:3]) + ".")
     slow = next((c for c in st["components"] if c["degradation"]), None)
     if slow:
-        todo.append(f"On {g['object']}: look at {slow['component']} ({slow['type']}), the slowest part of "
+        todo.append(f"On {g['object']}: look at {slow['component']}"
+                    + (f" ({slow['type']})" if slow["type"] != slow["component"] else "") + ", the slowest part of "
                     f"its start-up; the Slow start-ups tab shows it on every PC.")
     if st["cause"] is not None:
         c = logons["causes"][st["cause"]]
@@ -269,7 +270,7 @@ def _startup_why(g: dict, started_up, logons: dict) -> dict:
         text.append(f"{c['component']} was longer than normal on {c['pcs']} PC(s) in this window"
                     + (f" ({where})" if where else "") + ": the Slow start-ups tab lists them.")
     if not text:
-        text.append("Aternity recorded no parts for this start-up.")
+        text.append("Aternity recorded no breakdown for this start-up.")
     return {"failure": None, "others": None, "changes": [], "processes": [], "text": text, "todo": todo}
 
 

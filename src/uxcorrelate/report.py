@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 
+def _of(c: dict) -> str:
+    """A start-up part's type in brackets, unless the part is named by its type."""
+    return f" ({c['type']})" if c["type"] != c["component"] else ""
+
+
 def _bar(score: float, width: int = 20) -> str:
     filled = round(score * width)
     return "#" * filled + "." * (width - filled)
@@ -129,7 +134,7 @@ def render_logons(lg: dict) -> str:
         lines += ["", "Main causes (parts longer than normal, and on how many PCs):"]
         for i, c in enumerate(lg["causes"], 1):
             where = ", ".join(f"{k} {n}" for k, n in c["by_location"].items())
-            lines.append(f"  {i}. {c['component']} ({c['type']}): {c['pcs']} PC(s), {c['times']} time(s); {where}")
+            lines.append(f"  {i}. {c['component']}{_of(c)}: {c['pcs']} PC(s), {c['times']} time(s); {where}")
             for p in c["list"][:5]:
                 lines.append(f"       {p['device']}  {p['username'] or '?'}  {p['location'] or '?'}  "
                              f"{p['times']}x, up to {p['worst']}{unit} longer than normal")
@@ -138,7 +143,7 @@ def render_logons(lg: dict) -> str:
         lines.append(f"  {_start_line(st, unit)}")
         for c in st["components"][:3]:
             extra = f", {c['degradation']}{unit} longer than normal" if c["degradation"] else ""
-            lines.append(f"      {c['component']} ({c['type']}): {c['duration']}{unit}{extra}")
+            lines.append(f"      {c['component']}{_of(c)}: {c['duration']}{unit}{extra}")
         for w in st.get("why", []):
             lines.append(f"      why: {w}")
     if len(lg["by_location"]) > 1:
