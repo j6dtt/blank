@@ -255,14 +255,15 @@ class AternityClient:
         try:
             return self.query(self.cfg.entities[key], flt, select=select, top=top)
         except ApiError as exc:
-            log.warning("Aternity: could not read %s: %s", what, exc)
+            log.debug("Aternity: could not read %s: %s", what, exc)  # the full request and reply
             entity = self.cfg.entities[key]
             if "doesn't exist" in exc.reason or "does not exist" in exc.reason:
                 msg = (f"{what.capitalize()} not checked: this Aternity has no {entity} data source "
                        "(`uxcorrelate verify` shows what to change).")
             else:
-                msg = f"{what.capitalize()} not checked: Aternity {entity} gave an error ({exc.reason or exc.status or exc})."
+                msg = f"{what.capitalize()} not checked: Aternity {entity} gave an error ({exc.short()})."
             if msg not in self.warnings:
+                log.warning("Aternity: %s", msg)
                 self.warnings.append(msg)
             return []
 

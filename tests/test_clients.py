@@ -146,6 +146,8 @@ def test_free_disk_space_as_a_percent_from_either_kind_of_column():
 
     cfg = AternityConfig(base_url="https://aternity.test/aternity.odata/v2.0")
     client = AternityClient(cfg, transport=httpx.MockTransport(handler))
+    assert client.disk_space("LT1", START, END) == []  # off unless a data source is set
+    cfg.entities["disk_space"] = "RAW_DATA_STORAGE"
     assert [h.free_disk for h in client.disk_space("LT1", START, END)] == [4.5]
     cfg.entities["disk_space"] = "APPLICATIONS_RAW"
     cfg.fields["disk_space"].update(timestamp="TIMEFRAME", free_percent="", free_space="OS_FREE_DISK_SPACE")
@@ -164,3 +166,28 @@ def test_aternity_n_a_is_no_version():
     c = client.software_changes("LT1", START, END)[0]
     assert (c.version, c.version_before) == ("3.2", None)
     assert c.timestamp == datetime(2026, 10, 27, 14, 0, tzinfo=timezone.utc)  # local offset read as UTC
+
+
+def test_failures_are_told_without_urls_or_raw_replies(caplog):
+    import logging
+
+    def handler(request: httpx.Request):
+        return httpx.Response(400, text='<?xml version="1.0"?><error><message>View \'X_SOURCE\' doesn\'t exist.'
+                                        '</message></error>')
+
+    cfg = AternityConfig(base_url="https://aternity.test/aternity.odata/v2.0")
+    cfg.entities["software_changes"] = "X_SOURCE"
+    client = AternityClient(cfg, transport=httpx.MockTransport(handler))
+    client.http.retries = 0
+    netim = NetimClient(NetimConfig(base_url="https://netim.test:8543"), transport=httpx.MockTransport(handler))
+    netim.http.retries = 0
+    metric = NetimMetric("if_util_out", "Interface utilization out (%)", "INTERFACE", "IFC_UTIL", "utilizationOut", 80)
+    with caplog.at_level(logging.INFO, logger="uxcorrelate"):
+        client.software_changes("LT1", START, END)
+        netim.metrics(metric, ["51"], START, END)
+    said = client.warnings + netim.warnings + [r.getMessage() for r in caplog.records]
+    assert client.warnings == ["Software changes not checked: this Aternity has no X_SOURCE data source "
+                               "(`uxcorrelate verify` shows what to change)."]
+    assert netim.warnings == ["Interface utilization out (%) not checked: NetIM gave an error "
+                              "(View 'X_SOURCE' doesn't exist.)."]
+    assert not [s for s in said if "https://" in s or "<?xml" in s]

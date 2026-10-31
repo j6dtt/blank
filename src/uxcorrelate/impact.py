@@ -18,6 +18,8 @@ import logging
 from collections import Counter
 from datetime import datetime, timedelta
 
+from .http import short_error
+
 log = logging.getLogger("uxcorrelate")
 BASELINE_DAYS = 3
 
@@ -41,7 +43,7 @@ def gateway_index(netim) -> tuple[list[tuple], bool]:
             ready = True
         names = {d.id: d.name for d in netim.devices()} if by_device else {}
     except Exception as exc:  # NetIM trouble must not stop the comparison
-        log.warning("NetIM: interface index unavailable: %s", exc)
+        log.warning("NetIM: could not read devices and interfaces (%s)", short_error(exc))
         return [], False
     nets = []
     for dev_id, itfs in by_device.items():

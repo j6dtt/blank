@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from .config import load_settings
 from .correlate import InvestigationRequest, investigate
-from .http import ApiError
+from .http import ApiError, short_error
 from .logons import logon_report
 from .models import utc
 
@@ -83,7 +83,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
                 shared["netim"] = fresh
                 log.info("NetIM index ready: %d devices; investigations no longer wait for it", len(devices))
             except Exception as exc:  # NetIM down: investigations still work, only slower
-                log.warning("NetIM index failed, retrying in an hour: %s", exc)
+                log.warning("NetIM index could not be read (%s); trying again in an hour", short_error(exc))
             time.sleep(NETIM_REFRESH_S)
 
     threading.Thread(target=index_netim, daemon=True, name="netim-index").start()

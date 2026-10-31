@@ -12,6 +12,8 @@ The alerts path is not in any public Riverbed source, so it is off by default.
 
 from __future__ import annotations
 
+import logging
+
 from datetime import datetime
 from typing import Any, Iterable
 
@@ -22,6 +24,8 @@ from .http import ApiError, RestClient
 from .models import (
     MetricSample, NetimAlert, NetimDevice, NetimInterface, parse_time, to_float,
 )
+
+log = logging.getLogger("uxcorrelate")
 
 
 def _first(d: dict, *keys, default=None):
@@ -221,7 +225,8 @@ class NetimClient:
         try:
             data = self.http.post_json(self.cfg.metric_data_path, metric_request_body(metric, ids, start, end))
         except ApiError as exc:
-            self.warnings.append(f"NetIM metric {metric.key} unavailable: {exc}")
+            log.debug("NetIM: metric %s failed: %s", metric.key, exc)  # the full request and reply
+            self.warnings.append(f"{metric.label} not checked: NetIM gave an error ({exc.short()}).")
             return []
         return parse_metric_response(data, metric, metric.object_type)
 
@@ -233,7 +238,8 @@ class NetimClient:
                 self.cfg.alerts_path, params={"startTime": _ms(start), "endTime": _ms(end)}
             )
         except ApiError as exc:
-            self.warnings.append(f"NetIM alerts unavailable: {exc}")
+            log.debug("NetIM: alerts failed: %s", exc)
+            self.warnings.append(f"NetIM alerts not checked: NetIM gave an error ({exc.short()}).")
             return []
         alerts = []
         for r in _items(data):

@@ -16,6 +16,20 @@ class ApiError(RuntimeError):
         self.status = status
         self.reason = reason  # the server's own short message, if it gave one
 
+    def short(self) -> str:
+        """For people: the server's own message or the HTTP status, never the URL or body."""
+        if self.reason:
+            return self.reason
+        if self.status:
+            return f"HTTP {self.status}"
+        cause = self.__cause__
+        return f"no connection ({type(cause).__name__})" if cause else "no reply"
+
+
+def short_error(exc: Exception) -> str:
+    """Any error in a few words for a person (an ApiError without its URL or body)."""
+    return exc.short() if isinstance(exc, ApiError) else (str(exc)[:120] or type(exc).__name__)
+
 
 class RestClient:
     def __init__(

@@ -62,7 +62,10 @@ def test_a_tenant_without_some_sources_is_told_what_is_skipped_and_where_free_di
     for gone in ("RAW_DATA_TOP_PROCESSES", "RAW_DATA_STORAGE"):
         del schema[gone]
     schema["BUSINESS_ACTIVITIES_RAW"] = schema["BUSINESS_ACTIVITIES_RAW"] - {"OS_FREE_DISK_SPACE"}
-    checks = {c.item: c for c in check_schema(Settings(), schema)}
+    assert not [c for c in check_schema(Settings(), schema) if "disk_space" in c.item or c.item == "free disk space"]
+    settings = Settings()
+    settings.aternity.entities["disk_space"] = "RAW_DATA_STORAGE"
+    checks = {c.item: c for c in check_schema(settings, schema)}
     assert checks["entities.top_processes"].ok is None  # skipped, not a failure
     assert "busiest processes" in checks["entities.top_processes"].message
     disk = checks["free disk space"]

@@ -32,7 +32,9 @@ import yaml
 # boot_components: what each boot/logon spent its time on.
 # software_changes: installs, updates and removals per device (the "what changed").
 # top_processes: the busiest processes on a device over time (who used the CPU/disk).
-# disk_space: free space of a device's disk over time (a nearly full disk).
+# disk_space: free space of a device's disk over time (a nearly full disk). Off:
+# the live tenant publishes no such source (only a "now" value in the inventory).
+# To turn it on, set aternity.entities.disk_space; verify then checks it.
 DEFAULT_ATERNITY_ENTITIES = {
     "activities": "BUSINESS_ACTIVITIES_RAW",
     "inventory": "DEVICE_INVENTORY",
@@ -42,7 +44,6 @@ DEFAULT_ATERNITY_ENTITIES = {
     "boot_components": "MACHINE_BOOT_COMPONENTS",
     "software_changes": "INSTALLED_SOFTWARE_CHANGE_LOG",
     "top_processes": "RAW_DATA_TOP_PROCESSES",
-    "disk_space": "RAW_DATA_STORAGE",
 }
 
 # Aternity's free-disk columns, for `verify` to find another source of them when

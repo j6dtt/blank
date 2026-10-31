@@ -275,6 +275,7 @@ def test_a_missing_data_source_is_one_plain_line():
         return httpx.Response(400, text='<?xml version="1.0"?><error><code>null</code>'
                                         "<message>View 'RAW_DATA_STORAGE' doesn't exist.</message></error>")
     client = AternityClient(AternityConfig(base_url="https://aternity.test/odata"), transport=httpx.MockTransport(handler))
+    client.cfg.entities["disk_space"] = "RAW_DATA_STORAGE"
     client.http.retries = 0
     for dev in ("PC1", "PC2", "PC3"):
         client.disk_space(dev, T0, T0 + timedelta(hours=1))
