@@ -211,8 +211,11 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
             "app": worst.application, "activity": worst.activity, "seconds": round(worst.response_time, 1),
             "when": iso(worst.timestamp), "device": worst.device},
         # each PC the user worked on: actions and slow actions (a user may have several)
+        # a virtual desktop also names the device(s) the user sat at
         "pcs": [{"device": d, "actions": sum(1 for s in samples if s.device == d),
-                 "slow": sum(1 for s in slow if s.device == d)}
+                 "slow": sum(1 for s in slow if s.device == d),
+                 "virtual": any(s.virtual for s in samples if s.device == d),
+                 "from": sorted({s.client_device for s in samples if s.device == d and s.virtual and s.client_device})}
                 for d in sorted({s.device for s in samples}, key=lambda d: -sum(1 for s in slow if s.device == d))],
         "logon": (logons or {}).get("starts", [None])[0] if (logons or {}).get("starts") else None,
         "logon_unit": (logons or {}).get("unit"),

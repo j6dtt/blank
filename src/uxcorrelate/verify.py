@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from statistics import median
 from typing import Any
 
-from .aternity import AternityClient, odata_quote, odata_time
+from .aternity import AternityClient, is_virtual, odata_quote, odata_time
 from .config import (DISK_FREE_COLUMNS, PROCESS_COLUMN, SOFTWARE_UPDATE_GAP_MIN, TIME_COLUMNS, VDI_COLUMNS,
                      Settings)
 from .http import ApiError
@@ -95,6 +95,7 @@ OPTIONAL = {
     "top_processes": "the busiest processes behind CPU, memory or disk problems",
     "disk_space": "nearly full disks",
     "remote_display": "the delay a virtual desktop user feels (remote display latency)",
+    "process_hours": "CPU and memory per process, per hour",
 }
 
 
@@ -266,7 +267,8 @@ def verify_aternity(settings: Settings, client: AternityClient) -> list[Check]:
     return checks + _value_ranges(settings, client, schema) + _health_events(settings, client, schema) \
         + _app_usage(settings, client, schema) + _start_up_parts(settings, client, schema) \
         + _change_log(settings, client, schema) + _vdi(settings, client, schema) \
-        + _remote_display(settings, client, schema) + _process_sources(client, schema)
+        + _remote_display(settings, client, schema) + _process_sources(client, schema) \
+        + _process_hours(settings, client, schema)
 
 
 def _raw(row: dict, fields: dict, keys) -> str:
@@ -662,38 +664,115 @@ def _process_sources(client: AternityClient, schema: dict[str, set[str]]) -> lis
                   ". No source can tell which process used the CPU, memory or disk."), rows=lines)]
 
 
-def verify_client_subnets(settings: Settings, aternity: AternityClient, netim: NetimClient) -> list[Check]:
-    """Do the subnets of the users' own devices (where a virtual desktop is used
-    from) fall in a NetIM subnet? Reads every NetIM device's interfaces."""
+def _process_hours(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
+    """How the per-hour process source is filled: value ranges (are they percent?),
+    what its time column holds, and the busiest processes of one PC in one hour."""
+    cfg = settings.aternity
+    entity, f = cfg.entities.get("process_hours"), cfg.fields.get("process_hours", {})
+    if entity not in schema or f.get("timestamp") not in schema[entity]:
+        return []
+    cols = {k: c for k, c in f.items() if c in schema[entity]}
+    try:
+        rows = client.query(entity, f"{f['timestamp']} ge {odata_time(datetime.now(timezone.utc) - timedelta(days=1))}",
+                            top=1000, select=list(cols.values()), raw=True)
+    except ApiError as exc:
+        return [Check("Aternity", "processes per hour", None, f"Could not read them: {exc.reason or exc}")]
+    if not rows:
+        return [Check("Aternity", "processes per hour", None, f"{entity}: no rows in the last day.")]
+    nums = ("cpu_avg", "cpu_max", "memory_avg", "memory_max")
+    times = Counter(str(r.get(f["timestamp"]))[13:19] for r in rows)  # minutes:seconds part of the time
+    per = Counter((r.get(f["device"]), r.get(f["timestamp"])) for r in rows)
+    lines = [f"{k} ({cols[k]}): {_spread(rows, cols[k])}" for k in nums if k in cols]
+    lines.append(f"{f['timestamp']} minutes:seconds seen: {_values([{'t': t} for t in times.elements()], 't', 5)}")
+    lines.append(f"Rows per PC and hour: min {min(per.values())}, median {median(per.values()):g}, "
+                 f"max {max(per.values())} ({len(per)} PC-hours)")
+    out = [Check("Aternity", "processes per hour", None,
+                 f"{entity}, last day: {len(rows)} row(s){' (first 1000)' if len(rows) == 1000 else ''} on "
+                 f"{len({r.get(f['device']) for r in rows})} PC(s). Values as sent:", rows=lines)]
+    (dev, hour), n = per.most_common(1)[0]
+    try:  # every row of that PC-hour, not a slice
+        mine = client.query(entity, f"{f['timestamp']} eq {odata_time(parse_time(hour))} and "
+                            f"{f['device']} eq {odata_quote(str(dev))}",
+                            select=list(cols.values()), raw=True)
+    except (ApiError, AttributeError):  # AttributeError: a time that could not be read
+        mine = [r for r in rows if (r.get(f["device"]), r.get(f["timestamp"])) == (dev, hour)]
+    key = cols.get("cpu_max") or cols.get("cpu_avg")
+    mine.sort(key=lambda r: -(to_float(r.get(key)) or 0))
+    out.append(Check("Aternity", "processes per hour: one PC-hour", None,
+                     f"{dev} at {hour}: {len(mine)} process row(s), busiest CPU first (the first 8):",
+                     rows=[_raw(r, f, ("process", "application") + nums) for r in mine[:8]]))
+    return out
+
+
+def verify_vdi_network(settings: Settings, aternity: AternityClient, netim: NetimClient) -> list[Check]:
+    """Which addresses NetIM can place: the virtual desktops' own (their path to the
+    servers), the devices users sit at (CLIENT_DEVICE_NAME, looked up in the
+    inventory) and physical PCs. Reads every NetIM device's interfaces."""
     from .correlate import _subnet_contains
     cfg = settings.aternity
-    entity, f = cfg.entities.get("remote_display"), cfg.fields.get("remote_display", {})
-    if not f.get("client_subnet"):
+    act, f = cfg.entities.get("activities"), cfg.fields.get("activities", {})
+    inv, fi = cfg.entities.get("inventory"), cfg.fields.get("inventory", {})
+    if not f.get("virtualization") or not f.get("ip_address"):
         return []
+    since = odata_time(datetime.now(timezone.utc) - timedelta(days=1))
     try:
-        rows = aternity.query(entity, f"{f['timestamp']} ge {odata_time(datetime.now(timezone.utc) - timedelta(days=1))}",
-                              top=1000, select=[f["client_subnet"]])
+        rows = aternity.query(act, f"{f['timestamp']} ge {since}", top=1000,
+                              select=[f[k] for k in ("device", "ip_address", "virtualization", "client_device") if f.get(k)])
         devices = netim.devices()
         netim.read_interfaces(devices)
     except ApiError as exc:
-        return [Check("NetIM", "users' own subnets", None, f"Not checked: {exc.reason or exc}")]
-    subnets = Counter(str(r[f["client_subnet"]]) for r in rows if r.get(f["client_subnet"]))
+        return [Check("NetIM", "which addresses NetIM can place", None, f"Not checked: {exc.reason or exc}")]
     itfs = []
     for d in devices:
         try:
             itfs += [(d, i) for i in netim.interfaces(d.id) if i.ip_addresses]
         except ApiError:
             continue  # read_interfaces already skipped it
-    lines, inside = [], 0
-    for sub, n in subnets.most_common(15):
-        hit = next(((d, i) for d, i in itfs if _subnet_contains(i.ip_addresses, sub.split("/")[0])), None)
-        inside += bool(hit)
-        lines.append(f"{sub!r} ({n} row(s)): " + (f"inside {hit[0].name} {hit[1].name}" if hit else "no NetIM subnet"))
-    return [Check("NetIM", "users' own subnets", None,
-                  f"{entity} ({f['client_subnet']}), last day: {len(subnets)} subnet(s); of the "
-                  f"{min(15, len(subnets))} most used, {inside} inside a NetIM interface's subnet "
-                  f"({len(itfs)} interfaces with an address on {len(devices)} devices):", rows=lines)]
 
+    def place(ip: str) -> str:
+        hit = next(((d, i) for d, i in itfs if _subnet_contains(i.ip_addresses, ip)), None)
+        return f"inside {hit[0].name} {hit[1].name}" if hit else "no NetIM subnet"
+
+    def groups(pcs: dict[str, str], what: str) -> Check:
+        """One line per /24 (most PCs first): one address of it placed in NetIM."""
+        by: dict[str, list] = {}
+        for pc, ip in pcs.items():
+            by.setdefault(".".join(str(ip).split(".")[:3]) + ".x", []).append((pc, ip))
+        lines, inside = [], 0
+        for net, members in sorted(by.items(), key=lambda kv: -len(kv[1]))[:10]:
+            where = place(members[0][1])
+            inside += where != "no NetIM subnet"
+            lines.append(f"{net}: {len(members)} PC(s), e.g. {members[0][0]} {members[0][1]}: {where}")
+        return Check("NetIM", what, None, f"{len(pcs)} PC(s) in {len(by)} /24 group(s); of the "
+                     f"{min(10, len(by))} biggest, {inside} inside a NetIM interface's subnet:", rows=lines)
+
+    virt = {str(r.get(f["device"])): str(r.get(f["ip_address"])) for r in rows
+            if is_virtual(r.get(f["virtualization"])) and r.get(f["ip_address"])}
+    phys = {str(r.get(f["device"])): str(r.get(f["ip_address"])) for r in rows
+            if is_virtual(r.get(f["virtualization"])) is False and r.get(f["ip_address"])}
+    out = [groups(virt, "virtual desktops' own addresses"), groups(phys, "physical PCs' addresses")]
+    # the devices users sit at: are they Aternity devices with an address?
+    clients = Counter(str(r.get(f["client_device"])) for r in rows
+                      if f.get("client_device") and is_virtual(r.get(f["virtualization"])) and r.get(f["client_device"]))
+    names = [c for c, _ in clients.most_common(20)]
+    if names and inv and fi.get("device") and fi.get("ip_address"):
+        flt = " or ".join(f"{fi['device']} eq {odata_quote(n)}" for n in names)
+        try:
+            found = {str(r.get(fi["device"])): r.get(fi["ip_address"])
+                     for r in aternity.query(inv, flt, select=[fi["device"], fi["ip_address"]])}
+        except ApiError as exc:
+            found, names = {}, []
+            out.append(Check("NetIM", "devices users sit at", None, f"Inventory not read: {exc.reason or exc}"))
+        if names:
+            with_ip = {n: str(ip) for n, ip in found.items() if ip}
+            out.append(Check(
+                "NetIM", "devices users sit at", None,
+                f"{len(clients)} different {f['client_device']} on virtual desktops; of the {len(names)} most used, "
+                f"{len(found)} are in {inv}, {len(with_ip)} with an address:",
+                rows=[f"{n}: " + (f"{with_ip[n]}, {place(with_ip[n])}" if n in with_ip
+                                  else "in the inventory, no address" if n in found else "not an Aternity device")
+                      for n in names[:10]]))
+    return out
 
 def _unpaired(rows: list[dict], f: dict) -> list[tuple]:
     """Rows with no row of another change type for the same software on the same PC at

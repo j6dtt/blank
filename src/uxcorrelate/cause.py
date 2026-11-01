@@ -203,7 +203,9 @@ def changes_before(aternity, device: str, when, names, part: str, event: str) ->
     out = {"changes": [], "text": None, "todo": None}
     if not hasattr(aternity, "software_changes"):
         return out
-    rows = _updates(aternity.software_changes(device, when - CHANGES_BEFORE, when))
+    # read past `when` too: a removal put back later is not a change (see _updates)
+    rows = _updates(aternity.software_changes(device, when - CHANGES_BEFORE, when + CHANGES_BEFORE),
+                    when - CHANGES_BEFORE, when)
     names = {n.lower().rsplit(".", 1)[0] for n in names if n}
     for c in rows[:8]:
         related = (bool(c["name"]) and not c.get("back")
@@ -236,7 +238,8 @@ def change_text(c: dict) -> str:
     return (f"{_day(t)} {c['name']} {c['change'] or 'changed'}"
             + (f" {c['version_before']} → {c['version']}" if c["version_before"] and c["version"] else
                f" {c['version']}" if c["version"] else "")
-            + (f" ({_day(until)})" if until else ""))
+            + (f" ({_day(until)})" if until else "")
+            + (" (it comes and goes in Aternity's log)" if c.get("flaps") else ""))
 
 
 def changes_between(aternity, device: str, after, before) -> dict:
@@ -244,7 +247,8 @@ def changes_between(aternity, device: str, after, before) -> dict:
     {"changes": [...], "text": sentence}."""
     if not hasattr(aternity, "software_changes"):
         return {"changes": [], "text": None}
-    rows = _updates(aternity.software_changes(device, after, before))
+    rows = _updates(aternity.software_changes(device, after - CHANGES_BEFORE, before + CHANGES_BEFORE),
+                    after, before)
     span = f"between {_day(after)} and {_day(before)}" if _day(after) != _day(before) else f"on {_day(after)}"
     if not rows:
         return {"changes": [], "text": f"Nothing was installed, updated or removed on {device} {span}."}
@@ -254,14 +258,19 @@ def changes_between(aternity, device: str, after, before) -> dict:
             + (f" (+{len(rows) - 4} more)" if len(rows) > 4 else "") + "."}
 
 
-def _updates(rows) -> list[dict]:
+def _updates(rows, start=None, end=None) -> list[dict]:
     """The change log as changes: real changes first, newest first.
     - A removal and an install of one software within SOFTWARE_UPDATE_GAP_MIN are
       one change: "updated" (old -> new version), or "reinstalled" (same version).
     - A removal and a later install of the same version (or an install and a later
       removal), further apart, change nothing in the end: one line marked "back",
       listed last. On a live Aternity these come on many PCs at the same minutes.
-    - Anything else stays as Aternity logged it."""
+    - A software whose same version comes and goes like that on this PC (a live
+      Aternity logs Chrome removed one day, back the next, removed again) is noise:
+      its other rows at that version are told last too, never a change to check.
+    - Anything else stays as Aternity logged it.
+    Rows after `end` (or before `start`) are read only to find a row's other half:
+    only changes in [start, end] are returned."""
     gap = timedelta(minutes=SOFTWARE_UPDATE_GAP_MIN)
     rows = sorted(rows, key=lambda c: c.timestamp)
     used: set[int] = set()
@@ -292,10 +301,22 @@ def _updates(rows) -> list[dict]:
                              "change": ("removed, then put back" if c.change in SOFTWARE_REMOVED
                                         else "installed, then removed again") + " at",
                              "version": c.version, "version_before": None})
-    real += [{"time": c.timestamp, "name": c.name, "change": c.change, "version": c.version,
-              "version_before": c.version_before} for c in rows if id(c) not in used]
-    real.sort(key=lambda c: c["time"], reverse=True)
-    return real + sorted(back, key=lambda c: c["time"], reverse=True)
+    flaps = {(c["name"], c["version"]) for c in back}
+    for c in rows:
+        if id(c) in used:
+            continue
+        row = {"time": c.timestamp, "name": c.name, "change": c.change, "version": c.version,
+               "version_before": c.version_before}
+        if (c.name, c.version) in flaps:
+            back.append({**row, "back": True, "flaps": True})
+        else:
+            real.append(row)
+
+    def inside(c) -> bool:
+        return any(t is not None and (start is None or t >= start) and (end is None or t <= end)
+                   for t in (c["time"], c.get("until")))
+    real = sorted(filter(inside, real), key=lambda c: c["time"], reverse=True)
+    return real + sorted(filter(inside, back), key=lambda c: c["time"], reverse=True)
 
 
 def _changes(aternity, g, first, why) -> None:

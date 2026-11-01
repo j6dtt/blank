@@ -26,6 +26,8 @@ class UserSample:
     cpu: float | None = None
     memory: float | None = None
     disk_queue: float | None = None
+    virtual: bool | None = None  # a virtual desktop (VDI); None = Aternity did not say
+    client_device: str | None = None  # on a virtual desktop: the device the user sat at
 
 
 @dataclass

@@ -38,6 +38,8 @@ import yaml
 # remote_display: on a virtual desktop (VDI), the delay the user feels between
 # their own device and the desktop, per session (protocol, client device and
 # its subnet). Read only by `verify` so far.
+# process_hours: CPU and memory per process, one row per hour (the live tenant
+# has no RAW_DATA_TOP_PROCESSES). Read only by `verify` so far.
 DEFAULT_ATERNITY_ENTITIES = {
     "activities": "BUSINESS_ACTIVITIES_RAW",
     "inventory": "DEVICE_INVENTORY",
@@ -48,6 +50,7 @@ DEFAULT_ATERNITY_ENTITIES = {
     "software_changes": "INSTALLED_SOFTWARE_CHANGE_LOG",
     "top_processes": "RAW_DATA_TOP_PROCESSES",
     "remote_display": "REMOTE_DISPLAY_LATENCY_RAW",
+    "process_hours": "APPLICATION_RESOURCES_HOURLY",
 }
 
 # VDI and desktop-management columns on the sources already read (all in a real
@@ -82,6 +85,9 @@ SOFTWARE_REMOVED = ("Uninstalled",)
 # and the install of the new one, up to a few minutes apart (Edge: 2 min); some
 # updates are one "Updated" row. Rows of one software this close are one change.
 SOFTWARE_UPDATE_GAP_MIN = 10
+# VIRTUALIZATION values that mean a virtual desktop (a live tenant sends 'true' /
+# 'false'; some data sources type it as a number)
+VIRTUAL_VALUES = ("true", "1")
 
 # logical name -> Aternity OData column
 DEFAULT_ATERNITY_FIELDS = {
@@ -103,6 +109,9 @@ DEFAULT_ATERNITY_FIELDS = {
         "ip_address": "DEVICE_IP_ADDRESS",
         "location": "BUSINESS_LOCATION",
         "os": "OS_NAME",
+        # a virtual desktop (VDI) or not, and the device the user sat at
+        "virtualization": "VIRTUALIZATION",
+        "client_device": "CLIENT_DEVICE_NAME",
     },
     "inventory": {
         "device": "DEVICE_NAME",
@@ -188,6 +197,16 @@ DEFAULT_ATERNITY_FIELDS = {
         "protocol": "REMOTE_DISPLAY_PROTOCOL",
         "latency": "REMOTE_DISPLAY_LATENCY_AVG",
         "status": "SLA_STATUS",
+    },
+    "process_hours": {
+        "timestamp": "TIMEFRAME",
+        "device": "DEVICE_NAME",
+        "process": "PROCESS_NAME",
+        "application": "APPLICATION_NAME",
+        "cpu_avg": "PRC_CPU_UTIL_AVG",
+        "cpu_max": "PRC_CPU_UTIL_MAX",
+        "memory_avg": "PRC_PHYSICAL_MEMORY_UTIL_AVG",
+        "memory_max": "PRC_PHYSICAL_MEMORY_UTIL_MAX",
     },
     # free_percent, or free_space in the unit of inventory.total_disk (e.g. a
     # data source with OS_FREE_DISK_SPACE); `uxcorrelate verify` says which

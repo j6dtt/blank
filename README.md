@@ -243,10 +243,12 @@ back to dev.
 - **Virtual desktops (VDI):** which VDI and desktop-management columns
   the tenant publishes and how they are filled; for one user per kind of
   desktop, how many PCs they used in 14 days and how many users their PC
-  had (one desktop each, or pooled); the remote display latency source
-  (protocols, Aternity's status, the users' own device subnets) and, with
-  NetIM set too, whether those subnets are inside a NetIM subnet (it reads
+  had (one desktop each, or pooled); the remote display latency source if
+  published; with NetIM set too, which addresses NetIM can place: the
+  virtual desktops', physical PCs' and the devices users sit at (it reads
   every NetIM device's interfaces, about half a minute).
+- **Processes per hour:** value ranges of `APPLICATION_RESOURCES_HOURLY`
+  and the busiest processes of one PC in one hour.
 - **Put-backs:** for software removed and put back at the same version on
   a PC, the PC's nearest start-up each time, its image builds, and how many
   other PCs have change-log rows in the same minute.
@@ -256,6 +258,17 @@ back to dev.
   data): it prints the reply's key names, never values, and which function
   in `./src/uxcorrelate/netim.py` to fix. Edit it there and run
   `docker compose restart`; then bring the same fix to dev by hand.
+
+### Virtual desktops
+
+Aternity marks each action on a virtual desktop (`VIRTUALIZATION`). Live
+desktops are pooled (a user gets another one each time), so a user's
+start-ups on virtual desktops are compared with each other, and "Compared
+with normal" says when the last normal run was on another desktop. "What
+the user felt" names the virtual desktop and the device the user sat at.
+What Aternity does not give us yet (remote display latency, network round
+trip, top processes, ...) is listed for the Aternity admin in
+`docs/aternity-admin-questions.md`.
 
 ### Defaults and where they come from
 

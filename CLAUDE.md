@@ -51,7 +51,10 @@ unset `<REQUIRED>` base URLs.
   change log read by `cause._updates`: an "Uninstalled" + "Installed" row
   of one software within `SOFTWARE_UPDATE_GAP_MIN` = one update (or
   reinstall); further apart at the same version = "removed, then put back",
-  told last and never a change to check; "Updated" is one row), and main
+  told last and never a change to check; the other rows of a software that
+  comes and goes like that are told last too ("comes and goes in
+  Aternity's log"); the log is read past the problem time to find a row's
+  other half; "Updated" is one row), and main
   causes =
   that part longer than normal on every PC (`boot_component_everywhere`).
   No "slow" threshold, no assumed type names. Unit
@@ -66,7 +69,13 @@ unset `<REQUIRED>` base URLs.
   answer "Possibly: what changed on <PC>…". `logons.py` does the same for
   start-ups: since when every start-up of a type took longer than 9 in 10
   of those before it (earliest such point; 5 earlier start-ups needed), and
-  the changes just before. A start-up with no slow part that is normal for
+  the changes just before. Virtual desktops (Horizon) are pooled: for a
+  user, start-ups on their virtual desktops (`virtual_devices`, from
+  `VIRTUALIZATION` / `VIRTUAL_VALUES`) are compared with each other, not
+  with one desktop's history of many users; when the run before was on
+  another desktop, the answer says what changed is read on this one only.
+  "What the user felt" marks a virtual desktop and the device the user
+  sat at (`CLIENT_DEVICE_NAME`). A start-up with no slow part that is normal for
   its PC is "weak": "Possibly", never "Likely". The answer's "checked" list
   says what was ruled out, with counts.
 - `impact.py`: "who else" — other users of the same apps in the user's slow
@@ -110,9 +119,13 @@ unset `<REQUIRED>` base URLs.
   its image builds, other PCs in that minute. VDI (`VDI_COLUMNS`,
   `remote_display` in `config.py`, read only by verify so far): which
   columns are filled, pooled or one desktop per user, remote display
-  latency, and (`verify_client_subnets`, run by the CLI when both systems
-  are set) whether the users' own device subnets are in NetIM. "Process
-  data" lists every source with `PROCESS_COLUMN`.
+  latency, and (`verify_vdi_network`, run by the CLI when both systems
+  are set) which addresses NetIM can place: virtual desktops', physical
+  PCs' (one per /24) and the devices users sit at (looked up in the
+  inventory). "Process data" lists every source with `PROCESS_COLUMN`;
+  `process_hours` (`APPLICATION_RESOURCES_HOURLY`, read only by verify so
+  far) shows value ranges and one PC-hour. What Aternity does not give
+  us is listed for its admin in `docs/aternity-admin-questions.md`.
   A missing optional source (`OPTIONAL`) is a note saying what
   is skipped, not a FAIL; a wrong name gets paste-ready YAML only when the
   real name is very close. It checks every configured Aternity data source/column (against

@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from dataclasses import replace
 
 import pytest
 
@@ -491,7 +492,8 @@ def test_two_pcs_are_told_apart_and_usual_slowness_is_not_blamed():
     samples = erp(lambda i: i == 4) + [UserSample(T0 + timedelta(minutes=7), "amy", "PC2", "ERP", response_time=1.0)]
     result = amy(samples, source=Usual)
     a = result["answer"]
-    assert a["felt"]["pcs"] == [{"device": "PC1", "actions": 24, "slow": 1}, {"device": "PC2", "actions": 1, "slow": 0}]
+    assert [(p["device"], p["actions"], p["slow"], p["virtual"]) for p in a["felt"]["pcs"]] == [
+        ("PC1", 24, 1, False), ("PC2", 1, 0, False)]
     assert a["felt"]["slowest"]["device"] == "PC1"
     assert a["title"] == "Nothing unusual found"
     assert a["reason"].endswith("Other ERP users were slow as often as usual at this hour (see Who else).")
@@ -527,3 +529,53 @@ def test_the_change_log_reads_like_the_live_one():
                           "Oct 17 Text Editor removed, then put back at 8.9 (Oct 18).")
     # what is different afterwards: the put-back is told, not counted as a change to check
     assert [c["name"] for c in ch["changes"]] == ["Web Viewer", "Mail Client", "Old Agent"]
+
+
+def test_software_that_comes_and_goes_in_the_log_is_not_a_change_to_check():
+    # live: Chrome removed Oct 18, back Oct 19, removed Oct 20, back Oct 21 (same version);
+    # a problem on Oct 20 must not point at "Chrome Uninstalled", and a put-back after
+    # the problem is read too
+    from uxcorrelate.cause import changes_before
+    day = lambda d, h: datetime(2026, 10, d, h, 0, tzinfo=timezone.utc)  # noqa: E731
+
+    class Log:
+        def software_changes(self, device, start, end):
+            rows = [SoftwareChange(day(18, 13), device, "Browser", "Uninstalled", "154.0"),
+                    SoftwareChange(day(19, 13), device, "Browser", "Installed", "154.0"),
+                    SoftwareChange(day(20, 9), device, "Browser", "Uninstalled", "154.0"),
+                    SoftwareChange(day(21, 13), device, "Browser", "Installed", "154.0"),
+                    SoftwareChange(day(19, 16), device, "Mail Client", "Updated", "7.2")]
+            return [c for c in rows if start <= c.timestamp <= end]
+
+    ch = changes_before(Log(), "WS-8", day(20, 12), ["browser"], "failing part", "first failure")
+    assert ch["text"] == ("Changed on WS-8 in the 14 days before Oct 20: Oct 19 Mail Client Updated 7.2; "
+                          "Oct 20 Browser removed, then put back at 154.0 (Oct 21); "
+                          "Oct 18 Browser removed, then put back at 154.0 (Oct 19).")
+    assert ch["todo"] is None  # nothing related that left the PC different
+    assert [c["related"] for c in ch["changes"]] == [False, False, False]
+
+    class NotBackYet(Log):  # the latest removal has no put-back yet: it came and went before
+        def software_changes(self, device, start, end):
+            return [c for c in super().software_changes(device, start, end) if c.timestamp != day(21, 13)]
+
+    ch = changes_before(NotBackYet(), "WS-8", day(20, 12), ["browser"], "failing part", "first failure")
+    assert "Oct 20 Browser Uninstalled 154.0 (it comes and goes in Aternity's log)" in ch["text"]
+    assert ch["todo"] is None
+
+
+def test_on_a_pooled_virtual_desktop_the_answer_says_which_desktops():
+    class Pooled(Billing):  # lee gets another virtual desktop each day
+        def history(self, start, end, username=None, device=None):
+            return [replace(s, device=f"VD-{(T0 - s.timestamp).days}") if s.username == "lee" else s
+                    for s in super().history(start, end, username=username, device=device)]
+
+    samples = [UserSample(T0 + timedelta(minutes=10 * i), "lee", "VD-0", "Billing", "Open Invoice",
+                          response_time=9.0, virtual=True, client_device="TC-5") for i in range(3)]
+    result = investigate(InvestigationRequest(start=T0, end=T0 + timedelta(hours=2), username="lee"),
+                         Pooled(samples), None, Settings())
+    a = result["answer"]
+    assert ("The last normal Billing Open Invoice was on VD-11, another virtual desktop: what changed is "
+            "read on VD-0 only.") in a["normal"][0]
+    assert a["felt"]["pcs"] == [{"device": "VD-0", "actions": 3, "slow": 3, "virtual": True, "from": ["TC-5"]}]
+    from uxcorrelate.report import render_text
+    assert "  on virtual desktop VD-0, from TC-5" in render_text(result)

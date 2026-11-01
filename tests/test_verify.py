@@ -290,20 +290,28 @@ def test_verify_says_when_a_checked_column_has_no_values():
 
 def test_verify_shows_how_virtual_desktops_are_filled():
     from pathlib import Path
-    from uxcorrelate.verify import _change_log, _process_sources, _remote_display, _vdi, verify_client_subnets
+    from uxcorrelate.verify import _change_log, _process_sources, _process_hours, _remote_display, _vdi, verify_vdi_network
 
     def handler(request):
         path, flt = request.url.path, request.url.params.get("$filter", "")
         if path.endswith("/BUSINESS_ACTIVITIES_RAW"):
-            row = lambda u, d, v: {"TIMEFRAME": "2026-10-30T09:00:00Z", "USERNAME": u, "DEVICE_NAME": d,  # noqa: E731
-                                   "VIRTUALIZATION": v, "ACTIVITY_REMOTE_DISPLAY_LATENCY_AVG": 40}
+            row = lambda u, d, v, ip, c: {"TIMEFRAME": "2026-10-30T09:00:00Z", "USERNAME": u,  # noqa: E731
+                                          "DEVICE_NAME": d, "VIRTUALIZATION": v, "DEVICE_IP_ADDRESS": ip,
+                                          "CLIENT_DEVICE_NAME": c, "ACTIVITY_REMOTE_DISPLAY_LATENCY_AVG": 40}
             if "USERNAME eq 'ann'" in flt:  # a pooled user: another desktop each day
                 return httpx.Response(200, json={"value": [{"DEVICE_NAME": "VD-1"}, {"DEVICE_NAME": "VD-2"}]})
             if "DEVICE_NAME eq 'VD-1'" in flt:
                 return httpx.Response(200, json={"value": [{"USERNAME": "ann"}, {"USERNAME": "bob"}]})
             if "eq" in flt:
                 return httpx.Response(200, json={"value": [{"DEVICE_NAME": "LT-9", "USERNAME": "cy"}]})
-            return httpx.Response(200, json={"value": [row("ann", "VD-1", "Virtual"), row("cy", "LT-9", "N/A")]})
+            return httpx.Response(200, json={"value": [row("ann", "VD-1", "true", "10.0.0.5", "TC-5"),
+                                                       row("cy", "LT-9", "false", "172.16.9.9", "N/A")]})
+        if path.endswith("/DEVICE_INVENTORY") and "TC-5" in flt:  # the device ann sits at
+            return httpx.Response(200, json={"value": [{"DEVICE_NAME": "TC-5", "DEVICE_IP_ADDRESS": "10.0.0.77"}]})
+        if path.endswith("/APPLICATION_RESOURCES_HOURLY"):
+            hour = lambda p, cpu: {"TIMEFRAME": "2026-10-30T09:00:00-04:00", "DEVICE_NAME": "VD-1",  # noqa: E731
+                                   "PROCESS_NAME": p, "PRC_CPU_UTIL_AVG": cpu / 2, "PRC_CPU_UTIL_MAX": cpu}
+            return httpx.Response(200, json={"value": [hour("idle.exe", 1), hour("scan.exe", 60)]})
         if path.endswith("/DEVICE_INVENTORY"):
             return httpx.Response(200, json={"value": [{"DEVICE_NAME": "VD-1", "SCCM_CLIENT_VERSION": "5.0"}]})
         if path.endswith("/REMOTE_DISPLAY_LATENCY_RAW"):
@@ -337,9 +345,9 @@ def test_verify_shows_how_virtual_desktops_are_filled():
 
     cols, *_, values, pooled, mgmt = _vdi(settings, client, schema)
     assert cols.message.startswith("Published: VIRTUALIZATION, CLIENT_DEVICE_NAME")
-    assert "virtualization (VIRTUALIZATION): 'Virtual' 1, 'N/A' 1" in values.rows
+    assert "virtualization (VIRTUALIZATION): 'true' 1, 'false' 1" in values.rows
     assert "display_latency (ACTIVITY_REMOTE_DISPLAY_LATENCY_AVG): 2 with a value; min 40, median 40, max 40" in values.rows
-    assert pooled.rows[0] == ("VIRTUALIZATION 'Virtual': user ann worked on 2 PC(s) in 14 days "
+    assert pooled.rows[0] == ("VIRTUALIZATION 'true': user ann worked on 2 PC(s) in 14 days "
                               "('VD-1' 1, 'VD-2' 1); PC VD-1 was used by 2 user(s).")
     assert mgmt.rows == ["sccm_client (SCCM_CLIENT_VERSION): '5.0' 1", "image_build (DEVICE_IMAGE_BUILD_NUMBER): None 1"]
 
@@ -361,7 +369,12 @@ def test_verify_shows_how_virtual_desktops_are_filled():
                             "rows in the last day: yes") for r in proc.rows)
 
     netim = NetimClient(settings.netim, transport=httpx.MockTransport(netim_handler))
-    (subnets,) = verify_client_subnets(settings, client, netim)
-    assert "client_device (CLIENT_DEVICE_NAME): 0 different" in rd.rows
-    assert "of the 2 most used, 1 inside a NetIM interface's subnet" in subnets.message
-    assert subnets.rows == ["'10.0.0.0' (1 row(s)): inside den-rtr01 Gi0/1", "'172.16.5.0' (1 row(s)): no NetIM subnet"]
+    hours, one = _process_hours(settings, client, schema)
+    assert "cpu_max (PRC_CPU_UTIL_MAX): 2 with a value; min 1, median 30.5, max 60" in hours.rows
+    assert "Rows per PC and hour: min 2, median 2, max 2 (1 PC-hours)" in hours.rows
+    assert one.rows[0].startswith("process='scan.exe'")  # busiest CPU first
+
+    desktops, physical, clients = verify_vdi_network(settings, client, netim)
+    assert desktops.rows == ["10.0.0.x: 1 PC(s), e.g. VD-1 10.0.0.5: inside den-rtr01 Gi0/1"]
+    assert physical.rows == ["172.16.9.x: 1 PC(s), e.g. LT-9 172.16.9.9: no NetIM subnet"]
+    assert clients.rows == ["TC-5: 10.0.0.77, inside den-rtr01 Gi0/1"]

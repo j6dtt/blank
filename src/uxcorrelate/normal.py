@@ -95,10 +95,15 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
                 line += "; the last day before this was normal."
             text.append(line)
             if len(run) < len(days):  # a normal day before the slow ones: what changed after it
-                normal = max(s.timestamp for s in by_day[days[len(days) - len(run) - 1]])
+                last = max(by_day[days[len(days) - len(run) - 1]], key=lambda s: s.timestamp)
+                normal = last.timestamp
                 first = (min(s.timestamp for s in by_day[run[0]] if is_slow(s)) if run
                          else min(s.timestamp for s in mine))
                 since = first
+                if any(s.virtual for s in mine) and last.device and last.device != dev:
+                    # pooled virtual desktops: the normal run was on another desktop
+                    text.append(f"The last normal {name} was on {last.device}, another virtual desktop: "
+                                f"what changed is read on {dev} only.")
                 ch = changes_between(aternity, dev, normal, first)
                 changes = ch["changes"]
                 if ch["text"]:

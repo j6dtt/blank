@@ -318,8 +318,11 @@ function render(d) {
       + ` (${f.apps.map(([app, n]) => `${esc(app)} ${n}`).join(", ")}), ${f.first === f.last ? "at" : "between"} ${span(f.first, f.last)}.</p>`
     : `<p>No slow actions (${f.actions} measured).</p>`;
   const pcs = f.pcs || [];
+  // a virtual desktop also names the device(s) the user sat at
+  const from = (p) => p.from && p.from.length ? ` from ${p.from.map(esc).join(", ")}` : "";
   if (pcs.length > 1) felt += `<p>They used ${pcs.length} PCs: ` + pcs.map((p) =>
-    `${esc(p.device)} (${p.slow} of ${p.actions} slow)`).join(", ") + ".</p>";
+    `${esc(p.device)} (${p.virtual ? `virtual desktop${from(p)}; ` : ""}${p.slow} of ${p.actions} slow)`).join(", ") + ".</p>";
+  else if (pcs.length && pcs[0].virtual) felt += `<p>On virtual desktop ${esc(pcs[0].device)}${from(pcs[0]) ? "," + from(pcs[0]) : ""}.</p>`;
   if (f.slowest) felt += `<p>Slowest: <b>${f.slowest.seconds} s</b> in ${esc(f.slowest.app)}${f.slowest.activity ? ` (${esc(f.slowest.activity)})` : ""}${f.slowest.device ? ` on ${esc(f.slowest.device)}` : ""}, ${hm(f.slowest.when)}.</p>`;
   const tw = a.time_went;
   if (tw) felt += `<p>Aternity measured the slow time: PC ${Math.round(tw.pc * 100)}%, network ${Math.round(tw.network * 100)}%, server ${Math.round(tw.server * 100)}%.</p>`;

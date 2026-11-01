@@ -104,3 +104,36 @@ def test_a_start_up_says_since_when_it_is_longer_and_what_changed_just_before():
     assert st["why"][1] == "Changed on LAB-7 between Oct 16 and Oct 22: Oct 21 VPN Client Installed 9.0."
     assert st["why"][2] == "Aternity recorded no breakdown for this start-up."
     assert len(st["why"]) == 3  # the 14-day change list is not repeated
+
+
+def test_on_pooled_virtual_desktops_a_start_up_is_compared_with_the_users_own():
+    # live: one user on 11 virtual desktops in 14 days, one desktop used by 4 users
+    day = lambda d: START - timedelta(days=d)  # noqa: E731
+
+    class Pool:
+        def boots(self, start, end, username=None, **k):
+            if start < START - timedelta(days=1):
+                return [BootSample(day(d), f"VD-{d}", "ann", type="Sign-in", duration=20.0 + d % 3)
+                        for d in range(12, 0, -1)]
+            return [BootSample(START + timedelta(minutes=30), "VD-40", "ann", type="Sign-in", duration=75.0)]
+
+        def virtual_devices(self, start, end, username=None, device=None):
+            assert username == "ann"
+            return {f"VD-{d}" for d in range(1, 13)} | {"VD-40"}
+
+    lg = logon_report(Pool(), START, END, username="ann", unit="s")
+    st = lg["starts"][0]
+    assert st["pooled"] is True and st["values"]["Sign-in"]["usual"] == 21.0  # all her desktops
+    assert st["why"][0] == ("Sign-in took 75.0 s, longer than 9 in 10 of ann's 12 earlier start-ups on virtual "
+                            "desktops in the last 30 days (up to 22.0 s); the one before, Oct 27, took 21.0 s.")
+    assert st["why"][1] == ("The start-up before that was on VD-1, another virtual desktop: what changed is "
+                            "read on VD-40 only.")
+
+    # the same user on a physical PC: that PC's own history, as before
+    class Physical(Pool):
+        def virtual_devices(self, *a, **k):
+            return set()
+
+    st = logon_report(Physical(), START, END, username="ann", unit="s")["starts"][0]
+    assert st["pooled"] is False
+    assert st["why"][0].startswith("VD-40 has only 0 earlier Sign-in")

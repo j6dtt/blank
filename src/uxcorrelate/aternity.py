@@ -15,7 +15,7 @@ from urllib.parse import quote
 
 import httpx
 
-from .config import NO_VALUE, UNKNOWN_VALUE, AternityConfig
+from .config import NO_VALUE, UNKNOWN_VALUE, VIRTUAL_VALUES, AternityConfig
 from .http import ApiError, RestClient
 from .models import (
     AppUsageSample, BootComponent, BootSample, DeviceHealthSample, EndpointInfo, HealthEvent, ProcessSample,
@@ -28,6 +28,13 @@ log = logging.getLogger("uxcorrelate")
 def _bare(value) -> str:
     """A value without Aternity's bracketed label: "unknown (Dll)" -> "unknown"."""
     return re.sub(r"\s*\([^()]*\)$", "", str(value or "")).strip()
+
+
+def is_virtual(value) -> bool | None:
+    """Aternity's VIRTUALIZATION value as yes / no / not known."""
+    if value is None or value == "":
+        return None
+    return str(value).strip().lower() in VIRTUAL_VALUES
 
 
 def odata_quote(value: str) -> str:
@@ -135,6 +142,8 @@ class AternityClient:
                 cpu=to_float(row.get(f.get("cpu", ""))),
                 memory=to_float(row.get(f.get("memory", ""))),
                 disk_queue=to_float(row.get(f.get("disk_queue", ""))),
+                virtual=is_virtual(row.get(f.get("virtualization", ""))),
+                client_device=row.get(f.get("client_device", "")) or None,
             ))
             self._activity_health.setdefault(dev, []).append(DeviceHealthSample(
                 timestamp=ts,
@@ -278,6 +287,21 @@ class AternityClient:
         if type and f.get("type"):
             flt += f" and {f['type']} eq {odata_quote(type)}"
         return self._components(flt, "boot/logon components of other PCs")
+
+    def virtual_devices(self, start: datetime, end: datetime, username: str | None = None,
+                        device: str | None = None) -> set[str]:
+        """The PCs that Aternity marks as virtual desktops in this user's (or PC's) activities."""
+        key = "activities"
+        f = self.cfg.fields.get(key, {})
+        if not f.get("virtualization"):
+            return set()
+        clauses = [self._time_filter(key, start, end)]
+        for logical, value in (("username", username), ("device", device)):
+            if value:
+                clauses.append(f"{f[logical]} eq {odata_quote(value)}")
+        rows = self._optional(key, "which PCs are virtual desktops", " and ".join(clauses),
+                              select=[f["device"], f["virtualization"]])
+        return {str(r.get(f["device"])) for r in rows if is_virtual(r.get(f["virtualization"]))}
 
     def _optional(self, key: str, what: str, flt: str, select: list[str] | None = None,
                   top: int | None = None) -> list[dict]:

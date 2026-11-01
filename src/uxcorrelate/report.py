@@ -53,7 +53,9 @@ def _answer_lines(a: dict, who: str) -> list[str]:
         pcs = f.get("pcs") or []
         if len(pcs) > 1:
             lines.append(f"  they used {len(pcs)} PCs: "
-                         + ", ".join(f"{p['device']} ({p['slow']} of {p['actions']} slow)" for p in pcs))
+                         + ", ".join(f"{p['device']} ({_pc_kind(p)}{p['slow']} of {p['actions']} slow)" for p in pcs))
+        elif pcs and pcs[0].get("virtual"):
+            lines.append(f"  on virtual desktop {pcs[0]['device']}" + _pc_from(pcs[0]))
         s = f["slowest"]
         if s:
             lines.append(f"  slowest: {s['seconds']} s in {s['app']}" + (f" ({s['activity']})" if s["activity"] else "")
@@ -89,6 +91,15 @@ def _answer_lines(a: dict, who: str) -> list[str]:
     if a["todo"]:
         lines += ["", "What to do:"] + [f"  - {x}" for x in a["todo"]]
     return lines
+
+
+def _pc_from(p: dict) -> str:
+    return f", from {', '.join(p['from'])}" if p.get("from") else ""
+
+
+def _pc_kind(p: dict) -> str:
+    """ "virtual desktop from X; " for a virtual desktop, else nothing."""
+    return f"virtual desktop{_pc_from(p).replace(',', '', 1)}; " if p.get("virtual") else ""
 
 
 def render_text(result: dict) -> str:
