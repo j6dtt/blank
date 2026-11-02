@@ -86,9 +86,10 @@ class ProcessSample:
     process: str
     application: str | None = None
     cpu: float | None = None
-    memory: float | None = None
+    memory: float | None = None  # percent (RAW_DATA_TOP_PROCESSES)
     io_read: float | None = None
     io_write: float | None = None
+    memory_bytes: float | None = None  # bytes (APPLICATION_RESOURCES_HOURLY)
 
 
 @dataclass

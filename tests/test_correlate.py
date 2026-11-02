@@ -239,7 +239,28 @@ def test_a_cpu_problem_names_the_busiest_process():
               for i in range(24)]
     why = amy(erp(bad), health, source=Busy)["problems"][0]["why"]
     assert why["processes"][0] == {"process": "scan.exe", "value": 80.0}
-    assert why["text"][0] == "Busiest processes then: scan.exe (CPU 80.0%), erp.exe (CPU 10.0%)."
+    assert why["text"][0] == ("Busiest processes then (Aternity's process rows within 60 min of them): "
+                              "scan.exe CPU up to 80.0%, erp.exe CPU up to 10.0%.")
+
+
+def test_a_memory_problem_names_the_busiest_process_from_hourly_rows_in_mb():
+    # live APPLICATION_RESOURCES_HOURLY: one row per process and hour, memory in bytes,
+    # the row's time at any minute (here 40 min after the problem)
+    class Hourly(StubAternity):
+        def top_processes(self, device, start, end):
+            t = T0 + timedelta(minutes=80)
+            rows = [ProcessSample(t, "PC1", "scsrvc", "Trellix Solidcore", cpu=1.984, memory_bytes=227840000.0),
+                    ProcessSample(t, "PC1", "erp", "ERP", cpu=0.3, memory_bytes=3.5e9),
+                    ProcessSample(T0 + timedelta(hours=5), "PC1", "late", memory_bytes=9e9)]  # not near
+            return [p for p in rows if start <= p.timestamp <= end]
+
+    bad = lambda i: 6 <= i < 9  # noqa: E731
+    health = [DeviceHealthSample(T0 + timedelta(minutes=5 * i), "PC1", memory=97.0 if bad(i) else 50.0)
+              for i in range(24)]
+    why = amy(erp(bad), health, source=Hourly)["problems"][0]["why"]
+    assert why["text"][0] == ("Busiest processes then (Aternity's process rows within 60 min of them): "
+                              "erp memory up to 3337.9 MB, scsrvc (Trellix Solidcore) memory up to 217.3 MB.")
+    assert why["todo"][0] == "On PC1: look at erp, the busiest process at those times."
 
 
 class Starting(StubAternity):
@@ -579,3 +600,5 @@ def test_on_a_pooled_virtual_desktop_the_answer_says_which_desktops():
     assert a["felt"]["pcs"] == [{"device": "VD-0", "actions": 3, "slow": 3, "virtual": True, "from": ["TC-5"]}]
     from uxcorrelate.report import render_text
     assert "  on virtual desktop VD-0, from TC-5" in render_text(result)
+    assert ("Network between VD-0 (a virtual desktop) and the device the user sat at (TC-5): not checked, "
+            "Aternity gives no delay for it.") in a["checked"]

@@ -31,15 +31,15 @@ import yaml
 # boots: one row per Windows boot or logon (MEASUREMENT_TYPE says which).
 # boot_components: what each boot/logon spent its time on.
 # software_changes: installs, updates and removals per device (the "what changed").
-# top_processes: the busiest processes on a device over time (who used the CPU/disk).
+# top_processes: the busiest processes on a device over time (who used the CPU/memory).
+# The live tenant has no RAW_DATA_TOP_PROCESSES; APPLICATION_RESOURCES_HOURLY has
+# CPU and memory per process, one row per process and hour, no disk IO.
 # disk_space: free space of a device's disk over time (a nearly full disk). Off:
 # the live tenant publishes no such source (only a "now" value in the inventory).
 # To turn it on, set aternity.entities.disk_space; verify then checks it.
 # remote_display: on a virtual desktop (VDI), the delay the user feels between
 # their own device and the desktop, per session (protocol, client device and
 # its subnet). Read only by `verify` so far.
-# process_hours: CPU and memory per process, one row per hour (the live tenant
-# has no RAW_DATA_TOP_PROCESSES). Read only by `verify` so far.
 DEFAULT_ATERNITY_ENTITIES = {
     "activities": "BUSINESS_ACTIVITIES_RAW",
     "inventory": "DEVICE_INVENTORY",
@@ -48,9 +48,8 @@ DEFAULT_ATERNITY_ENTITIES = {
     "boots": "WINDOWS_MACHINE_BOOTS",
     "boot_components": "MACHINE_BOOT_COMPONENTS",
     "software_changes": "INSTALLED_SOFTWARE_CHANGE_LOG",
-    "top_processes": "RAW_DATA_TOP_PROCESSES",
+    "top_processes": "APPLICATION_RESOURCES_HOURLY",
     "remote_display": "REMOTE_DISPLAY_LATENCY_RAW",
-    "process_hours": "APPLICATION_RESOURCES_HOURLY",
 }
 
 # VDI and desktop-management columns on the sources already read (all in a real
@@ -85,6 +84,10 @@ SOFTWARE_REMOVED = ("Uninstalled",)
 # and the install of the new one, up to a few minutes apart (Edge: 2 min); some
 # updates are one "Updated" row. Rows of one software this close are one change.
 SOFTWARE_UPDATE_GAP_MIN = 10
+# A process row covers up to an hour (APPLICATION_RESOURCES_HOURLY); its time is
+# at any minute (live: :04, :08, ...), not said to be the hour's start or end, so
+# rows within this many minutes before or after a slow action are read.
+PROCESS_ROW_SPAN_MIN = 60
 # VIRTUALIZATION values that mean a virtual desktop (a live tenant sends 'true' /
 # 'false'; some data sources type it as a number)
 VIRTUAL_VALUES = ("true", "1")
@@ -177,14 +180,17 @@ DEFAULT_ATERNITY_FIELDS = {
         "vendor": "INSTALLED_SW_VENDOR",
     },
     "top_processes": {
-        "timestamp": "MEASUREMENT_START_TIMESTAMP",
+        # live values: CPU 0 to 30 over 1000 rows (a percent, like HRC_CPU_UTIL);
+        # "memory util" 241664 to 8.2e9: bytes, not a percent
+        "timestamp": "TIMEFRAME",
         "device": "DEVICE_NAME",
         "process": "PROCESS_NAME",
         "application": "APPLICATION_NAME",
-        "cpu": "PRC_CPU_UTIL_AVG",
-        "memory": "PRC_PHYSICAL_MEMORY_UTIL_AVG",
-        "io_read": "PRC_IO_READ_RATE",
-        "io_write": "PRC_IO_WRITE_RATE",
+        "cpu": "PRC_CPU_UTIL_MAX",
+        "memory": "",
+        "memory_bytes": "PRC_PHYSICAL_MEMORY_UTIL_MAX",
+        "io_read": "",
+        "io_write": "",
     },
     "remote_display": {
         "timestamp": "TIMEFRAME",
@@ -197,16 +203,6 @@ DEFAULT_ATERNITY_FIELDS = {
         "protocol": "REMOTE_DISPLAY_PROTOCOL",
         "latency": "REMOTE_DISPLAY_LATENCY_AVG",
         "status": "SLA_STATUS",
-    },
-    "process_hours": {
-        "timestamp": "TIMEFRAME",
-        "device": "DEVICE_NAME",
-        "process": "PROCESS_NAME",
-        "application": "APPLICATION_NAME",
-        "cpu_avg": "PRC_CPU_UTIL_AVG",
-        "cpu_max": "PRC_CPU_UTIL_MAX",
-        "memory_avg": "PRC_PHYSICAL_MEMORY_UTIL_AVG",
-        "memory_max": "PRC_PHYSICAL_MEMORY_UTIL_MAX",
     },
     # free_percent, or free_space in the unit of inventory.total_disk (e.g. a
     # data source with OS_FREE_DISK_SPACE); `uxcorrelate verify` says which

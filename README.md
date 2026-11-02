@@ -63,7 +63,9 @@ Who else is affected?
    - what was installed, updated or removed on the PC in the 14 days
      before (`INSTALLED_SOFTWARE_CHANGE_LOG`);
    - for CPU, memory or disk problems, the busiest processes at those
-     times (`RAW_DATA_TOP_PROCESSES`).
+     times (`APPLICATION_RESOURCES_HOURLY`: one row per process and hour,
+     so rows within an hour are read; CPU in %, memory in MB; it has no
+     disk use, so a disk problem says so).
 
    Each is a plain sentence under the finding; when a source has nothing,
    it says so.
@@ -247,8 +249,6 @@ back to dev.
   published; with NetIM set too, which addresses NetIM can place: the
   virtual desktops', physical PCs' and the devices users sit at (it reads
   every NetIM device's interfaces, about half a minute).
-- **Processes per hour:** value ranges of `APPLICATION_RESOURCES_HOURLY`
-  and the busiest processes of one PC in one hour.
 - **Put-backs:** for software removed and put back at the same version on
   a PC, the PC's nearest start-up each time, its image builds, and how many
   other PCs have change-log rows in the same minute.
@@ -265,7 +265,9 @@ Aternity marks each action on a virtual desktop (`VIRTUALIZATION`). Live
 desktops are pooled (a user gets another one each time), so a user's
 start-ups on virtual desktops are compared with each other, and "Compared
 with normal" says when the last normal run was on another desktop. "What
-the user felt" names the virtual desktop and the device the user sat at.
+the user felt" names the virtual desktop and the device the user sat at;
+"What was checked" says the network between them is not checked (Aternity
+gives no delay for it).
 What Aternity does not give us yet (remote display latency, network round
 trip, top processes, ...) is listed for the Aternity admin in
 `docs/aternity-admin-questions.md`.

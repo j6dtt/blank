@@ -290,7 +290,7 @@ def test_verify_says_when_a_checked_column_has_no_values():
 
 def test_verify_shows_how_virtual_desktops_are_filled():
     from pathlib import Path
-    from uxcorrelate.verify import _change_log, _process_sources, _process_hours, _remote_display, _vdi, verify_vdi_network
+    from uxcorrelate.verify import _change_log, _process_sources, _remote_display, _vdi, verify_vdi_network
 
     def handler(request):
         path, flt = request.url.path, request.url.params.get("$filter", "")
@@ -369,11 +369,6 @@ def test_verify_shows_how_virtual_desktops_are_filled():
                             "rows in the last day: yes") for r in proc.rows)
 
     netim = NetimClient(settings.netim, transport=httpx.MockTransport(netim_handler))
-    hours, one = _process_hours(settings, client, schema)
-    assert "cpu_max (PRC_CPU_UTIL_MAX): 2 with a value; min 1, median 30.5, max 60" in hours.rows
-    assert "Rows per PC and hour: min 2, median 2, max 2 (1 PC-hours)" in hours.rows
-    assert one.rows[0].startswith("process='scan.exe'")  # busiest CPU first
-
     desktops, physical, clients = verify_vdi_network(settings, client, netim)
     assert desktops.rows == ["10.0.0.x: 1 PC(s), e.g. VD-1 10.0.0.5: inside den-rtr01 Gi0/1"]
     assert physical.rows == ["172.16.9.x: 1 PC(s), e.g. LT-9 172.16.9.9: no NetIM subnet"]

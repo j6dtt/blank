@@ -9,7 +9,9 @@ says what we saw, why it matters, and what to ask. Most important first.
 - **Seen:** `REMOTE_DISPLAY_LATENCY_RAW` (and `_HOURLY`, `_DAILY`) is not
   published. In `BUSINESS_ACTIVITIES_RAW`, `ACTIVITY_REMOTE_DISPLAY_LATENCY_AVG`
   has no value on any row, though 612 of 1000 rows are virtual desktops
-  (`VIRTUALIZATION` = 'true', client type 'Remote Device').
+  (`VIRTUALIZATION` = 'true', client type 'Remote Device'). The devices
+  users sit at (`CLIENT_DEVICE_NAME`, mostly names starting "WT") are not
+  Aternity devices: none of the 20 most used is in `DEVICE_INVENTORY`.
 - **Why it matters:** this is the delay a Horizon user feels between their
   own device and the desktop. Without it, the network is not checked for
   virtual desktop users.
@@ -30,14 +32,18 @@ says what we saw, why it matters, and what to ask. Most important first.
 
 - **Seen:** `RAW_DATA_TOP_PROCESSES` is not published. Only
   `APPLICATION_RESOURCES_HOURLY` has process data: CPU and memory per
-  process per hour, no disk IO columns.
+  process per hour, no disk IO columns. The tool now uses it (CPU as a
+  percent, `PRC_PHYSICAL_MEMORY_UTIL_*` as bytes: values 241664 to 8.2e9).
 - **Why it matters:** when a PC's CPU, memory or disk is high at a slow
   action, we can't say which process caused it, and hourly values blur a
   spike of a few minutes.
 - **Ask:** Can `RAW_DATA_TOP_PROCESSES` be published (with
   `PRC_IO_READ_RATE` / `PRC_IO_WRITE_RATE`)? If not, are the IO columns of
-  `APPLICATION_RESOURCES_HOURLY` available? What unit are
-  `PRC_CPU_UTIL_AVG` / `_MAX` (percent of the whole PC?)?
+  `APPLICATION_RESOURCES_HOURLY` available? Please confirm the units:
+  `PRC_CPU_UTIL_AVG` / `_MAX` percent of the whole PC (live max 30)?
+  `PRC_PHYSICAL_MEMORY_UTIL_*` bytes, despite "UTIL" in the name? Does a
+  row's `TIMEFRAME` (seen at any minute, e.g. :04, :39) mark the start or
+  the end of its hour?
 
 ## 4. Software comes and goes in the change log
 
@@ -90,9 +96,10 @@ says what we saw, why it matters, and what to ask. Most important first.
 
 ## Not for the Aternity admin (NetIM)
 
-- The subnets of user PCs, virtual desktops and the devices users sit at
-  are to be added to NetIM; `uxcorrelate verify` lists which ones NetIM
-  can place today ("virtual desktops' own addresses", "physical PCs'
-  addresses", "devices users sit at").
+- None of the subnets seen is in NetIM today: the virtual desktops' (87
+  desktops in 16 /24s) and the physical PCs' (40 PCs in 11 /24s). Until
+  they are added, the network of a user's PC is not checked.
+  `uxcorrelate verify` lists them ("virtual desktops' own addresses",
+  "physical PCs' addresses").
 - NetIM alerts are off (`netim.alerts_path` empty): the active-alerts path
   is in NetIM's HELP > API Documentation.

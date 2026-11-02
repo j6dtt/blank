@@ -75,7 +75,8 @@ unset `<REQUIRED>` base URLs.
   with one desktop's history of many users; when the run before was on
   another desktop, the answer says what changed is read on this one only.
   "What the user felt" marks a virtual desktop and the device the user
-  sat at (`CLIENT_DEVICE_NAME`). A start-up with no slow part that is normal for
+  sat at (`CLIENT_DEVICE_NAME`); "checked" says the network between them
+  is not checked (Aternity gives no delay for it). A start-up with no slow part that is normal for
   its PC is "weak": "Possibly", never "Likely". The answer's "checked" list
   says what was ruled out, with counts.
 - `impact.py`: "who else" — other users of the same apps in the user's slow
@@ -90,7 +91,9 @@ unset `<REQUIRED>` base URLs.
   versions, error, from `DEVICE_HEALTH_RAW`), other PCs failing the same
   way, software changes in the 14 days before
   (`INSTALLED_SOFTWARE_CHANGE_LOG`), busiest processes for CPU/memory/disk
-  (`RAW_DATA_TOP_PROCESSES`). "Same failure" = same category+name, same
+  (`top_processes` = `APPLICATION_RESOURCES_HOURLY` on the live tenant: a row
+  per process and hour at any minute, so rows within `PROCESS_ROW_SPAN_MIN`
+  are read; CPU %, memory in bytes shown as MB, no disk IO). "Same failure" = same category+name, same
   component and sub-component (version shown, not matched); see
   `docs/who-else-is-affected.md`. Every health event kind gets a why (an
   event with no app, e.g. a background process, low memory, a blue screen,
@@ -123,8 +126,7 @@ unset `<REQUIRED>` base URLs.
   are set) which addresses NetIM can place: virtual desktops', physical
   PCs' (one per /24) and the devices users sit at (looked up in the
   inventory). "Process data" lists every source with `PROCESS_COLUMN`;
-  `process_hours` (`APPLICATION_RESOURCES_HOURLY`, read only by verify so
-  far) shows value ranges and one PC-hour. What Aternity does not give
+  value ranges include top_processes' CPU and memory. What Aternity does not give
   us is listed for its admin in `docs/aternity-admin-questions.md`.
   A missing optional source (`OPTIONAL`) is a note saying what
   is skipped, not a FAIL; a wrong name gets paste-ready YAML only when the

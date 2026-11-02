@@ -8,7 +8,8 @@ Only Aternity's own records are used:
 - what was installed, updated or removed on the PC in the days before
   (INSTALLED_SOFTWARE_CHANGE_LOG);
 - for CPU, memory or disk problems: the busiest processes at those times
-  (RAW_DATA_TOP_PROCESSES).
+  (top_processes: on the live tenant APPLICATION_RESOURCES_HOURLY, rows of up
+  to an hour, CPU and memory only).
 Nothing is guessed: each finding is a sentence about a record, and when a
 source has nothing, the sentence says so.
 """
@@ -19,7 +20,7 @@ import logging
 from collections import Counter
 from datetime import timedelta
 
-from .config import SOFTWARE_REMOVED, SOFTWARE_UPDATE_GAP_MIN
+from .config import PROCESS_ROW_SPAN_MIN, SOFTWARE_REMOVED, SOFTWARE_UPDATE_GAP_MIN
 from .models import parse_time
 
 log = logging.getLogger("uxcorrelate")
@@ -176,24 +177,35 @@ def _failure(aternity, g, events, times, window, start, end, why) -> None:
 
 
 def _processes(aternity, g, times, window, why) -> None:
+    """The busiest processes on the PC around the problem. A process row may cover
+    up to an hour (PROCESS_ROW_SPAN_MIN), so rows that close are read."""
     if g["what"] not in METRIC or not hasattr(aternity, "top_processes"):
         return
     label, key, unit = METRIC[g["what"]]
     dev = g["object"]
-    rows = aternity.top_processes(dev, min(a for a, _ in times) - window, max(b for _, b in times) + window)
-    best: dict[str, float] = {}
+    near = max(window, timedelta(minutes=PROCESS_ROW_SPAN_MIN))
+    rows = [p for p in aternity.top_processes(dev, min(a for a, _ in times) - near, max(b for _, b in times) + near)
+            if _near(p.timestamp, times, near)]
+    if key == "memory" and not any(p.memory is not None for p in rows):
+        key, unit = "memory_bytes", " MB"  # the hourly source gives bytes
+    best: dict[str, tuple] = {}
     for p in rows:
-        if not _near(p.timestamp, times, window):
-            continue
-        v = ((p.io_read or 0) + (p.io_write or 0)) if key == "io" else getattr(p, key)
+        v = (None if p.io_read is None and p.io_write is None else (p.io_read or 0) + (p.io_write or 0)) \
+            if key == "io" else getattr(p, key)
         if v is not None:
-            best[p.process] = max(best.get(p.process, v), v)
-    top = sorted(best.items(), key=lambda kv: -kv[1])[:3]
-    why["processes"] = [{"process": n, "value": round(v, 1)} for n, v in top]
+            v = v / 1048576 if key == "memory_bytes" else v
+            if p.process not in best or v > best[p.process][0]:
+                best[p.process] = (v, p.application)
+    top = sorted(best.items(), key=lambda kv: -kv[1][0])[:3]
+    why["processes"] = [{"process": n, "value": round(v, 1)} for n, (v, _) in top]
     if not top:
-        why["text"].append(f"Aternity has no process data for {dev} at those times.")
+        why["text"].append(f"Aternity has no {label} per process for {dev} at those times."
+                           if rows else f"Aternity has no process data for {dev} at those times.")
         return
-    why["text"].append(f"Busiest processes then: " + ", ".join(f"{n} ({label} {v:.1f}{unit})" for n, v in top) + ".")
+    app = lambda n, a: f"{n} ({a})" if a and a.lower() != n.lower() else n  # noqa: E731
+    span = "" if near == window else f" (Aternity's process rows within {PROCESS_ROW_SPAN_MIN} min of them)"
+    why["text"].append(f"Busiest processes then{span}: " + ", ".join(
+        f"{app(n, a)} {label} up to {v:.1f}{unit}" for n, (v, a) in top) + ".")
     why["todo"].append(f"On {dev}: look at {top[0][0]}, the busiest process at those times.")
 
 

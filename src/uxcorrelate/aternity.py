@@ -412,6 +412,7 @@ class AternityClient:
                     timestamp=ts, device=device, process=str(name), application=row.get(f.get("application", "")) or None,
                     cpu=to_float(row.get(f.get("cpu", ""))), memory=to_float(row.get(f.get("memory", ""))),
                     io_read=to_float(row.get(f.get("io_read", ""))), io_write=to_float(row.get(f.get("io_write", ""))),
+                    memory_bytes=to_float(row.get(f.get("memory_bytes", ""))),
                 ))
         return out
 

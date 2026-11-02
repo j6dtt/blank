@@ -113,6 +113,12 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
                           "is not in any NetIM subnet.")
         else:
             checks.append(f"Network: nothing wrong on the path at those times ({len(mapped)} NetIM objects).")
+        # a virtual desktop: the leg from the device the user sat at is a network of its own
+        for d in dict.fromkeys(s.device for s in slow if s.virtual):
+            used = sorted({s.client_device for s in samples if s.device == d and s.client_device})
+            checks.append(f"Network between {d} (a virtual desktop) and the device the user sat at"
+                          + (f" ({', '.join(used[:3])})" if used else "") + ": not checked, Aternity "
+                          "gives no delay for it.")
     for c in normal or []:
         for step in c["todo"]:
             if step not in todo:

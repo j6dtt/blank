@@ -95,7 +95,6 @@ OPTIONAL = {
     "top_processes": "the busiest processes behind CPU, memory or disk problems",
     "disk_space": "nearly full disks",
     "remote_display": "the delay a virtual desktop user feels (remote display latency)",
-    "process_hours": "CPU and memory per process, per hour",
 }
 
 
@@ -186,11 +185,13 @@ def _value_ranges(settings: Settings, client: AternityClient, schema: dict[str, 
         ("disk_space", "free_space"): f"free_disk_percent {th.free_disk_percent} of inventory.total_disk",
         ("app_usage", "uxi"): "none (UXI is shown as Aternity reports it)",
         ("boots", "duration"): "none (compared with medians; this shows the units)",
+        ("top_processes", "cpu"): "none (shown as a percent, like the PC's CPU)",
+        ("top_processes", "memory_bytes"): "none (shown in MB: bytes / 1048576)",
     }
     cfg = settings.aternity
     end = datetime.now(timezone.utc)
     checks = []
-    for key in ("activities", "app_usage", "boots", "disk_space"):
+    for key in ("activities", "app_usage", "boots", "disk_space", "top_processes"):
         entity, fields = cfg.entities.get(key), cfg.fields.get(key, {})
         if entity not in schema or fields.get("timestamp") not in schema[entity]:
             continue
@@ -267,8 +268,7 @@ def verify_aternity(settings: Settings, client: AternityClient) -> list[Check]:
     return checks + _value_ranges(settings, client, schema) + _health_events(settings, client, schema) \
         + _app_usage(settings, client, schema) + _start_up_parts(settings, client, schema) \
         + _change_log(settings, client, schema) + _vdi(settings, client, schema) \
-        + _remote_display(settings, client, schema) + _process_sources(client, schema) \
-        + _process_hours(settings, client, schema)
+        + _remote_display(settings, client, schema) + _process_sources(client, schema)
 
 
 def _raw(row: dict, fields: dict, keys) -> str:
@@ -662,46 +662,6 @@ def _process_sources(client: AternityClient, schema: dict[str, set[str]]) -> lis
     return [Check("Aternity", "process data", None,
                   f"Published data sources with {PROCESS_COLUMN}: {len(found)}" + (":" if found else
                   ". No source can tell which process used the CPU, memory or disk."), rows=lines)]
-
-
-def _process_hours(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
-    """How the per-hour process source is filled: value ranges (are they percent?),
-    what its time column holds, and the busiest processes of one PC in one hour."""
-    cfg = settings.aternity
-    entity, f = cfg.entities.get("process_hours"), cfg.fields.get("process_hours", {})
-    if entity not in schema or f.get("timestamp") not in schema[entity]:
-        return []
-    cols = {k: c for k, c in f.items() if c in schema[entity]}
-    try:
-        rows = client.query(entity, f"{f['timestamp']} ge {odata_time(datetime.now(timezone.utc) - timedelta(days=1))}",
-                            top=1000, select=list(cols.values()), raw=True)
-    except ApiError as exc:
-        return [Check("Aternity", "processes per hour", None, f"Could not read them: {exc.reason or exc}")]
-    if not rows:
-        return [Check("Aternity", "processes per hour", None, f"{entity}: no rows in the last day.")]
-    nums = ("cpu_avg", "cpu_max", "memory_avg", "memory_max")
-    times = Counter(str(r.get(f["timestamp"]))[13:19] for r in rows)  # minutes:seconds part of the time
-    per = Counter((r.get(f["device"]), r.get(f["timestamp"])) for r in rows)
-    lines = [f"{k} ({cols[k]}): {_spread(rows, cols[k])}" for k in nums if k in cols]
-    lines.append(f"{f['timestamp']} minutes:seconds seen: {_values([{'t': t} for t in times.elements()], 't', 5)}")
-    lines.append(f"Rows per PC and hour: min {min(per.values())}, median {median(per.values()):g}, "
-                 f"max {max(per.values())} ({len(per)} PC-hours)")
-    out = [Check("Aternity", "processes per hour", None,
-                 f"{entity}, last day: {len(rows)} row(s){' (first 1000)' if len(rows) == 1000 else ''} on "
-                 f"{len({r.get(f['device']) for r in rows})} PC(s). Values as sent:", rows=lines)]
-    (dev, hour), n = per.most_common(1)[0]
-    try:  # every row of that PC-hour, not a slice
-        mine = client.query(entity, f"{f['timestamp']} eq {odata_time(parse_time(hour))} and "
-                            f"{f['device']} eq {odata_quote(str(dev))}",
-                            select=list(cols.values()), raw=True)
-    except (ApiError, AttributeError):  # AttributeError: a time that could not be read
-        mine = [r for r in rows if (r.get(f["device"]), r.get(f["timestamp"])) == (dev, hour)]
-    key = cols.get("cpu_max") or cols.get("cpu_avg")
-    mine.sort(key=lambda r: -(to_float(r.get(key)) or 0))
-    out.append(Check("Aternity", "processes per hour: one PC-hour", None,
-                     f"{dev} at {hour}: {len(mine)} process row(s), busiest CPU first (the first 8):",
-                     rows=[_raw(r, f, ("process", "application") + nums) for r in mine[:8]]))
-    return out
 
 
 def verify_vdi_network(settings: Settings, aternity: AternityClient, netim: NetimClient) -> list[Check]:
