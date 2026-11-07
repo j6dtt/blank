@@ -35,7 +35,7 @@ from datetime import datetime, timedelta, timezone
 from statistics import mean
 from typing import Protocol
 
-from .config import NetimMetric, Settings
+from .config import BACKGROUND_EVENT, NetimMetric, Settings
 from .answer import build_answer, problem_text
 from .cause import explain
 from .impact import who_else
@@ -43,7 +43,7 @@ from .logons import logon_report
 from .normal import compare_actions
 from .models import (
     DeviceHealthSample, HealthEvent, EndpointInfo, MappedObject, MetricSample, NetimAlert,
-    NetimDevice, NetimInterface, UserSample, parse_time,
+    NetimDevice, NetimInterface, UserSample, parse_time, plain,
 )
 
 log = logging.getLogger("uxcorrelate")
@@ -286,12 +286,12 @@ def _startup_why(g: dict, started_up, logons: dict) -> dict:
 def _event_problem(e: HealthEvent) -> dict:
     """A device health event is a problem by itself: it happened. One with an
     application counts only for that application's slow actions."""
-    what = " / ".join(x for x in (e.category, e.name) if x) or "Health event"
-    where = e.component or e.application
+    what = e.name or e.category or "Health event"
+    where = plain(e.component or e.application)
     p = _problem(e.timestamp, "pc", "Aternity event", e.device, f"{what} ({where})" if where else what,
                  e.count if e.count is not None else 1, app=e.application)
     p["names"] = {_norm(e.application), _norm(e.component)} - {""}  # to find its app usage row
-    p["kinds"] = {k for k in ("crash", "hang") if k in what.lower()}
+    p["kinds"] = {k for k in ("crash", "hang") if k in f"{e.category} {e.name}".lower()}
     return p
 
 
@@ -335,12 +335,15 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
     # 2. problems on the PC
     endpoints = [aternity.endpoint_info(d) for d in device_names]
     problems: list[dict] = []
+    readings: Counter = Counter()  # how often each value was measured, per PC
     for d in device_names:
         health = aternity.device_health(d, req.start, req.end)
         if hasattr(aternity, "disk_space"):
             health += aternity.disk_space(d, req.start, req.end)
         for h in health:
             problems += _pc_problems(h, settings)
+            readings.update((d, what) for what, v in (("CPU %", h.cpu), ("Memory %", h.memory),
+                                                      ("Disk queue", h.disk_queue)) if v is not None)
     events: list[HealthEvent] = []
     uxi: list[float] = []
     for d in device_names:
@@ -399,9 +402,11 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
     problems += [p for p in started_up if p["slow"]]
     groups = _group(problems, len(slow))
     for g in groups:
+        g["readings"] = readings.get((g["object"], g["what"]))
         if g["source"] == START_UP:
             g["why"] = _startup_why(g, started_up, logons)
-    explain(aternity, groups, events, window, req.start, req.end)
+    _together(groups, window)
+    changed = explain(aternity, groups, events, window, req.start, req.end)
     for g in groups:
         g.pop("_times"), g.pop("_all")
     normal = compare_actions(aternity, slow, req.start, req.end, req.username, lambda s: is_slow(s, settings),
@@ -429,10 +434,11 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
         [a for a, _ in Counter(s.application for s in slow if s.application).most_common(3)]
     impact = who_else(aternity, netim, apps, {bucket(s.timestamp) for s in slow}, minutes, bucket,
                       lambda s: is_slow(s, settings), req.username or req.device,
-                      None if req.username else req.device, user_ip, user_location)
+                      None if req.username else req.device, user_ip, user_location,
+                      any(s.virtual for s in slow))
     warnings.extend(w for w in getattr(aternity, "warnings", []) if w not in warnings)
     answer = build_answer(groups, samples, slow, req.username or req.device, impact, netim is not None,
-                          mapped, user_ip, logons, minutes, _time_split(slow), normal, checked)
+                          mapped, user_ip, logons, minutes, _time_split(slow), normal, checked, changed)
     log.info("Done in %.0f s: %s", time.monotonic() - started, answer["title"])
     return {
         "request": {
@@ -492,12 +498,37 @@ def _merge_usage(grouped: dict) -> None:
         e["_times"] += u["_times"]
         e["_all"] += u["_all"]
         e["first"], e["last"] = min(e["first"], u["first"]), max(e["last"], u["last"])
-        # hang time has no documented unit: shown as Aternity gives it
-        e.setdefault("notes", []).append(
-            f"Aternity's app usage counted {u['_total']:g} crash(es) of {u['app']} on {u['object']} in this window."
-            if kind == "crash" else
-            f"Aternity's app usage recorded {u['app']} not responding on {u['object']} (hang time up to {u['worst']}).")
+        if kind == "hang":  # hang time has no documented unit: shown as Aternity gives it
+            e.setdefault("notes", []).append(f"Aternity's hang time value: up to {u['worst']:.0f} (unit not documented).")
         del grouped[key]
+
+
+def _issue(g: dict) -> str:
+    """What kind of issue a problem row is: "hang" and "crash" (what a user feels),
+    "background", "system" (other health events), "startup", "infra" or "limit"."""
+    what = g["what"].lower()
+    if g["source"] == START_UP:
+        return "startup"
+    if g["source"].startswith("NetIM"):
+        return "infra"
+    if g["source"] == "Aternity":
+        return "crash" if what.endswith(" crashed") else "hang" if what.endswith(" not responding") else "limit"
+    if BACKGROUND_EVENT in what:
+        return "background"
+    return "hang" if "hang" in g["_kinds"] else "crash" if "crash" in g["_kinds"] else "system"
+
+
+FELT_TOGETHER = ("hang", "crash", "system", "background")
+
+
+def _together(groups: list[dict], window: timedelta) -> None:
+    """g["together"]: what else failed on the same PC within `window` of it."""
+    issues = [g for g in groups if g["issue"] in FELT_TOGETHER]
+    near = lambda a, b: any(abs(x - y) <= window for x, _ in a["_all"] for y, _ in b["_all"])  # noqa: E731
+    for g in issues:
+        g["together"] = [o.get("app") or o["what"] for o in issues
+                         if o is not g and o["object"] == g["object"] and (o["app"] is None or o["app"] != g["app"])
+                         and near(g, o)][:3]
 
 
 def _group(problems: list[dict], slow_total: int) -> list[dict]:
@@ -526,6 +557,7 @@ def _group(problems: list[dict], slow_total: int) -> list[dict]:
     _merge_usage(grouped)
     out = []
     for g in grouped.values():
+        g["issue"] = _issue(g)
         for k in ("_names", "_kinds", "_total"):
             g.pop(k)
         g["slow_actions"] = len(g.pop("slow"))

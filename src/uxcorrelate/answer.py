@@ -1,5 +1,8 @@
 """The plain-language answer at the top of an investigation.
 
+The question is what went wrong for this user: slow actions are one kind of
+issue, next to hangs, crashes and health events. Each issue says what is known
+about it and who else has it, in the same shape; timing is a fact, not a rank.
 Everything here is written for a help-desk reader: plain counts ("at 3 of 4
 slow actions"), no scores. Times are returned as ISO strings next to the
 text, so the UI can show them in the reader's time zone and the CLI in UTC.
@@ -10,6 +13,10 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
+from .cause import ISSUE_ORDER, UNKNOWN_VERSION, change_text
+from .models import plural
+
+MAX_CHANGES_SHOWN = 40  # per PC
 WHERE = {"pc": "on the PC", "network": "on the network", "server": "on the application's servers"}
 
 
@@ -31,9 +38,9 @@ def problem_text(g: dict) -> str:
             return f"{m.group(1)} crashed on {obj}"
         if m:
             # APPLICATION_HANG_TIME_TOTAL's unit is not documented: shown as Aternity gives it
-            return f"{m.group(1)} was not responding on {obj} (Aternity hang time up to {worst})"
+            return f"{m.group(1)} was not responding on {obj} (Aternity's hang time value up to {worst:.0f})"
     if g["source"] == "Aternity event":
-        return f"Health event on {obj}: {what}"
+        return f"{what} on {obj}"
     if g["source"] == "Aternity start-up":
         return f"{obj} {what}"
     if g["source"] == "NetIM alert":
@@ -70,10 +77,117 @@ def _todo(g: dict) -> str:
     return f"On {obj}: find which process used the {g['what'].replace(' %', '').lower()} at those times."
 
 
+def others_text(o: dict) -> str:
+    """Who else has this issue, in one shape: how many, out of how many, on what, since when."""
+    if not o["pcs"]:
+        out = "Only this PC in this window" + (f", of {o['of']:,} {o['of_what']}" if o.get("of") else "") + "."
+    else:
+        out = f"{plural(o['pcs'], 'other PC')}" + (f" ({plural(o['users'], 'user')})" if o.get("users") else "")
+        out += f" of {o['of']:,} {o['of_what']}" if o.get("of") else ""
+        versions = {v: k for v, k in (o.get("versions") or {}).items() if v != UNKNOWN_VERSION}
+        if len(versions) == 1:
+            out += f", all on {next(iter(versions))}"
+        elif versions:
+            out += ", " + ", ".join(f"{k} on {v}" for v, k in list(versions.items())[:3])
+        out += "."
+        if versions and o.get("this_version") not in (None, UNKNOWN_VERSION):
+            out += f" This PC has {o['this_version']}."
+    h = o.get("history")
+    if h:
+        out += (f" Already on other PCs {h['days']} days before this window." if h["from_start"]
+                else f" On other PCs since {_day(h['since'])}." if h["since"]
+                else f" Not on other PCs in the {h['days']} days before this window.")
+    return out
+
+
+def verdict(o: dict | None) -> str | None:
+    """How far an issue reaches, by fixed rules on the counts. Never says it is or is not
+    the cause for this user."""
+    if not o:
+        return None
+    h = o.get("history") or {}
+    if not o["pcs"]:
+        return "Only this PC"
+    if h and h["since"] is None:
+        return "New"
+    if o["pcs"] == 1:
+        return "On 1 other PC"
+    return "Widespread" + (f", {h['trend']}" if h.get("trend") else "")
+
+
+def _days(o: dict | None) -> list[dict]:
+    """Other PCs per day: the days before the window, then the window."""
+    if not o or not (o.get("history") or {}).get("per_day"):
+        return []
+    return ([{"day": d, "pcs": n, "window": False} for d, n in o["history"]["per_day"].items()]
+            + [{"day": d, "pcs": n, "window": True} for d, n in (o.get("window_days") or {}).items()])
+
+
+def _rollup(found: list[dict]) -> list[dict]:
+    """One row per issue, across this user's PCs: the top of "What went wrong"."""
+    rows: dict[str, dict] = {}
+    for i, x in enumerate(found):
+        if not x.get("what"):
+            continue
+        r = rows.setdefault(x["what"], {"issue": x["what"], "times": 0, "others": None, "others_pcs": -1,
+                                        "verdict": None, "days": [], "first": i})
+        r["times"] += x["times"]
+        o = x.pop("_others")
+        if o and o["pcs"] > r["others_pcs"]:
+            r.update(others_pcs=o["pcs"], verdict=verdict(o), days=_days(o),
+                     others=f"{o['pcs']:,}" + (f" of {o['of']:,}" if o.get("of") else ""))
+    for r in rows.values():
+        del r["others_pcs"]
+    return list(rows.values())
+
+
+def _item(g: dict, count: str) -> dict:
+    """One issue: what happened, what is known, a possible cause, who else."""
+    why = g.get("why") or {}
+    text = list(why.get("text", []))
+    if g.get("together"):
+        text.append("Within minutes of it on this PC: " + ", ".join(g["together"]) + ".")
+    o = why.get("others")
+    return {"text": g["text"], "what": g["what"], "times": g["times"], "_others": o,
+            "count": count, "when": g["first"], "kind": g["kind"], "issue": g["issue"],
+            "why": text, "possible": why.get("possible", []),
+            "who": others_text(o) if o else None, "list": o["list"] if o else [],
+            "list_of": o["what"] if o else None, "this_version": o["this_version"] if o else None}
+
+
+def _join(items: list[str]) -> str:
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
+
+
+def _issue_counts(problems: list[dict]) -> tuple[list[str], list[dict]]:
+    """What the user felt, counted ("7 hangs"), and the background crashes."""
+    rows = [g for g in problems if not (g.get("why") or {}).get("same_as_above")]
+    total = lambda kind: sum(g["times"] for g in rows if g["issue"] == kind)  # noqa: E731
+    felt = []
+    if total("hang"):
+        felt.append(plural(total("hang"), "hang"))
+    if total("crash"):
+        felt.append(plural(total("crash"), "app crash", "app crashes"))
+    for what in dict.fromkeys(g["what"] for g in rows if g["issue"] == "system"):
+        felt.append(plural(sum(g["times"] for g in rows if g["issue"] == "system" and g["what"] == what),
+                           f"{what} event"))
+    return felt, [g for g in rows if g["issue"] == "background"]
+
+
+def _background_line(rows: list[dict]) -> str:
+    """ "4 background crashes: the same crashes hit 863 and 638 other PCs." """
+    total = sum(g["times"] for g in rows)
+    wide = sorted({(g.get("why") or {}).get("others", {}).get("pcs", 0)
+                   for g in rows if (g.get("why") or {}).get("others")}, reverse=True)
+    wide = [f"{n:,}" for n in wide if n >= 2]
+    return plural(total, "background crash", "background crashes") + (
+        f": the same crashes hit {_join(wide)} other PCs" if wide else "")
+
+
 def build_answer(problems: list[dict], samples: list, slow: list, who: str, impact: dict | None,
                  netim_on: bool, mapped: list, user_ip: str | None, logons: dict | None,
                  minutes: int, split: dict | None, normal: list | None = None,
-                 checked: dict | None = None) -> dict:
+                 checked: dict | None = None, changed: dict | None = None) -> dict:
     n = len(slow)
     at_slow = [g for g in problems if g["slow_actions"]]
     found, todo = [], []
@@ -81,29 +195,25 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         why = g.get("why") or {}
         if why.get("same_as_above"):
             continue  # e.g. a hang's own health event: already explained above
-        found.append({"text": g["text"], "count": f"at {g['slow_actions']} of {n} slow actions",
-                      "when": g["first"], "kind": g["kind"], "why": why.get("text", [])})
+        found.append(_item(g, f"at {g['slow_actions']} of {n} slow actions"))
         for step in why.get("todo") or [_todo(g)]:
             if step and step not in todo:
                 todo.append(step)
     later: list[str] = []
-    # crashes, hangs and health events at other times: an issue by themselves, with their why
+    # crashes, hangs and health events at other times: issues by themselves. What the user
+    # felt first, then what spans many PCs; a limit passed with nothing felt comes last
     elsewhere = [g for g in problems if not g["slow_actions"] and g.get("why")
                  and not g["why"].get("same_as_above")]
+    pcs = lambda g: (g["why"].get("others") or {}).get("pcs", 0)  # noqa: E731
+    elsewhere.sort(key=lambda g: (ISSUE_ORDER.get(g["issue"], 9), -pcs(g), -g["times"]))
     for g in elsewhere:
-        why = g["why"]
-        text = list(why.get("text", []))
-        o = why.get("others")
-        if o:
-            text.append(f"{o['pcs']} other PC(s) had the same failure in this window." if o["pcs"]
-                        else "Only this PC had this failure in this window.")
-        found.append({"text": g["text"], "count": f"{g['times']}x, not near a slow action", "when": g["first"],
-                      "kind": g["kind"], "why": text})
-        later += [s for s in why.get("todo") or [] if s not in later]  # after the slow actions' steps
+        count = f"{g['times']} of {g['readings']:,} readings" if g.get("readings") else f"{g['times']}x"
+        found.append(_item(g, count + (", not near a slow action" if n else "")))
+        later += [s for s in g["why"].get("todo") or [] if s not in later]  # after the slow actions' steps
     other = sum(1 for g in problems if not g["slow_actions"] and not g.get("why"))
     if other and n:
-        found.append({"text": f"{other} other problem(s) happened only at other times, not near a slow action.",
-                      "count": None, "when": None, "kind": None, "why": []})
+        found.append({"text": f"{plural(other, 'other problem')} happened only at other times, not near a slow action.",
+                      "count": None, "when": None, "kind": None, "why": [], "possible": [], "who": None, "list": []})
     checks = _checked(checked, minutes) if n else []
     if n and not any(g["kind"] == "network" for g in at_slow):
         if not netim_on:
@@ -124,22 +234,9 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
             if step not in todo:
                 todo.append(step)
 
-    # who else is affected? For an application failure: the other PCs with the same failure.
-    # Otherwise: other users of the same apps who were slow at the same times.
-    same = next(((g.get("why") or {}).get("others") for g in at_slow
-                 if (g.get("why") or {}).get("others") and not g["why"].get("same_as_above")), None)
+    # other users of the same apps at the slow times (an issue's own "who else" is on the issue)
     who_else = None
-    if same:
-        n_pcs = same["pcs"]
-        if not n_pcs:
-            who_else = f"Only this PC: no other PC had {same['what']} in this window."
-        else:
-            versions = same["versions"]
-            spread = (f"all on {next(iter(versions))}" if len(versions) == 1
-                      else ", ".join(f"{k} on {v}" for v, k in list(versions.items())[:3]))
-            who_else = (f"{n_pcs} other PC(s) had the same failure ({same['what']}), {spread}. "
-                         f"This PC has {same['this_version']}.")
-    elif impact:
+    if impact:
         apps = ", ".join(impact["applications"])
         users, k = impact["users"], impact["slow"]
         if not users:
@@ -147,11 +244,12 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         elif not k:
             who_else = f"Only this user: none of the {users} other {apps} users were slow."
         elif impact["unusual"]:
-            who_else = (f"{k} of {users} other {apps} users were slow ({_pct(impact['rate'])}), more than on "
-                         f"any of the last {impact['baseline_days']} days (at most {_pct(impact['usual_rate'])}).")
+            who_else = (f"{k} of {users} other {apps} users were slow ({_pct(impact['rate'])}), more than at these "
+                         f"hours on {plural(impact['baseline_days'], 'earlier day')} "
+                         f"(at most {_pct(impact['usual_rate'])}).")
         elif impact["unusual"] is False:
             who_else = (f"{k} of {users} other {apps} users were slow ({_pct(impact['rate'])}), "
-                         f"as usual at this hour (up to {_pct(impact['usual_rate'])} on previous days).")
+                         f"as usual at these hours on {plural(impact['baseline_days'], 'earlier day')} (up to {_pct(impact['usual_rate'])}).")
         else:
             who_else = f"{k} of {users} other {apps} users were slow ({_pct(impact['rate'])}); no earlier days to compare."
         cp = impact["common_point"]
@@ -167,13 +265,24 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
                  for c in normal or [] if c["since"] and c["changes"]), None)
     # other users of the same apps were slow as often as on previous days at this hour
     as_usual = bool(impact and impact["slow"] and impact["unusual"] is False)
-    usual_line = (f" Other {', '.join(impact['applications'])} users were slow as often as usual at this hour "
-                  "(see Who else)." if as_usual else "")
+    usual_line = (f" Other {', '.join(impact['applications'])} users were slow as often as usual at these hours "
+                  "(see Other users)." if as_usual else "")
     nothing = f"No problem was recorded within {minutes} min of any of the {n} slow actions."
     # the details stay in their own section; the reason says where to look
+    felt_issues, background = _issue_counts([g for g in problems if not g["slow_actions"]])
+    also = _background_line(background) if background else None
     if not n:
-        level, title = "none", "No slow actions found"
-        reason = "Nothing was slow in this window."
+        marked = f"Aternity marked none of the {len(samples)} measured actions slow."
+        if felt_issues:
+            level, title = "issues", f"{_join(felt_issues)}, no slow actions"
+            reason = f"Also {also}." if also else marked
+        elif background:
+            level, title = "none", "No slow actions, hangs or app crashes"
+            reason = f"Only in the background: {also}."
+        elif samples:
+            level, title, reason = "none", "No problems found", f"{marked} No hang or app crash either."
+        else:
+            level, title, reason = "none", "No activity found", "Aternity has no activity for this window."
     elif top is None and lead:
         # nothing at the slow actions, but it became slow right after a change on the PC
         level = "possible"
@@ -198,6 +307,8 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
             reason += (" Only the timing links them: Aternity measured nothing in it as longer than normal, "
                        "so it may not be the cause.")
         reason += usual_line
+    if n and felt_issues + ([also] if also else []):
+        reason += f" Also, not near the slow actions: {_join(felt_issues + ([also] if also else []))}."
     if not todo and n:
         todo.append(f"Nothing measured explains it: ask {who} what they were doing at those times "
                     "(see \"What was checked\" for what is ruled out).")
@@ -228,9 +339,18 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
     }
     return {
         "level": level, "title": title, "reason": reason, "felt": felt, "time_went": split,
-        "who_else": who_else, "same_failure": same, "found": found, "todo": todo,
+        "who_else": who_else, "rollup": _rollup(found), "found": found, "todo": todo, "changes": _changed(changed),
         "normal": [c["text"] for c in normal or []], "checked": checks,
     }
+
+
+def _changed(changed: dict | None) -> list[dict]:
+    """What changed on each PC, listed once: the issues only name a change that matches them."""
+    iso = lambda t: t.isoformat().replace("+00:00", "Z")  # noqa: E731
+    return [{"device": d, "changes": [{"time": iso(c["time"]), "text": change_text(c).split(" ", 2)[2]}
+                                      for c in rows[:MAX_CHANGES_SHOWN]],
+             "more": max(0, len(rows) - MAX_CHANGES_SHOWN)}
+            for d, rows in (changed or {}).items()]
 
 
 def _checked(c: dict | None, minutes: int) -> list[str]:

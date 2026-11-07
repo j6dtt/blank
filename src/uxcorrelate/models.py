@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -189,6 +190,17 @@ class MappedObject:
     device_id: str
     role: str  # client-gateway | site | app-server | app-server-network | always
     reason: str
+
+
+def plain(text: str | None) -> str:
+    """A value without Aternity's label: "OUTLOOK.EXE (Process)" -> "OUTLOOK.EXE"."""
+    return re.sub(r"\s*\((?:Process|Dll|Process Version|Dll Version|Exception)\)", "", text or "",
+                  flags=re.IGNORECASE).strip()
+
+
+def plural(n: int, word: str, many: str | None = None) -> str:
+    """ "1 PC", "3 PCs", "2 crashes" (with `many`)."""
+    return f"{n:,} {word if n == 1 else many or word + 's'}"
 
 
 def utc(dt: datetime) -> datetime:

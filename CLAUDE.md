@@ -62,7 +62,7 @@ unset `<REQUIRED>` base URLs.
   Used by "What the user felt", the "Slow start-ups" tab
   (`/api/logon-jobs`) and the `logons` CLI command.
 - `normal.py`: each slow app + activity next to its own normal (user's
-  30 days, other users at the same time), days where Aternity marked most
+  last 30 days at most, the days found are said: prod keeps about 8; other users at the same time), days where Aternity marked most
   runs slow and since when, the change log between the last normal day and
   the first slow one, and CPU/memory/disk queue at those actions vs usual.
   With no problem at the slow actions, a change before "since" makes the
@@ -79,18 +79,30 @@ unset `<REQUIRED>` base URLs.
   is not checked (Aternity gives no delay for it). A start-up with no slow part that is normal for
   its PC is "weak": "Possibly", never "Likely". The answer's "checked" list
   says what was ruled out, with counts.
-- `impact.py`: "who else" — other users of the same apps in the user's slow
-  intervals, grouped by the NetIM gateway (or /24) they sit behind and
-  compared with the same hours on previous days ("unusual" = more slow
-  than any of those days; common point = an unusual group holding more
-  than half the slow users). This NetIM grouping is what Aternity can't do.
-- `cause.py`: the main point of an investigation, "why". For every PC
-  problem (those at slow actions first, then those at other times: a crash
-  is an issue by itself; up to `MAX_EXPLAIN`, each Aternity question asked
-  once): where the app failed (component, module,
+- `impact.py`: "Other users of these apps" — other users of the same apps in
+  the user's slow intervals, grouped by the NetIM gateway (or /24) they sit
+  behind and compared with the same hours on the days of the week before,
+  working days with working days (`DAYS_BACK`; prod keeps activities about
+  8 days) ("unusual" = more slow than any of those days; common point = an
+  unusual group holding more than half the slow users). Virtual desktop
+  users are one group, never a network point (their address is the
+  desktop's). This NetIM grouping is what Aternity can't do. An issue's own
+  "who else" comes from `cause.py`.
+- `cause.py`: the main point of an investigation: what we know of each
+  issue. For every PC
+  problem (those at slow actions first, then what the user felt, then the
+  rest: a crash is an issue by itself; up to `MAX_EXPLAIN`, each Aternity
+  question asked once): where the app failed (component, module,
   versions, error, from `DEVICE_HEALTH_RAW`), other PCs failing the same
-  way, software changes in the 14 days before
-  (`INSTALLED_SOFTWARE_CHANGE_LOG`), busiest processes for CPU/memory/disk
+  way (out of the PCs using the app, `app_usage_everywhere`, or
+  `known_pcs`; since when, `_since`, for up to `MAX_HISTORY`), software
+  changes (`INSTALLED_SOFTWARE_CHANGE_LOG`, read once per PC): a change is a
+  "possible cause" only with the same name or version as the failing part,
+  before it, and with no other PC failing the same way on another version
+  (then it is "not new with this change"). Logged after the failure is said;
+  on a virtual desktop that does not clear it (the log runs late there,
+  usually by under a day; on physical PCs its time holds); `NO_PROGRAM` and
+  `WINDOWS_MODULES` (config) are never blamed; busiest processes for CPU/memory/disk and low memory events
   (`top_processes` = `APPLICATION_RESOURCES_HOURLY` on the live tenant: a row
   per process and hour at any minute, so rows within `PROCESS_ROW_SPAN_MIN`
   are read; CPU %, memory in bytes shown as MB, no disk IO). "Same failure" = same category+name, same
@@ -103,11 +115,23 @@ unset `<REQUIRED>` base URLs.
   a source with nothing says so. A hang and its own health event share one
   cause.
 - `answer.py`: the plain-language answer at the top of the page and the
-  CLI report (title, what the user felt, who else is affected, what we found,
-  what to do), plus `problem_text`, the sentence for each problem. The
-  headline only counts and points ("see Who else", "Compared with normal");
+  CLI report (title, what the user felt, other users, what went wrong, what
+  changed, what to do), plus `problem_text`, the sentence for each problem. The
+  headline only counts and points ("see Other users", "Compared with normal");
+  `rollup` is the top of "What went wrong": one row per issue across the
+  user's PCs, a `verdict` by fixed rules (`cause._trend`: last 7 days against
+  the 6 before, working days, `TREND_RATIO`, `TREND_MIN_PCS`; hangs have no
+  trend, app usage is kept about 8 days) and other PCs per day as bars;
   each detail is said once, in its own section. Nothing at the slow actions
-  and other users slow as usual = "Nothing unusual found". An app usage
+  and other users slow as usual = "Nothing unusual found". The question is
+  what went wrong for the user, not only what was slow: with no slow action
+  the title counts hangs, app crashes and system events (`level` "issues",
+  background crashes in the reason). Each problem has an `issue` kind
+  (`correlate._issue`); "found" is what the user felt first, then what spans
+  many PCs, limits passed last (`ISSUE_ORDER`), each with "What we know"
+  (`why`), `possible` causes and `who` (`others_text`, one shape: N other
+  PCs, users, of how many, versions, since when). "What changed" is listed
+  once per PC (`changes`). An app usage
   crash/hang and its health event are one row (`correlate._merge_usage`,
   names compared without ".exe", "(Process)" or spaces). "What the user
   felt" names each PC the user worked on. The CLI report wraps at 72. Keep it
@@ -126,7 +150,10 @@ unset `<REQUIRED>` base URLs.
   are set) which addresses NetIM can place: virtual desktops', physical
   PCs' (one per /24) and the devices users sit at (looked up in the
   inventory). "Process data" lists every source with `PROCESS_COLUMN`;
-  value ranges include top_processes' CPU and memory. What Aternity does not give
+  value ranges include top_processes' CPU and memory. "fleet: …" (`_fleet`):
+  PCs and users, how far back each source goes, the widest failures per day,
+  how software arrives and whether the log's time is real, and which columns
+  could place a virtual desktop user. What Aternity does not give
   us is listed for its admin in `docs/aternity-admin-questions.md`.
   A missing optional source (`OPTIONAL`) is a note saying what
   is skipped, not a FAIL; a wrong name gets paste-ready YAML only when the

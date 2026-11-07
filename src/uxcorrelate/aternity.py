@@ -170,7 +170,7 @@ class AternityClient:
         f = self.cfg.fields[key]
         apps = " or ".join(f"{f['application']} eq {odata_quote(a)}" for a in applications)
         logical = ("timestamp", "username", "device", "application", "location", "ip_address",
-                   "response_time", "client_time", "network_time", "backend_time", "status")
+                   "response_time", "client_time", "network_time", "backend_time", "status", "virtualization")
         select = [f[k] for k in logical if f.get(k)]
         rows = self.query(self.cfg.entities[key], f"{self._time_filter(key, start, end)} and ({apps})",
                           select=select)
@@ -190,6 +190,7 @@ class AternityClient:
                     network_time=to_float(row.get(f.get("network_time", ""))),
                     backend_time=to_float(row.get(f.get("backend_time", ""))),
                     status=row.get(f.get("status", "")) or None,
+                    virtual=is_virtual(row.get(f.get("virtualization", ""))),
                 ))
         return out
 
@@ -377,6 +378,14 @@ class AternityClient:
                             f"{f['component']} eq {odata_quote(component)}", "health events of other PCs",
                             self.EVERYWHERE)
 
+    def named_health_events(self, name: str, start: datetime, end: datetime) -> list[HealthEvent]:
+        """One kind of health event on every device, for events with no process (e.g. low memory)."""
+        f = self.cfg.fields.get("health_events", {})
+        if not f or not f.get("name"):
+            return []
+        return self._events(f"{self._time_filter('health_events', start, end)} and {f['name']} eq {odata_quote(name)}",
+                            "health events of other PCs", self.EVERYWHERE)
+
     def software_changes(self, device: str, start: datetime, end: datetime) -> list[SoftwareChange]:
         """Installs, updates and removals on the device in the window."""
         key = "software_changes"
@@ -438,6 +447,49 @@ class AternityClient:
                     hang_time=to_float(row.get(f.get("hang_time", ""))),
                 ))
         return out
+
+    def app_usage_everywhere(self, application: str, start: datetime, end: datetime) -> list[AppUsageSample]:
+        """One application's usage on every PC: how many use it, and where it hung or crashed."""
+        key = "app_usage"
+        f = self.cfg.fields.get(key, {})
+        if not f:
+            return []
+        out = []
+        for row in self._optional(key, "application usage of other PCs",
+                                  f"{self._time_filter(key, start, end)} and {f['application']} eq {odata_quote(application)}",
+                                  select=[f[k] for k in ("timestamp", "device", "crashes", "hang_time") if f.get(k)]):
+            ts = parse_time(row.get(f["timestamp"]))
+            if ts is not None:
+                out.append(AppUsageSample(timestamp=ts, device=str(row.get(f["device"]) or ""), application=application,
+                                          crashes=to_float(row.get(f.get("crashes", ""))),
+                                          hang_time=to_float(row.get(f.get("hang_time", "")))))
+        return out
+
+    def app_failures_everywhere(self, application: str, start: datetime, end: datetime) -> list[AppUsageSample]:
+        """Only the rows where this application hung or crashed, on every PC."""
+        key = "app_usage"
+        f = self.cfg.fields.get(key, {})
+        if not f.get("hang_time") or not f.get("crashes"):
+            return []
+        out = []
+        for row in self._optional(key, "hangs and crashes of other PCs",
+                                  f"{self._time_filter(key, start, end)} and {f['application']} eq {odata_quote(application)} "
+                                  f"and ({f['hang_time']} gt 0 or {f['crashes']} gt 0)",
+                                  select=[f[k] for k in ("timestamp", "device", "crashes", "hang_time")]):
+            ts = parse_time(row.get(f["timestamp"]))
+            if ts is not None:
+                out.append(AppUsageSample(timestamp=ts, device=str(row.get(f["device"]) or ""), application=application,
+                                          crashes=to_float(row.get(f["crashes"])), hang_time=to_float(row.get(f["hang_time"]))))
+        return out
+
+    def known_pcs(self) -> int | None:
+        """How many PCs the inventory lists (None if it could not be read in full)."""
+        f = self.cfg.fields.get("inventory", {})
+        if not f.get("device"):
+            return None
+        seen = len(self.warnings)
+        rows = self._optional("inventory", "the number of PCs", "", select=[f["device"]])
+        return len({r.get(f["device"]) for r in rows}) if rows and len(self.warnings) == seen else None
 
     def disk_space(self, device: str, start: datetime, end: datetime) -> list[DeviceHealthSample]:
         """Free space of the device's disk over time, in % (free_disk)."""

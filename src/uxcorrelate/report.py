@@ -62,9 +62,16 @@ def _answer_lines(a: dict, who: str) -> list[str]:
                          + (f" on {s['device']}" if s.get("device") else "") + f" at {_t(s['when'])}")
     else:
         lines.append(f"  no slow actions ({f['actions']} measured)")
+        pcs = f.get("pcs") or []
+        if len(pcs) > 1:
+            lines.append(f"  they used {len(pcs)} PCs: "
+                         + ", ".join(f"{p['device']} ({_pc_kind(p).rstrip('; ') or 'PC'})" for p in pcs))
+        elif pcs and pcs[0].get("virtual"):
+            lines.append(f"  on virtual desktop {pcs[0]['device']}" + _pc_from(pcs[0]))
     if f["logon"]:
         unit = f" {f['logon_unit']}" if f["logon_unit"] else ""
-        quiet = any(p["device"] == f["logon"]["device"] and not p["slow"] for p in f.get("pcs") or [])
+        quiet = f["slow_actions"] and any(p["device"] == f["logon"]["device"] and not p["slow"]
+                                          for p in f.get("pcs") or [])
         lines.append(f"  slowest start-up: {_start_line(f['logon'], unit)}"
                      + (" (no slow action on this PC)" if quiet else ""))
     tw = a["time_went"]
@@ -73,14 +80,25 @@ def _answer_lines(a: dict, who: str) -> list[str]:
         for label, key in (("PC", "pc"), ("Network", "network"), ("Server", "server")):
             lines.append(f"  {label:<8} {_bar(tw[key])} {tw[key]:.0%}")
     if a["who_else"]:
-        lines += ["", "Who else is affected?", f"  {a['who_else']}"]
+        lines += ["", "Other users of these apps:", f"  {a['who_else']}"]
     if a["found"]:
-        lines += ["", "What we found, and why:"]
+        lines += ["", "What went wrong:"]
         for x in a["found"]:
             lines.append(f"  - {x['text']}" + (f": {x['count']}, first {_t(x['when'])}" if x["count"] else ""))
-            if x.get("why"):
-                lines.append("    Why:")
-                lines += [f"      * {w}" for w in x["why"]]
+            lines += [f"      * {w}" for w in x["why"]]
+            lines += [f"      * Possible cause: {w}" for w in x["possible"]]
+            if x["who"]:
+                lines.append(f"      * Who else: {x['who']}")
+    if a.get("changes"):
+        lines += ["", "What changed on these PCs:"]
+        for c in a["changes"]:
+            if not c["changes"]:
+                lines.append(f"  {c['device']}: nothing in the window or the 14 days before it")
+                continue
+            lines.append(f"  {c['device']}:")
+            lines += [f"    {_t(x['time'])}  {x['text']}" for x in c["changes"]]
+            if c["more"]:
+                lines.append(f"    ... {c['more']} more")
     if a.get("normal"):
         lines += ["", "Compared with normal:"]
         for c in a["normal"]:
@@ -121,19 +139,19 @@ def render_text(result: dict) -> str:
         lines += ["", "Every problem in the window:"]
         for g in result["problems"][:30]:
             at = (f"at {g['slow_actions']} of {g['of_slow']} slow actions" if g["slow_actions"]
-                  else f"not near a slow action ({g['times']}x)")
+                  else f"not near a slow action ({g['times']}x)" if g["of_slow"] else f"{g['times']}x")
             end = "" if g["last"] == g["first"] else f" to {_t(g['last'])}"
             lines += [f"  [{g['kind']}] {g['text']}", f"      {at}; {_t(g['first'])}{end}"]
-    same, im = result["answer"].get("same_failure"), result.get("impact")
-    if same and same["pcs"]:
-        lines += ["", f"Other PCs with the same failure ({same['what']}):"]
-        for p in same["list"][:20]:
-            lines.append(f"  {p['device']}  {p['username'] or '?'}  version {p['version']}  "
+    im = result.get("impact")
+    for x in [x for x in result["answer"]["found"] if x["list"]][:3]:
+        lines += ["", f"Other PCs ({x['list_of']}):"]
+        for p in x["list"][:10]:
+            lines.append(f"  {p['device']}  {p['username'] or '?'}  {p['version']}  "
                          f"{p['times']}x, last {_t(p['last'])}")
-        if same["pcs"] > 20:
-            lines.append(f"  ... {same['pcs'] - 20} more (see --json or the web UI)")
-    elif im:
-        lines += ["", f"Who else by network point ({', '.join(im['applications'])}, same times):"]
+        if len(x["list"]) > 10:
+            lines.append("  ... more (see --json or the web UI)")
+    if im:
+        lines += ["", f"Other users by network point ({', '.join(im['applications'])}, same times):"]
         for g in im["groups"][:8]:
             usual = "" if g["usual_rate"] is None else f", usually up to {g['usual_rate']:.0%}"
             mark = " <- this user" if g["includes_user"] else ""

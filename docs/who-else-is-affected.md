@@ -1,26 +1,26 @@
-# "Who else is affected?"
+# Who else
 
-A short guide to the section on the Investigate page, and to the
-"Main causes" list on the Slow start-ups page. Both answer one question:
-**which other users and PCs actually had the same problem?**
+A short guide to "Who else" under each issue on the Investigate page, the
+"Other users of these apps" panel, and the "Main causes" list on the Slow
+start-ups page.
 
 ## In one line
 
-It lists PCs where Aternity **recorded the same failure**. A PC that only
-has the same software or version, but never failed, is **not** listed.
+"Who else" lists PCs where Aternity **recorded the same failure**. A PC that
+only has the same software or version, but never failed, is **not** listed.
 
-## Investigate page: an application failure
+## Under each issue
 
-When the main finding is an app crash or hang:
+Every hang, crash or health event says it in the same shape:
 
 ```
-This user's failure (from Aternity)
-  e.g. Outlook · Hang / Application hang
+This PC's failure (from Aternity)
+  e.g. Outlook · Application hang
        in AddinX.dll 2.1 (inside outlook.exe)
         │
         ▼
-Every PC's health events for Outlook
-in the same time range (DEVICE_HEALTH_RAW)
+Every PC's health events for Outlook,
+or for the process if no app (DEVICE_HEALTH_RAW)
         │
         ▼
 Keep an event only if ALL match:
@@ -33,25 +33,36 @@ One row per PC:
   PC · user · version · times · last seen
 ```
 
-- **Version** is shown, not matched. It tells you whether the failing
-  PCs share a version (e.g. "all on 2.1"), which points at that version.
-- **"Only this PC"** means no other PC had that same failure in the time
-  range. Look at this PC (see "Why").
+Example:
 
-Example sentence:
+> Who else: 41 other PCs (38 users) of 900 PCs using Outlook, all on 2.1.
+> This PC has 2.1. On other PCs since Nov 3.
 
-> 41 other PC(s) had the same failure (Outlook Hang / Application hang in
-> AddinX.dll 2.1 (inside outlook.exe 16.0)), all on 2.1. This PC has 2.1.
+- **Users** are counted too: on pooled virtual desktops one person moves
+  between PCs, so PCs alone overstate it.
+- **Of how many:** for an app, the PCs using it in the window
+  (`APPLICATIONS_RAW`); for a background process, the PCs in
+  `DEVICE_INVENTORY`.
+- **Version** is shown, not matched. "All on 2.1" points at that version.
+- **Since when:** other PCs' same failure in the 14 days before the window
+  (for up to 5 failures, when 2 or more other PCs have it).
+- **A hang with no details:** Aternity's app usage on every PC is read
+  instead, so it is "PCs where this app hung", not "the same failure".
+- **"Only this PC"** means no other PC had it in the time range.
+- **One other PC** is told, but "what to do" stays about this PC: it takes
+  two others to call it more than this PC's problem.
 
-Click **Show who** for the list, and **Hide who** to close it.
+Click **Show who** under an issue for the list, **Hide who** to close it.
 
-## Investigate page: no application failure
+## "Other users of these apps"
 
-When the main finding is not an app failure (e.g. the network), the
-section lists the other users of the same apps who were **slow at the same
-times**. They are grouped by the NetIM network point (gateway) they sit
-behind and compared with the same hours on the 3 previous days. If most
-of them share one network point, that point is named.
+Only when something was slow. It lists other users of the same apps who
+were **slow at the same times**: that they use the same app, not that they
+share this user's problem. They are grouped by the NetIM network point
+(gateway) they sit behind and compared with the same hours on the same
+days of the week before (working days with working days; activities are kept about 8 days). If most of them share one network point, it
+is named. A virtual desktop's address is the desktop's own, so those users
+are one group and never a network point.
 
 ## Slow start-ups page: "Main causes"
 

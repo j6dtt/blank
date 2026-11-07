@@ -1,4 +1,4 @@
-"""Why: for each problem seen at the user's slow actions, what caused it.
+"""What we know about each issue: where it failed, who else, what changed.
 
 Only Aternity's own records are used:
 - where an application failed: the component and sub-component (e.g. the
@@ -11,22 +11,36 @@ Only Aternity's own records are used:
   (top_processes: on the live tenant APPLICATION_RESOURCES_HOURLY, rows of up
   to an hour, CPU and memory only).
 Nothing is guessed: each finding is a sentence about a record, and when a
-source has nothing, the sentence says so.
+source has nothing, the sentence says so. A change on the PC is a "possible
+cause" of an issue only when it matches the failing part (same name or same
+version), came before it, and other PCs do not fail the same way on another
+version (then the failure is not new with this change); every other change is
+listed once per PC. On physical PCs the log's time holds; on virtual desktops
+it can run late (live: 1 in 4 failures ran a version before its log time, most
+by under a day), so there "logged after the failure" does not clear a change.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from collections import Counter
 from datetime import timedelta
 
-from .config import PROCESS_ROW_SPAN_MIN, SOFTWARE_REMOVED, SOFTWARE_UPDATE_GAP_MIN
-from .models import parse_time
+from .config import NO_PROGRAM, PROCESS_ROW_SPAN_MIN, SOFTWARE_REMOVED, SOFTWARE_UPDATE_GAP_MIN, WINDOWS_MODULES
+from .models import parse_time, plain, plural
 
 log = logging.getLogger("uxcorrelate")
 CHANGES_BEFORE = timedelta(days=14)  # how far back "what changed" looks
 MAX_EXPLAIN = 25  # problems explained per investigation (a few Aternity calls each)
+MAX_HISTORY = 5  # failures whose start is looked for on every PC (a wide read each)
+TREND_RATIO = 1.25  # one week against the week before: this much more (or less) is a trend
+TREND_MIN_PCS = 5  # PCs per working day: below this a trend is noise
+UNKNOWN_VERSION = "unknown version"
 EVENT = "Aternity event"  # a device health event (correlate._event_problem)
+# what is told first: what the user felt, then the rest; limits passed last
+ISSUE_ORDER = {"hang": 0, "crash": 0, "system": 1, "startup": 1, "background": 2, "limit": 3}
+FAULT_OFFSET = re.compile(r"Fault Offset:\s*\S+", re.IGNORECASE)  # means nothing to a reader
 METRIC = {"CPU %": ("CPU", "cpu", "%"), "Memory %": ("memory", "memory", "%"), "Disk queue": ("disk I/O", "io", "")}
 
 
@@ -47,42 +61,54 @@ def _where(e) -> tuple:
 
 
 def _module(where: tuple) -> str:
-    comp, cver, sub, sver = where
+    comp, cver, sub, sver = (plain(x) for x in where)
     if sub:
         return f"{sub}{f' {sver}' if sver else ''}" + (f" (inside {comp}{f' {cver}' if cver else ''})" if comp else "")
     return f"{comp}{f' {cver}' if cver else ''}" if comp else "an unnamed component"
 
 
-def explain(aternity, groups: list[dict], events: list, window: timedelta, start, end) -> None:
+def explain(aternity, groups: list[dict], events: list, window: timedelta, start, end) -> dict:
     """Adds g["why"] to every problem on the PC: those at the slow actions first,
-    then those at other times (a crash is an issue by itself). Up to MAX_EXPLAIN."""
+    then what the user felt, then the rest (a crash is an issue by itself). Up to
+    MAX_EXPLAIN. Returns what changed on each of those PCs, newest first."""
     done: dict[tuple, dict] = {}
     aternity = _Once(aternity)
     todo = [g for g in groups if not (g["why"] or g["source"].startswith("NetIM")
                                       or g["what"].startswith("Network round trip"))]  # NetIM and "who else"
-    todo.sort(key=lambda g: not g["slow_actions"])
-    for g in todo[:MAX_EXPLAIN]:
+    todo.sort(key=lambda g: (not g["slow_actions"], ISSUE_ORDER.get(g["issue"], 9)))
+    todo = todo[:MAX_EXPLAIN]
+    changed = {dev: _pc_changes(aternity, dev, start, end) for dev in dict.fromkeys(g["object"] for g in todo)}
+    virtual = set()
+    if hasattr(aternity, "virtual_devices"):
+        for dev in changed:
+            virtual |= aternity.virtual_devices(start, end, device=dev)
+    history = set()
+    for g in todo:
         if g["app"] and (g["object"], g["app"]) in done:  # a hang and its health event: one cause
             g["why"] = {**done[(g["object"], g["app"])], "same_as_above": True}
             continue
         log.info("Looking for the cause: %s", g["text"])
-        why = {"failure": None, "others": None, "changes": [], "processes": [], "text": [], "todo": []}
+        why = {"failure": None, "others": None, "changes": [], "processes": [], "text": [], "todo": [], "possible": []}
         times = g["_times"] or g["_all"]  # at the slow actions, else whenever it happened
         if g["app"] or g["source"] == EVENT:
-            _failure(aternity, g, events, times, window, start, end, why)
-        else:
-            _processes(aternity, g, times, window, why)
-        _changes(aternity, g, min(a for a, _ in times), why)
+            _failure(aternity, g, events, times, window, start, end, why, history)
+        if g["source"] == EVENT and "memory" in g["what"].lower():
+            _processes(aternity, g, times, window, why, "Memory %")
+        elif not (g["app"] or g["source"] == EVENT):
+            _processes(aternity, g, times, window, why, g["what"])
+        _changes(changed[g["object"]], g, min(a for a, _ in times), why, g["object"] in virtual)
         why["text"] += g.get("notes", [])
         g["why"] = why
         if g["app"]:
             done[(g["object"], g["app"])] = why
+    return changed
 
 
 class _Once:
     """The Aternity source, asking each question once per investigation (e.g. the
     other PCs' events of one app, for several problems of that app)."""
-    CACHED = ("app_health_events", "component_health_events", "software_changes")
+    CACHED = ("app_health_events", "component_health_events", "named_health_events", "software_changes",
+              "app_usage_everywhere", "known_pcs")
 
     def __init__(self, source):
         self._source, self._seen = source, {}
@@ -105,7 +131,113 @@ def _event_what(e) -> str:
     return _event_problem(e)["what"]
 
 
-def _failure(aternity, g, events, times, window, start, end, why) -> None:
+def _same_failure(found, dev, where, kind, error) -> list:
+    """Other PCs' events of the same kind (Aternity's category and name, e.g. a hang), in the
+    same process, the same module when Aternity knows it, the same error when both have one."""
+    return [e for e in found
+            if e.device != dev and e.component == where[0] and (e.category, e.name) == kind
+            and (where[2] is None or e.sub_component == where[2])
+            and (error is None or e.error is None or e.error == error)]
+
+
+def _audience(aternity, app, dev, start, end) -> tuple:
+    """(how many other PCs could have had it, of what): the PCs using the app, else
+    every PC in the inventory."""
+    if app and hasattr(aternity, "app_usage_everywhere"):
+        using = {u.device for u in aternity.app_usage_everywhere(app, start, end)} - {dev}
+        if using:
+            return len(using), f"PCs using {app}"
+    if not app and hasattr(aternity, "known_pcs"):
+        return aternity.known_pcs(), "PCs in Aternity's inventory"
+    return None, None
+
+
+def _pcs_per_day(items, first, last) -> dict:
+    """(time, PC) pairs as {day: PCs that day}, with every day from first to last."""
+    days: dict = {}
+    for t, device in items:
+        days.setdefault(t.date(), set()).add(device)
+    span = range((last - first).days + 1)
+    return {(first + timedelta(days=i)).isoformat(): len(days.get(first + timedelta(days=i), ())) for i in span}
+
+
+def _trend(per_day: dict, start) -> str | None:
+    """The last 7 days against the 6 before, PCs per working day: "growing", "falling",
+    "steady", or None when too few PCs to tell."""
+    def mean(lo, hi):
+        days = [start.date() - timedelta(days=k) for k in range(lo, hi + 1)]
+        counts = [per_day.get(d.isoformat(), 0) for d in days if d.weekday() < 5]
+        return sum(counts) / len(counts) if counts else 0
+    now, before = mean(1, 7), mean(8, 13)
+    if max(now, before) < TREND_MIN_PCS:
+        return None
+    return "growing" if now >= before * TREND_RATIO else "falling" if before >= now * TREND_RATIO else "steady"
+
+
+def _since(aternity, read, dev, where, kind, error, start) -> dict | None:
+    """Since when other PCs fail the same way: their events in the 14 days before the
+    window. {"since": first day seen, or None when none of those days had it; PCs per
+    day (the 13 whole days) and the trend}."""
+    warned = len(getattr(aternity, "warnings", []))
+    rows = _same_failure(read(start - CHANGES_BEFORE, start), dev, where, kind, error)
+    if len(getattr(aternity, "warnings", [])) != warned:
+        return None  # a partial read cannot say when it started
+    first = min((e.timestamp for e in rows), default=None)
+    per_day = _pcs_per_day(((e.timestamp, e.device) for e in rows), start.date() - timedelta(days=13),
+                           start.date() - timedelta(days=1))
+    return {"since": _iso(first) if first else None, "days": CHANGES_BEFORE.days,
+            "from_start": bool(first) and first - (start - CHANGES_BEFORE) < timedelta(days=1),
+            "per_day": per_day, "trend": _trend(per_day, start)}
+
+
+def _usage_days_before(aternity, app, dev, hang, start) -> dict | None:
+    """How long before the window other PCs already had it in their app usage. Aternity
+    keeps these rows about 8 days, so this says "already", never when it began."""
+    if not hasattr(aternity, "app_failures_everywhere"):
+        return None
+    warned = len(getattr(aternity, "warnings", []))
+    rows = aternity.app_failures_everywhere(app, start - CHANGES_BEFORE, start)
+    if len(getattr(aternity, "warnings", [])) != warned:
+        return None  # a partial read says nothing
+    rows = [u for u in rows if u.device != dev and (u.hang_time if hang else u.crashes)]
+    first = min((u.timestamp for u in rows), default=None)
+    days = (start - first).days if first else 0
+    if not days:
+        return None  # no trend: about 8 days kept, not two weeks to compare
+    return {"since": _iso(first), "days": days, "from_start": True, "trend": None,
+            "per_day": _pcs_per_day(((u.timestamp, u.device) for u in rows), first.date(), start.date() - timedelta(days=1))}
+
+
+def _usage_others(aternity, g, start, end, why, history) -> None:
+    """A hang or crash Aternity has no details of: the other PCs where its app usage
+    shows the same, out of the PCs using the app."""
+    if not hasattr(aternity, "app_usage_everywhere"):
+        return
+    dev, app = g["object"], g["app"]
+    hang = g["issue"] == "hang"
+    rows = aternity.app_usage_everywhere(app, start, end)
+    pcs: dict[str, dict] = {}
+    for u in sorted(rows, key=lambda u: u.timestamp):
+        if u.device != dev and (u.hang_time if hang else u.crashes):
+            p = pcs.setdefault(u.device, {"device": u.device, "username": None, "version": "", "times": 0,
+                                          "first": _iso(u.timestamp)})
+            p["times"] += 1
+            p["last"] = _iso(u.timestamp)
+    using = {u.device for u in rows} - {dev}
+    if using:
+        wide = pcs and (app in history or len(history) < MAX_HISTORY)
+        if wide:
+            history.add(app)
+        why["others"] = {"app": app, "what": f"{app} {'not responding' if hang else 'crashed'}", "pcs": len(pcs),
+                         "users": None, "of": len(using), "of_what": f"PCs using {app}", "versions": {},
+                         "this_version": None,
+                         "window_days": _pcs_per_day(((u.timestamp, u.device) for u in rows if u.device != dev
+                                                      and (u.hang_time if hang else u.crashes)), start.date(), end.date()),
+                         "history": _usage_days_before(aternity, app, dev, hang, start) if wide else None,
+                         "list": sorted(pcs.values(), key=lambda p: (-p["times"], p["device"]))[:100]}
+
+
+def _failure(aternity, g, events, times, window, start, end, why, history) -> None:
     """Where it failed, from the health events behind the problem: for an app, its
     crashes and hangs; for any other event (a background process, low memory, a
     blue screen, a failing disk), that event itself."""
@@ -116,7 +248,8 @@ def _failure(aternity, g, events, times, window, start, end, why) -> None:
         mine = [e for e in events if e.device == dev and e.application == app]
     near = [e for e in mine if _near(e.timestamp, times, window)]
     if not mine:
-        why["text"].append(f"Aternity recorded no crash or hang details for {app} on {dev}, only the count.")
+        why["text"].append(f"Aternity has no details of this on {dev}, only that it happened.")
+        _usage_others(aternity, g, start, end, why, history)
         return
     use = near or mine
     where = Counter(_where(e) for e in use).most_common(1)[0][0]
@@ -128,33 +261,45 @@ def _failure(aternity, g, events, times, window, start, end, why) -> None:
     why["failure"] = {"category": kind[0], "name": kind[1], "component": where[0], "component_version": where[1], "sub_component": where[2],
                       "sub_component_version": where[3], "exception": last.exception, "error": error,
                       "details": (last.details or "")[:300] or None, "events": len(use), "at_slow_actions": bool(near)}
-    err = last.exception or error
-    what = " / ".join(x for x in kind if x) or "failure"
+    err = plain(last.exception or error)
+    what = kind[1] or kind[0] or "failure"
     subject = f"{app} failed" if app else f"Aternity recorded {what} on {dev}"
     place = f" in {_module(where)}" if where[0] or where[2] else ""
-    why["text"].append(f"{subject}{place}" + (f": {err}" if err else "")
-                       + ("" if near else " (from its events in this window, not at the slow actions)") + ".")
-    if last.details:
+    if app or place or err:  # else the issue's own line says it all
+        why["text"].append(f"{subject}{place}" + (f": {err}" if err else "")
+                           + ("" if near or not g["of_slow"] else " (from its events in this window, not at the slow actions)")
+                           + ".")
+    if last.details and not FAULT_OFFSET.fullmatch(" ".join(last.details.split())):
         why["text"].append(f"Aternity's details: {' '.join(last.details.split())[:300]}")
-    module = where[2] or where[0]
-    if module:
-        why["todo"].append(f"On {dev}: look at {_module(where)}, where {app or what} failed "
-                           "(repair or update it; if it is an add-in, try without it).")
+
+    # what to look at: not a name that isn't a program, nor the Windows file that reported it
+    module = plain(where[2] or where[0])
+    look, name = _module(where), module or app
+    if module.lower() in NO_PROGRAM:
+        why["text"].append(f"{module} is not a program: Windows could not tell which program failed.")
+        look = name = None
+    elif where[2] and module.lower() in WINDOWS_MODULES:
+        comp = plain(where[0])
+        why["text"].append(f"{module} is a Windows file: it reports a failure, the cause is usually in "
+                           f"{comp or app or 'the program it ran in'}.")
+        look, name = _module((where[0], where[1], None, None)) if comp else None, comp or app
+    step = None
+    if look and module:
+        step = (f"On {dev}: look at {look}, where {app} failed (repair or update it; if it is an add-in, "
+                "try without it)." if app else f"On {dev}: look at {look}, the process that failed.")
 
     # only this PC, or others too? Found by the app, else by the process that failed.
     if app and hasattr(aternity, "app_health_events"):
-        found = aternity.app_health_events(app, start, end)
+        read = lambda a, b: aternity.app_health_events(app, a, b)  # noqa: E731
     elif not app and where[0] and hasattr(aternity, "component_health_events"):
-        found = aternity.component_health_events(where[0], start, end)
+        read = lambda a, b: aternity.component_health_events(where[0], a, b)  # noqa: E731
+    elif not app and kind[1] and hasattr(aternity, "named_health_events"):  # e.g. low memory: no process
+        read = lambda a, b: aternity.named_health_events(kind[1], a, b)  # noqa: E731
     else:
+        why["todo"] += [step] if step else []
         return
-    # the same failure: the same kind (Aternity's category and name, e.g. a hang), the same
-    # process, the same module when Aternity knows it, the same error when both have one
-    same = [e for e in found
-            if e.device != dev and e.component == where[0] and (e.category, e.name) == kind
-            and (where[2] is None or e.sub_component == where[2])
-            and (error is None or e.error is None or e.error == error)]
-    version = lambda e: (e.sub_component_version if where[2] else e.component_version) or "unknown version"  # noqa: E731
+    same = _same_failure(read(start, end), dev, where, kind, error)
+    version = lambda e: plain(e.sub_component_version if where[2] else e.component_version) or UNKNOWN_VERSION  # noqa: E731
     pcs: dict[str, dict] = {}
     for e in sorted(same, key=lambda e: e.timestamp):
         p = pcs.setdefault(e.device, {"device": e.device, "username": None, "version": version(e),
@@ -164,24 +309,36 @@ def _failure(aternity, g, events, times, window, start, end, why) -> None:
         p["times"] += int(e.count or 1)
         p["last"] = _iso(e.timestamp)
     versions = Counter(p["version"] for p in pcs.values())
-    # shown under "Who else is affected?" (one place), not in the why lines
+    of, of_what = _audience(aternity, app, dev, start, end)
+    wide = len(pcs) >= 2 and (key := app or where[0] or kind[1]) and (key in history or len(history) < MAX_HISTORY)
+    if wide:
+        history.add(key)
+    # said once, on the issue ("Who else")
     named = f"{app} {what}" if app else what
-    why["others"] = {"app": app, "what": f"{named}{place}" + (f", error {error}" if error else ""), "pcs": len(pcs),
-                     "this_version": (where[3] if where[2] else where[1]) or "unknown version",
+    why["others"] = {"app": app, "what": f"{named}{place}" + (f", error {plain(error)}" if error else ""), "pcs": len(pcs),
+                     "users": len({e.username for e in same if e.username}) or None, "of": of, "of_what": of_what,
+                     "this_version": plain(where[3] if where[2] else where[1]) or UNKNOWN_VERSION,
                      "versions": dict(versions.most_common(5)),
+                     "window_days": _pcs_per_day(((e.timestamp, e.device) for e in same), start.date(), end.date()),
+                     "history": _since(aternity, read, dev, where, kind, error, start) if wide else None,
                      "list": sorted(pcs.values(), key=lambda p: (-p["times"], p["device"]))[:100]}
-    if not pcs:
-        return
-    why["todo"].append(f"{len(pcs)} other PCs fail the same way: treat it as a {module or app} problem "
-                       f"(version, update, vendor), not this PC alone.")
+    if len(pcs) < 2:  # one other PC does not make it more than this PC's problem
+        why["todo"] += [step] if step else []
+    elif name:
+        why["todo"].append(f"{len(pcs)} other PCs fail the same way: treat it as a {name} problem "
+                           f"(version, update, vendor), not this PC alone.")
+    elif where[0]:
+        why["todo"].append(f"{len(pcs)} other PCs fail the same way and Windows cannot name the program: "
+                           "see when it started, and what was rolled out then.")
 
 
-def _processes(aternity, g, times, window, why) -> None:
+def _processes(aternity, g, times, window, why, metric) -> None:
     """The busiest processes on the PC around the problem. A process row may cover
-    up to an hour (PROCESS_ROW_SPAN_MIN), so rows that close are read."""
-    if g["what"] not in METRIC or not hasattr(aternity, "top_processes"):
+    up to an hour (PROCESS_ROW_SPAN_MIN), so rows that close are read. Something to
+    look at only when it touched the user: not for a limit passed at other times."""
+    if metric not in METRIC or not hasattr(aternity, "top_processes"):
         return
-    label, key, unit = METRIC[g["what"]]
+    label, key, unit = METRIC[metric]
     dev = g["object"]
     near = max(window, timedelta(minutes=PROCESS_ROW_SPAN_MIN))
     rows = [p for p in aternity.top_processes(dev, min(a for a, _ in times) - near, max(b for _, b in times) + near)
@@ -206,7 +363,8 @@ def _processes(aternity, g, times, window, why) -> None:
     span = "" if near == window else f" (Aternity's process rows within {PROCESS_ROW_SPAN_MIN} min of them)"
     why["text"].append(f"Busiest processes then{span}: " + ", ".join(
         f"{app(n, a)} {label} up to {v:.1f}{unit}" for n, (v, a) in top) + ".")
-    why["todo"].append(f"On {dev}: look at {top[0][0]}, the busiest process at those times.")
+    if g["_times"] or g["source"] == EVENT:
+        why["todo"].append(f"On {dev}: look at {top[0][0]}, the busiest process at those times.")
 
 
 def changes_before(aternity, device: str, when, names, part: str, event: str) -> dict:
@@ -331,12 +489,58 @@ def _updates(rows, start=None, end=None) -> list[dict]:
     return real + sorted(filter(inside, back), key=lambda c: c["time"], reverse=True)
 
 
-def _changes(aternity, g, first, why) -> None:
+def _pc_changes(aternity, device: str, start, end) -> list[dict]:
+    """What changed on the PC from 14 days before the window to its end, read once."""
+    if not hasattr(aternity, "software_changes"):
+        return []
+    # read past the end too: a removal put back later is not a change (see _updates)
+    return _updates(aternity.software_changes(device, start - CHANGES_BEFORE, end + CHANGES_BEFORE),
+                    start - CHANGES_BEFORE, end)
+
+
+def _matches(c: dict, names: set[str], versions: set[str]) -> str | None:
+    """How a change matches the failing part: its name, or the version it brought."""
+    if c.get("back") or not c["name"]:
+        return None
+    name = c["name"].lower()
+    if any(n in name or name in n for n in names):
+        return "name"
+    return "version" if c["version"] in versions and c["change"] not in SOFTWARE_REMOVED else None
+
+
+def _other_version(c: dict, others: dict | None) -> str | None:
+    """A version other PCs fail the same way on that this change did not bring."""
+    if not c["version"]:
+        return None
+    found = [v for v in (others or {}).get("versions", {}) if v not in (UNKNOWN_VERSION, c["version"])]
+    return found[0] if found else None
+
+
+def _changes(rows: list[dict], g, first, why, virtual=False) -> None:
+    """A change is told on an issue only when it matches the failing part. Before the
+    issue, and with no other PC failing the same way on another version, it is a possible
+    cause; otherwise what rules it out, or leaves it open, is said."""
     f = why["failure"] or {}
-    ch = changes_before(aternity, g["object"], first, (g["app"], f.get("component"), f.get("sub_component")),
-                        "failing part", "first failure")
-    why["changes"] = ch["changes"]
-    if ch["text"]:
-        why["text"].append(ch["text"])
-    if ch["todo"]:
-        why["todo"].append(ch["todo"])
+    names = {n.lower().rsplit(".", 1)[0] for n in map(plain, (g["app"], f.get("component"), f.get("sub_component"))) if n}
+    names -= set(NO_PROGRAM) | {m.rsplit(".", 1)[0] for m in WINDOWS_MODULES}
+    versions = {plain(f.get(k)) for k in ("component_version", "sub_component_version")} - {""}
+    for c in rows:
+        match = _matches(c, names, versions)
+        before = c["time"] <= first
+        if before and len(why["changes"]) < 8:
+            why["changes"].append({**_as_iso(c), "related": bool(match)})
+        if not match:
+            continue
+        other = _other_version(c, why["others"])
+        if other:
+            why["text"].append(f"{change_text(c)}: same {match} as the failing part, but other PCs fail the same "
+                               f"way on {other}, so this is not new with this change.")
+        elif before:
+            why["possible"].append(f"{change_text(c)} (same {match} as the failing part, before it).")
+            if not any("Check the" in t for t in why["todo"]):
+                why["todo"].append(f"Check the {c['name']} change of {_iso(c['time'])[:10]} on {g['object']}: "
+                                   "it came before the first failure.")
+        else:
+            why["text"].append(f"{change_text(c)}: same {match} as the failing part, but Aternity logged it after "
+                               "this failure" + (". On a virtual desktop the log can run late, so that does not "
+                                                 "clear it." if virtual else "."))

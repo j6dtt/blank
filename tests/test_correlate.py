@@ -79,7 +79,9 @@ def test_window_without_incident_reports_none():
     _, start = run_demo()
     result, _ = run_demo(start=start + timedelta(minutes=CPU_SPIKE[0] - 20),
                          end=start + timedelta(minutes=CPU_SPIKE[1] + 10))
-    assert result["answer"]["level"] == "none"
+    # no slow action, but a crash is an issue by itself
+    assert result["answer"]["level"] == "issues"
+    assert result["answer"]["title"] == "1 app crash, no slow actions"
     # the CPU spike is still listed, just not blamed
     cpu = [g for g in result["problems"] if g["what"] == "CPU %"]
     assert cpu and cpu[0]["slow_actions"] == 0
@@ -110,7 +112,7 @@ def test_a_crash_of_another_app_is_not_blamed():
     by_app = {g["app"]: g for g in result["problems"]}
     assert by_app["Notepad"]["slow_actions"] == 0
     assert by_app["ERP"]["slow_actions"] == 1
-    assert result["answer"]["title"] == "Likely: ERP was not responding on PC1 (Aternity hang time up to 12.0)"
+    assert result["answer"]["title"] == "Likely: ERP was not responding on PC1 (Aternity's hang time value up to 12)"
 
 
 def test_aternity_status_decides_what_is_slow():
@@ -144,7 +146,7 @@ def test_nothing_near_the_slow_actions_says_so():
 def test_who_else_finds_the_common_network_point_and_compares_with_earlier_days():
     result, _ = run_demo()
     im = result["impact"]
-    assert im["users"] == 50 and im["slow"] == 20 and im["baseline_days"] == 3
+    assert im["users"] == 50 and im["slow"] == 20 and im["baseline_days"] >= 1
     assert im["usual_rate"] == 0.0 and im["unusual"] is True
     cp = im["common_point"]
     assert cp["kind"] == "gateway" and cp["name"] == "den-br-rtr01 Gi0/0 (LAN) (10.20.30.0/24)"
@@ -163,8 +165,9 @@ def test_answer_is_plain_language():
     assert a["time_went"]["network"] > 0.8 and a["felt"]["slow_actions"] == 23
     # the problems at other times are listed with their own why, not just counted
     elsewhere = [f["text"] for f in a["found"] if (f["count"] or "").endswith("not near a slow action")]
-    assert elsewhere == ["LT-JDOE-01: CPU reached 96.0% (limit 85.0)",
-                         "Health event on LT-JDOE-01: Crash / Application crash (OUTLOOK.EXE)"]
+    # what the user felt first, a limit passed last
+    assert elsewhere == ["Application crash (OUTLOOK.EXE) on LT-JDOE-01",
+                         "LT-JDOE-01: CPU reached 96.0% (limit 85.0)"]
 
 
 def test_who_else_says_when_only_this_user_is_slow():
@@ -216,16 +219,18 @@ def test_a_hang_is_traced_to_its_module_the_change_before_it_and_other_pcs():
     assert others["pcs"] == 3 and others["versions"] == {"2.1": 3} and others["this_version"] == "2.1"
     assert [p["device"] for p in others["list"]] == ["PC2", "PC3", "PC4"] and others["list"][0]["username"] == "u2"
     assert why["changes"][0]["related"] and not why["changes"][1]["related"]
-    assert any("Oct 27 Scanner Updated 2.0 → 2.1 (same name as the failing part)" in t for t in why["text"])
+    assert why["possible"] == ["Oct 27 Scanner Updated 2.0 → 2.1 (same name as the failing part, before it)."]
+    assert not any("Some Viewer" in t for t in why["text"])  # no link to the failure: listed once, per PC
     a = result["answer"]
     # the why is said once, under the finding; the headline only counts
     assert a["reason"] == "It happened within 5 min of 1 of the 1 slow actions." and a["found"][0]["why"] == why["text"]
     assert any(t.startswith("Check the Scanner change of 2026-10-27") for t in a["todo"])
     assert len([f for f in a["found"] if f["why"]]) == 1  # the hang and its health event: one finding
-    # "who else is affected" is about the same failure, and it is said only there
-    assert a["who_else"] == ("3 other PC(s) had the same failure (ERP Hang / Application hang in scanner.dll 2.1 "
-                              "(inside erp.exe 5.0)), all on 2.1. This PC has 2.1.")
+    # who else is said once, on the issue, in one shape
+    assert a["found"][0]["who"].startswith("3 other PCs (3 users), all on 2.1. This PC has 2.1.")
     assert not any("other PC" in t for t in why["text"])
+    assert [(c["device"], [x["text"] for x in c["changes"]]) for c in a["changes"]] == [
+        ("PC1", ["Scanner Updated 2.0 → 2.1", "Some Viewer Installed 9"])]
 
 
 def test_a_cpu_problem_names_the_busiest_process():
@@ -355,10 +360,9 @@ def test_events_without_an_app_count_and_get_a_why():
     memory = next(g for t, g in texts.items() if "Low Memory" in t)
     assert crash["slow_actions"] == 2 and memory["slow_actions"] == 2  # no app: they count at any slow action
     why = crash["why"]
-    assert why["text"][0] == ("Aternity recorded Background Process / Background Process Crash on PC1 in "
-                              "agent.exe (Process) 7.2 (Process Version): c0000005 (Exception).")
+    assert why["text"][0] == "Aternity recorded Background Process Crash on PC1 in agent.exe 7.2: c0000005."
     assert why["others"]["pcs"] == 2 and [p["device"] for p in why["others"]["list"]] == ["PC2", "PC3"]
-    assert why["others"]["what"].endswith(", error c0000005 (Exception)")
+    assert why["others"]["what"].endswith(", error c0000005")
     assert "Aternity's details: Page Faults: 900 Percent Remaining Memory: 3.1%" in memory["why"]["text"]
 
 
@@ -464,7 +468,7 @@ def test_a_crash_at_another_time_still_gets_its_why():
     a = result["answer"]
     hang = next(f for f in a["found"] if f["count"] and "not near a slow action" in f["count"])
     assert hang["why"][0] == "ERP failed in scanner.dll 2.1 (inside erp.exe 5.0): Not responding."
-    assert "3 other PC(s) had the same failure in this window." in hang["why"]
+    assert hang["who"].startswith("3 other PCs (3 users)")
     assert any(t.startswith("Check the Scanner change of 2026-10-27") for t in a["todo"])
     assert not any(f["text"].endswith("not near a slow action.") for f in a["found"])  # nothing left unexplained
 
@@ -482,7 +486,7 @@ def test_one_earlier_run_is_too_few_to_say_what_is_normal():
     a = result["answer"]
     assert a["normal"] == [[
         "Billing Open Invoice took 9.0 s at its slow action.",
-        "Only 1 earlier Billing Open Invoice for lee in the last 30 days: too few to say what is normal.",
+        "Only 1 earlier Billing Open Invoice for lee in the activity Aternity keeps: too few to say what is normal.",
         "Other users within 5 min: typical 2.1 s (3 users).",
         "NB-12 at those slow actions: CPU up to 35.0 %.",
     ]]
@@ -500,7 +504,6 @@ def test_one_crash_counted_by_app_usage_and_health_events_is_one_row():
     result = amy(erp(lambda i: i == 0), usage=usage, source=Snip)
     rows = [g for g in result["problems"] if "nipping" in g["text"]]
     assert len(rows) == 1 and rows[0]["source"] == "Aternity event" and rows[0]["times"] == 2
-    assert "Aternity's app usage counted 3 crash(es) of Snipping Tool on PC1 in this window." in rows[0]["why"]["text"]
     assert rows[0]["last"] == "2026-10-28T10:10:00Z"  # the usage row at 10:10 is part of it
 
 
@@ -517,7 +520,7 @@ def test_two_pcs_are_told_apart_and_usual_slowness_is_not_blamed():
         ("PC1", 24, 1, False), ("PC2", 1, 0, False)]
     assert a["felt"]["slowest"]["device"] == "PC1"
     assert a["title"] == "Nothing unusual found"
-    assert a["reason"].endswith("Other ERP users were slow as often as usual at this hour (see Who else).")
+    assert a["reason"].endswith("Other ERP users were slow as often as usual at these hours (see Other users).")
 
 
 def test_the_text_report_fits_a_narrow_terminal():
@@ -602,3 +605,207 @@ def test_on_a_pooled_virtual_desktop_the_answer_says_which_desktops():
     assert "  on virtual desktop VD-0, from TC-5" in render_text(result)
     assert ("Network between VD-0 (a virtual desktop) and the device the user sat at (TC-5): not checked, "
             "Aternity gives no delay for it.") in a["checked"]
+
+
+class Wrong(StubAternity):
+    """No slow action, but a day of failures on a virtual desktop, as seen on a live Aternity."""
+    at = T0 + timedelta(minutes=30)
+    update = at - timedelta(minutes=20)
+
+    def __event(self, minutes, *args, **kw):
+        return HealthEvent(self.at + timedelta(minutes=minutes), "VD-1", *args, **kw)
+
+    def health_events(self, device, start, end):
+        return [self.__event(0, None, "amy", "Background Process", "Background Process Crash", "bad_module_info (Process)",
+                             exception="00000000 (Exception)", details="Fault Offset:00000000"),
+                self.__event(1, None, "amy", "Background Process", "Background Process Crash", "tagger.exe (Process)",
+                             component_version="26.0.1 (Process Version)", exception="c0000005 (Exception)",
+                             details="Fault Offset:012e0030"),
+                self.__event(2, "Mail", "amy", "Application", "Application Crash", "MAIL.EXE (Process)",
+                             component_version="16.2 (Process Version)", sub_component="KERNELBASE.dll (Dll)",
+                             sub_component_version="10.0 (Dll Version)", exception="e0434352 (Exception)"),
+                self.__event(60, None, "amy", "System", "Low Memory Pagefaults", details="Percent Remaining Memory: 1.91%"),
+                self.__event(70, "Web", "amy", "Application", "Application Crash", "web.exe (Process)",
+                             component_version="9.9 (Process Version)", exception="c0000005 (Exception)")]
+
+    def component_health_events(self, component, start, end):
+        if start < T0 - timedelta(days=1):  # the 14 days before: the tagger crash began 3 days ago
+            return [HealthEvent(T0 - timedelta(days=3), "VD-7", None, "u7", "Background Process",
+                                "Background Process Crash", "tagger.exe (Process)")] if "tagger" in component else []
+        return [HealthEvent(self.at, f"VD-{n}", None, "u1", "Background Process", "Background Process Crash", component)
+                for n in (2, 3, 4)]
+
+    def app_health_events(self, application, start, end):
+        return [HealthEvent(self.at, "VD-2", "Mail", "u2", "Application", "Application Crash", "MAIL.EXE (Process)",
+                            sub_component="KERNELBASE.dll (Dll)")] if application == "Mail" else []
+
+    def app_usage_everywhere(self, application, start, end):
+        return [AppUsageSample(self.at, f"VD-{n}", application, hang_time=9.0 if n < 3 else None) for n in range(1, 6)]
+
+    def known_pcs(self):
+        return 1200
+
+    def virtual_devices(self, start, end, username=None, device=None):
+        return {"VD-1"}
+
+    def app_failures_everywhere(self, application, start, end):
+        return [AppUsageSample(T0 - timedelta(days=5), "VD-2", application, hang_time=9.0)]
+
+    def app_usage(self, device, start, end, application=None):
+        return [AppUsageSample(self.at, "VD-1", "Sheets", hang_time=25885.0)]
+
+    def software_changes(self, device, start, end):
+        return [SoftwareChange(self.update, "VD-1", "Classifier", "Updated", "26.0.1", "24.1"),
+                SoftwareChange(self.update, "VD-1", "Office Suite", "Updated", "16.2", "16.1"),
+                SoftwareChange(self.update, "VD-1", "Viewer", "Updated", "3", "2"),
+                SoftwareChange(self.at + timedelta(minutes=75), "VD-1", "Web Runtime", "Updated", "9.9", "9.8")]
+
+    def top_processes(self, device, start, end):
+        return [ProcessSample(self.at + timedelta(minutes=80), "VD-1", "erp", memory_bytes=3.5e9)]
+
+
+def test_a_failure_on_another_version_is_not_new_with_this_change():
+    class OlderToo(Wrong):
+        def component_health_events(self, component, start, end):
+            return [HealthEvent(self.at, f"VD-{n}", None, "u1", "Background Process", "Background Process Crash", component,
+                                component_version="24.1 (Process Version)") for n in (2, 3)]
+
+    samples = [UserSample(T0 + timedelta(minutes=i), "amy", "VD-1", "ERP", response_time=1.0, status="Normal",
+                          virtual=True) for i in range(5)]
+    found = amy(samples, source=OlderToo)["answer"]["found"]
+    tagger = next(f for f in found if "tagger" in f["text"])
+    assert tagger["possible"] == []
+    assert any("other PCs fail the same way on 24.1, so this is not new with this change" in w for w in tagger["why"])
+
+
+def test_the_rollup_is_one_row_per_issue_with_a_rule_for_each_verdict():
+    from uxcorrelate.answer import verdict
+    from uxcorrelate.cause import _trend
+
+    class Fleet(Wrong):
+        def named_health_events(self, name, start, end):
+            if start < T0 - timedelta(days=1):  # steady on the working days before
+                return [HealthEvent(T0 - timedelta(days=d), f"VD-{n}", None, "u", "System", name)
+                        for d in range(1, 14) for n in range(10, 18)]
+            return [HealthEvent(self.at, f"VD-{n}", None, "u", "System", name) for n in (2, 3)]
+
+    samples = [UserSample(T0 + timedelta(minutes=i), "amy", "VD-1", "ERP", response_time=1.0, status="Normal",
+                          virtual=True) for i in range(5)]
+    a = amy(samples, source=Fleet)["answer"]
+    rows = {r["issue"]: r for r in a["rollup"]}
+    assert len(a["rollup"]) == len(rows) and "_others" not in a["found"][0]
+    memory = rows["Low Memory Pagefaults"]
+    assert memory["others"] == "2 of 1,200" and memory["verdict"] == "Widespread, steady" and memory["times"] == 1
+    assert [d["pcs"] for d in memory["days"]][:2] == [8, 8] and memory["days"][-1]["window"]
+    assert sum("cannot name the program" in t for t in a["todo"]) == 1  # bad_module_info, not low memory
+    assert a["found"][memory["first"]]["what"] == "Low Memory Pagefaults"
+
+    other = {"pcs": 3, "history": {"since": "x", "trend": "growing"}}
+    assert verdict(other) == "Widespread, growing"
+    assert verdict({"pcs": 0, "history": None}) == "Only this PC"
+    assert verdict({"pcs": 3, "history": {"since": None, "trend": None}}) == "New"
+    assert verdict({"pcs": 1, "history": None}) == "On 1 other PC"
+    assert verdict(None) is None
+    day = lambda k: (T0.date() - timedelta(days=k)).isoformat()  # noqa: E731
+    rising = {day(k): 20 if k <= 7 else 10 for k in range(1, 14)}
+    assert _trend(rising, T0) == "growing"
+    assert _trend({day(k): 10 if k <= 7 else 20 for k in range(1, 14)}, T0) == "falling"
+    assert _trend({day(k): 1 for k in range(1, 14)}, T0) is None  # too few to tell
+
+
+def test_a_hang_says_how_long_other_pcs_already_had_it():
+    samples = [UserSample(T0 + timedelta(minutes=i), "amy", "VD-1", "ERP", response_time=1.0, status="Normal",
+                          virtual=True) for i in range(5)]
+    found = amy(samples, source=Wrong)["answer"]["found"]
+    assert "Already on other PCs 5 days before this window." in next(f for f in found if f["issue"] == "hang")["who"]
+
+
+def test_with_no_slow_action_the_answer_is_what_went_wrong():
+    samples = [UserSample(T0 + timedelta(minutes=i), "amy", "VD-1", "ERP", response_time=1.0, status="Normal",
+                          virtual=True) for i in range(5)]
+    result = amy(samples, source=Wrong)
+    a = result["answer"]
+    assert a["level"] == "issues"
+    assert a["title"] == "1 hang, 2 app crashes and 1 Low Memory Pagefaults event, no slow actions"
+    assert a["reason"] == "Also 2 background crashes: the same crashes hit 3 other PCs."
+    # what the user felt first
+    assert [f["issue"] for f in a["found"]] == ["hang", "crash", "crash", "system", "background", "background"]
+    by = {f["text"].split(" on ")[0]: f for f in a["found"]}
+
+    # a change is a possible cause only when it matches the failing part and came first
+    tagger = by["Background Process Crash (tagger.exe)"]
+    assert tagger["possible"] == ["Oct 28 Classifier Updated 24.1 → 26.0.1 (same version as the failing part, before it)."]
+    assert tagger["who"] == "3 other PCs (1 user) of 1,200 PCs in Aternity's inventory. On other PCs since Oct 25."
+    assert not any("Fault Offset" in w for w in tagger["why"])
+    web = by["Application Crash (web.exe)"]
+    assert web["possible"] == [] and any("logged it after this failure. On a virtual desktop" in w for w in web["why"])
+    assert a["changes"][0]["device"] == "VD-1" and len(a["changes"][0]["changes"]) == 4
+
+    # names that are not the software at fault
+    unknown = by["Background Process Crash (bad_module_info)"]
+    assert "bad_module_info is not a program: Windows could not tell which program failed." in unknown["why"]
+    assert not any("look at bad_module_info" in t or "a bad_module_info problem" in t for t in a["todo"])
+    assert "3 other PCs fail the same way and Windows cannot name the program: see when it started, " \
+           "and what was rolled out then." in a["todo"]
+    mail = by["Application Crash (MAIL.EXE)"]
+    assert "KERNELBASE.dll is a Windows file: it reports a failure, the cause is usually in MAIL.EXE." in mail["why"]
+    assert mail["why"][0] == "Mail failed in KERNELBASE.dll 10.0 (inside MAIL.EXE 16.2): e0434352."
+    assert mail["possible"] == ["Oct 28 Office Suite Updated 16.1 → 16.2 (same version as the failing part, before it)."]
+    assert "On VD-1: look at MAIL.EXE 16.2, where Mail failed (repair or update it; if it is an add-in, try without it)." in a["todo"]
+    assert not any("KERNELBASE.dll problem" in t or "other PCs fail" in t and "Mail" in t for t in a["todo"])  # 1 other PC
+
+    # a hang with no details: who else from app usage, out of the PCs using the app
+    hang = by["Sheets was not responding"]
+    assert hang["text"] == "Sheets was not responding on VD-1 (Aternity's hang time value up to 25885)"
+    assert hang["who"] == "1 other PC of 4 PCs using Sheets. Already on other PCs 5 days before this window."
+    assert "Within minutes of it on this PC: bad_module_info" not in " ".join(hang["why"])
+    assert any(w.startswith("Within minutes of it on this PC: ") for w in hang["why"])
+    # low memory names who used it; the panel of other users is for slow actions only
+    low = by["Low Memory Pagefaults"]
+    assert any(w.startswith("Busiest processes then") and "erp memory up to" in w for w in low["why"])
+    assert "On VD-1: look at erp, the busiest process at those times." in a["todo"]
+    assert a["who_else"] is None
+    from uxcorrelate.report import render_text
+    text = render_text(result)
+    assert "What went wrong:" in text and "Possible cause: Oct 28 Classifier" in text and "What changed on these PCs:" in text
+
+
+def test_a_limit_passed_away_from_slow_actions_is_a_fact_not_a_step():
+    class Busy(StubAternity):
+        def top_processes(self, device, start, end):
+            return [ProcessSample(start + timedelta(minutes=30), "PC1", "erp", cpu=70.0)]
+
+    health = [DeviceHealthSample(T0 + timedelta(minutes=5 * i), "PC1", cpu=97.0 if i == 5 else 10.0) for i in range(24)]
+    a = amy(erp(lambda i: False), health=health, source=Busy)["answer"]
+    row = next(f for f in a["found"] if "CPU" in f["text"])
+    assert row["count"] == "1 of 24 readings" and any("erp CPU up to 70.0%" in w for w in row["why"])
+    assert not any("look at erp" in t for t in a["todo"])
+    assert a["level"] == "none" and a["title"] == "No problems found"
+
+
+def test_virtual_desktops_are_never_a_network_point():
+    class Pool(StubAternity):
+        def app_activity(self, applications, start, end):
+            # now 6 of 10 slow on one desktop subnet; earlier weeks none
+            quiet = start < T0 - timedelta(days=1)
+            return [UserSample(start + timedelta(minutes=1), f"u{i}", f"VD-{i}", "ERP", ip_address=f"10.9.9.{i}",
+                               response_time=6.0 if i < 6 and not quiet else 1.0, status="Normal", virtual=True)
+                    for i in range(10)]
+
+    samples = [replace(s, virtual=True) for s in erp(lambda i: i == 4)]
+    result = amy(samples, source=Pool)
+    im = result["impact"]
+    assert im["groups"][0]["kind"] == "virtual" and im["common_point"] is None and im["user_group"].startswith("Virtual")
+    assert not any("behind" in t for t in result["answer"]["todo"])
+
+
+def test_other_users_are_compared_with_earlier_working_days():
+    days = []
+
+    class Peers(StubAternity):
+        def app_activity(self, applications, start, end):
+            days.append(start.weekday())
+            return []
+
+    amy(erp(lambda i: i == 4), source=Peers)
+    assert len(days) == 6 and max(days) < 5  # the window and 5 of the 7 days before: no weekend

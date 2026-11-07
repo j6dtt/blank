@@ -92,6 +92,15 @@ PROCESS_ROW_SPAN_MIN = 60
 # 'false'; some data sources type it as a number)
 VIRTUAL_VALUES = ("true", "1")
 
+# Names in a health event that are not the software at fault (community sources
+# agree; Microsoft documents neither). "bad_module_info": Windows could not tell
+# which program failed. The Windows files: where a failure is reported, usually
+# not its cause, so the program they ran in is looked at instead.
+NO_PROGRAM = ("bad_module_info",)
+WINDOWS_MODULES = ("kernelbase.dll", "ntdll.dll", "kernel32.dll")
+# a health event of this kind runs in the background: the user may not feel it
+BACKGROUND_EVENT = "background"
+
 # logical name -> Aternity OData column
 DEFAULT_ATERNITY_FIELDS = {
     "activities": {

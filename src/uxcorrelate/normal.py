@@ -1,7 +1,9 @@
 """Each slow action compared with its own normal.
 
 For the applications and activities (e.g. "Teams Launch") that were slow:
-- how long it usually takes for this user or PC (their last 30 days), and
+- how long it usually takes for this user or PC (up to their last 30 days;
+  a live Aternity keeps about 8 days of activities, so the days said are the
+  days found), and
   for the other users at the same time;
 - on how many days Aternity marked most of its runs slow, and since when;
 - what changed on the PC between the last normal day and the first slow one
@@ -19,6 +21,7 @@ from datetime import timedelta
 from statistics import median
 
 from .cause import _day, changes_between
+from .models import plural
 
 log = logging.getLogger("uxcorrelate")
 BASELINE_DAYS = 30
@@ -54,6 +57,7 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
                                                        max(m.timestamp for m in mine) + window)
                   if not same(s) and near(s)]
         enough = len(hist) >= MIN_HISTORY
+        back = f"last {plural(max((start - min(s.timestamp for s in hist)).days, 1), 'day')}" if hist else ""
         took, typ = _med(s.response_time for s in mine), _med(s.response_time for s in others)
         usual = _med(s.response_time for s in hist) if enough else None
         worst = max((s.response_time for s in mine if s.response_time is not None), default=None)
@@ -63,8 +67,8 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
             text = [f"{name} took {took} s at its slow action."]
         else:
             text = [f"{name} took {took} s at its {n} slow actions (slowest {round(worst, 1)} s)."]
-        text.append(f"Usually {usual} s for {who} (typical of {len(hist)} in the last {BASELINE_DAYS} days)."
-                    if enough else f"Only {len(hist)} earlier {name} for {who} in the last {BASELINE_DAYS} days: "
+        text.append(f"Usually {usual} s for {who} (typical of {len(hist)} in the {back})."
+                    if enough else f"Only {len(hist)} earlier {name} for {who} in the activity Aternity keeps: "
                     "too few to say what is normal.")
         users = {s.username or s.device for s in others}
         text.append(f"Other users within {window.seconds // 60} min: typical {typ} s ({len(users)} users)."
@@ -84,7 +88,7 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
         since, changes, todo = None, [], []
         if enough:
             line = (f"Aternity marked most runs slow on {len(bad)} of the {len(days)} days {who} used it "
-                    f"in the last {BASELINE_DAYS} days")
+                    f"in the {back}")
             if not bad:
                 line += ": this is new."
             elif len(run) == len(days):

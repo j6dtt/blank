@@ -16,10 +16,11 @@ What the user felt:
   23 of their 91 actions were slow (CRM Portal 23),
   between 2026-10-28 10:00 UTC and 2026-10-28 10:44 UTC
 
-Who else is affected?
-  20 of 50 other CRM Portal users were slow (40%), more than on any of
-  the last 3 days (at most 0%). 20 of the 20 slow users share one network
-  point: den-br-rtr01 Gi0/0 (LAN) (10.20.30.0/24).
+Other users of these apps:
+  20 of 50 other CRM Portal users were slow (40%), more than at these
+  hours on 5 earlier days (at most 0%). 20 of the 20
+  slow users share one network point: den-br-rtr01 Gi0/0 (LAN)
+  (10.20.30.0/24).
 ```
 
 ## How it works
@@ -55,24 +56,43 @@ Who else is affected?
    of one application counts only for that application's slow actions.
    The answer names the problem at the most slow actions: "likely" when
    that is more than half of them, "possibly" when fewer. No scores.
-6. **Why (the main point).** For the problems at the most slow actions,
-   the tool looks for what caused them, from Aternity's own records:
+6. **What went wrong (the main point).** Slow actions are one kind of
+   issue, next to hangs, app crashes and health events: with no slow
+   action the answer still counts what happened ("7 hangs, 2 app crashes,
+   no slow actions"). Issues the user felt come first, then those on many
+   PCs, then limits passed with nothing felt. For each one the tool reads
+   Aternity's own records:
    - where the application failed: the component and the module inside
      it, their versions and the error (`DEVICE_HEALTH_RAW`);
-   - whether other PCs fail the same way, and on which versions;
-   - what was installed, updated or removed on the PC in the 14 days
-     before (`INSTALLED_SOFTWARE_CHANGE_LOG`);
+   - who else: other PCs that fail the same way, out of how many, on which
+     versions, and since when (see `docs/who-else-is-affected.md`);
+   - a possible cause: a change on the PC with the same name or the same
+     version as the failing part, before it. Every other change is listed
+     once per PC under "What changed on these PCs", with its time
+     (`INSTALLED_SOFTWARE_CHANGE_LOG`, 14 days before the window to its end);
    - for CPU, memory or disk problems, the busiest processes at those
      times (`APPLICATION_RESOURCES_HOURLY`: one row per process and hour,
      so rows within an hour are read; CPU in %, memory in MB; it has no
-     disk use, so a disk problem says so).
+     disk use, so a disk problem says so). Low memory events get them too.
+     A limit passed away from any slow action is a fact, not a step to do.
 
    Each is a plain sentence under the finding; when a source has nothing,
    it says so.
-7. **Who else.** The same applications' activity for every other user at
-   the same times, grouped by the NetIM gateway (or /24) each user sits
-   behind and compared with the same hours on the 3 previous days.
-8. **Start-ups.** The user's boots and logons (`WINDOWS_MACHINE_BOOTS`):
+   Two names are not blamed: `bad_module_info` (Windows could not tell
+   which program failed) and Windows files such as `KERNELBASE.dll` (they
+   report a failure; the program they ran in is looked at instead).
+7. **Rollup.** The top of "What went wrong": one row per issue, with this
+   user's count, other PCs, a verdict by fixed rules (Only this PC, On 1
+   other PC, New, Widespread, plus growing, steady or falling) and bars of
+   other PCs per day. The verdict says how far an issue reaches, not whether
+   it caused this user's problem. A new investigation clears the last one.
+8. **Other users.** For slow actions: the same applications' activity for
+   every other user at the same times, grouped by the NetIM gateway (or
+   /24) each user sits behind and compared with the same hours on the
+   working days of the week before (a live Aternity keeps about 8 days of
+   activities, so earlier weeks are gone). A virtual desktop's address is the
+   desktop's, so those users are one group, never a network point.
+9. **Start-ups.** The user's boots and logons (`WINDOWS_MACHINE_BOOTS`):
    Aternity's measurements of one PC within an hour form one start-up,
    shown next to that PC's own last 30 days, with what took the time
    (`MACHINE_BOOT_COMPONENTS`). For the slowest, the cause is the part
@@ -85,14 +105,18 @@ Who else is affected?
 
 Investigate tab, top to bottom:
 
-- **Answer**: the likely cause in one line, and at how many slow actions.
+- **Answer**: the likely cause in one line, and at how many slow actions;
+  with no slow action, what went wrong, counted (amber), or that nothing did.
 - **What the user felt**: slow actions per app, the slowest one, the time
   split Aternity measured, the slowest start-up.
-- **Who else is affected?** (see `docs/who-else-is-affected.md`) For an app failure: the other PCs with the same
-  failure ("Show who" lists PC, user, version, times, last seen). For a
-  network problem: the other slow users and the network point they share.
-- **What we found, and why**: each problem at the slow actions, with what
-  caused it underneath.
+- **Other users of these apps**: only when something was slow: how many
+  other users were slow, against the earlier days, and the network point
+  they share ("Show who" lists them).
+- **What went wrong**: each issue, with "What we know" under it: where it
+  failed, a "Possible cause" when a change matches it, and "Who else"
+  ("Show who" under it lists PC, user, version, times, last seen; "Hide
+  who" closes it).
+- **What changed on these PCs**: every change, once per PC, with its time.
 - **Compared with normal**: each slow app + activity (e.g. an app's
   launch) next to its own normal: how long it usually takes for this user
   (last 30 days) and for other users at the same time, on how many days
@@ -302,7 +326,7 @@ curl -s localhost:8080/api/investigate -H 'Content-Type: application/json' -d '{
 
 The response holds `answer` (the plain-language part), `summary` (counts
 and the slow rule), `problems` (one row per object and measurement, with
-`slow_actions` of `of_slow`), `impact` (who else), `timeline` (`actions`
+`slow_actions` of `of_slow`), `impact` (other users), `timeline` (`actions`
 and `marks`), `endpoints`, `mapped_objects` and `warnings`.
 
 ## How the clients call Riverbed

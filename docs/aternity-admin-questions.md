@@ -40,7 +40,7 @@ says what we saw, why it matters, and what to ask. Most important first.
 - **Ask:** Can `RAW_DATA_TOP_PROCESSES` be published (with
   `PRC_IO_READ_RATE` / `PRC_IO_WRITE_RATE`)? If not, are the IO columns of
   `APPLICATION_RESOURCES_HOURLY` available? Please confirm the units:
-  `PRC_CPU_UTIL_AVG` / `_MAX` percent of the whole PC (live max 30)?
+  `PRC_CPU_UTIL_AVG` / `_MAX` percent of the whole PC (seen up to 80)?
   `PRC_PHYSICAL_MEMORY_UTIL_*` bytes, despite "UTIL" in the name? Does a
   row's `TIMEFRAME` (seen at any minute, e.g. :04, :39) mark the start or
   the end of its hour?
@@ -93,6 +93,30 @@ says what we saw, why it matters, and what to ask. Most important first.
 - Health event 'Low Virtual Memory' with details "Percent Remaining
   Memory: 100%": how should it be read?
 - `DEVICE_USED_REMOTELY` is not published: is it available?
+
+## 8. Is the change log's time when the change happened?
+
+- **Seen:** a virtual desktop logged nothing for 14 days, then 10 or 11
+  updates on one morning (the same updates a day earlier on another
+  desktop). A process there crashed already running the new version about
+  two hours before the log shows anything on that desktop.
+- **Measured across the fleet:** of failures at a version the log shows
+  arriving on that PC, 1 of 282 on physical PCs ran it before the log's
+  time, against 509 of 2,168 on virtual desktops (403 of them by under a
+  day). So the time holds on physical PCs and runs late on virtual desktops.
+- **Why it matters:** a change only points at a failure if it came first.
+- **Ask:** Does `INSTALLED_SW_CHANGE_TIMESTAMP` mark the install, or when
+  the agent next reported the inventory? On a pooled desktop rebuilt from an
+  image, what does the agent log after a refresh?
+
+## 9. Can raw activity data be kept longer?
+
+- **Seen:** `BUSINESS_ACTIVITIES_RAW` and `APPLICATIONS_RAW` hold about 8
+  days; `DEVICE_HEALTH_RAW` and the change log hold 90 days or more.
+- **Why it matters:** "normal" for a slow action or a hang can only be
+  measured over those 8 days, and a before and after of an update has only
+  a few days on either side.
+- **Ask:** Is 8 days the tenant's setting, and can it be raised?
 
 ## Not for the Aternity admin (NetIM)
 

@@ -5,10 +5,14 @@ subnet holds their IP (the gateway), or their /24 when NetIM has no such
 subnet. Aternity only knows the locations an admin configured; NetIM knows the
 network, which is what lets slow users be traced to one router or subnet.
 
-Each group, and the whole, is compared with the same clock hours on the
-previous days: "unusual" means more users slow than on any of those days.
-No other threshold is used. The common point is the group holding more than
-half of the slow users, if it is unusual.
+Each group, and the whole, is compared with the same clock hours on the same
+weekday of the previous weeks (a Monday with Mondays, not with a weekend):
+"unusual" means more users slow than on any of those days. No other threshold
+is used. The common point is the group holding more than half of the slow
+users, if it is unusual.
+
+A virtual desktop's address is the desktop's, not where the user sits: those
+users are one group of their own, never a network point.
 """
 
 from __future__ import annotations
@@ -21,7 +25,8 @@ from datetime import datetime, timedelta
 from .http import short_error
 
 log = logging.getLogger("uxcorrelate")
-BASELINE_DAYS = 3
+DAYS_BACK = 7  # a live Aternity keeps about 8 days of activities: earlier weeks are gone
+VIRTUAL_GROUP = ("virtual", "Virtual desktops (their address says nothing of the user's network)")
 
 
 def _iso(dt: datetime) -> str:
@@ -90,8 +95,9 @@ def _per_user(rows, who: str, device: str | None, buckets: set, bucket, is_slow)
         if bucket(s.timestamp) not in buckets:
             continue
         u = users.setdefault(key, {"username": s.username, "device": s.device, "ips": Counter(),
-                                   "locations": Counter(), "slow": [], "activities": 0})
+                                   "locations": Counter(), "slow": [], "activities": 0, "virtual": False})
         u["activities"] += 1
+        u["virtual"] = u["virtual"] or bool(s.virtual)
         if s.ip_address:
             u["ips"][s.ip_address] += 1
         if s.location:
@@ -109,7 +115,8 @@ def _rate(slow: int, users: int) -> float | None:
 
 
 def who_else(aternity, netim, apps: list[str], degraded: set[datetime], minutes: int, bucket, is_slow,
-             who: str, device: str | None, user_ip: str | None, user_location: str | None) -> dict | None:
+             who: str, device: str | None, user_ip: str | None, user_location: str | None,
+             user_virtual: bool = False) -> dict | None:
     """Other users of `apps` in the `degraded` buckets, grouped and compared with previous days."""
     if not degraded or not apps or not hasattr(aternity, "app_activity"):
         return None
@@ -120,19 +127,22 @@ def who_else(aternity, netim, apps: list[str], degraded: set[datetime], minutes:
 
     nets, ready = gateway_index(netim)
     cache: dict = {}
+    place = lambda u: VIRTUAL_GROUP if u["virtual"] else group_of(u["ip"], nets, cache)  # noqa: E731
     for u in users.values():
-        u["group"] = group_of(u["ip"], nets, cache)
-    own_group = group_of(user_ip, nets, cache) if user_ip else None
+        u["group"] = place(u)
+    own_group = VIRTUAL_GROUP if user_virtual else group_of(user_ip, nets, cache) if user_ip else None
 
-    # the same clock hours on previous days
+    # the same clock hours on the days before, working days against working days
     history = []
-    for day in range(1, BASELINE_DAYS + 1):
-        shift = timedelta(days=day)
-        log.info("Aternity: same hours %d day(s) earlier, for comparison", day)
+    for back in range(1, DAYS_BACK + 1):
+        shift = timedelta(days=back)
+        if ((start - shift).weekday() >= 5) != (start.weekday() >= 5):
+            continue
+        log.info("Aternity: same hours %d day(s) earlier, for comparison", back)
         rows = aternity.app_activity(apps, start - shift, end - shift)
         old = _per_user(rows, who, device, {t - shift for t in degraded}, bucket, is_slow)
         for u in old.values():
-            u["group"] = group_of(u["ip"], nets, cache)
+            u["group"] = place(u)
         if old:
             history.append(old)
 
@@ -161,7 +171,8 @@ def who_else(aternity, netim, apps: list[str], degraded: set[datetime], minutes:
         g["includes_user"] = key == own_group
     ranked = sorted(groups.values(), key=lambda g: (-g["slow"], -g["users"]))
     top = ranked[0] if ranked else None
-    common = top if (top and unusual and top["unusual"] and top["slow"] * 2 > slow_total) else None
+    common = top if (top and unusual and top["unusual"] and top["slow"] * 2 > slow_total
+                     and top["kind"] != VIRTUAL_GROUP[0]) else None
 
     for u in users.values():
         u["worst"] = max(u["slow"], key=lambda s: s.response_time) if u["slow"] else None

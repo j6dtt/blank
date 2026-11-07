@@ -34,6 +34,16 @@
   #aFound > li { margin-bottom: 10px; }
   .why { margin: 6px 0 0; padding: 6px 10px; border-left: 3px solid var(--accent); background: var(--bg); }
   .why ul { margin: 2px 0 0; padding-left: 18px; }
+  #rollupBox { margin-bottom: 14px; }
+  #rollupBox td { vertical-align: middle; }
+  #rollupBox .link { text-align: left; overflow-wrap: anywhere; }
+  #rollupBox td:first-child { min-width: 180px; }
+  .spark { display: block; }
+  .spark .past { fill: var(--muted); opacity: .55; }
+  .spark .now { fill: var(--accent); }
+  .spark .hit { fill: transparent; }
+  .spark .hit:hover + rect { opacity: 1; }
+  .sparkWrap { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
   .types div { border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; }
   .muted { color: var(--muted); }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -110,7 +120,7 @@
     <div class="grid2" style="margin-top:16px">
       <section class="panel"><h2>What the user felt</h2><div id="aFelt"></div></section>
       <section class="panel" id="who">
-        <h2>Who else is affected?</h2>
+        <h2>Other users of these apps</h2>
         <div id="aJust"></div>
         <button type="button" class="link" id="whoBtn">Show who</button>
       </section>
@@ -121,7 +131,15 @@
         <div class="tableWrap scroll"><table id="whoUsers"></table></div>
       </div>
     </section>
-    <section class="panel" style="margin-top:16px"><h2>What we found, and why</h2><ul id="aFound"></ul></section>
+    <section class="panel" style="margin-top:16px"><h2>What went wrong</h2>
+      <div id="rollupBox" hidden><div class="tableWrap"><table id="aRollup"></table></div>
+        <p class="muted" style="font-size:12px;margin:6px 0 0">Bars: other PCs with this issue per day, each row on its own scale; blue is this window. Hover a bar for its day. Widespread says how far it reaches, not that it is or is not the cause here. Click an issue for its details.</p></div>
+      <ul id="aFound"></ul></section>
+    <section class="panel" id="changesBox" style="margin-top:16px" hidden>
+      <h2>What changed on these PCs</h2>
+      <p class="muted" style="font-size:12px">From 14 days before the window to its end. An issue above names a change only when it matches the failing part.</p>
+      <div id="aChanges"></div>
+    </section>
     <section class="panel" id="normalBox" style="margin-top:16px" hidden>
       <h2>Compared with normal</h2><ul id="aNormal"></ul>
     </section>
@@ -213,6 +231,7 @@ $("f").addEventListener("submit", (ev) => {
   ev.preventDefault();
   const body = formBody(ev.target, ["username", "device", "application"]);
   body.bucket_minutes = Number(ev.target.bucket_minutes.value) || null;
+  $("out").hidden = true; delete $("out").dataset.has;  // the last investigation's results go
   runJob("api/jobs", body, $("go"), render);
 });
 
@@ -301,7 +320,7 @@ const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", m
 const span = (a, b) => !b || a === b ? hm(a)
   : new Date(a).toDateString() === new Date(b).toDateString() ? `${hm(a)}–${clock(b)}` : `${hm(a)} – ${hm(b)}`;
 const hm = (iso) => iso ? new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
-const LEVEL_COLOR = { likely: "var(--bad)", possible: "var(--warn)", unsure: "var(--muted)", none: "var(--ok)" };
+const LEVEL_COLOR = { likely: "var(--bad)", possible: "var(--warn)", issues: "var(--warn)", unsure: "var(--muted)", none: "var(--ok)" };
 const KIND = { pc: ["PC", "var(--pc)"], network: ["Network", "var(--network)"], server: ["Server", "var(--server)"] };
 const pill = (k) => `<span class="pill" style="background:${KIND[k][1]}">${KIND[k][0]}</span>`;
 
@@ -320,8 +339,9 @@ function render(d) {
   const pcs = f.pcs || [];
   // a virtual desktop also names the device(s) the user sat at
   const from = (p) => p.from && p.from.length ? ` from ${p.from.map(esc).join(", ")}` : "";
-  if (pcs.length > 1) felt += `<p>They used ${pcs.length} PCs: ` + pcs.map((p) =>
-    `${esc(p.device)} (${p.virtual ? `virtual desktop${from(p)}; ` : ""}${p.slow} of ${p.actions} slow)`).join(", ") + ".</p>";
+  if (pcs.length > 1) felt += `<p>They used ${pcs.length} PCs: ` + pcs.map((p) => esc(p.device) + (f.slow_actions
+    ? ` (${p.virtual ? `virtual desktop${from(p)}; ` : ""}${p.slow} of ${p.actions} slow)`
+    : p.virtual ? ` (virtual desktop${from(p)})` : "")).join(", ") + ".</p>";
   else if (pcs.length && pcs[0].virtual) felt += `<p>On virtual desktop ${esc(pcs[0].device)}${from(pcs[0]) ? "," + from(pcs[0]) : ""}.</p>`;
   if (f.slowest) felt += `<p>Slowest: <b>${f.slowest.seconds} s</b> in ${esc(f.slowest.app)}${f.slowest.activity ? ` (${esc(f.slowest.activity)})` : ""}${f.slowest.device ? ` on ${esc(f.slowest.device)}` : ""}, ${hm(f.slowest.when)}.</p>`;
   const tw = a.time_went;
@@ -330,14 +350,34 @@ function render(d) {
     const u = f.logon_unit ? ` ${f.logon_unit}` : "";
     felt += `<p>Slowest start-up: ${hm(f.logon.time)} on ${esc(f.logon.device)}: ` + Object.entries(f.logon.values).map(([t, v]) =>
       `${esc(t)} <b>${v.duration}${u}</b>${v.usual != null ? ` (usual ${v.usual}${u})` : ""}`).join(", ") + "."
-      + (pcs.some((p) => p.device === f.logon.device && !p.slow) ? " No slow action on this PC." : "") + "</p>";
+      + (f.slow_actions && pcs.some((p) => p.device === f.logon.device && !p.slow) ? " No slow action on this PC." : "") + "</p>";
   }
   $("aFelt").innerHTML = felt;
-  renderWho(d.impact, a.who_else, a.same_failure, d.request);
-  // each finding, then what caused it (Aternity's own records)
-  $("aFound").innerHTML = a.found.map((x) => `<li>${esc(x.text)}${x.count ? `: <b>${esc(x.count)}</b>, from ${hm(x.when)}` : ""}`
-    + (x.why && x.why.length ? `<div class="why"><b>Why:</b><ul>${x.why.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></div>` : "")
-    + "</li>").join("") || "<li class='muted'>Nothing found.</li>";
+  renderWho(d.impact, a.who_else, d.request);
+  // each issue: what Aternity recorded, a change that matches it, who else has it
+  const others = (x, i) => !x.list.length ? "" : ` <button type="button" class="link" data-who="${i}">Show who ▸</button>
+    <div class="tableWrap scroll" id="whoOf${i}" hidden><table><tr><th>PC</th><th>User</th><th>Version</th><th>Times</th><th>Last seen</th></tr>`
+    + x.list.map((p) => `<tr><td>${esc(p.device)}</td><td>${esc(p.username ?? "")}</td><td>${esc(p.version)}`
+      + `${p.version && x.this_version && p.version !== x.this_version ? ` <span class="muted">(this PC: ${esc(x.this_version)})</span>` : ""}</td>`
+      + `<td class="num">${p.times}</td><td class="num">${hm(p.last)}</td></tr>`).join("") + "</table></div>";
+  const roll = a.rollup || [];
+  $("rollupBox").hidden = !roll.length;
+  $("aRollup").innerHTML = "<tr><th>Issue</th><th>This user</th><th>Other PCs</th><th>Verdict</th><th>Other PCs per day</th></tr>"
+    + roll.map((r) => `<tr><td><button type="button" class="link" data-issue="${r.first}">${esc(r.issue)}</button></td>`
+      + `<td class="num">${r.times.toLocaleString()}</td><td class="num">${esc(r.others ?? "—")}</td>`
+      + `<td>${esc(r.verdict ?? "—")}</td><td>${r.others == null ? "—" : spark(r.days)}</td></tr>`).join("");
+  $("aFound").innerHTML = a.found.map((x, i) => {
+    const lines = x.why.map((w) => `<li>${esc(w)}</li>`)
+      .concat(x.possible.map((w) => `<li><b>Possible cause:</b> ${esc(w)}</li>`))
+      .concat(x.who ? [`<li><b>Who else:</b> ${esc(x.who)}${others(x, i)}</li>`] : []);
+    return `<li id="issue${i}">${esc(x.text)}${x.count ? `: <b>${esc(x.count)}</b>, from ${hm(x.when)}` : ""}`
+      + (lines.length ? `<div class="why"><b>What we know:</b><ul>${lines.join("")}</ul></div>` : "") + "</li>";
+  }).join("") || "<li class='muted'>Nothing found.</li>";
+  const changes = a.changes || [];
+  $("changesBox").hidden = !changes.length;
+  $("aChanges").innerHTML = changes.map((c) => `<p><b>${esc(c.device)}</b>${c.changes.length ? "" : ": nothing changed."}</p>`
+    + (c.changes.length ? `<ul>${c.changes.map((x) => `<li>${hm(x.time)}: ${esc(x.text)}</li>`).join("")}`
+      + `${c.more ? `<li class="muted">… and ${c.more} more</li>` : ""}</ul>` : "")).join("");
   // each slow app + activity next to its own normal: first line, then the details
   const normal = a.normal || [], checked = a.checked || [];
   $("normalBox").hidden = !normal.length;
@@ -352,10 +392,14 @@ function render(d) {
   const row = (g) => `<tr><td class="num">${g.slow_actions ? `<b>${g.slow_actions} of ${g.of_slow}</b>` : `${g.times}×`}</td>
     <td>${pill(g.kind)}</td><td>${esc(g.text)}</td><td class="muted num">${span(g.first, g.last)}</td></tr>`;
   const at = d.problems.filter((g) => g.slow_actions), other = d.problems.filter((g) => !g.slow_actions);
-  $("problems").innerHTML = at.length
-    ? `<tr><th>At slow actions</th><th>Where</th><th>Problem</th><th>When</th></tr>` + at.map(row).join("")
+  // with no slow action there is nothing to be near: one list
+  const noSlow = !s.slow;
+  $("problems").innerHTML = noSlow
+    ? (other.length ? `<tr><th>Times</th><th>Where</th><th>Problem</th><th>When</th></tr>` + other.map(row).join("")
+      : `<tr><td class="muted">No problem recorded.</td></tr>`)
+    : at.length ? `<tr><th>At slow actions</th><th>Where</th><th>Problem</th><th>When</th></tr>` + at.map(row).join("")
     : `<tr><td class="muted">No problem was recorded within ${d.request.bucket_minutes} min of a slow action.</td></tr>`;
-  $("otherBtn").hidden = !other.length; $("otherBox").hidden = true;
+  $("otherBtn").hidden = noSlow || !other.length; $("otherBox").hidden = true;
   $("otherBtn").textContent = `Show ${other.length} problem(s) at other times ▸`;
   $("others").innerHTML = `<tr><th>Times</th><th>Where</th><th>Problem</th><th>When</th></tr>` + other.map(row).join("");
 
@@ -369,35 +413,45 @@ function render(d) {
         `<tr><td>${esc(m.name)}</td><td class="muted">${esc(m.reason)}</td></tr>`).join("")
     : `<tr><td class="muted">No NetIM object on this PC's path: the network was not checked.</td></tr>`;
 }
+// Other PCs per day as small bars: one row's own scale, its highest day labelled.
+function spark(days) {
+  if (!days.length) return `<span class="muted" style="font-size:12px">not read</span>`;
+  const step = 6, h = 24, top = Math.max(...days.map((d) => d.pcs), 1);
+  const label = (d) => `${new Date(d.day + "T00:00:00Z").toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })}: ${d.pcs.toLocaleString()} PCs`;
+  const bars = days.map((d, i) => {
+    const y = d.pcs ? Math.max(2, Math.round(d.pcs / top * h)) : 1;
+    return `<g><title>${esc(label(d))}${d.window ? " (this window)" : ""}</title><rect class="hit" x="${i * step}" y="0" width="${step}" height="${h}"/>`
+      + `<rect class="${d.window ? "now" : "past"}" x="${i * step}" y="${h - y}" width="${step - 2}" height="${y}" rx="1"/></g>`;
+  }).join("");
+  const hi = days.reduce((a, b) => (b.pcs > a.pcs ? b : a));
+  return `<div class="sparkWrap"><svg class="spark" width="${days.length * step}" height="${h}" role="img" `
+    + `aria-label="${esc(`Other PCs per day, ${days.length} days, highest ${label(hi)}`)}">${bars}</svg><span class="num">max ${top.toLocaleString()}</span></div>`;
+}
+$("aRollup").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-issue]");
+  if (b) $(`issue${b.dataset.issue}`).scrollIntoView({ behavior: "smooth", block: "center" });
+});
+$("aFound").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-who]");
+  if (!b) return;
+  const box = $(`whoOf${b.dataset.who}`); box.hidden = !box.hidden;
+  b.textContent = box.hidden ? "Show who ▸" : "Hide who ▾";
+});
 $("otherBtn").addEventListener("click", () => {
   const box = $("otherBox"); box.hidden = !box.hidden;
   $("otherBtn").textContent = $("otherBtn").textContent.replace(/[▸▾]/, box.hidden ? "▸" : "▾");
 });
 
-// Who else is affected: the sentence, then (on "Show who") who else has the same issue:
-// for an application failure, the other PCs with the same failure; otherwise the
-// other slow users of the same apps and the network points they sit behind.
-function renderWho(im, sentence, same, req) {
-  $("who").hidden = !(im || same);
+// Other users of the apps that were slow: the sentence, then (on "Show who") the slow
+// users and the network points they sit behind. An issue's own "who else" is on the issue.
+function renderWho(im, sentence, req) {
+  $("who").hidden = !im;
   $("whoBox").hidden = true; $("whoBtn").textContent = "Show who";
-  if (same) {
-    $("aJust").innerHTML = `<p>${esc(sentence)}</p><p class="muted" style="font-size:12px">Searched: every PC's `
-      + `health events for ${esc(same.app)}, ${span(req.start, req.end)}: the same kind of failure in the same place.</p>`;
-    $("whoBtn").hidden = !same.pcs; $("whoGroups").parentElement.hidden = true;
-    $("whoUsers").parentElement.style.gridColumn = "1 / -1";
-    const more = same.pcs > same.list.length ? `<tr><td colspan="5" class="muted">… and ${same.pcs - same.list.length} more</td></tr>` : "";
-    $("whoUsers").innerHTML = "<tr><th>PC</th><th>User</th><th>Version</th><th>Times</th><th>Last seen</th></tr>"
-      + same.list.map((p) => `<tr><td>${esc(p.device)}</td><td>${esc(p.username ?? "")}</td><td>${esc(p.version)}`
-        + `${p.version === same.this_version ? "" : ` <span class="muted">(this PC: ${esc(same.this_version)})</span>`}</td>`
-        + `<td class="num">${p.times}</td><td class="num">${hm(p.last)}</td></tr>`).join("") + more;
-    return;
-  }
   if (!im) return;
-  $("whoBtn").hidden = false; $("whoGroups").parentElement.hidden = false;
-  $("whoUsers").parentElement.style.gridColumn = "";
+  $("whoBtn").hidden = false;
   $("aJust").innerHTML = `<p>${esc(sentence)}</p><p class="muted" style="font-size:12px">Compared: other users of `
     + `${esc(im.applications.join(", "))}, ${span(im.start, im.end)}`
-    + `${im.baseline_days ? `, and the same hours on the ${im.baseline_days} previous days` : ""}.`
+    + `${im.baseline_days ? `, and the same hours on ${im.baseline_days} earlier ${im.baseline_days === 1 ? "day" : "days"} (working days with working days)` : ""}.`
     + `${im.netim_index_ready ? "" : " NetIM index not ready yet: users are grouped by subnet only."}</p>`;
   $("whoGroups").innerHTML = "<tr><th>Network point</th><th>Slow</th><th>Usually</th></tr>" + im.groups.map((g) =>
     `<tr${g.includes_user ? ' style="font-weight:600"' : ""}><td>${esc(g.name)}${g.includes_user ? " ← this user" : ""}</td>`
