@@ -199,6 +199,8 @@ def who_else(aternity, netim, apps: list[str], degraded: set[datetime], minutes:
             "network": u["group"][1], "slow_activities": len(u["slow"]),
             "worst_response_time": round(u["worst"].response_time, 2),
             "worst_app": u["worst"].application,
+            "worst_status": u["worst"].status,
         } for u in affected[:100]],
         "affected_total": len(affected),
+        "by_status": dict(Counter(s.status for u in users.values() for s in u["slow"] if s.status).most_common()),
     }

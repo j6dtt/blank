@@ -59,7 +59,10 @@ def _answer_lines(a: dict, who: str) -> list[str]:
         s = f["slowest"]
         if s:
             lines.append(f"  slowest: {s['seconds']} s in {s['app']}" + (f" ({s['activity']})" if s["activity"] else "")
-                         + (f" on {s['device']}" if s.get("device") else "") + f" at {_t(s['when'])}")
+                         + (f" on {s['device']}" if s.get("device") else "") + f" at {_t(s['when'])}"
+                         + (f", Aternity: {s['status']}" if s.get("status") else ""))
+        if f.get("by_status"):
+            lines.append("  Aternity marked them: " + ", ".join(f"{n} {k}" for k, n in f["by_status"].items()))
     else:
         lines.append(f"  no slow actions ({f['actions']} measured)")
         pcs = f.get("pcs") or []
@@ -158,7 +161,8 @@ def render_text(result: dict) -> str:
             lines.append(f"  {g['slow']:>4} of {g['users']:<4} slow  {g['name']}{usual}{mark}")
         for u in im["affected_users"][:10]:
             lines.append(f"  - {u['username'] or u['device']}  {u['device']}  {u['network']}  "
-                         f"slowest action {u['worst_response_time']} s in {u['worst_app']}")
+                         f"slowest action {u['worst_response_time']} s in {u['worst_app']}"
+                         + (f" ({u['worst_status']})" if u.get("worst_status") else ""))
         if im["affected_total"] > 10:
             lines.append(f"  ... {im['affected_total'] - 10} more (see --json or the web UI)")
     if result["endpoints"]:

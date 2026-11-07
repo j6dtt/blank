@@ -11,6 +11,7 @@ text, so the UI can show them in the reader's time zone and the CLI in UTC.
 from __future__ import annotations
 
 import re
+from collections import Counter
 from datetime import datetime
 
 from .cause import ISSUE_ORDER, UNKNOWN_VERSION, change_text
@@ -155,6 +156,15 @@ def _item(g: dict, count: str) -> dict:
             "list_of": o["what"] if o else None, "this_version": o["this_version"] if o else None}
 
 
+def _slow_actions(slow: list) -> str:
+    """ "This user had 4 slow actions: Open Mail in Outlook (3) and Chat in Teams (1)." """
+    what = Counter(f"{s.activity} in {s.application}" if s.activity else s.application for s in slow).most_common()
+    named = [f"{name} ({n})" for name, n in what[:3]]
+    if len(what) > 3:
+        named.append(f"{plural(len(what) - 3, 'other')}")
+    return f"This user had {plural(len(slow), 'slow action')}: {_join(named)}."
+
+
 def _join(items: list[str]) -> str:
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
 
@@ -237,24 +247,25 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
     # other users of the same apps at the slow times (an issue's own "who else" is on the issue)
     who_else = None
     if impact:
-        apps = ", ".join(impact["applications"])
+        names = impact["applications"]
+        apps = names[0] if len(names) == 1 else ", ".join(names[:-1]) + " or " + names[-1]
         users, k = impact["users"], impact["slow"]
+        lead = _slow_actions(slow)
+        too = (f"{lead} At the same time, {k} of the {users} other people using {apps} also had a slow action "
+               f"({_pct(impact['rate'])}).")
         if not users:
-            who_else = f"Nobody else used {apps} at those times."
+            who_else = f"{lead} Nobody else was using {apps} at the same time."
         elif not k:
-            who_else = f"Only this user: none of the {users} other {apps} users were slow."
+            who_else = f"{lead} None of the {users} other people using {apps} had a slow action at the same time."
         elif impact["unusual"]:
-            who_else = (f"{k} of {users} other {apps} users were slow ({_pct(impact['rate'])}), more than at these "
-                         f"hours on {plural(impact['baseline_days'], 'earlier day')} "
-                         f"(at most {_pct(impact['usual_rate'])}).")
+            who_else = f"{too} That is more than normal: at this time on other days, at most {_pct(impact['usual_rate'])} had one."
         elif impact["unusual"] is False:
-            who_else = (f"{k} of {users} other {apps} users were slow ({_pct(impact['rate'])}), "
-                         f"as usual at these hours on {plural(impact['baseline_days'], 'earlier day')} (up to {_pct(impact['usual_rate'])}).")
+            who_else = f"{too} That is normal: at this time on other days, up to {_pct(impact['usual_rate'])} had one."
         else:
-            who_else = f"{k} of {users} other {apps} users were slow ({_pct(impact['rate'])}); no earlier days to compare."
+            who_else = f"{too} There are no other days to compare with."
         cp = impact["common_point"]
         if cp:
-            who_else += f" {cp['slow']} of the {k} slow users share one network point: {cp['name']}."
+            who_else += f" {cp['slow']} of the {k} slow users are behind the same network point: {cp['name']}."
             todo.insert(0, f"Many users are slow behind {cp['name']}: check it first.")
         elif impact["unusual"]:
             todo.insert(0, f"Many {apps} users are slow at once: check the {apps} service and its servers.")
@@ -265,7 +276,7 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
                  for c in normal or [] if c["since"] and c["changes"]), None)
     # other users of the same apps were slow as often as on previous days at this hour
     as_usual = bool(impact and impact["slow"] and impact["unusual"] is False)
-    usual_line = (f" Other {', '.join(impact['applications'])} users were slow as often as usual at these hours "
+    usual_line = (f" Other {', '.join(impact['applications'])} users had slow actions about as often as normal at this time "
                   "(see Other users)." if as_usual else "")
     nothing = f"No problem was recorded within {minutes} min of any of the {n} slow actions."
     # the details stay in their own section; the reason says where to look
@@ -326,7 +337,8 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         "last": iso(max(s.timestamp for s in slow)) if slow else None,
         "slowest": None if worst is None else {
             "app": worst.application, "activity": worst.activity, "seconds": round(worst.response_time, 1),
-            "when": iso(worst.timestamp), "device": worst.device},
+            "when": iso(worst.timestamp), "device": worst.device, "status": worst.status},
+        "by_status": dict(Counter(s.status for s in slow if s.status).most_common()),  # Aternity's own, e.g. Minor
         # each PC the user worked on: actions and slow actions (a user may have several)
         # a virtual desktop also names the device(s) the user sat at
         "pcs": [{"device": d, "actions": sum(1 for s in samples if s.device == d),

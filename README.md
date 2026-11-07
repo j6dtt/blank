@@ -17,10 +17,11 @@ What the user felt:
   between 2026-10-28 10:00 UTC and 2026-10-28 10:44 UTC
 
 Other users of these apps:
-  20 of 50 other CRM Portal users were slow (40%), more than at these
-  hours on 5 earlier days (at most 0%). 20 of the 20
-  slow users share one network point: den-br-rtr01 Gi0/0 (LAN)
-  (10.20.30.0/24).
+  This user had 23 slow actions: Open Account in CRM Portal (23). At the
+  same time, 20 of the 50 other people using CRM Portal also had a slow
+  action (40%). That is more than normal: at this time on other days,
+  at most 0% had one. 20 of the 20 slow users are behind the same
+  network point: den-br-rtr01 Gi0/0 (LAN) (10.20.30.0/24).
 ```
 
 ## How it works
@@ -28,6 +29,8 @@ Other users of these apps:
 1. **Slow actions (Aternity).** The user's activities come from
    `BUSINESS_ACTIVITIES_RAW`. An activity is slow when Aternity's own
    status for it (`SLA_STATUS`) is one of `thresholds.slow_status`.
+   The page shows that status beside slow actions (e.g. Minor or Major),
+   with how many of each.
    `verify` lists the status values your tenant uses. Until you set it,
    slow means over `thresholds.response_time_s`.
 2. **Problems on the PC (Aternity).** Each activity row carries the PC's

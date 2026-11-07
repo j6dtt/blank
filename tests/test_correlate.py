@@ -61,7 +61,7 @@ def test_demo_points_at_the_branch_wan():
     assert a["level"] == "likely"
     assert a["title"].startswith("Likely: den-br-rtr01:Gi0/1 (WAN-MPLS): Interface utilization")
     assert top["kind"] == "network" and top["slow_actions"] == top["of_slow"] == result["summary"]["slow"] == 23
-    first_slow = min(t for t, rt, slow, app in result["timeline"]["actions"] if slow)
+    first_slow = min(t for t, rt, slow, app, _ in result["timeline"]["actions"] if slow)
     assert datetime.fromisoformat(first_slow.replace("Z", "+00:00")) == start + timedelta(minutes=INCIDENT[0])
 
 
@@ -158,8 +158,8 @@ def test_who_else_finds_the_common_network_point_and_compares_with_earlier_days(
 
 def test_answer_is_plain_language():
     a = run_demo()[0]["answer"]
-    assert a["who_else"].startswith("20 of 50 other CRM Portal users were slow (40%)")
-    assert "share one network point: den-br-rtr01 Gi0/0 (LAN)" in a["who_else"]
+    assert "At the same time, 20 of the 50 other people using CRM Portal also had a slow action (40%)." in a["who_else"]
+    assert "are behind the same network point: den-br-rtr01 Gi0/0 (LAN)" in a["who_else"]
     assert a["todo"][0].startswith("Many users are slow behind den-br-rtr01")
     assert a["found"][0]["count"] == "at 23 of 23 slow actions"
     assert a["time_went"]["network"] > 0.8 and a["felt"]["slow_actions"] == 23
@@ -178,7 +178,7 @@ def test_who_else_says_when_only_this_user_is_slow():
 
     result = amy(erp(lambda i: i == 3), source=WithPeers)
     assert result["impact"]["slow"] == 0
-    assert result["answer"]["who_else"] == "Only this user: none of the 10 other ERP users were slow."
+    assert result["answer"]["who_else"].endswith("None of the 10 other people using ERP had a slow action at the same time.")
 
 
 def test_the_users_slowest_start_up_is_in_what_they_felt():
@@ -520,7 +520,7 @@ def test_two_pcs_are_told_apart_and_usual_slowness_is_not_blamed():
         ("PC1", 24, 1, False), ("PC2", 1, 0, False)]
     assert a["felt"]["slowest"]["device"] == "PC1"
     assert a["title"] == "Nothing unusual found"
-    assert a["reason"].endswith("Other ERP users were slow as often as usual at these hours (see Other users).")
+    assert a["reason"].endswith("Other ERP users had slow actions about as often as normal at this time (see Other users).")
 
 
 def test_the_text_report_fits_a_narrow_terminal():
@@ -711,6 +711,19 @@ def test_the_rollup_is_one_row_per_issue_with_a_rule_for_each_verdict():
     assert _trend(rising, T0) == "growing"
     assert _trend({day(k): 10 if k <= 7 else 20 for k in range(1, 14)}, T0) == "falling"
     assert _trend({day(k): 1 for k in range(1, 14)}, T0) is None  # too few to tell
+
+
+def test_slow_actions_carry_aternitys_own_status():
+    from uxcorrelate.report import render_text
+
+    samples = [UserSample(T0 + timedelta(minutes=i), "amy", "PC1", "ERP", response_time=9.0 if i == 0 else 4.0,
+                          status="Major" if i == 0 else "Minor") for i in range(3)]
+    result = amy(samples)
+    felt = result["answer"]["felt"]
+    assert felt["by_status"] == {"Minor": 2, "Major": 1} and felt["slowest"]["status"] == "Major"
+    assert result["timeline"]["actions"][0][4] == "Major"
+    text = render_text(result)
+    assert "Aternity marked them: 2 Minor, 1 Major" in text and "Aternity: Major" in text
 
 
 def test_a_hang_says_how_long_other_pcs_already_had_it():

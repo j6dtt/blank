@@ -322,6 +322,7 @@ const span = (a, b) => !b || a === b ? hm(a)
 const hm = (iso) => iso ? new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
 const LEVEL_COLOR = { likely: "var(--bad)", possible: "var(--warn)", issues: "var(--warn)", unsure: "var(--muted)", none: "var(--ok)" };
 const KIND = { pc: ["PC", "var(--pc)"], network: ["Network", "var(--network)"], server: ["Server", "var(--server)"] };
+const statuses = (s) => Object.entries(s || {}).map(([k, n]) => `${n} ${esc(k)}`).join(", ");
 const pill = (k) => `<span class="pill" style="background:${KIND[k][1]}">${KIND[k][0]}</span>`;
 
 function render(d) {
@@ -343,7 +344,8 @@ function render(d) {
     ? ` (${p.virtual ? `virtual desktop${from(p)}; ` : ""}${p.slow} of ${p.actions} slow)`
     : p.virtual ? ` (virtual desktop${from(p)})` : "")).join(", ") + ".</p>";
   else if (pcs.length && pcs[0].virtual) felt += `<p>On virtual desktop ${esc(pcs[0].device)}${from(pcs[0]) ? "," + from(pcs[0]) : ""}.</p>`;
-  if (f.slowest) felt += `<p>Slowest: <b>${f.slowest.seconds} s</b> in ${esc(f.slowest.app)}${f.slowest.activity ? ` (${esc(f.slowest.activity)})` : ""}${f.slowest.device ? ` on ${esc(f.slowest.device)}` : ""}, ${hm(f.slowest.when)}.</p>`;
+  if (f.slowest) felt += `<p>Slowest: <b>${f.slowest.seconds} s</b> in ${esc(f.slowest.app)}${f.slowest.activity ? ` (${esc(f.slowest.activity)})` : ""}${f.slowest.device ? ` on ${esc(f.slowest.device)}` : ""}, ${hm(f.slowest.when)}${f.slowest.status ? `, Aternity: ${esc(f.slowest.status)}` : ""}.</p>`;
+  if (statuses(f.by_status)) felt += `<p>Aternity marked them: ${statuses(f.by_status)}.</p>`;
   const tw = a.time_went;
   if (tw) felt += `<p>Aternity measured the slow time: PC ${Math.round(tw.pc * 100)}%, network ${Math.round(tw.network * 100)}%, server ${Math.round(tw.server * 100)}%.</p>`;
   if (f.logon) {
@@ -353,7 +355,7 @@ function render(d) {
       + (f.slow_actions && pcs.some((p) => p.device === f.logon.device && !p.slow) ? " No slow action on this PC." : "") + "</p>";
   }
   $("aFelt").innerHTML = felt;
-  renderWho(d.impact, a.who_else, d.request);
+  renderWho(d.impact, a.who_else, d.request, d.summary.slow_rule);
   // each issue: what Aternity recorded, a change that matches it, who else has it
   const others = (x, i) => !x.list.length ? "" : ` <button type="button" class="link" data-who="${i}">Show who ▸</button>
     <div class="tableWrap scroll" id="whoOf${i}" hidden><table><tr><th>PC</th><th>User</th><th>Version</th><th>Times</th><th>Last seen</th></tr>`
@@ -444,14 +446,15 @@ $("otherBtn").addEventListener("click", () => {
 
 // Other users of the apps that were slow: the sentence, then (on "Show who") the slow
 // users and the network points they sit behind. An issue's own "who else" is on the issue.
-function renderWho(im, sentence, req) {
+function renderWho(im, sentence, req, rule) {
   $("who").hidden = !im;
   $("whoBox").hidden = true; $("whoBtn").textContent = "Show who";
   if (!im) return;
   $("whoBtn").hidden = false;
-  $("aJust").innerHTML = `<p>${esc(sentence)}</p><p class="muted" style="font-size:12px">Compared: other users of `
-    + `${esc(im.applications.join(", "))}, ${span(im.start, im.end)}`
-    + `${im.baseline_days ? `, and the same hours on ${im.baseline_days} earlier ${im.baseline_days === 1 ? "day" : "days"} (working days with working days)` : ""}.`
+  const dayKind = [0, 6].includes(new Date(im.start).getUTCDay()) ? "weekend" : "working";
+  $("aJust").innerHTML = `<p>${esc(sentence)}</p><p class="muted" style="font-size:12px">Slow action: ${esc(rule)}. Time checked: ${span(im.start, im.end)}, when this user had them.`
+    + `${im.baseline_days ? ` Other days: the same time on the last ${im.baseline_days === 1 ? `${dayKind} day` : `${im.baseline_days} ${dayKind} days`}.` : ""}`
+    + `${statuses(im.by_status) ? ` Aternity marked their slow actions: ${statuses(im.by_status)}.` : ""}`
     + `${im.netim_index_ready ? "" : " NetIM index not ready yet: users are grouped by subnet only."}</p>`;
   $("whoGroups").innerHTML = "<tr><th>Network point</th><th>Slow</th><th>Usually</th></tr>" + im.groups.map((g) =>
     `<tr${g.includes_user ? ' style="font-weight:600"' : ""}><td>${esc(g.name)}${g.includes_user ? " ← this user" : ""}</td>`
@@ -459,7 +462,7 @@ function renderWho(im, sentence, req) {
   const more = im.affected_total > im.affected_users.length ? `<tr><td colspan="4" class="muted">… and ${im.affected_total - im.affected_users.length} more</td></tr>` : "";
   $("whoUsers").innerHTML = im.affected_users.length
     ? "<tr><th>Slow user</th><th>Device</th><th>Network point</th><th>Slowest action</th></tr>" + im.affected_users.map((u) =>
-      `<tr><td>${esc(u.username)}</td><td>${esc(u.device)}</td><td>${esc(u.network)}</td><td>${u.worst_response_time} s <span class="muted">${esc(u.worst_app ?? "")}</span></td></tr>`).join("") + more
+      `<tr><td>${esc(u.username)}</td><td>${esc(u.device)}</td><td>${esc(u.network)}</td><td>${u.worst_response_time} s${u.worst_status ? ` (${esc(u.worst_status)})` : ""} <span class="muted">${esc(u.worst_app ?? "")}</span></td></tr>`).join("") + more
     : `<tr><td class="muted">No other user was slow at the same time.</td></tr>`;
 }
 
@@ -486,10 +489,10 @@ function chart(tl, req) {
     const v = (max / 4) * k;
     svg += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--border)"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v.toFixed(0)} s</text>`;
   }
-  for (const [t, rt, slow, app] of tl.actions) {
+  for (const [t, rt, slow, app, status] of tl.actions) {
     if (rt == null) continue;
     svg += `<circle cx="${x(t).toFixed(1)}" cy="${y(rt).toFixed(1)}" r="${slow ? 3.5 : 2.5}" fill="${slow ? "var(--bad)" : "var(--muted)"}"`
-      + ` opacity="${slow ? 1 : 0.6}"><title>${esc(hm(t))}: ${esc(app)} ${rt} s${slow ? " (slow)" : ""}</title></circle>`;
+      + ` opacity="${slow ? 1 : 0.6}"><title>${esc(hm(t))}: ${esc(app)} ${rt} s${slow ? ` (slow${status ? `, ${esc(status)}` : ""})` : ""}</title></circle>`;
   }
   ["pc", "network", "server"].forEach((k, j) => {
     const ly = T + plotH + 8 + j * (laneH + gap);

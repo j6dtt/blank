@@ -456,7 +456,7 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
         "problems": groups,
         "impact": impact,
         "timeline": {
-            "actions": [[_iso(s.timestamp), s.response_time, is_slow(s, settings), s.application]
+            "actions": [[_iso(s.timestamp), s.response_time, is_slow(s, settings), s.application, s.status]
                         for s in samples],
             "marks": [[_iso(p["t"]), p["kind"], f"{p['object']}: {p['what']}"
                        + (f" {p['value']}" if p["value"] is not None else ""), bool(p["slow"])]
