@@ -373,3 +373,46 @@ def test_verify_shows_how_virtual_desktops_are_filled():
     assert desktops.rows == ["10.0.0.x: 1 PC(s), e.g. VD-1 10.0.0.5: inside den-rtr01 Gi0/1"]
     assert physical.rows == ["172.16.9.x: 1 PC(s), e.g. LT-9 172.16.9.9: no NetIM subnet"]
     assert clients.rows == ["TC-5: 10.0.0.77, inside den-rtr01 Gi0/1"]
+
+
+def test_verify_reads_the_whole_fleet():
+    from pathlib import Path
+    from uxcorrelate.verify import _fleet
+
+    def event(day, dev, user, version="26.0 (Process Version)"):
+        return {"TIMEFRAME": f"2026-11-{day:02}T09:00:00Z", "DEVICE_NAME": dev, "USERNAME": user,
+                "HEALTH_EVENT_CATEGORY": "Background Process", "HEALTH_EVENT_NAME": "Background Process Crash",
+                "HEALTH_EVENT_COMPONENT": "tagger.exe (Process)", "HEALTH_EVENT_COMPONENT_VERSION": version}
+
+    def handler(request):
+        path, flt = request.url.path, request.url.params.get("$filter", "")
+        if path.endswith("/DEVICE_INVENTORY"):
+            return httpx.Response(200, json={"value": [{"DEVICE_NAME": n} for n in ("VD-1", "VD-2", "VD-3")]})
+        if path.endswith("/DEVICE_HEALTH_RAW"):
+            return httpx.Response(200, json={"value": [event(3, "VD-1", "ann"), event(4, "VD-2", "ann")]})
+        if path.endswith("/INSTALLED_SOFTWARE_CHANGE_LOG"):
+            row = lambda d, t: {"INSTALLED_SW_CHANGE_TIMESTAMP": t, "DEVICE_NAME": d, "INSTALLED_SW_NAME": "Tagger",  # noqa: E731
+                                "INSTALLED_SW_CHANGE_TYPE": "Installed", "INSTALLED_SW_VERSION": "26.0"}
+            return httpx.Response(200, json={"value": [row("VD-1", "2026-11-03T10:00:00Z"),
+                                                       row("VD-2", "2026-11-03T10:00:30Z")]})
+        if path.endswith("/BUSINESS_ACTIVITIES_RAW"):
+            return httpx.Response(200, json={"value": [
+                {"DEVICE_NAME": "VD-1", "USERNAME": "ann", "VIRTUALIZATION": "true", "CLIENT_DEVICE_NAME": "TC-5"}]})
+        return httpx.Response(200, json={"value": []})
+
+    settings = Settings()
+    settings.aternity.base_url = "https://aternity.test/odata"
+    client = AternityClient(settings.aternity, transport=httpx.MockTransport(handler))
+    schema = parse_odata_metadata((Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
+    size, failures, software, sit = _fleet(settings, client, schema)
+    assert size.rows[0] == "PCs in the inventory: 3"
+    assert size.rows[1] == "last day's activity (1 rows read): 1 PCs, 1 users"
+    assert "DEVICE_HEALTH_RAW has rows: 14d yes, 30d yes, 60d yes, 90d yes" in size.rows
+    assert "Background Process Crash: tagger.exe (Process): 2 PCs" in failures.rows
+    assert "  PCs per day: Nov 03 1, Nov 04 1" in failures.rows
+    assert any(r.startswith("  2 PCs, 1 users in 14 days") for r in failures.rows)
+    assert any(r.startswith("Tagger 26.0: 2 PCs, Nov 03 10:00 to Nov 03 10:00") for r in software.rows)
+    # one crash ran 26.0 before the log shows it on that PC, one after
+    assert software.rows[-1] == ("failures at a version the log shows arriving on that PC: "
+                                 + str({"before the log's time": 1, "after it": 1}))
+    assert any(r == "CLIENT_DEVICE_NAME: 1 filled, 1 different" for r in sit.rows)

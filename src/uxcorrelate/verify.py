@@ -23,8 +23,8 @@ from statistics import median
 from typing import Any
 
 from .aternity import AternityClient, is_virtual, odata_quote, odata_time
-from .config import (DISK_FREE_COLUMNS, PROCESS_COLUMN, SOFTWARE_UPDATE_GAP_MIN, TIME_COLUMNS, VDI_COLUMNS,
-                     Settings)
+from .config import (DISK_FREE_COLUMNS, PROCESS_COLUMN, SOFTWARE_REMOVED, SOFTWARE_UPDATE_GAP_MIN, TIME_COLUMNS,
+                     VDI_COLUMNS, Settings)
 from .http import ApiError
 from .models import parse_time, to_float
 from .netim import NetimClient, _items
@@ -268,7 +268,8 @@ def verify_aternity(settings: Settings, client: AternityClient) -> list[Check]:
     return checks + _value_ranges(settings, client, schema) + _health_events(settings, client, schema) \
         + _app_usage(settings, client, schema) + _start_up_parts(settings, client, schema) \
         + _change_log(settings, client, schema) + _vdi(settings, client, schema) \
-        + _remote_display(settings, client, schema) + _process_sources(client, schema)
+        + _remote_display(settings, client, schema) + _process_sources(client, schema) \
+        + _fleet(settings, client, schema)
 
 
 def _raw(row: dict, fields: dict, keys) -> str:
@@ -662,6 +663,153 @@ def _process_sources(client: AternityClient, schema: dict[str, set[str]]) -> lis
     return [Check("Aternity", "process data", None,
                   f"Published data sources with {PROCESS_COLUMN}: {len(found)}" + (":" if found else
                   ". No source can tell which process used the CPU, memory or disk."), rows=lines)]
+
+
+def _fleet(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
+    """The whole fleet, to read an issue's "who else" and "what changed": how many PCs
+    and users there are, how far back the data goes, when the widest failures began,
+    how software reaches the PCs, and whether the log's time is when it happened."""
+    now = datetime.now(timezone.utc)
+    return (_fleet_size(settings, client, schema, now) + _widest_failures(settings, client, schema, now)
+            + _rollouts(settings, client, schema, now) + _where_users_sit(settings, client, schema, now))
+
+
+def _fleet_size(settings, client, schema, now) -> list[Check]:
+    cfg, rows = settings.aternity, []
+    inv, f = cfg.entities.get("inventory"), cfg.fields.get("inventory", {})
+    if inv in schema and f.get("device"):
+        try:
+            pcs = client.query(inv, select=[f["device"]])
+            rows.append(f"PCs in the inventory: {len({r.get(f['device']) for r in pcs})}")
+        except ApiError as exc:
+            rows.append(f"inventory: {exc.short()}")
+    act, a = cfg.entities.get("activities"), cfg.fields.get("activities", {})
+    if act in schema and a.get("device") and a.get("username"):
+        try:
+            day = client.query(act, f"{a['timestamp']} ge {odata_time(now - timedelta(days=1))}",
+                               select=[a["device"], a["username"]], top=20000)
+            rows.append(f"last day's activity ({len(day)} rows read): "
+                        f"{len({r.get(a['device']) for r in day})} PCs, {len({r.get(a['username']) for r in day})} users")
+        except ApiError as exc:
+            rows.append(f"activities: {exc.short()}")
+    # how far back: one row in a day of 14, 30, 60 and 90 days ago
+    for key in ("health_events", "activities", "software_changes", "app_usage"):
+        ent, ts = cfg.entities.get(key), cfg.fields.get(key, {}).get("timestamp")
+        if ent not in schema or not ts:
+            continue
+        back = []
+        for days in (14, 30, 60, 90):
+            start = now - timedelta(days=days)
+            try:
+                hit = client.query(ent, f"{ts} ge {odata_time(start)} and {ts} le {odata_time(start + timedelta(days=1))}",
+                                   select=[ts], top=1)
+            except ApiError:
+                hit = []
+            back.append(f"{days}d {'yes' if hit else 'no'}")
+        rows.append(f"{ent} has rows: {', '.join(back)}")
+    return [Check("Aternity", "fleet: how many PCs, how far back", None, "What \"N other PCs of M\" and "
+                  "\"since when\" rest on.", rows=rows)]
+
+
+def _widest_failures(settings, client, schema, now) -> list[Check]:
+    """The failures on the most PCs in the last 2 days: PCs and users per day over 14 days."""
+    ent = settings.aternity.entities.get("health_events")
+    f = settings.aternity.fields.get("health_events", {})
+    if ent not in schema or not f.get("device"):
+        return []
+    recent = client._events(f"{f['timestamp']} ge {odata_time(now - timedelta(days=2))}", "health events of all PCs",
+                            client.EVERYWHERE)
+    by: dict[tuple, set] = {}
+    for e in recent:
+        by.setdefault((e.name or e.category, e.component, e.sub_component), set()).add(e.device)
+    rows = [f"last 2 days: {len(recent)} events on {len({e.device for e in recent})} PCs"]
+    for (name, comp, sub), pcs in sorted(by.items(), key=lambda kv: -len(kv[1]))[:5]:
+        rows.append(f"{name}: {comp}{f' / {sub}' if sub else ''}: {len(pcs)} PCs")
+        if not comp:
+            continue
+        old = [e for e in client.component_health_events(comp, now - timedelta(days=14), now)
+               if (e.name or e.category) == name and e.sub_component == sub]
+        days: dict = {}
+        for e in old:
+            days.setdefault(e.timestamp.date(), set()).add(e.device)
+        rows.append(f"  {len({e.device for e in old})} PCs, {len({e.username for e in old if e.username})} users in 14 days;"
+                    f" versions {dict(Counter(e.component_version for e in old).most_common(3))}")
+        rows.append("  PCs per day: " + ", ".join(f"{d.strftime('%b %d')} {len(p)}" for d, p in sorted(days.items())))
+    return [Check("Aternity", "fleet: widest failures", None, "When each began, and PCs against users.", rows=rows)]
+
+
+def _rollouts(settings, client, schema, now) -> list[Check]:
+    """How software reaches the PCs, from all PCs' change log rows of 14 days: per PC, in how
+    many separate minutes; per update, on how many PCs and over how long. And is the log's
+    time real? Failures already running a version before the log shows it arrive."""
+    cfg = settings.aternity
+    ent, f = cfg.entities.get("software_changes"), cfg.fields.get("software_changes", {})
+    if ent not in schema or not f.get("device"):
+        return []
+    try:
+        log_rows = client.query(ent, f"{f['timestamp']} ge {odata_time(now - timedelta(days=14))}",
+                                select=[c for c in f.values() if c], top=50000)
+    except ApiError as exc:
+        return [Check("Aternity", "fleet: how software arrives", None, f"Could not read it: {exc.short()}")]
+    rows, per_pc, arrived, versions = [f"{len(log_rows)} rows read"], {}, {}, {}
+    for r in log_rows:
+        t = parse_time(r.get(f["timestamp"]))
+        if t is None:
+            continue
+        dev, version = r.get(f["device"]), r.get(f["version"])
+        per_pc.setdefault(dev, []).append(t.replace(second=0, microsecond=0))
+        if r.get(f.get("change", "")) not in SOFTWARE_REMOVED and version:
+            arrived.setdefault((r.get(f["name"]), version), {}).setdefault(dev, t)
+            versions.setdefault((dev, version), t)
+    if per_pc:
+        minutes = [len(set(v)) for v in per_pc.values()]
+        busiest = [Counter(v).most_common(1)[0][1] for v in per_pc.values()]
+        rows.append(f"{len(per_pc)} PCs with changes; separate minutes per PC: median {median(minutes):g}, "
+                    f"max {max(minutes)}; most rows in one minute: median {median(busiest):g}, max {max(busiest)}")
+    for (name, version), pcs in sorted(arrived.items(), key=lambda kv: -len(kv[1]))[:8]:
+        t = sorted(pcs.values())
+        rows.append(f"{name} {version}: {len(pcs)} PCs, {t[0].strftime('%b %d %H:%M')} to {t[-1].strftime('%b %d %H:%M')}"
+                    f", busiest day {Counter(x.strftime('%b %d') for x in t).most_common(1)[0]}")
+    # a failing process at a version the log shows arriving on that PC: before or after?
+    h = cfg.fields.get("health_events", {})
+    if h.get("device"):
+        events = client._events(f"{h['timestamp']} ge {odata_time(now - timedelta(days=7))}", "health events of all PCs",
+                                client.EVERYWHERE)
+        seen = Counter()
+        for e in events:
+            for v in (e.component_version, e.sub_component_version):
+                t = versions.get((e.device, _label_off(v)))
+                if t is not None:
+                    seen["before the log's time" if e.timestamp < t else "after it"] += 1
+        rows.append(f"failures at a version the log shows arriving on that PC: {dict(seen) or 'none'}")
+    return [Check("Aternity", "fleet: how software arrives", None, "One image update, or one by one? "
+                  "Is the log's time when it happened?", rows=rows)]
+
+
+def _label_off(value) -> str | None:
+    return (value or "").rsplit(" (", 1)[0] or None
+
+
+def _where_users_sit(settings, client, schema, now) -> list[Check]:
+    """Does Aternity hold any address for the device a virtual desktop user sits at?"""
+    cfg = settings.aternity
+    act, f = cfg.entities.get("activities"), cfg.fields.get("activities", {})
+    virt = f.get("virtualization")
+    if act not in schema or virt not in schema[act] or not f.get("timestamp"):
+        return []
+    cols = sorted(c for c in schema[act] if any(k in c for k in ("CLIENT", "SUBNET", "ADDRESS", "_IP", "GATEWAY", "SITE")))
+    try:
+        sample = client.query(act, f"{f['timestamp']} ge {odata_time(now - timedelta(days=1))}",
+                              select=[virt] + cols, top=1000, raw=True)
+    except ApiError as exc:
+        return [Check("Aternity", "fleet: where users sit", None, f"Could not read it: {exc.short()}")]
+    virtual = [r for r in sample if is_virtual(r.get(virt))]
+    rows = [f"{len(virtual)} virtual desktop rows of {len(sample)} read"]
+    for c in cols:
+        vals = [r.get(c) for r in virtual if r.get(c) not in (None, "", "N/A")]
+        rows.append(f"{c}: {len(vals)} filled, {len(set(vals))} different")
+    return [Check("Aternity", "fleet: where users sit", None, "A column filled here could place the user's "
+                  "own network.", rows=rows)]
 
 
 def verify_vdi_network(settings: Settings, aternity: AternityClient, netim: NetimClient) -> list[Check]:
