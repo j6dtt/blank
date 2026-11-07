@@ -398,21 +398,34 @@ def test_verify_reads_the_whole_fleet():
         if path.endswith("/BUSINESS_ACTIVITIES_RAW"):
             return httpx.Response(200, json={"value": [
                 {"DEVICE_NAME": "VD-1", "USERNAME": "ann", "VIRTUALIZATION": "true", "CLIENT_DEVICE_NAME": "TC-5"}]})
+        if path.endswith("/APPLICATIONS_RAW"):
+            if " gt 0" in flt:
+                return httpx.Response(400, json={"error": {"message": "no"}})
+            hang = lambda d, t: {"TIMEFRAME": t, "DEVICE_NAME": d, "APPLICATION_NAME": "Mail",  # noqa: E731
+                                 "APPLICATION_CRASHES_TOTAL": 0, "APPLICATION_HANG_TIME_TOTAL": 5}
+            return httpx.Response(200, json={"value": [hang("VD-1", "2026-11-02T09:00:00Z"),
+                                                       hang("VD-1", "2026-11-04T09:00:00Z")]})
         return httpx.Response(200, json={"value": []})
 
     settings = Settings()
     settings.aternity.base_url = "https://aternity.test/odata"
     client = AternityClient(settings.aternity, transport=httpx.MockTransport(handler))
     schema = parse_odata_metadata((Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
-    size, failures, software, sit = _fleet(settings, client, schema)
+    size, failures, per_day, software, hangs, sit = _fleet(settings, client, schema)
     assert size.rows[0] == "PCs in the inventory: 3"
     assert size.rows[1] == "last day's activity (1 rows read): 1 PCs, 1 users"
-    assert "DEVICE_HEALTH_RAW has rows: 14d yes, 30d yes, 60d yes, 90d yes" in size.rows
+    assert "DEVICE_HEALTH_RAW has rows: 3d yes, 7d yes, 10d yes, 13d yes, 14d yes, 30d yes, 60d yes, 90d yes" in size.rows
     assert "Background Process Crash: tagger.exe (Process): 2 PCs" in failures.rows
     assert "  PCs per day: Nov 03 1, Nov 04 1" in failures.rows
     assert any(r.startswith("  2 PCs, 1 users in 14 days") for r in failures.rows)
     assert any(r.startswith("Tagger 26.0: 2 PCs, Nov 03 10:00 to Nov 03 10:00") for r in software.rows)
     # one crash ran 26.0 before the log shows it on that PC, one after
-    assert software.rows[-1] == ("failures at a version the log shows arriving on that PC: "
-                                 + str({"before the log's time": 1, "after it": 1}))
+    assert "  virtual: {'before: under a day': 1}" in software.rows
+    assert "  not known: {'after it': 1}" in software.rows
+    assert any("{'virtual': 1, 'not known': 1}" in r for r in software.rows)
+    assert any(r.startswith("Background Process Crash: ") for r in per_day.rows)
+    assert "no event of these days is a hang" in per_day.rows
+    assert any(r.startswith("  further back, same weekday: ") for r in failures.rows)
+    assert any(r.startswith("hang, Mail: ") for r in hangs.rows)
+    assert any(r.startswith("Tagger 26.0, Mail: reached (") for r in hangs.rows)
     assert any(r == "CLIENT_DEVICE_NAME: 1 filled, 1 different" for r in sit.rows)

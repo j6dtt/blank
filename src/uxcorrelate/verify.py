@@ -665,13 +665,91 @@ def _process_sources(client: AternityClient, schema: dict[str, set[str]]) -> lis
                   ". No source can tell which process used the CPU, memory or disk."), rows=lines)]
 
 
+FLEET_DAYS = 21  # failures per day, and hangs against updates
+LOG_DAYS = 28  # change log rows read: a PC's earliest row of a version is when it arrived
+ROWS_PER_READ = 50000
+
+
 def _fleet(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
     """The whole fleet, to read an issue's "who else" and "what changed": how many PCs
     and users there are, how far back the data goes, when the widest failures began,
-    how software reaches the PCs, and whether the log's time is when it happened."""
+    how software reaches the PCs, whether the log's time is when it happened, and
+    whether hangs changed on the PCs an update reached."""
     now = datetime.now(timezone.utc)
+    log = _software_log(settings, client, schema, now)
+    virtual = _virtual_pcs(settings, client, schema, now)
     return (_fleet_size(settings, client, schema, now) + _widest_failures(settings, client, schema, now)
-            + _rollouts(settings, client, schema, now) + _where_users_sit(settings, client, schema, now))
+            + _failures_per_day(settings, client, schema, now) + _rollouts(settings, client, schema, now, log, virtual)
+            + _hangs_and_updates(settings, client, schema, now, log)
+            + _where_users_sit(settings, client, schema, now))
+
+
+def _pieces(now: datetime, days: int) -> list[tuple[datetime, datetime]]:
+    """A week at a time, oldest first: one read of all PCs would stop at max_pages."""
+    out = []
+    for back in range(days, 0, -7):
+        out.append((now - timedelta(days=back), now - timedelta(days=max(back - 7, 0))))
+    return out
+
+
+def _between(column: str, start: datetime, end: datetime) -> str:
+    return f"{column} ge {odata_time(start)} and {column} lt {odata_time(end)}"
+
+
+def _per_day(items) -> str:
+    """(time, device) pairs as PCs per day."""
+    days: dict = {}
+    for t, dev in items:
+        days.setdefault(t.date(), set()).add(dev)
+    return ", ".join(f"{d.strftime('%b %d')} {len(p)}" for d, p in sorted(days.items()))
+
+
+def _cut_short(client, mark: int) -> list[str]:
+    return [f"PARTIAL: {w}" for w in client.warnings[mark:]]
+
+
+def _virtual_pcs(settings, client, schema, now) -> dict:
+    """PC -> virtual or not, from the last 2 days' activity."""
+    act, a = settings.aternity.entities.get("activities"), settings.aternity.fields.get("activities", {})
+    column = VDI_COLUMNS["activities"]["virtualization"]
+    if act not in schema or column not in schema[act] or not a.get("device"):
+        return {}
+    try:
+        rows = client.query(act, f"{a['timestamp']} ge {odata_time(now - timedelta(days=2))}",
+                            select=[a["device"], column], top=ROWS_PER_READ)
+    except ApiError:
+        return {}
+    return {r.get(a["device"]): is_virtual(r.get(column)) for r in rows}
+
+
+def _software_log(settings, client, schema, now) -> dict:
+    """All PCs' change log of LOG_DAYS. "arrived": (name, version) -> PC -> its earliest
+    row; "seen": (PC, version) -> the times of those rows; "minutes": PC -> minutes."""
+    cfg = settings.aternity
+    ent, f = cfg.entities.get("software_changes"), cfg.fields.get("software_changes", {})
+    out = {"arrived": {}, "seen": {}, "minutes": {}, "rows": 0, "full": 0, "error": None}
+    if ent not in schema or not f.get("device"):
+        return out
+    for start, end in _pieces(now, LOG_DAYS):
+        try:
+            rows = client.query(ent, _between(f["timestamp"], start, end),
+                                select=[c for c in f.values() if c], top=ROWS_PER_READ)
+        except ApiError as exc:
+            out["error"] = exc.short()
+            continue
+        out["rows"] += len(rows)
+        out["full"] += len(rows) >= ROWS_PER_READ
+        for r in rows:
+            t = parse_time(r.get(f["timestamp"]))
+            if t is None:
+                continue
+            dev, version = r.get(f["device"]), r.get(f["version"])
+            out["minutes"].setdefault(dev, []).append(t.replace(second=0, microsecond=0))
+            if r.get(f.get("change", "")) not in SOFTWARE_REMOVED and version:
+                pcs = out["arrived"].setdefault((r.get(f["name"]), version), {})
+                pcs[dev] = min(t, pcs.get(dev, t))
+                out["seen"].setdefault((dev, version), []).append(t)
+    return out
 
 
 def _fleet_size(settings, client, schema, now) -> list[Check]:
@@ -692,20 +770,19 @@ def _fleet_size(settings, client, schema, now) -> list[Check]:
                         f"{len({r.get(a['device']) for r in day})} PCs, {len({r.get(a['username']) for r in day})} users")
         except ApiError as exc:
             rows.append(f"activities: {exc.short()}")
-    # how far back: one row in a day of 14, 30, 60 and 90 days ago
+    # how far back: one row in a day of that many days ago ("error": the read failed)
     for key in ("health_events", "activities", "software_changes", "app_usage"):
         ent, ts = cfg.entities.get(key), cfg.fields.get(key, {}).get("timestamp")
         if ent not in schema or not ts:
             continue
         back = []
-        for days in (14, 30, 60, 90):
+        for days in (3, 7, 10, 13, 14, 30, 60, 90):
             start = now - timedelta(days=days)
             try:
-                hit = client.query(ent, f"{ts} ge {odata_time(start)} and {ts} le {odata_time(start + timedelta(days=1))}",
-                                   select=[ts], top=1)
+                hit = client.query(ent, _between(ts, start, start + timedelta(days=1)), select=[ts], top=1)
+                back.append(f"{days}d {'yes' if hit else 'no'}")
             except ApiError:
-                hit = []
-            back.append(f"{days}d {'yes' if hit else 'no'}")
+                back.append(f"{days}d error")
         rows.append(f"{ent} has rows: {', '.join(back)}")
     return [Check("Aternity", "fleet: how many PCs, how far back", None, "What \"N other PCs of M\" and "
                   "\"since when\" rest on.", rows=rows)]
@@ -735,55 +812,155 @@ def _widest_failures(settings, client, schema, now) -> list[Check]:
         rows.append(f"  {len({e.device for e in old})} PCs, {len({e.username for e in old if e.username})} users in 14 days;"
                     f" versions {dict(Counter(e.component_version for e in old).most_common(3))}")
         rows.append("  PCs per day: " + ", ".join(f"{d.strftime('%b %d')} {len(p)}" for d, p in sorted(days.items())))
+        back = []  # when it began: one day each, the same weekday, so the numbers compare
+        for weeks in (4, 8, 12, 16, 26):
+            start = now - timedelta(days=1, weeks=weeks)
+            same = {e.device for e in client.component_health_events(comp, start, start + timedelta(days=1))
+                    if (e.name or e.category) == name and e.sub_component == sub}
+            back.append(f"{start.strftime('%b %d')} {len(same)}")
+        rows.append("  further back, same weekday: " + ", ".join(back))
     return [Check("Aternity", "fleet: widest failures", None, "When each began, and PCs against users.", rows=rows)]
 
 
-def _rollouts(settings, client, schema, now) -> list[Check]:
-    """How software reaches the PCs, from all PCs' change log rows of 14 days: per PC, in how
-    many separate minutes; per update, on how many PCs and over how long. And is the log's
-    time real? Failures already running a version before the log shows it arrive."""
-    cfg = settings.aternity
-    ent, f = cfg.entities.get("software_changes"), cfg.fields.get("software_changes", {})
+def _failures_per_day(settings, client, schema, now) -> list[Check]:
+    """Every kind of health event, and the hangs by program, per day: did anything step up?"""
+    ent = settings.aternity.entities.get("health_events")
+    f = settings.aternity.fields.get("health_events", {})
     if ent not in schema or not f.get("device"):
         return []
-    try:
-        log_rows = client.query(ent, f"{f['timestamp']} ge {odata_time(now - timedelta(days=14))}",
-                                select=[c for c in f.values() if c], top=50000)
-    except ApiError as exc:
-        return [Check("Aternity", "fleet: how software arrives", None, f"Could not read it: {exc.short()}")]
-    rows, per_pc, arrived, versions = [f"{len(log_rows)} rows read"], {}, {}, {}
-    for r in log_rows:
-        t = parse_time(r.get(f["timestamp"]))
-        if t is None:
-            continue
-        dev, version = r.get(f["device"]), r.get(f["version"])
-        per_pc.setdefault(dev, []).append(t.replace(second=0, microsecond=0))
-        if r.get(f.get("change", "")) not in SOFTWARE_REMOVED and version:
-            arrived.setdefault((r.get(f["name"]), version), {}).setdefault(dev, t)
-            versions.setdefault((dev, version), t)
-    if per_pc:
-        minutes = [len(set(v)) for v in per_pc.values()]
-        busiest = [Counter(v).most_common(1)[0][1] for v in per_pc.values()]
-        rows.append(f"{len(per_pc)} PCs with changes; separate minutes per PC: median {median(minutes):g}, "
+    mark, events = len(client.warnings), []
+    for start, end in _pieces(now, FLEET_DAYS):
+        events += client._events(_between(f["timestamp"], start, end), "health events of all PCs", client.EVERYWHERE)
+    kinds: dict = {}
+    hangs: dict = {}
+    for e in events:
+        kinds.setdefault(e.name or e.category, []).append(e)
+        if "hang" in f"{e.category} {e.name}".lower():
+            hangs.setdefault(e.application or _label_off(e.component), []).append(e)
+    rows = [f"{FLEET_DAYS} days: {len(events)} events on {len({e.device for e in events})} PCs"]
+    wide = lambda group: -len({e.device for e in group[1]})  # noqa: E731
+    for kind, group in sorted(kinds.items(), key=wide)[:8]:
+        rows.append(f"{kind}: {len(group)} events, {len({e.device for e in group})} PCs")
+        rows.append("  PCs per day: " + _per_day((e.timestamp, e.device) for e in group))
+    for program, group in sorted(hangs.items(), key=wide)[:5]:
+        rows.append(f"hang, {program}: {len(group)} events, {len({e.device for e in group})} PCs")
+        rows.append("  PCs per day: " + _per_day((e.timestamp, e.device) for e in group))
+    if not hangs:
+        rows.append("no event of these days is a hang")
+    return [Check("Aternity", "fleet: failures per day", None, "Did anything step up, and when?",
+                  rows=rows + _cut_short(client, mark))]
+
+
+def _rollouts(settings, client, schema, now, log, virtual) -> list[Check]:
+    """How software reaches the PCs: per PC, in how many separate minutes; per update, on how
+    many PCs (virtual desktops and physical PCs) and over how long. And is the log's time
+    real? Failures already running a version before the PC's earliest row of it."""
+    cfg = settings.aternity
+    if cfg.entities.get("software_changes") not in schema or not cfg.fields.get("software_changes", {}).get("device"):
+        return []
+    if log["error"] and not log["rows"]:
+        return [Check("Aternity", "fleet: how software arrives", None, f"Could not read it: {log['error']}")]
+    rows = [f"{log['rows']} rows read over {LOG_DAYS} days"]
+    if log["full"] or log["error"]:
+        rows.append(f"PARTIAL: {log['full']} of the reads hit {ROWS_PER_READ} rows"
+                    + (f"; {log['error']}" if log["error"] else ""))
+    if log["minutes"]:
+        minutes = [len(set(v)) for v in log["minutes"].values()]
+        busiest = [Counter(v).most_common(1)[0][1] for v in log["minutes"].values()]
+        rows.append(f"{len(minutes)} PCs with changes; separate minutes per PC: median {median(minutes):g}, "
                     f"max {max(minutes)}; most rows in one minute: median {median(busiest):g}, max {max(busiest)}")
-    for (name, version), pcs in sorted(arrived.items(), key=lambda kv: -len(kv[1]))[:8]:
+    kind = lambda dev: {True: "virtual", False: "physical"}.get(virtual.get(dev), "not known")  # noqa: E731
+    for (name, version), pcs in sorted(log["arrived"].items(), key=lambda kv: -len(kv[1]))[:8]:
         t = sorted(pcs.values())
         rows.append(f"{name} {version}: {len(pcs)} PCs, {t[0].strftime('%b %d %H:%M')} to {t[-1].strftime('%b %d %H:%M')}"
-                    f", busiest day {Counter(x.strftime('%b %d') for x in t).most_common(1)[0]}")
+                    f", busiest day {Counter(x.strftime('%b %d') for x in t).most_common(1)[0]}, "
+                    f"{dict(Counter(kind(d) for d in pcs))}")
     # a failing process at a version the log shows arriving on that PC: before or after?
     h = cfg.fields.get("health_events", {})
     if h.get("device"):
         events = client._events(f"{h['timestamp']} ge {odata_time(now - timedelta(days=7))}", "health events of all PCs",
                                 client.EVERYWHERE)
-        seen = Counter()
+        seen: dict = {}
         for e in events:
             for v in (e.component_version, e.sub_component_version):
-                t = versions.get((e.device, _label_off(v)))
-                if t is not None:
-                    seen["before the log's time" if e.timestamp < t else "after it"] += 1
-        rows.append(f"failures at a version the log shows arriving on that PC: {dict(seen) or 'none'}")
+                times = log["seen"].get((e.device, _label_off(v)))
+                if times:
+                    early = e.timestamp < min(times)
+                    gap = "" if not early else "under a day" if min(times) - e.timestamp < timedelta(days=1) else "longer"
+                    seen.setdefault(kind(e.device), Counter())["before: " + gap if early else "after it"] += 1
+        rows.append(f"failures at a version, against the PC's earliest row of it in {LOG_DAYS} days:")
+        rows += [f"  {k}: {dict(c)}" for k, c in sorted(seen.items())] or ["  none"]
+        twice = sum(len(t) > 1 for t in log["seen"].values())
+        rows.append(f"PC and version pairs logged more than once: {twice} of {len(log['seen'])}")
     return [Check("Aternity", "fleet: how software arrives", None, "One image update, or one by one? "
                   "Is the log's time when it happened?", rows=rows)]
+
+
+def _rate(hangs: dict, pcs, split, start, end) -> tuple[float, float] | None:
+    """Rows per 100 PC-days before and after each PC's own time."""
+    rows, days = [0, 0], [0.0, 0.0]
+    for dev in pcs:
+        t = split(dev)
+        if not start < t < end:
+            continue
+        days[0] += (t - start).total_seconds() / 86400
+        days[1] += (end - t).total_seconds() / 86400
+        for when in hangs.get(dev, ()):
+            rows[when >= t] += 1
+    return None if not all(days) else (round(rows[0] * 100 / days[0], 1), round(rows[1] * 100 / days[1], 1))
+
+
+def _hangs_and_updates(settings, client, schema, now, log) -> list[Check]:
+    """App usage hangs and crashes per day, and whether hangs changed on the PCs an update
+    reached, next to the PCs it did not reach (split at the update's middle day)."""
+    ent, f = settings.aternity.entities.get("app_usage"), settings.aternity.fields.get("app_usage", {})
+    if ent not in schema or not f.get("hang_time") or not f.get("device"):
+        return []
+    select, usage, rows = [f[k] for k in ("timestamp", "device", "application", "crashes", "hang_time") if f.get(k)], [], []
+    mark = len(client.warnings)
+    for start, end in _pieces(now, 14):
+        when = _between(f["timestamp"], start, end)
+        try:
+            read = client.query(ent, f"{when} and ({f['hang_time']} gt 0 or {f['crashes']} gt 0)", select=select,
+                                top=ROWS_PER_READ)
+        except ApiError as exc:
+            rows.append(f"read of hangs only refused ({exc.short()}): reading all rows")
+            try:
+                read = client.query(ent, when, select=select, top=ROWS_PER_READ)
+            except ApiError as again:
+                rows.append(f"could not read it: {again.short()}")
+                continue
+        rows.append(f"{start.strftime('%b %d')} to {end.strftime('%b %d')}: {len(read)} rows")
+        usage += read
+    by: dict = {"hang": {}, "crash": {}}
+    for r in usage:
+        t = parse_time(r.get(f["timestamp"]))
+        if t is None:
+            continue
+        for kind, col in (("hang", "hang_time"), ("crash", "crashes")):
+            if (to_float(r.get(f[col])) or 0) > 0:
+                by[kind].setdefault(r.get(f["application"]), []).append((t, r.get(f["device"])))
+    for kind, apps in by.items():
+        for app, items in sorted(apps.items(), key=lambda kv: -len({d for _, d in kv[1]}))[:6]:
+            rows.append(f"{kind}, {app}: {len(items)} rows, {len({d for _, d in items})} PCs")
+            rows.append("  PCs per day: " + _per_day(items))
+    everything = [t for items in by["hang"].values() for t, _ in items]
+    if everything:
+        start, tops = min(everything), sorted(by["hang"].items(), key=lambda kv: -len(kv[1]))[:3]
+        rows.append(f"hang rows per 100 PC-days from {start.strftime('%b %d')}, before and after the update:")
+        for (name, version), pcs in sorted(log["arrived"].items(), key=lambda kv: -len(kv[1]))[:4]:
+            times = sorted(pcs.values())
+            middle = times[len(times) // 2]
+            others = set(log["minutes"]) - set(pcs)
+            for app, items in tops:
+                hangs: dict = {}
+                for t, dev in items:
+                    hangs.setdefault(dev, []).append(t)
+                got = _rate(hangs, pcs, pcs.get, start, now)
+                rest = _rate(hangs, others, lambda _: middle, start, now)
+                rows.append(f"{name} {version}, {app}: reached {got or 'n/a'}, not reached {rest or 'n/a'}")
+    return [Check("Aternity", "fleet: hangs against updates", None, "Did hangs change on the PCs an update reached?",
+                  rows=rows + _cut_short(client, mark))]
 
 
 def _label_off(value) -> str | None:
