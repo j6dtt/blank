@@ -128,3 +128,26 @@ def test_the_pcs_are_named_never_these_pcs():
     assert (pick(one), pick(two)) == ("PC1", "PC1 and PC2")
     three = two + [act(9, device="PC3")]
     assert pick(three) == "the 3 PCs"
+
+
+def _two(changes_b):
+    c = normal(device="VD-1", since="2026-11-06T09:00:00Z", changes=[change("Print Agent")], virtual=True, n=2)
+    c["pcs"] = [{"device": "VD-1", "runs": 9, "slow": 1, "took": 6.0, "changes": c["changes"], "changed": 1},
+                {"device": "VD-2", "runs": 4, "slow": 1, "took": 5.0, "changes": changes_b,
+                 "changed": len(changes_b)}]
+    slow = [act(0, device="VD-1", virtual=True), act(9, device="VD-2", virtual=True, seconds=5.0)]
+    return build_answer([], slow, slow, "amy", None, True, [], None, None, 5, None, normal=[c])
+
+
+def test_c_slow_on_two_pcs_one_unchanged_does_not_blame_the_changes():
+    a = _two([])
+    assert a["title"] == ("ERP Open slow on 2 desktops from Nov 6: VD-1 1 of 9 times (6.0 s), VD-2 1 of 4 times "
+                          "(5.0 s); usually 1.0 s, normal on each of the 5 days before. 1 change on VD-1 on Nov 5, "
+                          "none on VD-2: they do not explain it alone")
+    assert a["level"] == "unsure"
+
+
+def test_c_slow_on_two_pcs_both_changed():
+    a = _two([change("Print Agent", 4)])
+    assert a["title"].endswith("1 change on VD-1 on Nov 5 and 1 change on VD-2 on Nov 4: possibly one of them")
+    assert a["level"] == "possible"

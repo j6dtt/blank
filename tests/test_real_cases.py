@@ -334,26 +334,31 @@ class OutlookPreviewNew(SameMinuteReading):
     """The full Nov 6-8 page (live), names made up: besides the Teams Launch on VD-14,
     on VD-41 (logon 08:12, CPU 91.75% with a normal action at 08:15) Outlook Launch
     takes 40.6 s at 09:15 (others typical 33.5 s) while an AAD token broker hang
-    starts in the same minute; Preview Mail takes 3.6 and 5.2 s (4.4 s typical, as prod showed), with 4
-    fast runs (0.2 s) after them, so it is slow 2 of 6 times, not "since" (usually 0.2 s for
+    starts in the same minute; Preview Mail is slow once on each desktop (VD-41 Nov 6, VD-14 Nov 8
+    09:58; 4.4 s typical of the two, as prod showed), with fast runs after each: VD-41 1 of 11
+    times, as prod showed; VD-14 has no change logged (usually 0.2 s for
     the user, on the 3 days before, last on another desktop; others 0.1 s). VD-41's
     log on Nov 5 13:11: three updates (Teams Meeting Add-in, OneDrive, the agent)
     and 27 "Uninstalled" rows with no install (Microsoft 365 Apps among them)."""
     D6 = datetime(2026, 11, 6, tzinfo=timezone.utc)
     LOGON41 = D6 + timedelta(hours=8, minutes=12)
     OL_LAUNCH = D6 + timedelta(hours=9, minutes=15)
-    PREVIEW = [D6 + timedelta(hours=10, minutes=5), D6 + timedelta(hours=10, minutes=25)]
+    PREVIEW = [D6 + timedelta(hours=10, minutes=5), datetime(2026, 11, 8, 9, 58, tzinfo=timezone.utc)]
 
     def user_activity(self, *a, **k):
-        mk = lambda t, what, rt, cpu, status=None: UserSample(  # noqa: E731
-            t, "user2", "VD-41", OUTLOOK, activity=what, response_time=rt, client_time=rt * .8,
+        mk = lambda t, what, rt, cpu, status=None, dev="VD-41": UserSample(  # noqa: E731
+            t, "user2", dev, OUTLOOK, activity=what, response_time=rt, client_time=rt * .8,
             network_time=rt * .1, backend_time=rt * .1, status=status, cpu=cpu, memory=50.0, disk_queue=0.0,
-            virtual=True, client_device="TC-3")
+            virtual=True, client_device="TC-3" if dev == "VD-41" else "TC-2")
         rows = super().user_activity(*a, **k) + [
             mk(self.LOGON41 + timedelta(minutes=3), "Open Mail", 1.0, 91.75),
-            mk(self.OL_LAUNCH, "Launch", 40.6, 30.0, "Minor")] + [
-            mk(t, "Preview Mail", rt, 7.9, "Minor") for t, rt in zip(self.PREVIEW, (3.6, 5.2))] + [
-            mk(self.PREVIEW[0] + timedelta(hours=h), "Preview Mail", 0.2, 7.9) for h in (2, 4, 24, 26)]
+            mk(self.OL_LAUNCH, "Launch", 40.6, 30.0, "Minor"),
+            # one slow Preview Mail on each desktop (prod: VD-41 2 of 47 slow, VD-14 2 of 26);
+            # which one took 5.2 s and which 3.6 s is not known from prod yet
+            mk(self.PREVIEW[0], "Preview Mail", 5.2, 7.9, "Minor"),
+            mk(self.PREVIEW[1], "Preview Mail", 3.6, 7.9, "Minor", "VD-14")] + [
+            mk(self.PREVIEW[0] + timedelta(hours=h), "Preview Mail", 0.2, 7.9) for h in range(1, 11)] + [
+            mk(self.PREVIEW[1] + timedelta(minutes=m), "Preview Mail", 0.2, 7.9, None, "VD-14") for m in (10, 20)]
         return sorted(rows, key=lambda s: s.timestamp)
 
     def boots(self, start, end, username=None, **k):
@@ -407,15 +412,20 @@ def test_the_full_page_of_nov_8_tells_the_real_change_only():
     a = investigate(InvestigationRequest(start=c.START, end=c.END, username="user2"), c(), None, settings)["answer"]
     # the only slowdown new for this user, after a real change on its desktop
     # what the user felt, the usual, since when, and the changes by count and day (names in What changed)
-    assert a["title"] == ("Microsoft Outlook Preview Mail on VD-41: slow 2 of 6 times from Nov 6 (4.4 s, usually "
-                          "0.2 s); normal on each of the 3 days before. 3 changes logged there on Nov 5: possibly "
-                          "one of them")
+    # slow on both desktops (prod), each told with its own count and time; the changes on one
+    # desktop do not explain a slow run on the other, where nothing changed
+    assert a["title"] == ("Microsoft Outlook Preview Mail slow on 2 desktops from Nov 6: VD-41 1 of 11 times "
+                          "(5.2 s), VD-14 1 of 3 times (3.6 s); usually 0.2 s, normal on each of the 3 days "
+                          "before. 3 changes on VD-41 on Nov 5, none on VD-14: they do not explain it alone")
+    assert a["level"] == "unsure"
+    assert any(t.endswith("It was slow on VD-14 too, where no change was logged: the changes do not explain "
+                          "it alone.") for t in a["todo"])
     # every other slow action at the top, each with what is known of it
     assert a["reason"].endswith(
         "Also slow: Microsoft Outlook Launch 40.6 s on VD-41, others typical 33.5 s; Microsoft Teams Launch "
         "43.8 s on VD-14, 3 min after a start-up (on virtual desktops 93% are slow then, 62% later). Also, not "
-        "near the slow actions: 3 hangs (see Other things on VD-41 and VD-14).")
-    assert a["pcs_label"] == "VD-41 and VD-14" and "these PCs" not in str(a)
+        "near the slow actions: 3 hangs (see Other things on VD-14 and VD-41).")
+    assert a["pcs_label"] == "VD-14 and VD-41" and "these PCs" not in str(a)
     preview = next(n for n in a["normal"] if n[0].startswith("Microsoft Outlook Preview Mail"))
     assert any(x.endswith("most runs were not slow: being slow is new.") for x in preview)
     changed = next(x for x in preview if x.startswith("Changed on VD-41"))

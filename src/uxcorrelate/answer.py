@@ -258,26 +258,59 @@ def _felt_all(slow: list, worst) -> str:
     return f"{name} took {at}" if len(slow) == 1 else f"{len(slow)} slow actions, slowest {name} {at}"
 
 
+def _when(ch: list[dict]) -> str:
+    first, last = min(x["time"] for x in ch), max(x["time"] for x in ch)
+    return f"on {_day(first)}" if _day(first) == _day(last) else f"between {_day(first)} and {_day(last)}"
+
+
+def _several(c: dict) -> list[dict]:
+    """The PCs an action was slow on, when more than one (normal.py's "pcs")."""
+    pcs = c.get("pcs") or []
+    return pcs if len(pcs) > 1 else []
+
+
+def _changed_anywhere(c: dict) -> bool:
+    return bool(c["changes"]) or any(p["changes"] for p in _several(c))
+
+
 def _changes_phrase(c: dict) -> str:
-    """The changes before an action became slow, as the headline says them."""
+    """The changes before an action became slow, as the headline says them. Slow on several
+    PCs: the changes on each; one with no change means they do not explain it alone."""
+    pcs = _several(c)
+    if pcs:
+        told = [f"{plural(p['changed'] or len(p['changes']), 'change')} on {p['device']} {_when(p['changes'])}"
+                for p in pcs if p["changes"]]
+        quiet = [p["device"] for p in pcs if not p["changes"]]
+        return _join(told) + (f", none on {_join(quiet)}: they do not explain it alone" if quiet
+                              else ": possibly one of them")
     ch, k = c["changes"], c.get("changed") or len(c["changes"])
     if k == 1:
         x = ch[0]
         return f"Possibly: {x['name']} {x['change'] or 'changed'} on {_day(x['time'])}"
-    first, last = min(x["time"] for x in ch), max(x["time"] for x in ch)
-    when = f"on {_day(first)}" if _day(first) == _day(last) else f"between {_day(first)} and {_day(last)}"
-    return f"{plural(k, 'change')} logged there {when}: possibly one of them"
+    return f"{plural(k, 'change')} logged there {_when(ch)}: possibly one of them"
+
+
+def _counted(c: dict) -> str:
+    """ "slow 2 of 9 times", or on several PCs "VD-41 1 of 11 times (5.2 s), VD-14 1 of 3 times (3.6 s)" """
+    pcs = _several(c)
+    if pcs:
+        return ", ".join(f"{p['device']} {p['slow']} of {p['runs']} times ({p['took']} s)" for p in pcs)
+    k, runs = c.get("from_slow"), c.get("from_runs")
+    return f"slow {k} of {runs} times" if runs else "slow"
 
 
 def _since_phrase(c: dict) -> str:
     """ "Microsoft Outlook Preview Mail on VD-41: slow 2 of 9 times from Nov 6 (4.4 s, usually 0.2 s);
     normal on each of the 4 days before." What was counted, never "slow since" (runs in between
-    may have been fast)."""
-    k, runs = c.get("from_slow"), c.get("from_runs")
-    count = f"slow {k} of {runs} times" if runs else "slow"
+    may have been fast). Slow on several PCs: each with its own count and time."""
     before = (f"normal on each of the {c['days_used']} days before" if not c["slow_days"] else
               f"normal on {_day(c['normal_day'])}" if c.get("normal_day") else "normal before")
-    return (f"{c['name']} on {c['device']}: {count} from {_day(c['since'])} ({c['took']} s, usually "
+    pcs = _several(c)
+    if pcs:
+        kind = "desktops" if c.get("virtual") else "PCs"
+        return (f"{c['name']} slow on {len(pcs)} {kind} from {_day(c['since'])}: {_counted(c)}; usually "
+                f"{c['usual']} s, {before}.")
+    return (f"{c['name']} on {c['device']}: {_counted(c)} from {_day(c['since'])} ({c['took']} s, usually "
             f"{c['usual']} s); {before}.")
 
 
@@ -297,8 +330,8 @@ def _pick_headline(at_slow: list[dict], slow: list, normal: list[dict], after_st
     named = [{**c, "name": _name(c["application"], c["activity"])} for c in normal if c.get("took") is not None]
     by = lambda xs: max(xs, key=lambda c: (c["slow_actions"], c.get("worst") or 0)) if xs else None  # noqa: E731
     cands = {
-        "C": by([c for c in named if c["since"] and c["changes"]]),
-        "D": by([c for c in named if c["since"] and not c["changes"]]),
+        "C": by([c for c in named if c["since"] and _changed_anywhere(c)]),
+        "D": by([c for c in named if c["since"] and not _changed_anywhere(c)]),
         "F": by([c for c in named if c.get("enough") and c["days_used"] and c["slow_days"] == c["days_used"]]),
     }
     starts = [c for c in after_start if c["slower"]]
@@ -342,10 +375,11 @@ def _pick_headline(at_slow: list[dict], slow: list, normal: list[dict], after_st
                                         f"{_after_when(st)} a start-up (on {st['kind']} {st['after']['share']:.0%} "
                                         f"are slow then, {st['later']['share']:.0%} later)"))
             elif nm is not None:
-                counted = (f"slow {nm['from_slow']} of {nm['from_runs']} times" if nm.get("from_runs")
-                           else "slow") + f" from {_day(nm['since'])}" if nm["since"] else ""
-                fact = (f"usually {nm['usual']} s, {counted}, after "
-                        f"{plural(nm.get('changed') or len(nm['changes']), 'change')} there" if nm["since"] and nm["changes"]
+                counted = f"{_counted(nm)} from {_day(nm['since'])}" if nm["since"] else ""
+                fact = (f"usually {nm['usual']} s, {counted}, " + (
+                        _changes_phrase(nm) if _several(nm) else
+                        f"after {plural(nm.get('changed') or len(nm['changes']), 'change')} there")
+                        if nm["since"] and _changed_anywhere(nm)
                         else f"usually {nm['usual']} s, {counted}, no change to check logged"
                         if nm["since"] else
                         "slow on most runs every day it was used, not new"
@@ -526,14 +560,17 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
             "more than on other days")
         reason = f"{nothing} See Other users."
     elif cls in ("C", "D"):
-        level = "possible" if cls == "C" else "unsure"
+        # slow on a PC with no change too: the changes do not explain it alone
+        level = "possible" if cls == "C" and not any(not p["changes"] for p in _several(c)) else "unsure"
         title = _since_phrase(c) + " "
         title += _changes_phrase(c) if cls == "C" else (
-            "No change to check was logged there before it"
+            ("No change to check was logged on any of them before it" if _several(c)
+             else "No change to check was logged there before it")
             + (" (on a virtual desktop the log can run late)" if c["virtual"] else ""))
         reason = f"{nothing} {_usual_from(c)}"
         if cls == "C":
-            reason += f" What changed on {c['device']} is listed under What changed."
+            on = _join([p["device"] for p in _several(c)]) if _several(c) else c["device"]
+            reason += f" What changed on {on} is listed under What changed."
         reason += usual_line
     elif cls == "E":
         level = "possible"

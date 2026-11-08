@@ -56,6 +56,12 @@ Details:
   Nov 6"): runs in between may have been fast. Then what was normal
   before: every day ("normal on each of the 3 days before") or the
   last normal day. The PC is named once; later it is "there".
+- **C, D on several PCs:** each PC it was slow on with its own count
+  and time ("slow on 2 desktops from Nov 6: VD-41 1 of 11 times
+  (5.2 s), VD-14 1 of 3 times (3.6 s)"). Changes are read on each, up
+  to when it first became slow. If one of them had no change: "3
+  changes on VD-41 on Nov 5, none on VD-14: they do not explain it
+  alone", with no "possibly" (level unsure).
 - **C, D, F subject:** the slow app and activity with the most slow
   actions, then the slowest. That can beat the slowest action overall.
 - **Thin data is said:** the reason gives "The usual time is from N

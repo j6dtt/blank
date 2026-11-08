@@ -95,7 +95,7 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
             if d not in bad:
                 break
             run.insert(0, d)
-        since, changes, todo, changed, normal_day, from_runs = None, [], [], 0, None, []
+        since, changes, todo, changed, normal_day, from_runs, pcs = None, [], [], 0, None, [], []
         if enough:
             line = (f"Aternity marked most runs slow on {len(bad)} of the {len(days)} days {who} used it "
                     f"in the {back}")
@@ -118,17 +118,38 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
                 # every run of it on this PC from the first slow one: "slow 2 of 9 times", not "slow since"
                 from_runs = [s for s in hist + [x for x in samples or slow if (x.application, x.activity) == (app, act)]
                              if s.device == dev and s.timestamp >= first and s.response_time is not None]
-                if any(s.virtual for s in mine) and last.device and last.device != dev:
+                # each PC it was slow on, in order: its own count, time and changes (a user on
+                # pooled desktops can be slow on two; one with no change weakens the others')
+                runs_all = hist + [x for x in samples or slow if (x.application, x.activity) == (app, act)]
+                for d in dict.fromkeys(s.device for s in sorted(mine, key=lambda s: s.timestamp)):
+                    first_d = min(s.timestamp for s in runs_all if s.device == d and s.timestamp >= first
+                                  and s.response_time is not None and is_slow(s))
+                    runs_d = [s for s in runs_all if s.device == d and s.timestamp >= first_d
+                              and s.response_time is not None]
+                    # changes up to when it first became slow (any PC): later ones cannot explain that
+                    ch = changes_between(aternity, d, normal, first)
+                    pcs.append({"device": d, "runs": len(runs_d), "slow": sum(1 for s in runs_d if is_slow(s)),
+                                "took": _med(s.response_time for s in mine if s.device == d),
+                                "changes": ch["changes"], "changed": ch.get("count", len(ch["changes"])),
+                                "text": ch["text"]})
+                devs = [p["device"] for p in pcs]
+                if any(s.virtual for s in mine) and last.device and last.device not in devs:
                     # pooled virtual desktops: the normal run was on another desktop
                     text.append(f"The last normal {name} was on {last.device}, another virtual desktop: "
-                                f"what changed is read on {dev} only.")
-                ch = changes_between(aternity, dev, normal, first)
-                changes, changed = ch["changes"], ch.get("count", len(ch["changes"]))
-                if ch["text"]:
-                    text.append(ch["text"])
-                if changes:
-                    names = ", ".join(dict.fromkeys(c["name"] for c in changes if c["name"]))
-                    todo.append(f"On {dev}: check what changed before {name} became slow ({names}).")
+                                f"what changed is read on {' and '.join(devs)} only.")
+                if len(pcs) > 1:
+                    text.append(f"Slow on {len(pcs)} PCs: " + ", ".join(
+                        f"{p['device']} {p['slow']} of {p['runs']} times ({p['took']} s)" for p in pcs) + ".")
+                text += [p["text"] for p in pcs if p["text"]]
+                own = next(p for p in pcs if p["device"] == dev)
+                changes, changed = own["changes"], own["changed"]
+                for p in pcs:
+                    if p["changes"]:
+                        names = ", ".join(dict.fromkeys(c["name"] for c in p["changes"] if c["name"]))
+                        quiet = [q["device"] for q in pcs if not q["changes"]]
+                        todo.append(f"On {p['device']}: check what changed before {name} became slow ({names})."
+                                    + (f" It was slow on {' and '.join(quiet)} too, where no change was logged: "
+                                       "the changes do not explain it alone." if quiet else ""))
 
         pc = []
         for key, label, unit in PC:
@@ -136,7 +157,8 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
             if top is not None:
                 u = _med(getattr(s, key) for s in hist) if enough else None
                 pc.append(f"{label} up to {round(top, 1)}{unit}" + (f" (usually {u}{unit})" if u is not None else ""))
-        text.append(f"{dev} at {'that slow action' if n == 1 else 'those slow actions'}: {', '.join(pc)}." if pc
+        at = " and ".join(dict.fromkeys(s.device for s in sorted(mine, key=lambda s: s.timestamp)))
+        text.append(f"{at} at {'that slow action' if n == 1 else 'those slow actions'}: {', '.join(pc)}." if pc
                     else "Aternity gave no CPU, memory or disk queue for those actions.")
         out.append({"application": app, "activity": act, "device": dev, "slow_actions": n, "took": took,
                     "usual": usual, "others_typical": typ, "others": len(users), "slow_days": len(bad),
@@ -144,6 +166,7 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
                     "changes": changes, "changed": changed, "enough": enough, "runs": len(hist), "back": back,
                     "worst": round(worst, 1) if worst is not None else None,
                     "virtual": any(s.virtual for s in mine), "status": _status(mine),
+                    "pcs": [{k: v for k, v in p.items() if k != "text"} for p in pcs],
                     "from_runs": len(from_runs), "from_slow": sum(1 for s in from_runs if is_slow(s)),
                     "normal_day": normal_day.isoformat().replace("+00:00", "Z") if normal_day else None,
                     "text": text, "todo": todo})
