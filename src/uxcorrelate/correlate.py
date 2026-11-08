@@ -405,6 +405,13 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
         g["readings"] = readings.get((g["object"], g["what"]))
         if g["source"] == START_UP:
             g["why"] = _startup_why(g, started_up, logons)
+    # a start-up with nothing longer than normal did not go wrong: it is no problem
+    # anywhere (list, timeline, answer); the answer only says it was near
+    calm = [{"object": g["object"], "what": g["what"]} for g in groups
+            if g["source"] == START_UP and g["why"]["weak"]]
+    out = {(c["object"], c["what"]) for c in calm}
+    groups = [g for g in groups if not (g["source"] == START_UP and (g["object"], g["what"]) in out)]
+    problems = [p for p in problems if not (p["source"] == START_UP and (p["object"], p["what"]) in out)]
     _together(groups, window)
     changed = explain(aternity, groups, events, window, req.start, req.end)
     for g in groups:
@@ -438,7 +445,7 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
                       any(s.virtual for s in slow))
     warnings.extend(w for w in getattr(aternity, "warnings", []) if w not in warnings)
     answer = build_answer(groups, samples, slow, req.username or req.device, impact, netim is not None,
-                          mapped, user_ip, logons, minutes, _time_split(slow), normal, checked, changed)
+                          mapped, user_ip, logons, minutes, _time_split(slow), normal, checked, changed, calm)
     log.info("Done in %.0f s: %s", time.monotonic() - started, answer["title"])
     return {
         "request": {

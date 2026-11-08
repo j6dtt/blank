@@ -77,8 +77,9 @@ unset `<REQUIRED>` base URLs.
   "What the user felt" marks a virtual desktop and the device the user
   sat at (`CLIENT_DEVICE_NAME`); "checked" says the network between them
   is not checked (Aternity gives no delay for it). A start-up with no slow part that is normal for
-  its PC is "weak": never an issue or the headline, only a sentence in
-  the reason (it was near the slow action, nothing in it was long). The answer's "checked" list
+  its PC is "weak": not a problem anywhere (`correlate.investigate` drops
+  it from the problems and the timeline), only a sentence in the reason
+  (`calm`: it was near the slow action, nothing in it was long). The answer's "checked" list
   says what was ruled out, with counts.
 - `impact.py`: "Other users of these apps" — other users of the same apps in
   the user's slow intervals, grouped by the NetIM gateway (or /24) they sit

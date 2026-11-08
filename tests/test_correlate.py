@@ -404,8 +404,9 @@ def test_a_normal_start_up_is_not_the_cause_nor_an_issue():
     assert "PC1 was starting up near it: Logon 105.0 s" in a["reason"]
     assert "No part of that start-up took longer than normal." in a["reason"]
     assert not any("starting up" in r["issue"] for r in a["rollup"])
-    assert result["problems"][0]["why"]["text"][0] == (
-        "Logon (105.0 s) was normal for PC1: 9 in 10 of its 8 earlier start-ups in the last 30 days took up to 108.1 s.")
+    # not a problem anywhere: not in the list, not on the timeline
+    assert not any("starting up" in g["what"] for g in result["problems"])
+    assert not any("starting up" in m[2] for m in result["timeline"]["marks"])
     assert not any("Slow start-ups tab" in t for t in a["todo"])
     assert a["todo"][-1].startswith("Nothing measured explains it")
 

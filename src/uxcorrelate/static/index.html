@@ -317,7 +317,7 @@ async function waitFor(id, started) {
 
 // "Oct 27, 08:45 AM", and a range drops the repeated day: "Oct 27, 08:45 AM–09:10 AM"
 const clock = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-const span = (a, b) => !b || a === b ? hm(a)
+const span = (a, b) => !b || hm(a) === hm(b) ? hm(a)
   : new Date(a).toDateString() === new Date(b).toDateString() ? `${hm(a)}–${clock(b)}` : `${hm(a)} – ${hm(b)}`;
 const hm = (iso) => iso ? new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
 const LEVEL_COLOR = { likely: "var(--bad)", possible: "var(--warn)", issues: "var(--warn)", unsure: "var(--muted)", none: "var(--ok)" };

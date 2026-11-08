@@ -197,12 +197,12 @@ def _background_line(rows: list[dict]) -> str:
 def build_answer(problems: list[dict], samples: list, slow: list, who: str, impact: dict | None,
                  netim_on: bool, mapped: list, user_ip: str | None, logons: dict | None,
                  minutes: int, split: dict | None, normal: list | None = None,
-                 checked: dict | None = None, changed: dict | None = None) -> dict:
+                 checked: dict | None = None, changed: dict | None = None,
+                 calm: list[dict] | None = None) -> dict:
     n = len(slow)
-    # a start-up with nothing longer than normal is near a slow action by timing only:
-    # it did not go wrong, so it is said in the reason, never an issue or the headline
-    calm = [g for g in problems if g["slow_actions"] and (g.get("why") or {}).get("weak")]
-    at_slow = [g for g in problems if g["slow_actions"] and g not in calm]
+    # calm: start-ups near a slow action with nothing longer than normal (not problems,
+    # correlate.py leaves them out); the reason says they were near
+    at_slow = [g for g in problems if g["slow_actions"]]
     found, todo = [], []
     for g in at_slow:
         why = g.get("why") or {}
@@ -283,7 +283,7 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
                   "(see Other users)." if as_usual else "")
     near = "the slow action" if n == 1 else f"any of the {n} slow actions"
     nothing = f"No problem was recorded within {minutes} min of {near}."
-    for g in calm:
+    for g in calm or []:
         nothing += (f" {g['object']} was starting up near it: {g['what'].split(': ', 1)[-1]}. "
                     "No part of that start-up took longer than normal.")
     # the details stay in their own section; the reason says where to look
