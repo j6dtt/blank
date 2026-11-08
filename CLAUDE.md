@@ -14,7 +14,14 @@ uxcorrelate -c config.yaml verify       # check config names against live system
 uxcorrelate -c config.yaml <command>    # -c goes BEFORE the sub-command
 docker compose up -d --build            # web UI on :8080 (needs config.yaml)
 scripts/make-bundle.sh                  # tests, then bundle for the live host
+scripts/snapshot.sh DIR                 # every test investigation's report + page data
 ```
+
+Before and after any change to what an investigation says: run
+`scripts/snapshot.sh` into two folders and `diff -r` them; every changed
+line must be one you meant (`tests/conftest.py` does the saving).
+`tests/test_real_cases.py` rebuilds cases seen on prod (made-up names):
+render one on dev and look at the whole page before prod.
 
 Without installing: `PYTHONPATH=src python3 -m uxcorrelate.cli ...`.
 The dev host has no Riverbed and no pytest: tests run in the runtime
@@ -124,8 +131,10 @@ unset `<REQUIRED>` base URLs.
   user's PCs, a `verdict` by fixed rules (`cause._trend`: last 7 days against
   the 6 before, working days, `TREND_RATIO`, `TREND_MIN_PCS`; hangs have no
   trend, app usage is kept about 8 days) and other PCs per day as bars;
-  each detail is said once, in its own section. Nothing at the slow actions
-  and other users slow as usual = "Nothing unusual found". The question is
+  each detail is said once, in its own section. Nothing at the slow actions:
+  the title still names what the user felt, the slowest action ("Microsoft
+  Outlook Launch took 61.8 s (Major): no cause found"); other users slow
+  as usual is said in the reason. The question is
   what went wrong for the user, not only what was slow: with no slow action
   the title counts hangs, app crashes and system events (`level` "issues",
   background crashes in the reason). Each problem has an `issue` kind
@@ -154,8 +163,11 @@ unset `<REQUIRED>` base URLs.
   inventory). "Process data" lists every source with `PROCESS_COLUMN`;
   value ranges include top_processes' CPU and memory. "fleet: …" (`_fleet`):
   PCs and users, how far back each source goes, the widest failures per day,
-  how software arrives and whether the log's time is real, and which columns
-  could place a virtual desktop user. What Aternity does not give
+  how software arrives and whether the log's time is real, whether actions
+  are slow right after a start-up of their PC (`_after_start_up`: share of
+  slow actions 0-10 min after one, virtual and physical; for the activities
+  most often slow there, runs right after against later ones), and which
+  columns could place a virtual desktop user. What Aternity does not give
   us is listed for its admin in `docs/aternity-admin-questions.md`.
   A missing optional source (`OPTIONAL`) is a note saying what
   is skipped, not a FAIL; a wrong name gets paste-ready YAML only when the

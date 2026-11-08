@@ -411,7 +411,7 @@ def test_verify_reads_the_whole_fleet():
     settings.aternity.base_url = "https://aternity.test/odata"
     client = AternityClient(settings.aternity, transport=httpx.MockTransport(handler))
     schema = parse_odata_metadata((Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
-    size, failures, per_day, software, hangs, sit = _fleet(settings, client, schema)
+    size, failures, per_day, software, hangs, after, sit = _fleet(settings, client, schema)
     assert size.rows[0] == "PCs in the inventory: 3"
     assert size.rows[1] == "last day's activity (1 rows read): 1 PCs, 1 users"
     assert "DEVICE_HEALTH_RAW has rows: 3d yes, 7d yes, 10d yes, 13d yes, 14d yes, 30d yes, 60d yes, 90d yes" in size.rows
@@ -429,3 +429,58 @@ def test_verify_reads_the_whole_fleet():
     assert any(r.startswith("hang, Mail: ") for r in hangs.rows)
     assert any(r.startswith("Tagger 26.0, Mail: reached (") for r in hangs.rows)
     assert any(r == "CLIENT_DEVICE_NAME: 1 filled, 1 different" for r in sit.rows)
+
+
+def test_verify_compares_actions_right_after_a_start_up_with_later_ones():
+    """Pooled desktops: Mail Launch 2 min after a logon takes 60 s (Major), later 5 s.
+    A physical PC's launch right after its start-up takes 6 s."""
+    import re
+    from datetime import datetime, timedelta, timezone
+    from pathlib import Path
+    from uxcorrelate.verify import _after_start_up
+
+    now = datetime(2026, 11, 9, 0, 0, tzinfo=timezone.utc)
+    at = lambda h, m=0: f"2026-11-08T{h:02}:{m:02}:00Z"  # noqa: E731
+    boots = [{"TIMEFRAME": at(6, 18), "DEVICE_NAME": d} for d in ("VD-1", "VD-2", "PC-9")]
+
+    def run(dev, t, rt, status, virtual, act="Launch"):
+        return {"TIMEFRAME": t, "DEVICE_NAME": dev, "APPLICATION_NAME": "Mail", "ACTIVITY_NAME": act,
+                "ACTIVITY_RESPONSE_TIME": rt, "SLA_STATUS": status, "VIRTUALIZATION": virtual}
+    runs = [run("VD-1", at(6, 20), 60.0, "Major", "true"), run("VD-2", at(6, 25), 58.0, "Major", "true"),
+            run("VD-1", at(11), 5.0, "Normal", "true"), run("VD-2", at(12), 40.0, "Minor", "true"),
+            run("PC-9", at(6, 20), 6.0, "Normal", "false"), run("PC-9", at(9), 5.0, "Normal", "false"),
+            run("VD-1", at(13), 9.0, "Major", "true", act="Send")]
+
+    asked = []
+
+    def handler(request):
+        flt = request.url.params.get("$filter", "")
+        start, end = re.findall(r"ge (\S+) and \S+ lt (\S+)", flt)[0]
+        rows = boots if request.url.path.endswith("/WINDOWS_MACHINE_BOOTS") else runs
+        rows = [r for r in rows if start <= r["TIMEFRAME"] < end]
+        asked.append("slow" if "SLA_STATUS eq" in flt else "other")
+        if "SLA_STATUS eq" in flt:
+            return httpx.Response(400, json={"error": {"message": "no"}})  # read all, filtered here
+        if "ACTIVITY_NAME eq" in flt:
+            rows = [r for r in rows if r["ACTIVITY_NAME"] == "Launch"]
+        return httpx.Response(200, json={"value": rows})
+
+    settings = Settings()
+    settings.aternity.base_url = "https://aternity.test/odata"
+    settings.thresholds.slow_status = ["Minor", "Major"]
+    client = AternityClient(settings.aternity, transport=httpx.MockTransport(handler))
+    schema = parse_odata_metadata((Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
+    rows = _after_start_up(settings, client, schema, now)[0].rows
+    refused = [r for r in rows if "filter refused" in r]
+    assert refused == ["slow actions: filter refused (no), reading all rows"]
+    assert asked.count("slow") == 1  # refused once, then every piece once, unfiltered
+    assert [r for r in rows if r not in refused][1:] == [
+        "start-up rows: 3 on 3 PCs",
+        "slow actions (Aternity marked it Minor or Major): 4 on 2 PCs; right after a start-up:",
+        "  virtual: 2 of 4 (50%)",
+        "most often slow right after a start-up: Mail Launch 2",
+        "Mail Launch, physical, right after: 1 runs, median 6.0 s, 0 of 1 (0%) slow",
+        "Mail Launch, physical, later: 1 runs, median 5.0 s, 0 of 1 (0%) slow",
+        "Mail Launch, virtual, right after: 2 runs, median 59.0 s, 2 of 2 (100%) slow",
+        "Mail Launch, virtual, later: 2 runs, median 22.5 s, 1 of 2 (50%) slow",
+    ]

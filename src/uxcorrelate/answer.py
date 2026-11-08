@@ -282,6 +282,14 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
     usual_line = (f" Other {', '.join(impact['applications'])} users had slow actions about as often as normal at this time "
                   "(see Other users)." if as_usual else "")
     near = "the slow action" if n == 1 else f"any of the {n} slow actions"
+    worst = max((s for s in slow if s.response_time is not None), key=lambda s: s.response_time, default=None)
+    # with no cause found, the headline still says what the user felt: the slowest action
+    felt_title = None
+    if worst is not None:
+        name = f"{worst.application} {worst.activity}" if worst.activity else worst.application
+        took = f"{name} {worst.response_time:.1f} s" + (f" ({worst.status})" if worst.status else "")
+        felt_title = (f"{name} took {worst.response_time:.1f} s" + (f" ({worst.status})" if worst.status else "")
+                      if n == 1 else f"{n} slow actions, slowest {took}") + ": no cause found"
     nothing = f"No problem was recorded within {minutes} min of {near}."
     for g in calm or []:
         nothing += (f" {g['object']} was starting up near it: {g['what'].split(': ', 1)[-1]}. "
@@ -308,10 +316,10 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         reason = (f"{nothing} Compared with normal shows it slow since {_day(lead['since'])} "
                   f"and what changed on {lead['device']} just before.{usual_line}")
     elif top is None and as_usual:
-        level, title = "unsure", "Nothing unusual found"
+        level, title = "unsure", felt_title or "Nothing unusual found"
         reason = nothing + usual_line
     elif top is None:
-        level, title = "unsure", "Cause not found"
+        level, title = "unsure", felt_title or "Cause not found"
         reason = nothing
         if split:
             side = max(split, key=split.get)
@@ -323,13 +331,12 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
                   f"It happened within {minutes} min of {top['slow_actions']} of the {n} slow actions.")
         reason += usual_line
     if n and felt_issues + ([also] if also else []):
-        reason += f" Also, not near the slow actions: {_join(felt_issues + ([also] if also else []))}."
+        reason += f" Also, not near {'the slow action' if n == 1 else 'the slow actions'}: {_join(felt_issues + ([also] if also else []))}."
     if not todo and n:
         todo.append(f"Nothing measured explains it: ask {who} what they were doing at those times "
                     "(see \"What was checked\" for what is ruled out).")
 
     todo += [s for s in later if s not in todo]
-    worst = max((s for s in slow if s.response_time is not None), key=lambda s: s.response_time, default=None)
     per_app: dict[str, int] = {}
     for s in slow:
         per_app[s.application] = per_app.get(s.application, 0) + 1

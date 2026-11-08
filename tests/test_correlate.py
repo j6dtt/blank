@@ -138,7 +138,7 @@ def test_nothing_near_the_slow_actions_says_so():
     # one slow action; the CPU problem came 35 minutes later
     result = amy(erp(lambda i: i == 3), [DeviceHealthSample(T0 + timedelta(minutes=50), "PC1", cpu=99.0)])
     a = result["answer"]
-    assert a["level"] == "unsure" and a["title"] == "Cause not found"
+    assert a["level"] == "unsure" and a["title"] == "ERP took 6.0 s: no cause found"
     assert "Aternity measured most of the slow time on the PC" in a["reason"]
     assert result["problems"][0]["slow_actions"] == 0
 
@@ -493,7 +493,7 @@ def test_one_earlier_run_is_too_few_to_say_what_is_normal():
         "Other users within 5 min: typical 2.1 s (3 users).",
         "NB-12 at those slow actions: CPU up to 35.0 %.",
     ]]
-    assert a["title"] == "Cause not found"  # no headline built on one earlier run
+    assert a["title"] == "Billing Open Invoice took 9.0 s: no cause found"  # none built on one earlier run
     assert "highest CPU 35.0 % (limit 85.0 %)" in a["checked"][0]
 
 
@@ -522,7 +522,7 @@ def test_two_pcs_are_told_apart_and_usual_slowness_is_not_blamed():
     assert [(p["device"], p["actions"], p["slow"], p["virtual"]) for p in a["felt"]["pcs"]] == [
         ("PC1", 24, 1, False), ("PC2", 1, 0, False)]
     assert a["felt"]["slowest"]["device"] == "PC1"
-    assert a["title"] == "Nothing unusual found"
+    assert a["title"] == "ERP took 6.0 s: no cause found"
     assert a["reason"].endswith("Other ERP users had slow actions about as often as normal at this time (see Other users).")
 
 

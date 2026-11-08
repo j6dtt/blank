@@ -14,6 +14,7 @@ screen, and every FAIL says what to change there.
 from __future__ import annotations
 
 import difflib
+from bisect import bisect_right
 import textwrap
 import xml.etree.ElementTree as ET
 from collections import Counter
@@ -25,6 +26,7 @@ from typing import Any
 from .aternity import AternityClient, is_virtual, odata_quote, odata_time
 from .config import (DISK_FREE_COLUMNS, PROCESS_COLUMN, SOFTWARE_REMOVED, SOFTWARE_UPDATE_GAP_MIN, TIME_COLUMNS,
                      VDI_COLUMNS, Settings)
+from .correlate import slow_rule
 from .http import ApiError
 from .models import parse_time, to_float
 from .netim import NetimClient, _items
@@ -681,6 +683,7 @@ def _fleet(settings: Settings, client: AternityClient, schema: dict[str, set[str
     return (_fleet_size(settings, client, schema, now) + _widest_failures(settings, client, schema, now)
             + _failures_per_day(settings, client, schema, now) + _rollouts(settings, client, schema, now, log, virtual)
             + _hangs_and_updates(settings, client, schema, now, log)
+            + _after_start_up(settings, client, schema, now)
             + _where_users_sit(settings, client, schema, now))
 
 
@@ -960,6 +963,118 @@ def _hangs_and_updates(settings, client, schema, now, log) -> list[Check]:
                 rest = _rate(hangs, others, lambda _: middle, start, now)
                 rows.append(f"{name} {version}, {app}: reached {got or 'n/a'}, not reached {rest or 'n/a'}")
     return [Check("Aternity", "fleet: hangs against updates", None, "Did hangs change on the PCs an update reached?",
+                  rows=rows + _cut_short(client, mark))]
+
+
+AFTER_START_DAYS = 4  # actions and start-ups read, half a day at a time
+AFTER_START_MIN = 10  # "right after a start-up": up to this many minutes after its time
+
+
+def _after_start_up(settings, client, schema, now) -> list[Check]:
+    """Are actions slow because they come right after the PC started up (a launch
+    just after logon on a fresh pooled desktop)? Of all slow actions, how many came
+    up to AFTER_START_MIN after a start-up of the same PC, virtual and physical; then,
+    for the activities most often slow there, all their runs right after a start-up
+    against later ones: runs, median time, share slow."""
+    cfg, th = settings.aternity, settings.thresholds
+    act, a = cfg.entities.get("activities"), cfg.fields.get("activities", {})
+    boot, b = cfg.entities.get("boots"), cfg.fields.get("boots", {})
+    if act not in schema or boot not in schema or not a.get("device") or not b.get("device"):
+        return []
+    rows, mark = [], len(client.warnings)
+    pieces = [(now - timedelta(hours=12 * (i + 1)), now - timedelta(hours=12 * i))
+              for i in reversed(range(AFTER_START_DAYS * 2))]
+    rows.append(f"Read: {pieces[0][0].strftime('%b %d %H:%M')} to {now.strftime('%b %d %H:%M')} UTC; "
+                f"\"right after\" = 0 to {AFTER_START_MIN} min after a start-up row of the same PC")
+
+    ent_key = {act: "activities", boot: "boots"}
+
+    def read(ent, flt, select, what, keep=None):
+        """Every piece; a filter Aternity refuses is said once, then every piece is
+        read unfiltered and `keep` picks the rows."""
+        out = []
+        for start, end in pieces:
+            when = _between(cfg.fields[ent_key[ent]]["timestamp"], start, end)
+            try:
+                got = client.query(ent, f"{when} and ({flt})" if flt else when, select=select, top=ROWS_PER_READ)
+            except ApiError as exc:
+                if not (flt and keep):
+                    rows.append(f"{what}, {start.strftime('%b %d %H:%M')}: error {exc.short()}")
+                    continue
+                rows.append(f"{what}: filter refused ({exc.short()}), reading all rows")
+                flt = ""
+                try:
+                    got = client.query(ent, when, select=select, top=ROWS_PER_READ)
+                except ApiError as again:
+                    rows.append(f"{what}, {start.strftime('%b %d %H:%M')}: error {again.short()}")
+                    continue
+            if len(got) >= ROWS_PER_READ:
+                rows.append(f"PARTIAL: {what}, {start.strftime('%b %d %H:%M')}: stopped at {ROWS_PER_READ} rows")
+            out += [r for r in got if keep(r)] if keep and not flt else got
+        return out
+
+    starts: dict = {}
+    for r in read(boot, "", [b["timestamp"], b["device"]], "start-ups"):
+        t = parse_time(r.get(b["timestamp"]))
+        if t is not None:
+            starts.setdefault(r.get(b["device"]), []).append(t)
+    for times in starts.values():
+        times.sort()
+    rows.append(f"start-up rows: {sum(map(len, starts.values())):,} on {len(starts):,} PCs")
+
+    def right_after(dev, t) -> bool:
+        times = starts.get(dev, ())
+        i = bisect_right(times, t)
+        return i > 0 and t - times[i - 1] <= timedelta(minutes=AFTER_START_MIN)
+
+    vcol = VDI_COLUMNS["activities"]["virtualization"]
+    vcol = vcol if vcol in schema[act] else None
+    select = [c for c in (a.get("timestamp"), a.get("device"), a.get("application"), a.get("activity"),
+                          a.get("response_time"), a.get("status"), vcol) if c]
+    if th.slow_status and a.get("status"):
+        slow_filter = " or ".join(f"{a['status']} eq {odata_quote(s)}" for s in th.slow_status)
+        slow = lambda r: r.get(a["status"]) in th.slow_status  # noqa: E731
+    else:
+        slow_filter = f"{a['response_time']} gt {th.response_time_s:g}"
+        slow = lambda r: (to_float(r.get(a["response_time"])) or 0) > th.response_time_s  # noqa: E731
+    kind = lambda r: ("virtual" if is_virtual(r.get(vcol)) else "physical") if vcol else "all"  # noqa: E731
+
+    def runs(items):
+        """(time, row) -> per kind: [right after, later] of (runs, slow, times)."""
+        out: dict = {}
+        for t, r in items:
+            side = out.setdefault(kind(r), [[0, 0, []], [0, 0, []]])[0 if right_after(r.get(a["device"]), t) else 1]
+            side[0] += 1
+            side[1] += slow(r)
+            rt = to_float(r.get(a["response_time"]))
+            if rt is not None:
+                side[2].append(rt)
+        return out
+
+    timed = lambda got: [(t, r) for r in got if (t := parse_time(r.get(a["timestamp"]))) is not None]  # noqa: E731
+    slow_rows = timed(read(act, slow_filter, select, "slow actions", slow))
+    pct = lambda k, n: f"{k:,} of {n:,} ({k * 100 // n}%)" if n else "0 of 0"  # noqa: E731
+    rows.append(f"slow actions ({slow_rule(settings)}): {len(slow_rows):,} on "
+                f"{len({r.get(a['device']) for _, r in slow_rows}):,} PCs; right after a start-up:")
+    for k, (after, later) in sorted(runs(slow_rows).items()):
+        rows.append(f"  {k}: {pct(after[0], after[0] + later[0])}")
+    name = lambda r: (r.get(a["application"]), r.get(a.get("activity", "")))  # noqa: E731
+    top = Counter(name(r) for t, r in slow_rows if right_after(r.get(a["device"]), t)).most_common(3)
+    if top:
+        rows.append("most often slow right after a start-up: "
+                    + ", ".join(f"{app} {what or ''} {n:,}".replace("  ", " ") for (app, what), n in top))
+    # each of those activities, every run (slow or not): right after a start-up against later
+    for (app, what), _ in top:
+        flt = f"{a['application']} eq {odata_quote(app)}" + (
+            f" and {a['activity']} eq {odata_quote(what)}" if what and a.get("activity") else "")
+        label = f"{app} {what or ''}".strip()
+        same = lambda r, app=app, what=what: name(r) == (app, what)  # noqa: E731
+        for k, (after, later) in sorted(runs(timed(read(act, flt, select, label, same))).items()):
+            for side, (n, s, times) in (("right after", after), ("later", later)):
+                rows.append(f"{label}, {k}, {side}: {n:,} runs, median "
+                            + (f"{median(times):.1f} s" if times else "n/a") + f", {pct(s, n)} slow")
+    return [Check("Aternity", "fleet: actions right after a start-up", None,
+                  "Are actions slow because the PC has just started up (e.g. a launch right after logon)?",
                   rows=rows + _cut_short(client, mark))]
 
 

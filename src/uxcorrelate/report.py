@@ -47,7 +47,8 @@ def _answer_lines(a: dict, who: str) -> list[str]:
     lines += ["", "What the user felt:"]
     if f["slow_actions"]:
         apps = ", ".join(f"{app} {n}" for app, n in f["apps"])
-        lines.append(f"  {f['slow_actions']} of their {f['actions']} actions were slow ({apps}),")
+        lines.append(f"  {f['slow_actions']} of their {f['actions']} actions "
+                     f"{'was' if f['slow_actions'] == 1 else 'were'} slow ({apps}),")
         lines.append(f"  at {_t(f['first'])}" if f["first"] == f["last"] else
                      f"  between {_t(f['first'])} and {_t(f['last'])}")
         pcs = f.get("pcs") or []

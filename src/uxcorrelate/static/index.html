@@ -334,7 +334,7 @@ function render(d) {
 
   const f = a.felt;
   let felt = f.slow_actions
-    ? `<p><b>${f.slow_actions}</b> of their ${f.actions} actions were slow`
+    ? `<p><b>${f.slow_actions}</b> of their ${f.actions} actions ${f.slow_actions === 1 ? "was" : "were"} slow`
       + ` (${f.apps.map(([app, n]) => `${esc(app)} ${n}`).join(", ")}), ${f.first === f.last ? "at" : "between"} ${span(f.first, f.last)}.</p>`
     : `<p>No slow actions (${f.actions} measured).</p>`;
   const pcs = f.pcs || [];

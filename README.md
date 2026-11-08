@@ -59,6 +59,8 @@ Other users of these apps:
    of one application counts only for that application's slow actions.
    The answer names the problem at the most slow actions: "likely" when
    that is more than half of them, "possibly" when fewer. No scores.
+   With nothing at the slow actions it names the slowest one: "Microsoft
+   Outlook Launch took 61.8 s (Major): no cause found".
 6. **What went wrong (the main point).** Slow actions are one kind of
    issue, next to hangs, app crashes and health events: with no slow
    action the answer still counts what happened ("7 hangs, 2 app crashes,
