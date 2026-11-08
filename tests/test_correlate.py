@@ -185,7 +185,7 @@ def test_who_else_says_when_only_this_user_is_slow():
 
 def test_the_users_slowest_start_up_is_in_what_they_felt():
     f = run_demo()[0]["answer"]["felt"]
-    assert f["logon"]["username"] == "jdoe" and f["logon"]["values"]["Logon"]["duration"] == 94.0
+    assert f["logons"][0]["username"] == "jdoe" and f["logons"][0]["values"]["Logon"]["duration"] == 94.0
     assert f["logon_unit"] == "s"
 
 
@@ -371,6 +371,15 @@ def test_events_without_an_app_count_and_get_a_why():
     assert why["others"]["pcs"] == 2 and [p["device"] for p in why["others"]["list"]] == ["PC2", "PC3"]
     assert why["others"]["what"].endswith(", error c0000005")
     assert "Aternity's details: Page Faults: 900 Percent Remaining Memory: 3.1%" in memory["why"]["text"]
+
+
+def test_a_background_crash_away_from_the_slow_actions_keeps_its_step_below_the_answer():
+    # slow only at 09:00: the background crash at 09:40 is not why amy was slow
+    a = amy(erp(lambda i: i == 0), source=Background)["answer"]
+    crash = next(f for f in a["elsewhere"] if f["text"].startswith("Background Process Crash"))
+    assert any(w.startswith("Next step: 2 other PCs fail the same way: treat it as a agent.exe problem")
+               for w in crash["why"])
+    assert not any("treat it as a" in t for t in a["todo"])
 
 
 def test_aternity_n_a_and_unknown_modules_are_no_value():

@@ -15,8 +15,7 @@ from collections import Counter
 from datetime import datetime
 
 from .after_start import sentence as after_start_sentence
-from .cause import ISSUE_ORDER, UNKNOWN_VERSION, change_text
-from .config import SOFTWARE_REMOVED
+from .cause import ISSUE_ORDER, UNKNOWN_VERSION, batch_removals, change_text
 from .models import plural
 
 MAX_CHANGES_SHOWN = 40  # per PC
@@ -225,7 +224,7 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
                  minutes: int, split: dict | None, normal: list | None = None,
                  checked: dict | None = None, changed: dict | None = None,
                  calm: list[dict] | None = None, after_start: list[dict] | None = None,
-                 ip_device: str | None = None) -> dict:
+                 ip_device: str | None = None, addresses: list[tuple] | None = None) -> dict:
     n = len(slow)
     worst = max((s for s in slow if s.response_time is not None), key=lambda s: s.response_time, default=None)
     # the slowest action came right after a start-up, and on all PCs of its kind that
@@ -270,9 +269,17 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         if g.get("readings"):
             count = f"{g['times']} of {g['readings']:,} readings" + (", none with a slow action" if n else "")
         else:
-            count = f"{g['times']}x" + (", not near a slow action" if n else "")
-        put.append(_item(g, count))
-        later += [s for s in g["why"].get("todo") or [] if s not in later]  # after the slow actions' steps
+            # near a slow action of another app: not counted for it (correlate._other_app_near says so)
+            count = f"{g['times']}x" + ((", not counted for a slow action" if g.get("near_other_app")
+                                         else ", not near a slow action") if n else "")
+        item = _item(g, count)
+        put.append(item)
+        steps = [s for s in g["why"].get("todo") or [] if s not in later]
+        if n and g["issue"] in ("background", "limit"):
+            # not something the user felt: its step stays with it, below the answer
+            item["why"] += [f"Next step: {s}" for s in steps]
+        else:
+            later += steps  # after the slow actions' steps
     other = sum(1 for g in problems if not g["slow_actions"] and not g.get("why"))
     if other and n:
         put.append({"text": f"{plural(other, 'other problem')} happened only at other times, not near a slow action.",
@@ -282,8 +289,11 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         if not netim_on:
             checks.append("Network: not checked, NetIM is not configured.")
         elif not mapped:
-            checks.append(f"Network: not checked, the address of {ip_device or 'the PC'} ({user_ip or 'unknown'}) "
-                          "is not in any NetIM subnet.")
+            # every PC the user worked on, each with its own address
+            pcs = addresses or [(ip_device or "the PC", user_ip)]
+            named = _join([f"{d} ({ip or 'address unknown'})" for d, ip in pcs])
+            checks.append(f"Network: not checked, the address{'es' if len(pcs) > 1 else ''} of {named} "
+                          f"{'are' if len(pcs) > 1 else 'is'} not in any NetIM subnet.")
         else:
             checks.append(f"Network: nothing wrong on the path at those times ({len(mapped)} NetIM objects).")
         # a virtual desktop: the leg from the device the user sat at is a network of its own
@@ -350,7 +360,8 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         nothing = (f"No problem was recorded within {minutes} min of {near}, other than a PC reading over "
                    "its limit taken with another action (see Other things on these PCs).")
     for g in calm or []:
-        nothing += (f" {g['object']} was starting up near it: {g['what'].split(': ', 1)[-1]}. "
+        nothing += (f" {g['object']} was starting up near {'it' if n == 1 else 'a slow action'}: "
+                    f"{g['what'].split(': ', 1)[-1]}. "
                     "No part of that start-up took longer than normal.")
     # the details stay in their own section; the reason says where to look
     felt_issues, background = _issue_counts([g for g in problems if not g["slow_actions"]])
@@ -430,7 +441,8 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
                  "virtual": any(s.virtual for s in samples if s.device == d),
                  "from": sorted({s.client_device for s in samples if s.device == d and s.virtual and s.client_device})}
                 for d in sorted({s.device for s in samples}, key=lambda d: -sum(1 for s in slow if s.device == d))],
-        "logon": (logons or {}).get("starts", [None])[0] if (logons or {}).get("starts") else None,
+        # each PC's slowest start-up in the window (the user may have worked on several)
+        "logons": _per_pc((logons or {}).get("starts") or []),
         "logon_unit": (logons or {}).get("unit"),
     }
     return {
@@ -442,7 +454,12 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
     }
 
 
-REMOVED_TOGETHER = 5  # this many "Uninstalled" rows in one minute, none installed: one line
+def _per_pc(starts: list[dict]) -> list[dict]:
+    """Each PC's first start-up in the list (the list is slowest first)."""
+    seen: dict[str, dict] = {}
+    for st in starts:
+        seen.setdefault(st["device"], st)
+    return list(seen.values())
 
 
 def _changed(changed: dict | None) -> list[dict]:
@@ -452,16 +469,15 @@ def _changed(changed: dict | None) -> list[dict]:
     iso = lambda t: t.isoformat().replace("+00:00", "Z")  # noqa: E731
     out = []
     for d, rows in (changed or {}).items():
-        lone = lambda c: c["change"] in SOFTWARE_REMOVED and not c.get("back")  # noqa: E731
+        batch = batch_removals(rows)
         minute = lambda c: c["time"].replace(second=0, microsecond=0)  # noqa: E731
-        per_minute = Counter(minute(c) for c in rows if lone(c))
         items, done = [], set()
         for c in rows:
             m = minute(c)
-            if lone(c) and per_minute[m] >= REMOVED_TOGETHER:
+            if id(c) in batch:
                 if m not in done:
                     done.add(m)
-                    names = [x["name"] for x in rows if lone(x) and minute(x) == m]
+                    names = [x["name"] for x in rows if id(x) in batch and minute(x) == m]
                     items.append({"time": iso(c["time"]), "text": (
                         f"{len(names)} programs logged as uninstalled in the same minute, with no install logged: "
                         f"{', '.join(names[:4])}"

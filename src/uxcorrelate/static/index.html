@@ -365,11 +365,12 @@ function render(d) {
   if (statuses(f.by_status)) felt += `<p>Aternity marked them: ${statuses(f.by_status)}.</p>`;
   const tw = a.time_went;
   if (tw) felt += `<p>Aternity measured the slow time: PC ${Math.round(tw.pc * 100)}%, network ${Math.round(tw.network * 100)}%, server ${Math.round(tw.server * 100)}%.</p>`;
-  if (f.logon) {
-    const u = f.logon_unit ? ` ${f.logon_unit}` : "";
-    felt += `<p>${f.logon.unusual ? "Slow start-up" : "Start-up"}: ${hm(f.logon.time)} on ${esc(f.logon.device)}: ` + Object.entries(f.logon.values).map(([t, v]) =>
+  // each PC's start-up in the window
+  const u = f.logon_unit ? ` ${f.logon_unit}` : "";
+  for (const st of f.logons || []) {
+    felt += `<p>${st.unusual ? "Slow start-up" : "Start-up"}: ${hm(st.time)} on ${esc(st.device)}: ` + Object.entries(st.values).map(([t, v]) =>
       `${esc(t)} <b>${v.duration}${u}</b>${v.usual != null ? ` (usual ${v.usual}${u})` : ""}`).join(", ") + "."
-      + (f.slow_actions && pcs.some((p) => p.device === f.logon.device && !p.slow) ? " No slow action on this PC." : "") + "</p>";
+      + (f.slow_actions && pcs.some((p) => p.device === st.device && !p.slow) ? " No slow action on this PC." : "") + "</p>";
   }
   $("aFelt").innerHTML = felt;
   renderWho(d.impact, a.who_else, d.request, d.summary.slow_rule);

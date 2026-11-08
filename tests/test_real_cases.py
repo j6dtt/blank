@@ -303,3 +303,153 @@ def test_a_reading_with_a_slow_action_is_the_one_told():
     assert cpu["why"][0].startswith("Aternity reads the PC's CPU with each of the user's actions: the highest "
                                     "reading was 88.98%, 1 min after the slow Microsoft Teams Launch")
     assert "Over its limit with a slow action: 86.2% with the slow Microsoft Outlook Preview Mail." in cpu["why"]
+
+
+class SameMinuteReading(TeamsAfterLogonBusyPC):
+    """As on the live page: another action in the same minute as the slow Teams Launch
+    has CPU 87.41%; the launch's own row has 58.5%. Aternity gives both the same time."""
+    def user_activity(self, *a, **k):
+        rows = super().user_activity(*a, **k)
+        other = UserSample(self.LAUNCH, "user2", "VD-14", OUTLOOK, activity="Open Mail", response_time=1.0,
+                           cpu=87.41, memory=37.0, disk_queue=0.1, virtual=True, client_device="TC-2")
+        return sorted(rows + [other], key=lambda s: s.timestamp)
+
+
+def test_a_reading_in_the_same_minute_is_not_the_slow_actions_own():
+    settings = Settings()
+    settings.thresholds.slow_status = ["Minor", "Major"]
+    c = SameMinuteReading
+    a = investigate(InvestigationRequest(start=c.START, end=c.END, username="user2"), c(), None, settings)["answer"]
+    assert a["found"] == []  # the launch's own CPU (58.5%) was under the limit
+    cpu = next(f for f in a["elsewhere"] if f["text"].startswith("VD-14: CPU"))
+    assert cpu["count"] == "2 of 9 readings, none with a slow action"
+    assert not any("with a slow action:" in w for w in cpu["why"])
+    assert a["title"].startswith("Microsoft Teams Launch took 43.8 s (Minor) right after a start-up.")
+
+
+class OutlookPreviewNew(SameMinuteReading):
+    """The full Nov 6-8 page (live), names made up: besides the Teams Launch on VD-14,
+    on VD-41 (logon 08:12, CPU 91.75% with a normal action at 08:15) Outlook Launch
+    takes 40.6 s at 09:15 (others typical 33.5 s) while an AAD token broker hang
+    starts in the same minute; Preview Mail takes 4.4 and 5.2 s (usually 0.2 s for
+    the user, on the 3 days before, last on another desktop; others 0.1 s). VD-41's
+    log on Nov 5 13:11: three updates (Teams Meeting Add-in, OneDrive, the agent)
+    and 27 "Uninstalled" rows with no install (Microsoft 365 Apps among them)."""
+    D6 = datetime(2026, 11, 6, tzinfo=timezone.utc)
+    LOGON41 = D6 + timedelta(hours=8, minutes=12)
+    OL_LAUNCH = D6 + timedelta(hours=9, minutes=15)
+    PREVIEW = [D6 + timedelta(hours=10, minutes=5), D6 + timedelta(hours=10, minutes=25)]
+
+    def user_activity(self, *a, **k):
+        mk = lambda t, what, rt, cpu, status=None: UserSample(  # noqa: E731
+            t, "user2", "VD-41", OUTLOOK, activity=what, response_time=rt, client_time=rt * .8,
+            network_time=rt * .1, backend_time=rt * .1, status=status, cpu=cpu, memory=50.0, disk_queue=0.0,
+            virtual=True, client_device="TC-3")
+        rows = super().user_activity(*a, **k) + [
+            mk(self.LOGON41 + timedelta(minutes=3), "Open Mail", 1.0, 91.75),
+            mk(self.OL_LAUNCH, "Launch", 40.6, 30.0, "Minor")] + [
+            mk(t, "Preview Mail", rt, 7.9, "Minor") for t, rt in zip(self.PREVIEW, (4.4, 5.2))]
+        return sorted(rows, key=lambda s: s.timestamp)
+
+    def boots(self, start, end, username=None, **k):
+        rows = super().boots(start, end, username, **k)
+        if username and start >= self.START - timedelta(days=1):
+            rows.append(BootSample(self.LOGON41, "VD-41", "user2", type="User Logon", duration=30.0))
+        return rows
+
+    def app_usage(self, device, start, end, application=None):
+        rows = super().app_usage(device, start, end, application)
+        aad = [AppUsageSample(self.OL_LAUNCH, "VD-41", "AAD token broker plugin", hang_time=120.0)]
+        return rows + [u for u in aad if u.device == device and start <= u.timestamp <= end]
+
+    def activity_history(self, application, activity, start, end, username=None, device=None):
+        if application != OUTLOOK:
+            return super().activity_history(application, activity, start, end, username, device)
+        rows = []
+        if activity == "Preview Mail":
+            for d in (3, 4, 5):  # the user's 3 days before, normal, on another desktop
+                rows += [UserSample(datetime(2026, 11, d, 9, m, tzinfo=timezone.utc), "user2", "VD-2E",
+                                    OUTLOOK, "Preview Mail", response_time=0.2, virtual=True) for m in (0, 20)]
+            rows += [UserSample(t + timedelta(minutes=1), f"o{i}", f"VF-{i}", OUTLOOK, "Preview Mail",
+                                response_time=0.1, virtual=True) for t in self.PREVIEW for i in range(5)]
+        elif activity == "Launch":
+            rows.append(UserSample(datetime(2026, 11, 5, 9, 0, tzinfo=timezone.utc), "user2", "VD-2E", OUTLOOK,
+                                   "Launch", response_time=30.0, virtual=True))
+            rows += [UserSample(self.OL_LAUNCH, f"o{i}", f"VF-{i}", OUTLOOK, "Launch", response_time=33.5,
+                                virtual=True) for i in range(4)]
+        if username:
+            rows = [r for r in rows if r.username == username]
+        return [r for r in rows if start <= r.timestamp <= end]
+
+    def software_changes(self, device, start, end):
+        if device != "VD-41":
+            return []
+        t = self.IMAGE
+        rows = [SoftwareChange(t, device, n, ch, v) for n, a, b in (
+            ("Microsoft Teams Meeting Add-in for Microsoft Office", "1.26.08901", "1.26.18801"),
+            ("Microsoft OneDrive", "26.032.0217.0003", "26.063.0405.0002"),
+            ("Aternity Agent", "12.2.4.79", "12.2.4.113")) for ch, v in (("Uninstalled", a), ("Installed", b))]
+        gone = ["Microsoft 365 Apps for enterprise - en-us",
+                "Microsoft Visual C++ 2015-2022 Redistributable (x86) - 14.44.35211"] + [f"Update {i}" for i in range(25)]
+        rows += [SoftwareChange(t, device, n, "Uninstalled", "1.0") for n in gone]
+        return [c for c in rows if start <= c.timestamp <= end]
+
+
+def test_the_full_page_of_nov_8_tells_the_real_change_only():
+    settings = Settings()
+    settings.thresholds.slow_status = ["Minor", "Major"]
+    c = OutlookPreviewNew
+    a = investigate(InvestigationRequest(start=c.START, end=c.END, username="user2"), c(), None, settings)["answer"]
+    # the only slowdown new for this user, after a real change on its desktop
+    assert a["title"] == "Possibly: what changed on VD-41 before Microsoft Outlook Preview Mail became slow"
+    preview = next(n for n in a["normal"] if n[0].startswith("Microsoft Outlook Preview Mail"))
+    assert any(x.endswith("most runs were not slow: being slow is new.") for x in preview)
+    changed = next(x for x in preview if x.startswith("Changed on VD-41"))
+    assert "27 programs logged as uninstalled in the same minute, with no install logged (not changes to check)" \
+        in changed and "Visual C++" not in changed
+    step = next(t for t in a["todo"] if t.startswith("On VD-41: check what changed"))
+    assert "Teams Meeting Add-in" in step and "Visual C++" not in step and "Microsoft 365" not in step
+    # the AAD hang: not counted for Outlook, but said to be in the same minute
+    aad = next(f for f in a["elsewhere"] if f["text"].startswith("AAD token broker plugin"))
+    assert any(w.startswith("One was in the same minute as the slow Microsoft Outlook Launch on VD-41.")
+               for w in aad["why"])
+    # each desktop's start-up; the CPU readings with other actions are below the answer
+    assert [st["device"] for st in a["felt"]["logons"]] == ["VD-14", "VD-41"] or \
+        sorted(st["device"] for st in a["felt"]["logons"]) == ["VD-14", "VD-41"]
+    assert a["found"] == []
+    assert {f["text"] for f in a["elsewhere"] if "CPU" in f["text"]} == {
+        "VD-14: CPU reached 88.98% (limit 85.0)", "VD-41: CPU reached 91.75% (limit 85.0)"}
+
+
+class EmptyNetim:
+    """A NetIM that knows none of the user's addresses."""
+    warnings: list = []
+
+    def devices(self):
+        return []
+
+    def interfaces(self, device_id):
+        return []
+
+    def metrics(self, metric, object_ids, start, end):
+        return []
+
+    def alerts(self, start, end):
+        return []
+
+
+class WithAddresses(OutlookPreviewNew):
+    def endpoint_info(self, device):
+        return EndpointInfo(device=device, ip_address={"VD-41": "10.9.0.41", "VD-14": "10.9.0.14"}[device])
+
+
+def test_the_network_line_names_every_pc():
+    settings = Settings()
+    settings.thresholds.slow_status = ["Minor", "Major"]
+    c = WithAddresses
+    a = investigate(InvestigationRequest(start=c.START, end=c.END, username="user2"), c(), EmptyNetim(),
+                    settings)["answer"]
+    assert ("Network: not checked, the addresses of VD-41 (10.9.0.41) and VD-14 (10.9.0.14) are not in any "
+            "NetIM subnet.") in a["checked"]
+    aad = next(f for f in a["elsewhere"] if f["text"].startswith("AAD token broker plugin"))
+    assert aad["count"] == "1x, not counted for a slow action"

@@ -57,7 +57,9 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
                                                        max(m.timestamp for m in mine) + window)
                   if not same(s) and near(s)]
         enough = len(hist) >= MIN_HISTORY
-        back = f"last {plural(max((start - min(s.timestamp for s in hist)).days, 1), 'day')}" if hist else ""
+        # calendar days, counted as a reader would (Nov 3 to Nov 6: the last 3 days)
+        back = (f"last {plural(max((start.date() - min(s.timestamp for s in hist).date()).days, 1), 'day')}"
+                if hist else "")
         took, typ = _med(s.response_time for s in mine), _med(s.response_time for s in others)
         usual = _med(s.response_time for s in hist) if enough else None
         worst = max((s.response_time for s in mine if s.response_time is not None), default=None)
@@ -90,7 +92,8 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
             line = (f"Aternity marked most runs slow on {len(bad)} of the {len(days)} days {who} used it "
                     f"in the {back}")
             if not bad:
-                line += ": this is new."
+                line = (f"On each of the {len(days)} days {who} used it in the {back}, most runs were not slow: "
+                        "being slow is new.")
             elif len(run) == len(days):
                 line += ": every day, so it is not new."
             elif run:

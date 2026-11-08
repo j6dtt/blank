@@ -436,10 +436,28 @@ def changes_between(aternity, device: str, after, before) -> dict:
     span = f"between {_day(after)} and {_day(before)}" if _day(after) != _day(before) else f"on {_day(after)}"
     if not rows:
         return {"changes": [], "text": f"Nothing was installed, updated or removed on {device} {span}."}
+    # many removals with no install in one minute: one line, never a change to check
+    batch = batch_removals(rows)
+    real = [c for c in rows if id(c) not in batch]
+    told = [change_text(c) for c in real[:4]] + ([f"{len(batch)} programs logged as uninstalled in the same "
+                                                  "minute, with no install logged (not changes to check)"]
+                                                 if batch else [])
     # "changes" = what is different afterwards; a same-version put-back is only told
-    return {"changes": [_as_iso(c) for c in rows if not c.get("back")][:8],
-            "text": f"Changed on {device} {span}: " + "; ".join(change_text(c) for c in rows[:4])
-            + (f" (+{len(rows) - 4} more)" if len(rows) > 4 else "") + "."}
+    return {"changes": [_as_iso(c) for c in real if not c.get("back")][:8],
+            "text": f"Changed on {device} {span}: " + "; ".join(told)
+            + (f" (+{len(real) - 4} more)" if len(real) > 4 else "") + "."}
+
+
+REMOVED_TOGETHER = 5  # this many "Uninstalled" rows in one minute, none installed: one batch
+
+
+def batch_removals(rows: list[dict]) -> set[int]:
+    """ids of the removals with no install logged that come REMOVED_TOGETHER or more in
+    one minute. On live virtual desktops (Nov 2026) such a minute lists programs still in
+    use afterwards (Microsoft 365 Apps among them): not removals to look at one by one."""
+    lone = [c for c in rows if c["change"] in SOFTWARE_REMOVED and not c.get("back")]
+    per = Counter(c["time"].replace(second=0, microsecond=0) for c in lone)
+    return {id(c) for c in lone if per[c["time"].replace(second=0, microsecond=0)] >= REMOVED_TOGETHER}
 
 
 def _updates(rows, start=None, end=None) -> list[dict]:

@@ -139,6 +139,14 @@ unset `<REQUIRED>` base URLs.
   another PC's slow actions. With slow actions, problems not counted
   for one are `answer["elsewhere"]` ("Other things on these PCs",
   below the answer, not in the rollup).
+  Two actions can share a timestamp (live): a reading counts for a slow
+  action only when it is that action's own value. A crash/hang within
+  minutes of another app's slow action is said, not counted
+  (`_other_app_near`). A background crash or PC limit there keeps its
+  step with its item ("Next step: …"), not in "What to do". 5+
+  unpaired "Uninstalled" rows in one minute (`cause.batch_removals`)
+  are one line everywhere and never a change to check. "What the user
+  felt" lists each PC's start-up (`felt.logons`).
 - PC values over a limit (`correlate._limit_context`): Aternity reads CPU,
   memory and disk queue with each of the user's actions, so the highest
   reading is told against the nearest slow action (and that action's own

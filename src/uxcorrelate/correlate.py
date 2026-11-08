@@ -289,6 +289,7 @@ def _startup_why(g: dict, started_up, logons: dict) -> dict:
 # a PC value over its limit: the column of the slow action that holds the same value
 LIMIT_FIELDS = {"CPU %": ("cpu", "CPU", "%"), "Memory %": ("memory", "memory", "%"),
                 "Disk queue": ("disk_queue", "disk queue", "")}
+READING_FIELD = {k: v[0] for k, v in LIMIT_FIELDS.items()}  # an action's own value of each reading
 
 
 def _limit_context(g: dict, problems: list, slow: list, logons: dict, window: timedelta) -> None:
@@ -308,15 +309,15 @@ def _limit_context(g: dict, problems: list, slow: list, logons: dict, window: ti
         s = min(near, key=lambda s: abs(s.timestamp - top["t"]))
         name = f"{s.application} {s.activity}" if s.activity else s.application
         own = getattr(s, field)
-        when = ("with the slow " + name if s.timestamp == top["t"] else
+        mine = _matches(top, s, window)  # the slow action's own reading
+        when = ("with the slow " + name if mine else
+                f"in the same minute as the slow {name}, with another action" if s.timestamp == top["t"] else
                 f"{mins(top['t'] - s.timestamp)} {'after' if top['t'] > s.timestamp else 'before'} the slow {name}")
         text[0] = text[0][:-1] + f", {when}" + (
-            f" (at that action itself: {round(own, 1)}{unit})." if own is not None and s.timestamp != top["t"]
-            else ".")
+            f" (at that action itself: {round(own, 1)}{unit})." if own is not None and not mine else ".")
     # the readings that count for a slow action (taken with it), when the highest is not one
     named = lambda s: f"{s.application} {s.activity}" if s.activity else s.application  # noqa: E731
-    counted = [(p, s) for p in sorted(rows, key=lambda p: -p["value"]) for s in slow
-               if s.device == p["object"] and s.timestamp == p["t"]]
+    counted = [(p, s) for p in sorted(rows, key=lambda p: -p["value"]) for s in slow if _matches(p, s, window)]
     with_slow = [] if any(p is top for p, _ in counted) else counted
     for st in logons.get("starts", []):
         t = parse_time(st.get("time"))
@@ -330,6 +331,26 @@ def _limit_context(g: dict, problems: list, slow: list, logons: dict, window: ti
             f"{p['value']}{unit} with the slow {named(s)}" for p, s in with_slow) + "." if len(with_slow) <= 3 else
             f"Over its limit with {len(with_slow)} slow actions: up to {with_slow[0][0]['value']}{unit}.")
     g["why"]["text"][:0] = text
+
+
+def _other_app_near(g: dict, problems: list, slow: list, window: timedelta) -> None:
+    """A crash or hang of one app counts only for that app's slow actions; when it was
+    within minutes of a slow action of another app on the same PC, that is said (not
+    counted, not called a cause)."""
+    if g["slow_actions"] or not g.get("app") or not g.get("why"):
+        return
+    times = [p["t"] for p in problems if (p["object"], p["what"]) == (g["object"], g["what"])]
+    near = [(abs(s.timestamp - t), s, t) for s in slow for t in times
+            if s.device == g["object"] and s.application != g["app"] and abs(s.timestamp - t) <= window]
+    if not near:
+        return
+    _, s, t = min(near, key=lambda x: x[0])
+    name = f"{s.application} {s.activity}" if s.activity else s.application
+    m = round(abs((s.timestamp - t).total_seconds()) / 60)
+    when = "in the same minute as" if m == 0 else f"{m} min {'before' if t < s.timestamp else 'after'}"
+    g["near_other_app"] = True
+    g["why"]["text"].append(f"One was {when} the slow {name} on {g['object']}. A crash or hang counts only "
+                            f"for its own app's slow actions, so it is not counted for {s.application}.")
 
 
 def _event_problem(e: HealthEvent) -> dict:
@@ -352,8 +373,13 @@ def _norm(name: str | None) -> str:
 def _matches(p: dict, s: UserSample, window: timedelta) -> bool:
     if p.get("reading"):
         # a PC value read with one of the user's actions belongs to that action only: a
-        # reading with another action (even a minute later) was not measured during it
-        return p["object"] == s.device and p["t"] == s.timestamp
+        # reading with another action (even a minute later) was not measured during it.
+        # Two actions can share a timestamp (live, Nov 2026: a slow launch at 58.5% CPU and
+        # another action at 87.41% in the same minute), so the action's own value decides
+        if p["object"] != s.device or p["t"] != s.timestamp:
+            return False
+        own = getattr(s, READING_FIELD.get(p["what"], ""), None)
+        return own is None or round(own, 2) == p["value"]
     if p["kind"] == "pc" and p["source"] in ("Aternity", "Aternity event", START_UP) and p["object"] != s.device:
         return False  # something on one PC is not near a slow action on another
     return (p["app"] is None or p["app"] == s.application) and \
@@ -471,6 +497,7 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
     changed = explain(aternity, groups, events, window, req.start, req.end)
     for g in groups:
         _limit_context(g, problems, slow, logons, window)
+        _other_app_near(g, problems, slow, window)
         # a PC reading over its limit, taken with another action near a slow one: told so
         # (it does not count for the slow action, correlate._matches)
         g["near_reading"] = not g["slow_actions"] and any(
@@ -512,7 +539,7 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
     warnings.extend(w for w in getattr(aternity, "warnings", []) if w not in warnings)
     answer = build_answer(groups, samples, slow, req.username or req.device, impact, netim is not None,
                           mapped, user_ip, logons, minutes, _time_split(slow), normal, checked, changed, calm,
-                          after_start, ip_device)
+                          after_start, ip_device, [(e.device, e.ip_address) for e in endpoints])
     log.info("Done in %.0f s: %s", time.monotonic() - started, answer["title"])
     return {
         "request": {

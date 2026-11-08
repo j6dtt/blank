@@ -72,11 +72,10 @@ def _answer_lines(a: dict, who: str) -> list[str]:
                          + ", ".join(f"{p['device']} ({_pc_kind(p).rstrip('; ') or 'PC'})" for p in pcs))
         elif pcs and pcs[0].get("virtual"):
             lines.append(f"  on virtual desktop {pcs[0]['device']}" + _pc_from(pcs[0]))
-    if f["logon"]:
-        unit = f" {f['logon_unit']}" if f["logon_unit"] else ""
-        quiet = f["slow_actions"] and any(p["device"] == f["logon"]["device"] and not p["slow"]
+    unit = f" {f['logon_unit']}" if f["logon_unit"] else ""
+    for st in f["logons"]:
+        quiet = f["slow_actions"] and any(p["device"] == st["device"] and not p["slow"]
                                           for p in f.get("pcs") or [])
-        st = f["logon"]
         vals = ", ".join(f"{t} {v['duration']}{unit}" + (f" (usual {v['usual']}{unit})" if v["usual"] is not None
                                                           else "") for t, v in st["values"].items())
         lines.append(f"  {'slow start-up' if st.get('unusual') else 'start-up'}: {_t(st['time'])} on {st['device']}"
