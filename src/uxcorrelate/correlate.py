@@ -313,6 +313,11 @@ def _limit_context(g: dict, problems: list, slow: list, logons: dict, window: ti
         text[0] = text[0][:-1] + f", {when}" + (
             f" (at that action itself: {round(own, 1)}{unit})." if own is not None and s.timestamp != top["t"]
             else ".")
+    # the readings that count for a slow action (taken with it), when the highest is not one
+    named = lambda s: f"{s.application} {s.activity}" if s.activity else s.application  # noqa: E731
+    counted = [(p, s) for p in sorted(rows, key=lambda p: -p["value"]) for s in slow
+               if s.device == p["object"] and s.timestamp == p["t"]]
+    with_slow = [] if any(p is top for p, _ in counted) else counted
     for st in logons.get("starts", []):
         t = parse_time(st.get("time"))
         if st.get("device") == g["object"] and t is not None and \
@@ -320,6 +325,10 @@ def _limit_context(g: dict, problems: list, slow: list, logons: dict, window: ti
             text.append(f"It was {mins(top['t'] - t)} after {g['object']} started up "
                         f"({', '.join(st['values'])}).")
             break
+    if with_slow:
+        text.append("Over its limit with a slow action: " + "; ".join(
+            f"{p['value']}{unit} with the slow {named(s)}" for p, s in with_slow) + "." if len(with_slow) <= 3 else
+            f"Over its limit with {len(with_slow)} slow actions: up to {with_slow[0][0]['value']}{unit}.")
     g["why"]["text"][:0] = text
 
 

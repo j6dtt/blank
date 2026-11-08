@@ -277,3 +277,29 @@ def test_a_busy_pc_after_logon_is_told_plainly():
     assert any(t.startswith("25 programs logged as uninstalled in the same minute, with no install logged: ")
                for t in texts)
     assert any(t.startswith("Aternity Agent updated 12.2.4.79 → 12.2.4.113") for t in texts)
+
+
+class TeamsAndOutlookBusyPC(TeamsAfterLogonBusyPC):
+    """The same day as seen on the live page: besides the Teams Launch, slow Outlook
+    actions; one of them on VD-14 has its own CPU reading over the limit (86.2%, a
+    made-up value: the live page counted "2 of 26 readings, with 1 of 4 slow actions"
+    but told only the highest reading, which was with no slow action)."""
+    def user_activity(self, *a, **k):
+        rows = super().user_activity(*a, **k)
+        extra = UserSample(self.LAUNCH + timedelta(minutes=20), "user2", "VD-14", OUTLOOK, activity="Preview Mail",
+                           response_time=9.0, client_time=7.0, network_time=1.0, backend_time=1.0, status="Minor",
+                           cpu=86.2, memory=37.0, disk_queue=0.1, virtual=True, client_device="TC-2")
+        return sorted(rows + [extra], key=lambda s: s.timestamp)
+
+
+def test_a_reading_with_a_slow_action_is_the_one_told():
+    settings = Settings()
+    settings.thresholds.slow_status = ["Minor", "Major"]
+    c = TeamsAndOutlookBusyPC
+    a = investigate(InvestigationRequest(start=c.START, end=c.END, username="user2"), c(), None, settings)["answer"]
+    cpu = next(f for f in a["found"] if f["text"].startswith("VD-14: CPU"))
+    assert cpu["count"] == "2 of 9 readings, with 1 of 2 slow actions"
+    # the highest is told with where it came from; the one that counts is told too
+    assert cpu["why"][0].startswith("Aternity reads the PC's CPU with each of the user's actions: the highest "
+                                    "reading was 88.98%, 1 min after the slow Microsoft Teams Launch")
+    assert "Over its limit with a slow action: 86.2% with the slow Microsoft Outlook Preview Mail." in cpu["why"]
