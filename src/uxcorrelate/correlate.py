@@ -539,7 +539,8 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
     warnings.extend(w for w in getattr(aternity, "warnings", []) if w not in warnings)
     answer = build_answer(groups, samples, slow, req.username or req.device, impact, netim is not None,
                           mapped, user_ip, logons, minutes, _time_split(slow), normal, checked, changed, calm,
-                          after_start, ip_device, [(e.device, e.ip_address) for e in endpoints])
+                          after_start, ip_device, [(e.device, e.ip_address) for e in endpoints],
+                          [w for w in warnings if any(k in w for k in UNREAD)])
     log.info("Done in %.0f s: %s", time.monotonic() - started, answer["title"])
     return {
         "request": {
@@ -621,6 +622,9 @@ def _issue(g: dict) -> str:
     return "hang" if "hang" in g["_kinds"] else "crash" if "crash" in g["_kinds"] else "system"
 
 
+# warnings that mean a source was not read (or not in full): "No cause found in what could be read"
+UNREAD = (" not checked:", "could not be read", "stopped after")
+
 FELT_TOGETHER = ("hang", "crash", "system", "background")
 
 
@@ -663,6 +667,7 @@ def _group(problems: list[dict], slow_total: int) -> list[dict]:
         g["issue"] = _issue(g)
         for k in ("_names", "_kinds", "_total"):
             g.pop(k)
+        g["slow_idx"] = sorted(g["slow"])  # which slow actions (indexes into the slow list)
         g["slow_actions"] = len(g.pop("slow"))
         g["of_slow"] = slow_total
         g["first"], g["last"] = _iso(g["first"]), _iso(g["last"])

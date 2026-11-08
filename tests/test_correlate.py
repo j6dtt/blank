@@ -59,7 +59,8 @@ def test_demo_points_at_the_branch_wan():
     result, start = run_demo()
     a, top = result["answer"], result["problems"][0]
     assert a["level"] == "likely"
-    assert a["title"].startswith("Likely: den-br-rtr01:Gi0/1 (WAN-MPLS): Interface utilization")
+    assert a["title"].startswith("23 slow actions, slowest CRM Portal Open Account 8.2 s on LT-JDOE-01. "
+                                 "Likely: den-br-rtr01:Gi0/1 (WAN-MPLS): Interface utilization")
     assert top["kind"] == "network" and top["slow_actions"] == top["of_slow"] == result["summary"]["slow"] == 23
     first_slow = min(t for t, rt, slow, app, _ in result["timeline"]["actions"] if slow)
     assert datetime.fromisoformat(first_slow.replace("Z", "+00:00")) == start + timedelta(minutes=INCIDENT[0])
@@ -99,7 +100,8 @@ def test_pc_cpu_without_netim():
               for i in range(24)]
     result = amy(erp(bad), health)
     a = result["answer"]
-    assert a["title"] == "Likely: PC1: CPU reached 99.0% (limit 85.0)" and result["problems"][0]["slow_actions"] == 4
+    assert a["title"] == ("4 slow actions, slowest ERP 6.0 s on PC1. Likely: PC1: CPU reached 99.0% (limit 85.0) "
+                          "at all of them") and result["problems"][0]["slow_actions"] == 4
     assert any("NetIM is not configured" in w for w in result["warnings"])
     assert "Network: not checked, NetIM is not configured." in a["checked"]
 
@@ -112,7 +114,7 @@ def test_a_crash_of_another_app_is_not_blamed():
     by_app = {g["app"]: g for g in result["problems"]}
     assert by_app["Notepad"]["slow_actions"] == 0
     assert by_app["ERP"]["slow_actions"] == 1
-    assert result["answer"]["title"] == "Likely: ERP was not responding on PC1"
+    assert result["answer"]["title"] == "ERP took 6.0 s on PC1. Likely: ERP was not responding on PC1"
 
 
 def test_aternity_status_decides_what_is_slow():
@@ -131,14 +133,15 @@ def test_a_nearly_full_disk_is_a_pc_problem():
     result = amy(erp(bad), health)
     top = result["problems"][0]
     assert top["kind"] == "pc" and top["worst"] == 3.0 and top["slow_actions"] == 4
-    assert result["answer"]["title"] == "Likely: PC1's disk was nearly full (3.0% free, limit 10.0%)"
+    assert result["answer"]["title"] == ("4 slow actions, slowest ERP 6.0 s on PC1. Likely: PC1's disk was nearly "
+                                         "full (3.0% free, limit 10.0%) at all of them")
 
 
 def test_nothing_near_the_slow_actions_says_so():
     # one slow action; the CPU problem came 35 minutes later
     result = amy(erp(lambda i: i == 3), [DeviceHealthSample(T0 + timedelta(minutes=50), "PC1", cpu=99.0)])
     a = result["answer"]
-    assert a["level"] == "unsure" and a["title"] == "ERP took 6.0 s: no cause found"
+    assert a["level"] == "unsure" and a["title"] == "ERP took 6.0 s on PC1. No cause found"
     assert "Aternity measured most of the slow time on the PC" in a["reason"]
     assert result["problems"][0]["slow_actions"] == 0
 
@@ -297,7 +300,7 @@ def test_an_app_opened_during_a_slow_logon_is_explained_by_the_logon():
     result = amy(erp(lambda i: i == 5), source=Starting)  # ERP at 09:25, 4 min after the logon began
     top = result["problems"][0]
     assert top["source"] == "Aternity start-up" and top["slow_actions"] == 1
-    assert result["answer"]["title"] == "Likely: PC1 was starting up: Logon 105.0 s (usual 34.0 s)"
+    assert result["answer"]["title"] == "ERP took 6.0 s on PC1. Likely: PC1 was starting up: Logon 105.0 s (usual 34.0 s)"
     why = top["why"]["text"]
     assert why[0] == ("Logon took 105.0 s, longer than 9 in 10 of PC1's 5 earlier start-ups in the last 30 days "
                       "(up to 34.0 s); the one before, Oct 27, took 34.0 s.")
@@ -475,9 +478,11 @@ def test_each_slow_action_is_compared_with_its_own_normal_and_what_changed():
         "disk queue up to 0.3 (usually 0.1).",
     ]]
     assert "On NB-12: check what changed before Billing Open Invoice became slow (Print Agent)." in a["todo"]
-    assert a["level"] == "possible" and a["title"] == "Possibly: what changed on NB-12 before Billing Open Invoice became slow"
-    assert a["reason"] == ("No problem was recorded within 5 min of any of the 3 slow actions. Compared with normal "
-                           "shows it slow since Oct 18 and what changed on NB-12 just before.")
+    assert a["level"] == "possible" and a["title"] == ("Billing Open Invoice slow on NB-12 since Oct 18: 9.0 s, "
+                                                      "usually 2.0 s. Possibly: Print Agent updated on Oct 17")
+    # how much the usual rests on, so a reader can judge it
+    assert a["reason"] == ("No problem was recorded within 5 min of any of the 3 slow actions. The usual time is "
+                           "from 60 runs in the last 30 days. What changed on NB-12 is listed under What changed.")
 
 
 def test_a_crash_at_another_time_still_gets_its_why():
@@ -509,7 +514,7 @@ def test_one_earlier_run_is_too_few_to_say_what_is_normal():
         "Other users within 5 min: typical 2.1 s (3 users).",
         "NB-12 at that slow action: CPU up to 35.0 %.",
     ]]
-    assert a["title"] == "Billing Open Invoice took 9.0 s: no cause found"  # none built on one earlier run
+    assert a["title"] == "Billing Open Invoice took 9.0 s on NB-12. No cause found"  # none built on one earlier run
     assert "highest CPU 35.0 % (limit 85.0 %)" in a["checked"][0]
 
 
@@ -538,7 +543,7 @@ def test_two_pcs_are_told_apart_and_usual_slowness_is_not_blamed():
     assert [(p["device"], p["actions"], p["slow"], p["virtual"]) for p in a["felt"]["pcs"]] == [
         ("PC1", 24, 1, False), ("PC2", 1, 0, False)]
     assert a["felt"]["slowest"]["device"] == "PC1"
-    assert a["title"] == "ERP took 6.0 s: no cause found"
+    assert a["title"] == "ERP took 6.0 s on PC1. Other ERP users were as slow as usual at this time"
     assert a["reason"].endswith("Other ERP users had slow actions about as often as normal at this time (see Other users).")
 
 
@@ -801,7 +806,7 @@ def test_with_no_slow_action_the_answer_is_what_went_wrong():
     assert a["who_else"] is None
     from uxcorrelate.report import render_text
     text = render_text(result)
-    assert "What went wrong:" in text and "Possible cause: Oct 28 Classifier" in text and "What changed on these PCs:" in text
+    assert "What went wrong:" in text and "Possible cause: Oct 28 Classifier" in text and "What changed on VD-1:" in text
 
 
 def test_a_limit_passed_away_from_slow_actions_is_a_fact_not_a_step():

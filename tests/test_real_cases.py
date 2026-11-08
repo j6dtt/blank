@@ -2,6 +2,7 @@
 so the whole page can be checked on dev before anything goes to prod.
 These tests pin what the page says today; a change that alters it shows here
 and in scripts/snapshot.sh."""
+import re
 from datetime import datetime, timedelta, timezone
 
 from uxcorrelate.config import Settings
@@ -106,8 +107,8 @@ def test_outlook_launch_after_a_normal_logon_names_the_launch():
     assert a["felt"]["slowest"] == {"app": OUTLOOK, "activity": "Launch", "seconds": 61.8,
                                     "when": "2026-11-06T06:20:00Z", "device": "VD-1", "status": "Major"}
     # both shares: slow right after a start-up, and how often it is slow later anyway
-    assert a["title"] == ("Microsoft Outlook Launch took 61.8 s (Major) right after a start-up. "
-                          "On virtual desktops it is slow 67% of the time then, 42% later")
+    assert a["title"] == ("Microsoft Outlook Launch took 61.8 s on VD-1 (Major), 2 min after a start-up. "
+                          "On virtual desktops 67% are slow then, 42% later")
     assert a["level"] == "possible"
     assert ("On virtual desktops in the 24 h before, Microsoft Outlook Launch right after a start-up was slow "
             "40 of 60 times (67%, median 45.0 s); later 17 of 40 times (42%, median 20.0 s).") in a["reason"]
@@ -135,7 +136,9 @@ def test_a_launch_not_slower_after_start_ups_elsewhere_is_not_the_headline():
     settings.thresholds.slow_status = ["Minor", "Major"]
     c = LaunchAsUsual
     a = investigate(InvestigationRequest(start=c.START, end=c.END, username="user1"), c(), None, settings)["answer"]
-    assert a["title"] == "Microsoft Outlook Launch took 61.8 s (Major): no cause found"
+    # slow on each day the user ran it: not new, which comes before "others as usual"
+    assert a["title"] == ("Microsoft Outlook Launch took 61.8 s on VD-1 (Major), usually 45.0 s. Aternity "
+                          "marked most runs slow on each of the 7 days user1 used it: not new")
     said = [x for x in a["checked"] if "right after a start-up" in x]
     assert len(said) == 1 and said[0].endswith("Not slower right after a start-up: not the reason.")
 
@@ -243,12 +246,12 @@ def test_a_busy_pc_after_logon_is_told_plainly():
     a = teams_after_logon()["answer"]
     result = teams_after_logon()
     # the fleet's count is the answer, with how often it is slow later anyway
-    assert a["title"] == ("Microsoft Teams Launch took 43.8 s (Minor) right after a start-up. "
-                          "On virtual desktops it is slow 93% of the time then, 62% later")
+    assert a["title"] == ("Microsoft Teams Launch took 43.8 s on VD-14 (Minor), 3 min after a start-up. "
+                          "On virtual desktops 93% are slow then, 62% later")
     # the CPU reading over its limit came with another action a minute later: it does not
     # count for the slow launch (its own reading, 58.5%, was under the limit)
     assert ("No problem was recorded within 5 min of the slow action, other than a PC reading over its limit "
-            "taken with another action (see Other things on these PCs).") in a["reason"]
+            "taken with another action (see Other things on VD-14 and VD-41).") in a["reason"]
     assert a["found"] == [] and a["rollup"] == []
     cpu = next(f for f in a["elsewhere"] if f["text"].startswith("VD-14: CPU"))
     assert cpu["count"] == "1 of 8 readings, none with a slow action"
@@ -266,7 +269,7 @@ def test_a_busy_pc_after_logon_is_told_plainly():
     # the Acrobat hangs: another PC, two days before: below the answer, no number without a
     # unit (not even on the timeline's hover), and an "Uninstalled" row is no cause
     hang = next(f for f in a["elsewhere"] if f["text"].startswith("Adobe Acrobat"))
-    assert "(see Other things on these PCs)" in a["reason"]
+    assert "(see Other things on VD-14 and VD-41)" in a["reason"]
     assert not any("2856" in m[2] for m in result["timeline"]["marks"])
     assert hang["text"] == "Adobe Acrobat was not responding on VD-41" and hang["possible"] == []
     assert any("as uninstalled on Nov 5 with no install logged, but it failed after that" in w for w in hang["why"])
@@ -324,14 +327,14 @@ def test_a_reading_in_the_same_minute_is_not_the_slow_actions_own():
     cpu = next(f for f in a["elsewhere"] if f["text"].startswith("VD-14: CPU"))
     assert cpu["count"] == "2 of 9 readings, none with a slow action"
     assert not any("with a slow action:" in w for w in cpu["why"])
-    assert a["title"].startswith("Microsoft Teams Launch took 43.8 s (Minor) right after a start-up.")
+    assert a["title"].startswith("Microsoft Teams Launch took 43.8 s on VD-14 (Minor), 3 min after a start-up.")
 
 
 class OutlookPreviewNew(SameMinuteReading):
     """The full Nov 6-8 page (live), names made up: besides the Teams Launch on VD-14,
     on VD-41 (logon 08:12, CPU 91.75% with a normal action at 08:15) Outlook Launch
     takes 40.6 s at 09:15 (others typical 33.5 s) while an AAD token broker hang
-    starts in the same minute; Preview Mail takes 4.4 and 5.2 s (usually 0.2 s for
+    starts in the same minute; Preview Mail takes 3.6 and 5.2 s (4.4 s typical, as prod showed) (usually 0.2 s for
     the user, on the 3 days before, last on another desktop; others 0.1 s). VD-41's
     log on Nov 5 13:11: three updates (Teams Meeting Add-in, OneDrive, the agent)
     and 27 "Uninstalled" rows with no install (Microsoft 365 Apps among them)."""
@@ -348,7 +351,7 @@ class OutlookPreviewNew(SameMinuteReading):
         rows = super().user_activity(*a, **k) + [
             mk(self.LOGON41 + timedelta(minutes=3), "Open Mail", 1.0, 91.75),
             mk(self.OL_LAUNCH, "Launch", 40.6, 30.0, "Minor")] + [
-            mk(t, "Preview Mail", rt, 7.9, "Minor") for t, rt in zip(self.PREVIEW, (4.4, 5.2))]
+            mk(t, "Preview Mail", rt, 7.9, "Minor") for t, rt in zip(self.PREVIEW, (3.6, 5.2))]
         return sorted(rows, key=lambda s: s.timestamp)
 
     def boots(self, start, end, username=None, **k):
@@ -401,7 +404,15 @@ def test_the_full_page_of_nov_8_tells_the_real_change_only():
     c = OutlookPreviewNew
     a = investigate(InvestigationRequest(start=c.START, end=c.END, username="user2"), c(), None, settings)["answer"]
     # the only slowdown new for this user, after a real change on its desktop
-    assert a["title"] == "Possibly: what changed on VD-41 before Microsoft Outlook Preview Mail became slow"
+    # what the user felt, the usual, since when, and the changes by count and day (names in What changed)
+    assert a["title"] == ("Microsoft Outlook Preview Mail slow on VD-41 since Nov 6: 4.4 s, usually 0.2 s. "
+                          "3 changes logged on VD-41 on Nov 5: possibly one of them")
+    # every other slow action at the top, each with what is known of it
+    assert a["reason"].endswith(
+        "Also slow: Microsoft Outlook Launch 40.6 s on VD-41, others typical 33.5 s; Microsoft Teams Launch "
+        "43.8 s on VD-14, 3 min after a start-up (on virtual desktops 93% are slow then, 62% later). Also, not "
+        "near the slow actions: 3 hangs (see Other things on VD-41 and VD-14).")
+    assert a["pcs_label"] == "VD-41 and VD-14" and "these PCs" not in str(a)
     preview = next(n for n in a["normal"] if n[0].startswith("Microsoft Outlook Preview Mail"))
     assert any(x.endswith("most runs were not slow: being slow is new.") for x in preview)
     changed = next(x for x in preview if x.startswith("Changed on VD-41"))
@@ -453,3 +464,19 @@ def test_the_network_line_names_every_pc():
             "NetIM subnet.") in a["checked"]
     aad = next(f for f in a["elsewhere"] if f["text"].startswith("AAD token broker plugin"))
     assert aad["count"] == "1x, not counted for a slow action"
+
+
+def test_every_real_case_tells_each_slow_action_at_the_top():
+    """Every case seen on prod: the headline says what was slow and how slow, every slow app
+    and activity is named at the top (headline or reason), and no PC is called "these PCs"."""
+    settings = Settings()
+    settings.thresholds.slow_status = ["Minor", "Major"]
+    for c, user in ((OutlookAfterLogon, "user1"), (LaunchAsUsual, "user1"), (TeamsAfterLogonBusyPC, "user2"),
+                    (TeamsAndOutlookBusyPC, "user2"), (SameMinuteReading, "user2"), (OutlookPreviewNew, "user2")):
+        result = investigate(InvestigationRequest(start=c.START, end=c.END, username=user), c(), None, settings)
+        a, top = result["answer"], result["answer"]["title"] + " " + result["answer"]["reason"]
+        assert re.search(r"\d+\.\d s", a["title"]), (c.__name__, a["title"])
+        # each slow app + activity (Compared with normal names them: "Microsoft Teams Launch took …")
+        for name in [n[0].split(" took ")[0] for n in a["normal"]]:
+            assert name in top, (c.__name__, name)
+        assert "these PCs" not in str(a), c.__name__

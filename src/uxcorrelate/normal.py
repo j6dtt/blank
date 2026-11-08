@@ -35,6 +35,12 @@ def _med(values) -> float | None:
     return round(median(values), 1) if values else None
 
 
+def _status(mine: list) -> str | None:
+    """Aternity's own status for these slow actions, when they all have the same one."""
+    seen = {s.status for s in mine}
+    return seen.pop() if len(seen) == 1 else None
+
+
 def compare_actions(aternity, slow: list, start, end, username: str | None, is_slow,
                     window: timedelta = timedelta(minutes=5)) -> list[dict]:
     """One entry per slow application + activity: sentences ("text") and steps ("todo")."""
@@ -58,8 +64,10 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
                   if not same(s) and near(s)]
         enough = len(hist) >= MIN_HISTORY
         # calendar days, counted as a reader would (Nov 3 to Nov 6: the last 3 days)
-        back = (f"last {plural(max((start.date() - min(s.timestamp for s in hist).date()).days, 1), 'day')}"
-                if hist else "")
+        # calendar days, today included when it has runs: 7 dates from Nov 2 to Nov 8 are the last 7 days
+        span = ((start.date() - min(s.timestamp for s in hist).date()).days
+                + any(s.timestamp.date() == start.date() for s in hist)) if hist else 0
+        back = f"last {plural(max(span, 1), 'day')}" if hist else ""
         took, typ = _med(s.response_time for s in mine), _med(s.response_time for s in others)
         usual = _med(s.response_time for s in hist) if enough else None
         worst = max((s.response_time for s in mine if s.response_time is not None), default=None)
@@ -87,7 +95,7 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
             if d not in bad:
                 break
             run.insert(0, d)
-        since, changes, todo = None, [], []
+        since, changes, todo, changed = None, [], [], 0
         if enough:
             line = (f"Aternity marked most runs slow on {len(bad)} of the {len(days)} days {who} used it "
                     f"in the {back}")
@@ -112,7 +120,7 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
                     text.append(f"The last normal {name} was on {last.device}, another virtual desktop: "
                                 f"what changed is read on {dev} only.")
                 ch = changes_between(aternity, dev, normal, first)
-                changes = ch["changes"]
+                changes, changed = ch["changes"], ch.get("count", len(ch["changes"]))
                 if ch["text"]:
                     text.append(ch["text"])
                 if changes:
@@ -130,5 +138,8 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
         out.append({"application": app, "activity": act, "device": dev, "slow_actions": n, "took": took,
                     "usual": usual, "others_typical": typ, "others": len(users), "slow_days": len(bad),
                     "days_used": len(days), "since": since.isoformat().replace("+00:00", "Z") if since else None,
-                    "changes": changes, "text": text, "todo": todo})
+                    "changes": changes, "changed": changed, "enough": enough, "runs": len(hist), "back": back,
+                    "worst": round(worst, 1) if worst is not None else None,
+                    "virtual": any(s.virtual for s in mine), "status": _status(mine),
+                    "text": text, "todo": todo})
     return out

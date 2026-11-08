@@ -97,7 +97,7 @@ def _answer_lines(a: dict, who: str) -> list[str]:
             if x["who"]:
                 lines.append(f"      * Who else: {x['who']}")
     if a.get("elsewhere"):
-        lines += ["", "Other things on these PCs (not counted for a slow action):"]
+        lines += ["", f"Other things on {a.get('pcs_label') or 'these PCs'} (not counted for a slow action):"]
         for x in a["elsewhere"]:
             lines.append(f"  - {x['text']}" + (f": {x['count']}, first {_t(x['when'])}" if x["count"] else ""))
             lines += [f"      * {w}" for w in x["why"]]
@@ -105,7 +105,8 @@ def _answer_lines(a: dict, who: str) -> list[str]:
             if x["who"]:
                 lines.append(f"      * Who else: {x['who']}")
     if a.get("changes"):
-        lines += ["", "What changed on these PCs:"]
+        devs = [c["device"] for c in a["changes"]]
+        lines += ["", "What changed on " + (f"the {len(devs)} PCs" if len(devs) > 2 else " and ".join(devs)) + ":"]
         for c in a["changes"]:
             if not c["changes"]:
                 lines.append(f"  {c['device']}: nothing in the window or the 14 days before it")

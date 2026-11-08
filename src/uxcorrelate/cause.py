@@ -430,12 +430,12 @@ def changes_between(aternity, device: str, after, before) -> dict:
     """What changed on `device` between the last normal time and the first slow one:
     {"changes": [...], "text": sentence}."""
     if not hasattr(aternity, "software_changes"):
-        return {"changes": [], "text": None}
+        return {"changes": [], "count": 0, "text": None}
     rows = _updates(aternity.software_changes(device, after - CHANGES_BEFORE, before + CHANGES_BEFORE),
                     after, before)
     span = f"between {_day(after)} and {_day(before)}" if _day(after) != _day(before) else f"on {_day(after)}"
     if not rows:
-        return {"changes": [], "text": f"Nothing was installed, updated or removed on {device} {span}."}
+        return {"changes": [], "count": 0, "text": f"Nothing was installed, updated or removed on {device} {span}."}
     # many removals with no install in one minute: one line, never a change to check
     batch = batch_removals(rows)
     real = [c for c in rows if id(c) not in batch]
@@ -444,6 +444,7 @@ def changes_between(aternity, device: str, after, before) -> dict:
                                                  if batch else [])
     # "changes" = what is different afterwards; a same-version put-back is only told
     return {"changes": [_as_iso(c) for c in real if not c.get("back")][:8],
+            "count": sum(1 for c in real if not c.get("back")),
             "text": f"Changed on {device} {span}: " + "; ".join(told)
             + (f" (+{len(real) - 4} more)" if len(real) > 4 else "") + "."}
 

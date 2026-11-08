@@ -148,12 +148,12 @@
         <p class="muted" style="font-size:12px;margin:6px 0 0">Bars: other PCs with this issue per day, each row on its own scale; green is this window. Hover a bar for its day. Widespread says how far it reaches, not that it is or is not the cause here. Click an issue for its details.</p></div>
       <ul id="aFound"></ul></section>
     <section class="panel" id="elsewhereBox" style="margin-top:16px" hidden>
-      <h2>Other things on these PCs</h2>
+      <h2 id="elsewhereTitle">Other things on these PCs</h2>
       <p class="muted" style="font-size:12px">Not counted for a slow action, so not part of the answer above. Each says why.</p>
       <ul id="aElsewhere"></ul>
     </section>
     <section class="panel" id="changesBox" style="margin-top:16px" hidden>
-      <h2>What changed on these PCs</h2>
+      <h2 id="changesTitle">What changed on these PCs</h2>
       <p class="muted" style="font-size:12px">From 14 days before the window to its end. An issue above names a change only when it matches the failing part.</p>
       <div id="aChanges"></div>
     </section>
@@ -398,9 +398,14 @@ function render(d) {
   $("aFound").innerHTML = a.found.map(issue("issue")).join("")
     || `<li class='muted'>${elsewhere.length ? "Nothing at the slow actions." : "Nothing found."}</li>`;
   $("elsewhereBox").hidden = !elsewhere.length;
+  $("elsewhereTitle").textContent = `Other things on ${a.pcs_label || "these PCs"}`;
   $("aElsewhere").innerHTML = elsewhere.map(issue("other")).join("");
   const changes = a.changes || [];
   $("changesBox").hidden = !changes.length;
+  // the PCs by name: "What changed on VD-41", "on VD-41 and VD-14", "on the 3 PCs"
+  const devs = changes.map((c) => c.device);
+  $("changesTitle").textContent = "What changed on " + (devs.length > 2 ? `the ${devs.length} PCs`
+    : devs.join(" and ") || "these PCs");
   $("aChanges").innerHTML = changes.map((c) => `<p><b>${esc(c.device)}</b>${c.changes.length ? "" : ": nothing changed."}</p>`
     + (c.changes.length ? `<ul>${c.changes.map((x) => `<li>${hm(x.time)}: ${esc(x.text)}</li>`).join("")}`
       + `${c.more ? `<li class="muted">… and ${c.more} more</li>` : ""}</ul>` : "")).join("");

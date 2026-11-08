@@ -73,7 +73,7 @@ unset `<REQUIRED>` base URLs.
   runs slow and since when, the change log between the last normal day and
   the first slow one, and CPU/memory/disk queue at those actions vs usual.
   With no problem at the slow actions, a change before "since" makes the
-  answer "Possibly: what changed on <PC>…". `logons.py` does the same for
+  headline (class C in `docs/headline-rules.md`). `logons.py` does the same for
   start-ups: since when every start-up of a type took longer than 9 in 10
   of those before it (earliest such point; 5 earlier start-ups needed), and
   the changes just before. Virtual desktops (Horizon) are pooled: for a
@@ -165,10 +165,11 @@ unset `<REQUIRED>` base URLs.
   user's PCs, a `verdict` by fixed rules (`cause._trend`: last 7 days against
   the 6 before, working days, `TREND_RATIO`, `TREND_MIN_PCS`; hangs have no
   trend, app usage is kept about 8 days) and other PCs per day as bars;
-  each detail is said once, in its own section. Nothing at the slow actions:
-  the title still names what the user felt, the slowest action ("Microsoft
-  Outlook Launch took 61.8 s (Major): no cause found"); other users slow
-  as usual is said in the reason. The question is
+  each detail is said once, in its own section. The headline is two sentences,
+  what the user felt then one verdict, by the classes A-H in
+  `docs/headline-rules.md` (`_pick_headline`; order provisional); each
+  other slow app + activity is an "Also slow" line in the reason; PCs
+  are named ("Other things on VD-41"), never "these PCs". The question is
   what went wrong for the user, not only what was slow: with no slow action
   the title counts hangs, app crashes and system events (`level` "issues",
   background crashes in the reason). Each problem has an `issue` kind

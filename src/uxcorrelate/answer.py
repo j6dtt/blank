@@ -219,27 +219,149 @@ def _background_line(rows: list[dict]) -> str:
         f": the same crashes hit {_join(wide)} other PCs" if wide else "")
 
 
+# the headline's tie order for problems at the same number of slow actions: what the user
+# felt, then health events, a start-up, the network, a PC reading, a nearly full disk
+HEAD_ORDER = {"hang": 0, "crash": 0, "system": 1, "background": 1, "startup": 2, "infra": 3, "limit": 4}
+
+
+def _head_rank(g: dict) -> tuple:
+    disk = g["what"].startswith("Free disk")
+    return (-g["slow_actions"], HEAD_ORDER.get(g["issue"], 9) + disk, -g["times"])
+
+
+def _name(app: str, act: str | None) -> str:
+    return f"{app} {act}" if act else app
+
+
+def _start_name(c: dict) -> str:
+    return _name(c["application"], c["activity"])
+
+
+def _status_of(c: dict, slow: list) -> str:
+    """ " (Minor)": Aternity's status of the slow action a start-up comparison is about."""
+    s = next((s for s in slow if (s.application, s.activity, s.device, s.response_time)
+              == (c["application"], c["activity"], c["device"], c["seconds"])), None)
+    return f" ({s.status})" if s is not None and s.status else ""
+
+
+def _after_when(c: dict) -> str:
+    return "right after" if c["minutes"] <= 1 else f"{c['minutes']} min after"
+
+
+def _felt_all(slow: list, worst) -> str:
+    """ "Microsoft Outlook Launch took 40.6 s on VD-41 (Minor)", or "4 slow actions, slowest …" """
+    if worst is None:
+        return plural(len(slow), "slow action")
+    name = _name(worst.application, worst.activity)
+    at = f"{worst.response_time:.1f} s" + (f" on {worst.device}" if worst.device else "") + (
+        f" ({worst.status})" if worst.status else "")
+    return f"{name} took {at}" if len(slow) == 1 else f"{len(slow)} slow actions, slowest {name} {at}"
+
+
+def _changes_phrase(c: dict) -> str:
+    """The changes before an action became slow, as the headline says them."""
+    ch, k = c["changes"], c.get("changed") or len(c["changes"])
+    if k == 1:
+        x = ch[0]
+        return f"Possibly: {x['name']} {x['change'] or 'changed'} on {_day(x['time'])}"
+    first, last = min(x["time"] for x in ch), max(x["time"] for x in ch)
+    when = f"on {_day(first)}" if _day(first) == _day(last) else f"between {_day(first)} and {_day(last)}"
+    return f"{plural(k, 'change')} logged on {c['device']} {when}: possibly one of them"
+
+
+def _usual_from(c: dict) -> str:
+    """How much the usual time rests on, so a reader can judge it."""
+    return f"The usual time is from {plural(c['runs'], 'run')} in the {c['back']}."
+
+
+def _group_line(name: str, took, dev: str, fact: str) -> str:
+    return f"{name} {took} s on {dev}" + (f", {fact}" if fact else "")
+
+
+def _pick_headline(at_slow: list[dict], slow: list, normal: list[dict], after_start: list[dict],
+                   impact: dict | None) -> dict:
+    """Which class of verdict the headline gives (docs/headline-rules.md), its subject, the
+    start-up comparisons told at the top, and one line for each other slow app + activity."""
+    named = [{**c, "name": _name(c["application"], c["activity"])} for c in normal if c.get("took") is not None]
+    by = lambda xs: max(xs, key=lambda c: (c["slow_actions"], c.get("worst") or 0)) if xs else None  # noqa: E731
+    cands = {
+        "C": by([c for c in named if c["since"] and c["changes"]]),
+        "D": by([c for c in named if c["since"] and not c["changes"]]),
+        "F": by([c for c in named if c.get("enough") and c["days_used"] and c["slow_days"] == c["days_used"]]),
+    }
+    starts = [c for c in after_start if c["slower"]]
+    start = max(starts, key=lambda c: (c["count"], c["seconds"] or 0)) if starts else None
+    top = at_slow[0] if at_slow else None
+    if not slow:
+        cls, subject = None, None
+    elif top is not None and not (_pc_limit(top) and start):
+        # a PC reading (one value) gives way to a start-up comparison over many PCs
+        cls, subject = "A", None
+    elif impact and impact.get("unusual"):
+        cls, subject = "B", None
+    elif cands["C"] or cands["D"]:
+        cls = "C" if cands["C"] else "D"
+        subject = cands[cls]
+    elif start:
+        cls, subject = "E", start
+    elif cands["F"]:
+        cls, subject = "F", cands["F"]
+    elif impact and impact["slow"] and impact["unusual"] is False:
+        cls, subject = "G", None
+    else:
+        cls, subject = "H", None
+    told_start = [subject] if cls == "E" else []
+    also = []
+    if cls in ("A", "C", "D", "E", "F"):
+        # a problem row without its slow actions listed covers them all
+        covered = set(top.get("slow_idx", range(len(slow)))) if cls == "A" else set()
+        key = (subject["application"], subject["activity"]) if subject else None
+        for (app, act) in dict.fromkeys((s.application, s.activity) for s in slow):
+            mine = [i for i, s in enumerate(slow) if (s.application, s.activity) == (app, act)]
+            if (app, act) == key or (cls == "A" and set(mine) <= covered):
+                continue
+            nm = next((c for c in named if (c["application"], c["activity"]) == (app, act)), None)
+            st = next((c for c in starts if (c["application"], c["activity"]) == (app, act)), None)
+            times = sorted(slow[i].response_time for i in mine if slow[i].response_time is not None)
+            dev = slow[mine[0]].device
+            if st is not None:
+                told_start.append(st)
+                also.append(_group_line(_name(app, act), f"{st['seconds']:.1f}", st["device"],
+                                        f"{_after_when(st)} a start-up (on {st['kind']} {st['after']['share']:.0%} "
+                                        f"are slow then, {st['later']['share']:.0%} later)"))
+            elif nm is not None:
+                fact = (f"usually {nm['usual']} s, slow since {_day(nm['since'])} after "
+                        f"{plural(nm.get('changed') or len(nm['changes']), 'change')} there" if nm["since"] and nm["changes"]
+                        else f"usually {nm['usual']} s, slow since {_day(nm['since'])}, no change to check logged"
+                        if nm["since"] else
+                        "slow on most runs every day it was used, not new"
+                        if nm.get("enough") and nm["days_used"] and nm["slow_days"] == nm["days_used"] else
+                        f"others typical {nm['others_typical']} s" if nm["others_typical"] is not None else "")
+                also.append(_group_line(nm["name"], nm["took"], nm["device"], fact))
+            elif times:
+                also.append(_group_line(_name(app, act), f"{times[-1]:.1f}", dev, ""))
+    return {"class": cls, "subject": subject, "start": subject if cls == "E" else None,
+            "told_start": told_start, "also": also}
+
+
 def build_answer(problems: list[dict], samples: list, slow: list, who: str, impact: dict | None,
                  netim_on: bool, mapped: list, user_ip: str | None, logons: dict | None,
                  minutes: int, split: dict | None, normal: list | None = None,
                  checked: dict | None = None, changed: dict | None = None,
                  calm: list[dict] | None = None, after_start: list[dict] | None = None,
-                 ip_device: str | None = None, addresses: list[tuple] | None = None) -> dict:
+                 ip_device: str | None = None, addresses: list[tuple] | None = None,
+                 unread: list[str] | None = None) -> dict:
     n = len(slow)
+    # the PCs the user worked on, by name: "Other things on VD-41", "on VD-41 and VD-14"
+    devs = sorted({s.device for s in samples if s.device}, key=lambda d: (-sum(1 for s in slow if s.device == d), d))
+    pcs_label = (devs[0] if len(devs) == 1 else _join(devs) if len(devs) == 2
+                 else f"the {len(devs)} PCs" if devs else "this PC")
     worst = max((s for s in slow if s.response_time is not None), key=lambda s: s.response_time, default=None)
-    # the slowest action came right after a start-up, and on all PCs of its kind that
-    # activity is slower right after one: the headline when nothing else explains it
-    start_lead = next((c for c in after_start or [] if c["slower"] and worst is not None
-                       and (c["application"], c["activity"], c["seconds"])
-                       == (worst.application, worst.activity, worst.response_time)), None)
-    # it gives way to anything at the slow actions but a PC value over its limit (one reading
-    # against a count over many PCs), and to a change before the action became slow
-    if any(g["slow_actions"] and not _pc_limit(g) for g in problems) or \
-            any(c["since"] and c["changes"] for c in normal or []):
-        start_lead = None
     # calm: start-ups near a slow action with nothing longer than normal (not problems,
     # correlate.py leaves them out); the reason says they were near
-    at_slow = [g for g in problems if g["slow_actions"]]
+    # problems at slow actions: most slow actions first, then by kind (HEAD_ORDER)
+    at_slow = sorted((g for g in problems if g["slow_actions"]), key=_head_rank)
+    head = _pick_headline(at_slow, slow, normal or [], after_start or [], impact)
     found, todo = [], []
     for g in at_slow:
         why = g.get("why") or {}
@@ -302,9 +424,9 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
             checks.append(f"Network between {d} (a virtual desktop) and the device the user sat at"
                           + (f" ({', '.join(used[:3])})" if used else "") + ": not checked, Aternity "
                           "gives no delay for it.")
-    # every other slow activity right after a start-up, against all PCs (once: not the headline's)
+    # every other slow activity right after a start-up, against all PCs (once: not those told at the top)
     for c in after_start or []:
-        if c is not start_lead:
+        if not any(c is t for t in head["told_start"]):
             checks.append(after_start_sentence(c) + (
                 " Slower right after a start-up." if c["slower"] else
                 "" if not c["enough"] else " Not slower right after a start-up: not the reason."))
@@ -339,26 +461,17 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         elif impact["unusual"]:
             todo.insert(0, f"Many {apps} users are slow at once: check the {apps} service and its servers.")
 
-    # title: the problem seen at the most slow actions; "likely" when that is more than half
+    # the headline: what the user felt, then one verdict (docs/headline-rules.md)
     top = at_slow[0] if at_slow else None
-    lead = next(({**c, "name": f"{c['application']} {c['activity']}" if c["activity"] else c["application"]}
-                 for c in normal or [] if c["since"] and c["changes"]), None)
     # other users of the same apps were slow as often as on previous days at this hour
     as_usual = bool(impact and impact["slow"] and impact["unusual"] is False)
     usual_line = (f" Other {', '.join(impact['applications'])} users had slow actions about as often as normal at this time "
                   "(see Other users)." if as_usual else "")
     near = "the slow action" if n == 1 else f"any of the {n} slow actions"
-    # with no cause found, the headline still says what the user felt: the slowest action
-    felt_title = None
-    if worst is not None:
-        name = f"{worst.application} {worst.activity}" if worst.activity else worst.application
-        took = f"{name} {worst.response_time:.1f} s" + (f" ({worst.status})" if worst.status else "")
-        felt_title = (f"{name} took {worst.response_time:.1f} s" + (f" ({worst.status})" if worst.status else "")
-                      if n == 1 else f"{n} slow actions, slowest {took}") + ": no cause found"
     nothing = f"No problem was recorded within {minutes} min of {near}."
     if any(g.get("near_reading") for g in problems):
         nothing = (f"No problem was recorded within {minutes} min of {near}, other than a PC reading over "
-                   "its limit taken with another action (see Other things on these PCs).")
+                   f"its limit taken with another action (see Other things on {pcs_label}).")
     for g in calm or []:
         nothing += (f" {g['object']} was starting up near {'it' if n == 1 else 'a slow action'}: "
                     f"{g['what'].split(': ', 1)[-1]}. "
@@ -366,6 +479,7 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
     # the details stay in their own section; the reason says where to look
     felt_issues, background = _issue_counts([g for g in problems if not g["slow_actions"]])
     also = _background_line(background) if background else None
+    cls, c = head["class"], head["subject"]
     if not n:
         marked = f"Aternity marked none of the {len(samples)} measured actions slow."
         if felt_issues:
@@ -378,44 +492,76 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
             level, title, reason = "none", "No problems found", f"{marked} No hang or app crash either."
         else:
             level, title, reason = "none", "No activity found", "Aternity has no activity for this window."
-    elif top is None and lead:
-        # nothing at the slow actions, but it became slow right after a change on the PC
+    elif cls == "A":
+        level = "likely" if top["slow_actions"] * 2 > n else "possible"
+        more = len(found) - 1
+        title = (f"{_felt_all(slow, worst)}. {'Likely' if level == 'likely' else 'Possibly'}: {top['text']}"
+                 + ("" if n == 1 else " at all of them" if top["slow_actions"] == n
+                    else f" at {top['slow_actions']} of them")
+                 + (f"; {plural(more, 'more issue')} (see What went wrong)" if more > 0 else ""))
+        reason = (f"It happened within {minutes} min of the slow action." if n == 1 else
+                  f"It happened within {minutes} min of {top['slow_actions']} of the {n} slow actions.")
+        reason += usual_line
+    elif cls == "B":
         level = "possible"
-        title = f"Possibly: what changed on {lead['device']} before {lead['name']} became slow"
-        reason = (f"{nothing} Compared with normal shows it slow since {_day(lead['since'])} "
-                  f"and what changed on {lead['device']} just before.{usual_line}")
-    elif start_lead:
-        # nothing at the slow action, but that activity is slow right after a start-up on many PCs
-        c = start_lead
-        name = f"{c['application']} {c['activity']}" if c["activity"] else c["application"]
+        cp = impact["common_point"]
+        apps = _join(impact["applications"])
+        title = f"{_felt_all(slow, worst)}. " + (
+            f"Many users behind {cp['name']} were slow at the same time" if cp else
+            f"{impact['slow']} of the {impact['users']} other {apps} users were slow at the same time, "
+            "more than on other days")
+        reason = f"{nothing} See Other users."
+    elif cls in ("C", "D"):
+        level = "possible" if cls == "C" else "unsure"
+        title = f"{c['name']} slow on {c['device']} since {_day(c['since'])}: {c['took']} s, usually {c['usual']} s. "
+        title += _changes_phrase(c) if cls == "C" else (
+            f"No change to check was logged on {c['device']} before it"
+            + (" (on a virtual desktop the log can run late)" if c["virtual"] else ""))
+        reason = f"{nothing} {_usual_from(c)}"
+        if cls == "C":
+            reason += f" What changed on {c['device']} is listed under What changed."
+        reason += usual_line
+    elif cls == "E":
         level = "possible"
-        # both shares: slow right after a start-up, and how often it is slow later anyway
-        shares = f"slow {c['after']['share']:.0%} of the time right after a start-up, {c['later']['share']:.0%} later"
-        title = (f"{name} took {c['seconds']:.1f} s" + (f" ({worst.status})" if worst.status else "")
-                 + f" right after a start-up. On {c['kind']} it is slow {c['after']['share']:.0%} of the time "
-                 f"then, {c['later']['share']:.0%} later")
-        near = nothing if top is None else f"Also with it: {top['text']} (see What went wrong)."
-        reason = f"{after_start_sentence(c)} {near}{usual_line}"
-        todo.insert(0, f"{name} on {c['kind']} is {shares}, for many users, not only {who}. "
-                       f"Aternity does not say why: a question for whoever builds the {c['kind']}.")
-    elif top is None and as_usual:
-        level, title = "unsure", felt_title or "Nothing unusual found"
+        title = (f"{_start_name(c)} took {c['seconds']:.1f} s on {c['device']}" + _status_of(c, slow)
+                 + f", {_after_when(c)} a start-up. On {c['kind']} {c['after']['share']:.0%} are slow then, "
+                 f"{c['later']['share']:.0%} later")
+        with_it = nothing if top is None else f"Also with it: {top['text']} (see What went wrong)."
+        reason = f"{after_start_sentence(c)} {with_it}{usual_line}"
+    elif cls == "F":
+        level = "unsure"
+        title = (f"{c['name']} took {c['took']} s on {c['device']}" + (f" ({c['status']})" if c.get("status") else "")
+                 + (f", usually {c['usual']} s" if c.get("usual") is not None else "")
+                 + ". Aternity marked most runs slow on each of the "
+                 f"{c['days_used']} days {who} used it: not new")
+        reason = f"{nothing} {_usual_from(c)}{usual_line}"
+    elif cls == "G":
+        level = "unsure"
+        title = (f"{_felt_all(slow, worst)}. Other {_join(impact['applications'])} users were as slow as usual "
+                 "at this time")
         reason = nothing + usual_line
-    elif top is None:
-        level, title = "unsure", felt_title or "Cause not found"
+    else:
+        level = "unsure"
+        title = f"{_felt_all(slow, worst)}. No cause found" + (
+            f" in what could be read ({plural(len(unread), 'source')} not read: see Warnings)" if unread else "")
         reason = nothing
         if split:
             side = max(split, key=split.get)
             reason += f" Aternity measured most of the slow time {WHERE[side]} ({_pct(split[side])})."
-    else:
-        level = "likely" if top["slow_actions"] * 2 > n else "possible"
-        title = f"{'Likely' if level == 'likely' else 'Possibly'}: {top['text']}"
-        reason = (f"It happened within {minutes} min of the slow action." if n == 1 else
-                  f"It happened within {minutes} min of {top['slow_actions']} of the {n} slow actions.")
-        reason += usual_line
+    # each other slow app and activity, with what is known of it
+    also_slow = [x for x in head["also"] if x]
+    if n and also_slow:
+        reason += " Also slow: " + "; ".join(also_slow) + "."
+    for t in head["told_start"]:
+        name, kind = _start_name(t), t["kind"]
+        step = (f"{name} on {kind} is slow {t['after']['share']:.0%} of the time right after a start-up, "
+                f"{t['later']['share']:.0%} later, for many users, not only {who}. "
+                f"Aternity does not say why: a question for whoever builds the {kind}.")
+        if step not in todo:
+            todo.insert(0, step)
     if n and felt_issues + ([also] if also else []):
         reason += (f" Also, not near {'the slow action' if n == 1 else 'the slow actions'}: "
-                   f"{_join(felt_issues + ([also] if also else []))} (see Other things on these PCs).")
+                   f"{_join(felt_issues + ([also] if also else []))} (see Other things on {pcs_label}).")
     if not todo and n:
         todo.append(f"Nothing measured explains it: ask {who} what they were doing at those times "
                     "(see \"What was checked\" for what is ruled out).")
@@ -449,7 +595,7 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         "level": level, "title": title, "reason": reason, "felt": felt, "time_went": split,
         "who_else": who_else, "rollup": _rollup(found), "found": found,
         "elsewhere": [{k: v for k, v in x.items() if k != "_others"} for x in elsewhere_items],
-        "todo": todo, "changes": _changed(changed),
+        "todo": todo, "changes": _changed(changed), "pcs_label": pcs_label,
         "normal": [c["text"] for c in normal or []], "checked": checks,
     }
 
