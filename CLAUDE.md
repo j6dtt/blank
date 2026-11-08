@@ -133,6 +133,22 @@ unset `<REQUIRED>` base URLs.
   ("… right after a start-up: 67% of those on virtual desktops are
   slow", level possible); the others go to "checked". Live: launches
   right after logon are slow, most on virtual desktops (verify, Nov 2026).
+- A PC reading (CPU, memory, disk queue, round trip) is from one action's
+  own row: it counts only for that action (`correlate._matches`), never
+  for a slow action minutes away; a PC's problems never count for
+  another PC's slow actions. With slow actions, problems not counted
+  for one are `answer["elsewhere"]` ("Other things on these PCs",
+  below the answer, not in the rollup).
+- PC values over a limit (`correlate._limit_context`): Aternity reads CPU,
+  memory and disk queue with each of the user's actions, so the highest
+  reading is told against the nearest slow action (and that action's own
+  value) and a start-up just before it. Per-program figures are hourly:
+  said so; a program is named as the one to look at only when its hourly
+  CPU is half the PC's reading or more, or for a low-memory event. A PC
+  limit gives way to the start-up comparison as the headline. A hang's
+  value (no documented unit) is not in the text. An "Uninstalled" row
+  with no install, of software that failed after it, is not a cause;
+  5+ such rows in one minute are one line in "What changed".
 - `answer.py`: the plain-language answer at the top of the page and the
   CLI report (title, what the user felt, other users, what went wrong, what
   changed, what to do), plus `problem_text`, the sentence for each problem. The

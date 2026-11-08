@@ -68,8 +68,8 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
         else:
             text = [f"{name} took {took} s at its {n} slow actions (slowest {round(worst, 1)} s)."]
         text.append(f"Usually {usual} s for {who} (typical of {len(hist)} in the {back})."
-                    if enough else f"Only {len(hist)} earlier {name} for {who} in the activity Aternity keeps: "
-                    "too few to say what is normal.")
+                    if enough else f"{'Only ' + str(len(hist)) if hist else 'No'} earlier {name} for {who} in the activity Aternity keeps: "
+                    f"too few to say what is normal for {who}.")
         users = {s.username or s.device for s in others}
         text.append(f"Other users within {window.seconds // 60} min: typical {typ} s ({len(users)} users)."
                     if typ is not None else f"No other user ran {name} within {window.seconds // 60} min.")
@@ -122,7 +122,7 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
             if top is not None:
                 u = _med(getattr(s, key) for s in hist) if enough else None
                 pc.append(f"{label} up to {round(top, 1)}{unit}" + (f" (usually {u}{unit})" if u is not None else ""))
-        text.append(f"{dev} at those slow actions: {', '.join(pc)}." if pc
+        text.append(f"{dev} at {'that slow action' if n == 1 else 'those slow actions'}: {', '.join(pc)}." if pc
                     else "Aternity gave no CPU, memory or disk queue for those actions.")
         out.append({"application": app, "activity": act, "device": dev, "slow_actions": n, "took": took,
                     "usual": usual, "others_typical": typ, "others": len(users), "slow_days": len(bad),

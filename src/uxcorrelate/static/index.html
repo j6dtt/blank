@@ -147,6 +147,11 @@
       <div id="rollupBox" hidden><div class="tableWrap"><table id="aRollup"></table></div>
         <p class="muted" style="font-size:12px;margin:6px 0 0">Bars: other PCs with this issue per day, each row on its own scale; green is this window. Hover a bar for its day. Widespread says how far it reaches, not that it is or is not the cause here. Click an issue for its details.</p></div>
       <ul id="aFound"></ul></section>
+    <section class="panel" id="elsewhereBox" style="margin-top:16px" hidden>
+      <h2>Other things on these PCs</h2>
+      <p class="muted" style="font-size:12px">Not counted for a slow action, so not part of the answer above. Each says why.</p>
+      <ul id="aElsewhere"></ul>
+    </section>
     <section class="panel" id="changesBox" style="margin-top:16px" hidden>
       <h2>What changed on these PCs</h2>
       <p class="muted" style="font-size:12px">From 14 days before the window to its end. An issue above names a change only when it matches the failing part.</p>
@@ -347,7 +352,7 @@ function render(d) {
   const f = a.felt;
   let felt = f.slow_actions
     ? `<p><b>${f.slow_actions}</b> of their ${f.actions} actions ${f.slow_actions === 1 ? "was" : "were"} slow`
-      + ` (${f.apps.map(([app, n]) => `${esc(app)} ${n}`).join(", ")}), ${f.first === f.last ? "at" : "between"} ${span(f.first, f.last)}.</p>`
+      + ` (${f.apps.map(([app, n]) => `${esc(app)}: ${n}`).join(", ")}), ${f.first === f.last ? "at" : "between"} ${span(f.first, f.last)}.</p>`
     : `<p>No slow actions (${f.actions} measured).</p>`;
   const pcs = f.pcs || [];
   // a virtual desktop also names the device(s) the user sat at
@@ -362,7 +367,7 @@ function render(d) {
   if (tw) felt += `<p>Aternity measured the slow time: PC ${Math.round(tw.pc * 100)}%, network ${Math.round(tw.network * 100)}%, server ${Math.round(tw.server * 100)}%.</p>`;
   if (f.logon) {
     const u = f.logon_unit ? ` ${f.logon_unit}` : "";
-    felt += `<p>Slowest start-up: ${hm(f.logon.time)} on ${esc(f.logon.device)}: ` + Object.entries(f.logon.values).map(([t, v]) =>
+    felt += `<p>${f.logon.unusual ? "Slow start-up" : "Start-up"}: ${hm(f.logon.time)} on ${esc(f.logon.device)}: ` + Object.entries(f.logon.values).map(([t, v]) =>
       `${esc(t)} <b>${v.duration}${u}</b>${v.usual != null ? ` (usual ${v.usual}${u})` : ""}`).join(", ") + "."
       + (f.slow_actions && pcs.some((p) => p.device === f.logon.device && !p.slow) ? " No slow action on this PC." : "") + "</p>";
   }
@@ -380,13 +385,19 @@ function render(d) {
     + roll.map((r) => `<tr><td><button type="button" class="link" data-issue="${r.first}">${esc(r.issue)}</button></td>`
       + `<td class="num">${r.times.toLocaleString()}</td><td class="num">${esc(r.others ?? "—")}</td>`
       + `<td>${esc(r.verdict ?? "—")}</td><td>${r.others == null ? "—" : spark(r.days)}</td></tr>`).join("");
-  $("aFound").innerHTML = a.found.map((x, i) => {
+  // one issue: what happened, what we know, who else ("id" keeps the two lists' ids apart)
+  const issue = (id) => (x, i) => {
     const lines = x.why.map((w) => `<li>${esc(w)}</li>`)
       .concat(x.possible.map((w) => `<li><b>Possible cause:</b> ${esc(w)}</li>`))
-      .concat(x.who ? [`<li><b>Who else:</b> ${esc(x.who)}${others(x, i)}</li>`] : []);
-    return `<li id="issue${i}">${esc(x.text)}${x.count ? `: <b>${esc(x.count)}</b>, from ${hm(x.when)}` : ""}`
+      .concat(x.who ? [`<li><b>Who else:</b> ${esc(x.who)}${others(x, id + i)}</li>`] : []);
+    return `<li id="${id}${i}">${esc(x.text)}${x.count ? `: <b>${esc(x.count)}</b>, from ${hm(x.when)}` : ""}`
       + (lines.length ? `<div class="why"><b>What we know:</b><ul>${lines.join("")}</ul></div>` : "") + "</li>";
-  }).join("") || "<li class='muted'>Nothing found.</li>";
+  };
+  const elsewhere = a.elsewhere || [];
+  $("aFound").innerHTML = a.found.map(issue("issue")).join("")
+    || `<li class='muted'>${elsewhere.length ? "Nothing at the slow actions." : "Nothing found."}</li>`;
+  $("elsewhereBox").hidden = !elsewhere.length;
+  $("aElsewhere").innerHTML = elsewhere.map(issue("other")).join("");
   const changes = a.changes || [];
   $("changesBox").hidden = !changes.length;
   $("aChanges").innerHTML = changes.map((c) => `<p><b>${esc(c.device)}</b>${c.changes.length ? "" : ": nothing changed."}</p>`
@@ -445,7 +456,7 @@ $("aRollup").addEventListener("click", (ev) => {
   const b = ev.target.closest("button[data-issue]");
   if (b) $(`issue${b.dataset.issue}`).scrollIntoView({ behavior: "smooth", block: "center" });
 });
-$("aFound").addEventListener("click", (ev) => {
+for (const list of ["aFound", "aElsewhere"]) $(list).addEventListener("click", (ev) => {
   const b = ev.target.closest("button[data-who]");
   if (!b) return;
   const box = $(`whoOf${b.dataset.who}`); box.hidden = !box.hidden;

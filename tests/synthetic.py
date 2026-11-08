@@ -75,8 +75,9 @@ class DemoAternity:
         return out
 
     def device_health(self, device, start, end):
+        # like the live client: a reading with each of the user's actions (every 2 min)
         out = []
-        for t, m in self._minutes(start, end, 5):
+        for t, m in self._minutes(start, end, 2):
             out.append(DeviceHealthSample(
                 timestamp=t, device=device,
                 cpu=96.0 if _in(m, CPU_SPIKE) else self.rng.uniform(15, 40),

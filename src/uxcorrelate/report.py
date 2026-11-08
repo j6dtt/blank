@@ -46,7 +46,7 @@ def _answer_lines(a: dict, who: str) -> list[str]:
     f = a["felt"]
     lines += ["", "What the user felt:"]
     if f["slow_actions"]:
-        apps = ", ".join(f"{app} {n}" for app, n in f["apps"])
+        apps = ", ".join(f"{app}: {n}" for app, n in f["apps"])
         lines.append(f"  {f['slow_actions']} of their {f['actions']} actions "
                      f"{'was' if f['slow_actions'] == 1 else 'were'} slow ({apps}),")
         lines.append(f"  at {_t(f['first'])}" if f["first"] == f["last"] else
@@ -76,7 +76,11 @@ def _answer_lines(a: dict, who: str) -> list[str]:
         unit = f" {f['logon_unit']}" if f["logon_unit"] else ""
         quiet = f["slow_actions"] and any(p["device"] == f["logon"]["device"] and not p["slow"]
                                           for p in f.get("pcs") or [])
-        lines.append(f"  slowest start-up: {_start_line(f['logon'], unit)}"
+        st = f["logon"]
+        vals = ", ".join(f"{t} {v['duration']}{unit}" + (f" (usual {v['usual']}{unit})" if v["usual"] is not None
+                                                          else "") for t, v in st["values"].items())
+        lines.append(f"  {'slow start-up' if st.get('unusual') else 'start-up'}: {_t(st['time'])} on {st['device']}"
+                     + (f" ({st['location']})" if st.get("location") else "") + f": {vals}"
                      + (" (no slow action on this PC)" if quiet else ""))
     tw = a["time_went"]
     if tw:
@@ -88,6 +92,14 @@ def _answer_lines(a: dict, who: str) -> list[str]:
     if a["found"]:
         lines += ["", "What went wrong:"]
         for x in a["found"]:
+            lines.append(f"  - {x['text']}" + (f": {x['count']}, first {_t(x['when'])}" if x["count"] else ""))
+            lines += [f"      * {w}" for w in x["why"]]
+            lines += [f"      * Possible cause: {w}" for w in x["possible"]]
+            if x["who"]:
+                lines.append(f"      * Who else: {x['who']}")
+    if a.get("elsewhere"):
+        lines += ["", "Other things on these PCs (not counted for a slow action):"]
+        for x in a["elsewhere"]:
             lines.append(f"  - {x['text']}" + (f": {x['count']}, first {_t(x['when'])}" if x["count"] else ""))
             lines += [f"      * {w}" for w in x["why"]]
             lines += [f"      * Possible cause: {w}" for w in x["possible"]]
@@ -147,7 +159,7 @@ def render_text(result: dict) -> str:
             end = "" if g["last"] == g["first"] else f" to {_t(g['last'])}"
             lines += [f"  [{g['kind']}] {g['text']}", f"      {at}; {_t(g['first'])}{end}"]
     im = result.get("impact")
-    for x in [x for x in result["answer"]["found"] if x["list"]][:3]:
+    for x in [x for x in result["answer"]["found"] + result["answer"].get("elsewhere", []) if x["list"]][:3]:
         lines += ["", f"Other PCs ({x['list_of']}):"]
         for p in x["list"][:10]:
             lines.append(f"  {p['device']}  {p['username'] or '?'}  {p['version']}  "

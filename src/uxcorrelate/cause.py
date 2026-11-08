@@ -360,11 +360,25 @@ def _processes(aternity, g, times, window, why, metric) -> None:
                            if rows else f"Aternity has no process data for {dev} at those times.")
         return
     app = lambda n, a: f"{n} ({a})" if a and a.lower() != n.lower() else n  # noqa: E731
-    span = "" if near == window else f" (Aternity's process rows within {PROCESS_ROW_SPAN_MIN} min of them)"
-    why["text"].append(f"Busiest processes then{span}: " + ", ".join(
-        f"{app(n, a)} {label} up to {v:.1f}{unit}" for n, (v, a) in top) + ".")
+    listed = ", ".join(f"{app(n, a)} {label} up to {v:.1f}{unit}" for n, (v, a) in top)
+    if near != window:
+        # one row per program and hour: it cannot show which program it was at that minute,
+        # so it is said so, and no program is named as the one to look at
+        why["text"].append(f"Aternity keeps {label} per program only per hour, so it cannot show which program "
+                           f"it was at that moment. In the hours around it, the highest per program: {listed}.")
+        # one program named only when its hourly figure alone is half the PC's reading or more
+        # (CPU: both in %); a few % cannot explain a PC near its limit
+        # an event (e.g. low memory) says the PC ran short: its biggest user is where to look
+        if g["source"] == EVENT:
+            why["todo"].append(f"On {dev}: look at {top[0][0]}: {label} up to {top[0][1][0]:.1f}{unit} in the hours "
+                               "around it, the most of any program.")
+        elif unit == "%" and g.get("worst") and top[0][1][0] * 2 >= g["worst"] and g["_times"]:
+            why["todo"].append(f"On {dev}: look at {top[0][0]}: {label} up to {top[0][1][0]:.1f}% in the hours "
+                               f"around it, against the PC's {g['worst']}%.")
+        return
+    why["text"].append(f"Busiest programs then: {listed}.")
     if g["_times"] or g["source"] == EVENT:
-        why["todo"].append(f"On {dev}: look at {top[0][0]}, the busiest process at those times.")
+        why["todo"].append(f"On {dev}: look at {top[0][0]}, the busiest program at those times.")
 
 
 def changes_before(aternity, device: str, when, names, part: str, event: str) -> dict:
@@ -530,6 +544,14 @@ def _changes(rows: list[dict], g, first, why, virtual=False) -> None:
         if before and len(why["changes"]) < 8:
             why["changes"].append({**_as_iso(c), "related": bool(match)})
         if not match:
+            continue
+        if c["change"] in SOFTWARE_REMOVED:
+            # paired removals are updates by now: this one has no install logged. The
+            # software failed after it, so it was still there: not a removal, not a cause
+            if before:
+                why["text"].append(f"Aternity logged {c['name']} {c['version'] or ''} as uninstalled on "
+                                   f"{_day(c['time'])} with no install logged, but it failed after that, so it was "
+                                   "still there: that row is not a removal.".replace("  ", " "))
             continue
         other = _other_version(c, why["others"])
         if other:

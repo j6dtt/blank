@@ -112,7 +112,7 @@ def test_a_crash_of_another_app_is_not_blamed():
     by_app = {g["app"]: g for g in result["problems"]}
     assert by_app["Notepad"]["slow_actions"] == 0
     assert by_app["ERP"]["slow_actions"] == 1
-    assert result["answer"]["title"] == "Likely: ERP was not responding on PC1 (Aternity's hang time value up to 12)"
+    assert result["answer"]["title"] == "Likely: ERP was not responding on PC1"
 
 
 def test_aternity_status_decides_what_is_slow():
@@ -164,7 +164,9 @@ def test_answer_is_plain_language():
     assert a["found"][0]["count"] == "at 23 of 23 slow actions"
     assert a["time_went"]["network"] > 0.8 and a["felt"]["slow_actions"] == 23
     # the problems at other times are listed with their own why, not just counted
-    elsewhere = [f["text"] for f in a["found"] if (f["count"] or "").endswith("not near a slow action")]
+    # in their own section, below the answer
+    elsewhere = [f["text"] for f in a["elsewhere"]]
+    assert not any(f in a["found"] for f in a["elsewhere"]) and all(f["count"] for f in a["elsewhere"])
     # what the user felt first, a limit passed last
     assert elsewhere == ["Application crash (OUTLOOK.EXE) on LT-JDOE-01",
                          "LT-JDOE-01: CPU reached 96.0% (limit 85.0)"]
@@ -244,8 +246,12 @@ def test_a_cpu_problem_names_the_busiest_process():
               for i in range(24)]
     why = amy(erp(bad), health, source=Busy)["problems"][0]["why"]
     assert why["processes"][0] == {"process": "scan.exe", "value": 80.0}
-    assert why["text"][0] == ("Busiest processes then (Aternity's process rows within 60 min of them): "
-                              "scan.exe CPU up to 80.0%, erp.exe CPU up to 10.0%.")
+    assert why["text"][0] == ("Aternity reads the PC's CPU with each of the user's actions: the highest reading was "
+                              "99.0%, with the slow ERP.")
+    assert why["text"][1] == ("Aternity keeps CPU per program only per hour, so it cannot show which program it was "
+                              "at that moment. In the hours around it, the highest per program: scan.exe CPU up to "
+                              "80.0%, erp.exe CPU up to 10.0%.")
+    assert why["todo"] == ["On PC1: look at scan.exe: CPU up to 80.0% in the hours around it, against the PC's 99.0%."]
 
 
 def test_a_memory_problem_names_the_busiest_process_from_hourly_rows_in_mb():
@@ -263,9 +269,10 @@ def test_a_memory_problem_names_the_busiest_process_from_hourly_rows_in_mb():
     health = [DeviceHealthSample(T0 + timedelta(minutes=5 * i), "PC1", memory=97.0 if bad(i) else 50.0)
               for i in range(24)]
     why = amy(erp(bad), health, source=Hourly)["problems"][0]["why"]
-    assert why["text"][0] == ("Busiest processes then (Aternity's process rows within 60 min of them): "
-                              "erp memory up to 3337.9 MB, scsrvc (Trellix Solidcore) memory up to 217.3 MB.")
-    assert why["todo"][0] == "On PC1: look at erp, the busiest process at those times."
+    assert why["text"][1] == ("Aternity keeps memory per program only per hour, so it cannot show which program it "
+                              "was at that moment. In the hours around it, the highest per program: erp memory up to "
+                              "3337.9 MB, scsrvc (Trellix Solidcore) memory up to 217.3 MB.")
+    assert not any("look at" in t for t in why["todo"])  # MB per program against the PC's %: not comparable
 
 
 class Starting(StubAternity):
@@ -469,11 +476,11 @@ def test_a_crash_at_another_time_still_gets_its_why():
     usage = [AppUsageSample(Traced.at, "PC1", "ERP", hang_time=12.0)]
     result = amy(erp(lambda i: i == 0), usage=usage, source=Traced)
     a = result["answer"]
-    hang = next(f for f in a["found"] if f["count"] and "not near a slow action" in f["count"])
+    hang = next(f for f in a["elsewhere"] if f["count"] and "not near a slow action" in f["count"])
     assert hang["why"][0] == "ERP failed in scanner.dll 2.1 (inside erp.exe 5.0): Not responding."
     assert hang["who"].startswith("3 other PCs (3 users)")
     assert any(t.startswith("Check the Scanner change of 2026-10-27") for t in a["todo"])
-    assert not any(f["text"].endswith("not near a slow action.") for f in a["found"])  # nothing left unexplained
+    assert not any(f["text"].endswith("not near a slow action.") for f in a["found"] + a["elsewhere"])
 
 
 def test_one_earlier_run_is_too_few_to_say_what_is_normal():
@@ -489,9 +496,9 @@ def test_one_earlier_run_is_too_few_to_say_what_is_normal():
     a = result["answer"]
     assert a["normal"] == [[
         "Billing Open Invoice took 9.0 s at its slow action.",
-        "Only 1 earlier Billing Open Invoice for lee in the activity Aternity keeps: too few to say what is normal.",
+        "Only 1 earlier Billing Open Invoice for lee in the activity Aternity keeps: too few to say what is normal for lee.",
         "Other users within 5 min: typical 2.1 s (3 users).",
-        "NB-12 at those slow actions: CPU up to 35.0 %.",
+        "NB-12 at that slow action: CPU up to 35.0 %.",
     ]]
     assert a["title"] == "Billing Open Invoice took 9.0 s: no cause found"  # none built on one earlier run
     assert "highest CPU 35.0 % (limit 85.0 %)" in a["checked"][0]
@@ -772,14 +779,16 @@ def test_with_no_slow_action_the_answer_is_what_went_wrong():
 
     # a hang with no details: who else from app usage, out of the PCs using the app
     hang = by["Sheets was not responding"]
-    assert hang["text"] == "Sheets was not responding on VD-1 (Aternity's hang time value up to 25885)"
+    assert hang["text"] == "Sheets was not responding on VD-1"
     assert hang["who"] == "1 other PC of 4 PCs using Sheets. Already on other PCs 5 days before this window."
     assert "Within minutes of it on this PC: bad_module_info" not in " ".join(hang["why"])
     assert any(w.startswith("Within minutes of it on this PC: ") for w in hang["why"])
     # low memory names who used it; the panel of other users is for slow actions only
     low = by["Low Memory Pagefaults"]
-    assert any(w.startswith("Busiest processes then") and "erp memory up to" in w for w in low["why"])
-    assert "On VD-1: look at erp, the busiest process at those times." in a["todo"]
+    assert any(w.startswith("Aternity keeps memory per program only per hour") and "erp memory up to" in w
+               for w in low["why"])
+    assert any(t.startswith("On VD-1: look at erp: memory up to ") and t.endswith("the most of any program.")
+               for t in a["todo"])
     assert a["who_else"] is None
     from uxcorrelate.report import render_text
     text = render_text(result)

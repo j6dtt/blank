@@ -36,7 +36,7 @@ from statistics import mean
 from typing import Protocol
 
 from .config import BACKGROUND_EVENT, NetimMetric, Settings
-from .after_start import compare as compare_after_start
+from .after_start import AFTER_START_MIN, compare as compare_after_start
 from .answer import build_answer, problem_text
 from .cause import explain
 from .impact import who_else
@@ -225,7 +225,9 @@ def _pc_problems(h: DeviceHealthSample, settings: Settings) -> list[dict]:
                                      ("network", h.network_latency, th.client_network_latency_ms,
                                       "Network round trip ms")):
         if value is not None and value > limit:
-            out.append(_problem(h.timestamp, kind, "Aternity", h.device, what, round(value, 2), limit))
+            p = _problem(h.timestamp, kind, "Aternity", h.device, what, round(value, 2), limit)
+            p["reading"] = True  # read with one of the user's actions (its own row)
+            out.append(p)
     return out
 
 
@@ -284,6 +286,43 @@ def _startup_why(g: dict, started_up, logons: dict) -> dict:
             "weak": weak}
 
 
+# a PC value over its limit: the column of the slow action that holds the same value
+LIMIT_FIELDS = {"CPU %": ("cpu", "CPU", "%"), "Memory %": ("memory", "memory", "%"),
+                "Disk queue": ("disk_queue", "disk queue", "")}
+
+
+def _limit_context(g: dict, problems: list, slow: list, logons: dict, window: timedelta) -> None:
+    """Where a PC value over its limit comes from: Aternity takes it with each of the
+    user's actions, so the highest reading is told against the nearest slow action
+    (and that action's own value) and a start-up of the PC just before it."""
+    if g["source"] != "Aternity" or g["what"] not in LIMIT_FIELDS or not g.get("why"):
+        return
+    field, label, unit = LIMIT_FIELDS[g["what"]]
+    rows = [p for p in problems if (p["source"], p["object"], p["what"]) == ("Aternity", g["object"], g["what"])]
+    top = max(rows, key=lambda p: p["value"])
+    mins = lambda d: f"{round(abs(d.total_seconds()) / 60)} min"  # noqa: E731
+    text = [f"Aternity reads the PC's {label} with each of the user's actions: the highest reading was "
+            f"{top['value']}{unit}."]
+    near = [s for s in slow if s.device == g["object"] and abs(s.timestamp - top["t"]) <= window]
+    if near:
+        s = min(near, key=lambda s: abs(s.timestamp - top["t"]))
+        name = f"{s.application} {s.activity}" if s.activity else s.application
+        own = getattr(s, field)
+        when = ("with the slow " + name if s.timestamp == top["t"] else
+                f"{mins(top['t'] - s.timestamp)} {'after' if top['t'] > s.timestamp else 'before'} the slow {name}")
+        text[0] = text[0][:-1] + f", {when}" + (
+            f" (at that action itself: {round(own, 1)}{unit})." if own is not None and s.timestamp != top["t"]
+            else ".")
+    for st in logons.get("starts", []):
+        t = parse_time(st.get("time"))
+        if st.get("device") == g["object"] and t is not None and \
+                timedelta(0) <= top["t"] - t <= timedelta(minutes=AFTER_START_MIN):
+            text.append(f"It was {mins(top['t'] - t)} after {g['object']} started up "
+                        f"({', '.join(st['values'])}).")
+            break
+    g["why"]["text"][:0] = text
+
+
 def _event_problem(e: HealthEvent) -> dict:
     """A device health event is a problem by itself: it happened. One with an
     application counts only for that application's slow actions."""
@@ -302,6 +341,12 @@ def _norm(name: str | None) -> str:
 
 
 def _matches(p: dict, s: UserSample, window: timedelta) -> bool:
+    if p.get("reading"):
+        # a PC value read with one of the user's actions belongs to that action only: a
+        # reading with another action (even a minute later) was not measured during it
+        return p["object"] == s.device and p["t"] == s.timestamp
+    if p["kind"] == "pc" and p["source"] in ("Aternity", "Aternity event", START_UP) and p["object"] != s.device:
+        return False  # something on one PC is not near a slow action on another
     return (p["app"] is None or p["app"] == s.application) and \
         p["t"] - window <= s.timestamp <= p["until"] + window
 
@@ -416,6 +461,14 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
     _together(groups, window)
     changed = explain(aternity, groups, events, window, req.start, req.end)
     for g in groups:
+        _limit_context(g, problems, slow, logons, window)
+        # a PC reading over its limit, taken with another action near a slow one: told so
+        # (it does not count for the slow action, correlate._matches)
+        g["near_reading"] = not g["slow_actions"] and any(
+            p.get("reading") and (p["object"], p["what"]) == (g["object"], g["what"])
+            and any(s.device == p["object"] and abs(s.timestamp - p["t"]) <= window for s in slow)
+            for p in problems)
+    for g in groups:
         g.pop("_times"), g.pop("_all")
     normal = compare_actions(aternity, slow, req.start, req.end, req.username, lambda s: is_slow(s, settings),
                              window)
@@ -436,7 +489,7 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
 
     user_location = next((e.location for e in endpoints if e.location), None) or \
         next((s.location for s in samples if s.location), None)
-    user_ip = next((e.ip_address for e in endpoints if e.ip_address), None)
+    user_ip, ip_device = next(((e.ip_address, e.device) for e in endpoints if e.ip_address), (None, None))
     bucket = lambda t: _bucket(t, minutes)  # noqa: E731
     apps = [req.application] if req.application else \
         [a for a, _ in Counter(s.application for s in slow if s.application).most_common(3)]
@@ -450,7 +503,7 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
     warnings.extend(w for w in getattr(aternity, "warnings", []) if w not in warnings)
     answer = build_answer(groups, samples, slow, req.username or req.device, impact, netim is not None,
                           mapped, user_ip, logons, minutes, _time_split(slow), normal, checked, changed, calm,
-                          after_start)
+                          after_start, ip_device)
     log.info("Done in %.0f s: %s", time.monotonic() - started, answer["title"])
     return {
         "request": {
@@ -470,8 +523,10 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
         "timeline": {
             "actions": [[_iso(s.timestamp), s.response_time, is_slow(s, settings), s.application, s.status]
                         for s in samples],
+            # a hang's value has no documented unit: never shown, not even on hover
             "marks": [[_iso(p["t"]), p["kind"], f"{p['object']}: {p['what']}"
-                       + (f" {p['value']}" if p["value"] is not None else ""), bool(p["slow"])]
+                       + (f" {p['value']}" if p["value"] is not None and not p["what"].endswith(" not responding")
+                          else ""), bool(p["slow"])]
                       for p in sorted(problems, key=lambda p: p["t"])][:5000],
         },
         "endpoints": [asdict(e) for e in endpoints],

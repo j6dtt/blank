@@ -16,6 +16,7 @@ from datetime import datetime
 
 from .after_start import sentence as after_start_sentence
 from .cause import ISSUE_ORDER, UNKNOWN_VERSION, change_text
+from .config import SOFTWARE_REMOVED
 from .models import plural
 
 MAX_CHANGES_SHOWN = 40  # per PC
@@ -39,8 +40,9 @@ def problem_text(g: dict) -> str:
         if m and m.group(2) == "crashed":
             return f"{m.group(1)} crashed on {obj}"
         if m:
-            # APPLICATION_HANG_TIME_TOTAL's unit is not documented: shown as Aternity gives it
-            return f"{m.group(1)} was not responding on {obj} (Aternity's hang time value up to {worst:.0f})"
+            # APPLICATION_HANG_TIME_TOTAL's unit is not documented: a bare number means nothing
+            # to a reader, so it is left out (the problem's notes keep it for IT)
+            return f"{m.group(1)} was not responding on {obj}"
     if g["source"] == "Aternity event":
         return f"{what} on {obj}"
     if g["source"] == "Aternity start-up":
@@ -143,6 +145,26 @@ def _rollup(found: list[dict]) -> list[dict]:
     return list(rows.values())
 
 
+def _pc_limit(g: dict) -> bool:
+    """A PC value (CPU, memory, disk) over its limit, read with the user's actions."""
+    return g["source"] == "Aternity" and g["kind"] == "pc" and g.get("limit") is not None
+
+
+def _limit_step(g: dict, n: int) -> str:
+    """What to do about a PC value over its limit at slow actions, when Aternity cannot
+    name the program for that minute (its per-program figures are hourly)."""
+    label = g["what"].replace(" %", "")
+    near = "the slow action" if n == 1 else f"{g['slow_actions']} of {n} slow actions"
+    return (f"On {g['object']}: {label} was over its limit during {near}, and Aternity cannot name the program for "
+            "that minute: when it is slow again, see which program it is (Task Manager).")
+
+
+# what a limit problem is called in the rollup ("CPU %" is a column name, not an issue)
+LIMIT_ISSUE = {"CPU %": "CPU over its limit", "Memory %": "Memory over its limit",
+               "Disk queue": "Disk queue over its limit", "Free disk space %": "Disk nearly full",
+               "Network round trip ms": "Network round trip over its limit"}
+
+
 def _item(g: dict, count: str) -> dict:
     """One issue: what happened, what is known, a possible cause, who else."""
     why = g.get("why") or {}
@@ -150,7 +172,10 @@ def _item(g: dict, count: str) -> dict:
     if g.get("together"):
         text.append("Within minutes of it on this PC: " + ", ".join(g["together"]) + ".")
     o = why.get("others")
-    return {"text": g["text"], "what": g["what"], "times": g["times"], "_others": o,
+    what = LIMIT_ISSUE.get(g["what"], g["what"]) + (f" ({g['limit']:g}{'%' if '%' in g['what'] else ''})"
+                                                     if g["what"] in LIMIT_ISSUE and g.get("limit") is not None
+                                                     else "")
+    return {"text": g["text"], "what": what, "times": g["times"], "_others": o,
             "count": count, "when": g["first"], "kind": g["kind"], "issue": g["issue"],
             "why": text, "possible": why.get("possible", []),
             "who": others_text(o) if o else None, "list": o["list"] if o else [],
@@ -199,7 +224,8 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
                  netim_on: bool, mapped: list, user_ip: str | None, logons: dict | None,
                  minutes: int, split: dict | None, normal: list | None = None,
                  checked: dict | None = None, changed: dict | None = None,
-                 calm: list[dict] | None = None, after_start: list[dict] | None = None) -> dict:
+                 calm: list[dict] | None = None, after_start: list[dict] | None = None,
+                 ip_device: str | None = None) -> dict:
     n = len(slow)
     worst = max((s for s in slow if s.response_time is not None), key=lambda s: s.response_time, default=None)
     # the slowest action came right after a start-up, and on all PCs of its kind that
@@ -207,7 +233,10 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
     start_lead = next((c for c in after_start or [] if c["slower"] and worst is not None
                        and (c["application"], c["activity"], c["seconds"])
                        == (worst.application, worst.activity, worst.response_time)), None)
-    if any(g["slow_actions"] for g in problems) or any(c["since"] and c["changes"] for c in normal or []):
+    # it gives way to anything at the slow actions but a PC value over its limit (one reading
+    # against a count over many PCs), and to a change before the action became slow
+    if any(g["slow_actions"] and not _pc_limit(g) for g in problems) or \
+            any(c["since"] and c["changes"] for c in normal or []):
         start_lead = None
     # calm: start-ups near a slow action with nothing longer than normal (not problems,
     # correlate.py leaves them out); the reason says they were near
@@ -217,31 +246,43 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         why = g.get("why") or {}
         if why.get("same_as_above"):
             continue  # e.g. a hang's own health event: already explained above
-        found.append(_item(g, "at the slow action" if n == 1 else f"at {g['slow_actions']} of {n} slow actions"))
-        for step in why.get("todo") or [_todo(g)]:
+        at = "at the slow action" if n == 1 else f"at {g['slow_actions']} of {n} slow actions"
+        # a limit counts readings ("This user" in the rollup): say both; a reading counts only
+        # for the action it was read with (correlate._matches)
+        found.append(_item(g, f"{g['times']} of {g['readings']:,} readings, {at.replace('at ', 'with ', 1)}"
+                           if g.get("readings") else at))
+        # a PC value over its limit with its why told: only the steps the data supports
+        # (Aternity cannot show which program it was at that minute)
+        for step in why.get("todo") or ([_limit_step(g, n)] if _pc_limit(g) and why.get("text") else [_todo(g)]):
             if step and step not in todo:
                 todo.append(step)
     later: list[str] = []
     # crashes, hangs and health events at other times: issues by themselves. What the user
-    # felt first, then what spans many PCs; a limit passed with nothing felt comes last
+    # felt first, then what spans many PCs; a limit passed with nothing felt comes last.
+    # With slow actions they are not the answer: "Other things on these PCs", below it
+    elsewhere_items: list[dict] = []
+    put = elsewhere_items if n else found
     elsewhere = [g for g in problems if not g["slow_actions"] and g.get("why")
                  and not g["why"].get("same_as_above")]
     pcs = lambda g: (g["why"].get("others") or {}).get("pcs", 0)  # noqa: E731
     elsewhere.sort(key=lambda g: (ISSUE_ORDER.get(g["issue"], 9), -pcs(g), -g["times"]))
     for g in elsewhere:
-        count = f"{g['times']} of {g['readings']:,} readings" if g.get("readings") else f"{g['times']}x"
-        found.append(_item(g, count + (", not near a slow action" if n else "")))
+        if g.get("readings"):
+            count = f"{g['times']} of {g['readings']:,} readings" + (", none with a slow action" if n else "")
+        else:
+            count = f"{g['times']}x" + (", not near a slow action" if n else "")
+        put.append(_item(g, count))
         later += [s for s in g["why"].get("todo") or [] if s not in later]  # after the slow actions' steps
     other = sum(1 for g in problems if not g["slow_actions"] and not g.get("why"))
     if other and n:
-        found.append({"text": f"{plural(other, 'other problem')} happened only at other times, not near a slow action.",
+        put.append({"text": f"{plural(other, 'other problem')} happened only at other times, not near a slow action.",
                       "count": None, "when": None, "kind": None, "why": [], "possible": [], "who": None, "list": []})
     checks = _checked(checked, minutes) if n else []
     if n and not any(g["kind"] == "network" for g in at_slow):
         if not netim_on:
             checks.append("Network: not checked, NetIM is not configured.")
         elif not mapped:
-            checks.append(f"Network: not checked, this PC's address ({user_ip or 'unknown'}) "
+            checks.append(f"Network: not checked, the address of {ip_device or 'the PC'} ({user_ip or 'unknown'}) "
                           "is not in any NetIM subnet.")
         else:
             checks.append(f"Network: nothing wrong on the path at those times ({len(mapped)} NetIM objects).")
@@ -305,6 +346,9 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         felt_title = (f"{name} took {worst.response_time:.1f} s" + (f" ({worst.status})" if worst.status else "")
                       if n == 1 else f"{n} slow actions, slowest {took}") + ": no cause found"
     nothing = f"No problem was recorded within {minutes} min of {near}."
+    if any(g.get("near_reading") for g in problems):
+        nothing = (f"No problem was recorded within {minutes} min of {near}, other than a PC reading over "
+                   "its limit taken with another action (see Other things on these PCs).")
     for g in calm or []:
         nothing += (f" {g['object']} was starting up near it: {g['what'].split(': ', 1)[-1]}. "
                     "No part of that start-up took longer than normal.")
@@ -334,10 +378,14 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         c = start_lead
         name = f"{c['application']} {c['activity']}" if c["activity"] else c["application"]
         level = "possible"
+        # both shares: slow right after a start-up, and how often it is slow later anyway
+        shares = f"slow {c['after']['share']:.0%} of the time right after a start-up, {c['later']['share']:.0%} later"
         title = (f"{name} took {c['seconds']:.1f} s" + (f" ({worst.status})" if worst.status else "")
-                 + f" right after a start-up: {c['after']['share']:.0%} of those on {c['kind']} are slow")
-        reason = f"{nothing} {after_start_sentence(c)}{usual_line}"
-        todo.insert(0, f"{name} right after a start-up is slow on many {c['kind']}, not only for {who}. "
+                 + f" right after a start-up. On {c['kind']} it is slow {c['after']['share']:.0%} of the time "
+                 f"then, {c['later']['share']:.0%} later")
+        near = nothing if top is None else f"Also with it: {top['text']} (see What went wrong)."
+        reason = f"{after_start_sentence(c)} {near}{usual_line}"
+        todo.insert(0, f"{name} on {c['kind']} is {shares}, for many users, not only {who}. "
                        f"Aternity does not say why: a question for whoever builds the {c['kind']}.")
     elif top is None and as_usual:
         level, title = "unsure", felt_title or "Nothing unusual found"
@@ -355,7 +403,8 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
                   f"It happened within {minutes} min of {top['slow_actions']} of the {n} slow actions.")
         reason += usual_line
     if n and felt_issues + ([also] if also else []):
-        reason += f" Also, not near {'the slow action' if n == 1 else 'the slow actions'}: {_join(felt_issues + ([also] if also else []))}."
+        reason += (f" Also, not near {'the slow action' if n == 1 else 'the slow actions'}: "
+                   f"{_join(felt_issues + ([also] if also else []))} (see Other things on these PCs).")
     if not todo and n:
         todo.append(f"Nothing measured explains it: ask {who} what they were doing at those times "
                     "(see \"What was checked\" for what is ruled out).")
@@ -386,18 +435,41 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
     }
     return {
         "level": level, "title": title, "reason": reason, "felt": felt, "time_went": split,
-        "who_else": who_else, "rollup": _rollup(found), "found": found, "todo": todo, "changes": _changed(changed),
+        "who_else": who_else, "rollup": _rollup(found), "found": found,
+        "elsewhere": [{k: v for k, v in x.items() if k != "_others"} for x in elsewhere_items],
+        "todo": todo, "changes": _changed(changed),
         "normal": [c["text"] for c in normal or []], "checked": checks,
     }
 
 
+REMOVED_TOGETHER = 5  # this many "Uninstalled" rows in one minute, none installed: one line
+
+
 def _changed(changed: dict | None) -> list[dict]:
-    """What changed on each PC, listed once: the issues only name a change that matches them."""
+    """What changed on each PC, listed once: the issues only name a change that matches them.
+    Many removals with no install logged in one minute (a virtual desktop's image renewed,
+    as the log shows it) are one line, not a page of "Uninstalled"."""
     iso = lambda t: t.isoformat().replace("+00:00", "Z")  # noqa: E731
-    return [{"device": d, "changes": [{"time": iso(c["time"]), "text": change_text(c).split(" ", 2)[2]}
-                                      for c in rows[:MAX_CHANGES_SHOWN]],
-             "more": max(0, len(rows) - MAX_CHANGES_SHOWN)}
-            for d, rows in (changed or {}).items()]
+    out = []
+    for d, rows in (changed or {}).items():
+        lone = lambda c: c["change"] in SOFTWARE_REMOVED and not c.get("back")  # noqa: E731
+        minute = lambda c: c["time"].replace(second=0, microsecond=0)  # noqa: E731
+        per_minute = Counter(minute(c) for c in rows if lone(c))
+        items, done = [], set()
+        for c in rows:
+            m = minute(c)
+            if lone(c) and per_minute[m] >= REMOVED_TOGETHER:
+                if m not in done:
+                    done.add(m)
+                    names = [x["name"] for x in rows if lone(x) and minute(x) == m]
+                    items.append({"time": iso(c["time"]), "text": (
+                        f"{len(names)} programs logged as uninstalled in the same minute, with no install logged: "
+                        f"{', '.join(names[:4])}"
+                        + (f" and {len(names) - 4} more" if len(names) > 4 else ""))})
+                continue
+            items.append({"time": iso(c["time"]), "text": change_text(c).split(" ", 2)[2]})
+        out.append({"device": d, "changes": items[:MAX_CHANGES_SHOWN], "more": max(0, len(items) - MAX_CHANGES_SHOWN)})
+    return out
 
 
 def _checked(c: dict | None, minutes: int) -> list[str]:
@@ -410,7 +482,9 @@ def _checked(c: dict | None, minutes: int) -> list[str]:
         vals = [f"{label} {pc[k]}{unit} (limit {lim[k]}{unit})" for k, label, unit in
                 (("cpu", "CPU", " %"), ("memory", "memory", " %"), ("disk_queue", "disk queue", ""))
                 if pc[k] is not None]
-        out.append(f"PC at the {pc['measured']} slow actions Aternity measured it: highest " + ", ".join(vals) + ".")
+        at = "the slow action" if pc["measured"] == 1 else f"the {pc['measured']} slow actions"
+        out.append(f"PC during {at}, as Aternity read it with {'it' if pc['measured'] == 1 else 'them'}: highest "
+                   + ", ".join(vals) + ".")
     else:
         out.append("PC: Aternity gave no CPU, memory or disk queue for the slow actions.")
     for key, what in (("events", "Health events"), ("crashes_hangs", "App crashes and hangs"),
