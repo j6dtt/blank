@@ -270,7 +270,7 @@ def _changes_phrase(c: dict) -> str:
 
 
 def _since_phrase(c: dict) -> str:
-    """ "Microsoft Outlook Preview Mail on D041: slow 2 of 9 times from Nov 6 (4.4 s, usually 0.2 s);
+    """ "Microsoft Outlook Preview Mail on VD-41: slow 2 of 9 times from Nov 6 (4.4 s, usually 0.2 s);
     normal on each of the 4 days before." What was counted, never "slow since" (runs in between
     may have been fast)."""
     k, runs = c.get("from_slow"), c.get("from_runs")
