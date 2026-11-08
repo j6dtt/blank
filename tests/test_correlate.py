@@ -223,7 +223,7 @@ def test_a_hang_is_traced_to_its_module_the_change_before_it_and_other_pcs():
     assert not any("Some Viewer" in t for t in why["text"])  # no link to the failure: listed once, per PC
     a = result["answer"]
     # the why is said once, under the finding; the headline only counts
-    assert a["reason"] == "It happened within 5 min of 1 of the 1 slow actions." and a["found"][0]["why"] == why["text"]
+    assert a["reason"] == "It happened within 5 min of the slow action." and a["found"][0]["why"] == why["text"]
     assert any(t.startswith("Check the Scanner change of 2026-10-27") for t in a["todo"])
     assert len([f for f in a["found"] if f["why"]]) == 1  # the hang and its health event: one finding
     # who else is said once, on the issue, in one shape
@@ -397,11 +397,13 @@ class Usual(Starting):
         return []
 
 
-def test_a_normal_start_up_is_only_possibly_the_cause_and_has_no_dead_end_step():
+def test_a_normal_start_up_is_not_the_cause_nor_an_issue():
     result = amy(erp(lambda i: i == 5), source=Usual)
     a = result["answer"]
-    assert a["level"] == "possible" and a["title"].startswith("Possibly: PC1 was starting up")
-    assert "Only the timing links them" in a["reason"]
+    assert a["level"] == "unsure" and "starting up" not in a["title"]
+    assert "PC1 was starting up near it: Logon 105.0 s" in a["reason"]
+    assert "No part of that start-up took longer than normal." in a["reason"]
+    assert not any("starting up" in r["issue"] for r in a["rollup"])
     assert result["problems"][0]["why"]["text"][0] == (
         "Logon (105.0 s) was normal for PC1: 9 in 10 of its 8 earlier start-ups in the last 30 days took up to 108.1 s.")
     assert not any("Slow start-ups tab" in t for t in a["todo"])

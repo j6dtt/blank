@@ -199,13 +199,16 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
                  minutes: int, split: dict | None, normal: list | None = None,
                  checked: dict | None = None, changed: dict | None = None) -> dict:
     n = len(slow)
-    at_slow = [g for g in problems if g["slow_actions"]]
+    # a start-up with nothing longer than normal is near a slow action by timing only:
+    # it did not go wrong, so it is said in the reason, never an issue or the headline
+    calm = [g for g in problems if g["slow_actions"] and (g.get("why") or {}).get("weak")]
+    at_slow = [g for g in problems if g["slow_actions"] and g not in calm]
     found, todo = [], []
     for g in at_slow:
         why = g.get("why") or {}
         if why.get("same_as_above"):
             continue  # e.g. a hang's own health event: already explained above
-        found.append(_item(g, f"at {g['slow_actions']} of {n} slow actions"))
+        found.append(_item(g, "at the slow action" if n == 1 else f"at {g['slow_actions']} of {n} slow actions"))
         for step in why.get("todo") or [_todo(g)]:
             if step and step not in todo:
                 todo.append(step)
@@ -278,7 +281,11 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
     as_usual = bool(impact and impact["slow"] and impact["unusual"] is False)
     usual_line = (f" Other {', '.join(impact['applications'])} users had slow actions about as often as normal at this time "
                   "(see Other users)." if as_usual else "")
-    nothing = f"No problem was recorded within {minutes} min of any of the {n} slow actions."
+    near = "the slow action" if n == 1 else f"any of the {n} slow actions"
+    nothing = f"No problem was recorded within {minutes} min of {near}."
+    for g in calm:
+        nothing += (f" {g['object']} was starting up near it: {g['what'].split(': ', 1)[-1]}. "
+                    "No part of that start-up took longer than normal.")
     # the details stay in their own section; the reason says where to look
     felt_issues, background = _issue_counts([g for g in problems if not g["slow_actions"]])
     also = _background_line(background) if background else None
@@ -310,13 +317,10 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
             side = max(split, key=split.get)
             reason += f" Aternity measured most of the slow time {WHERE[side]} ({_pct(split[side])})."
     else:
-        weak = (top.get("why") or {}).get("weak")
-        level = "likely" if top["slow_actions"] * 2 > n and not weak else "possible"
+        level = "likely" if top["slow_actions"] * 2 > n else "possible"
         title = f"{'Likely' if level == 'likely' else 'Possibly'}: {top['text']}"
-        reason = f"It happened within {minutes} min of {top['slow_actions']} of the {n} slow actions."
-        if weak:
-            reason += (" Only the timing links them: Aternity measured nothing in it as longer than normal, "
-                       "so it may not be the cause.")
+        reason = (f"It happened within {minutes} min of the slow action." if n == 1 else
+                  f"It happened within {minutes} min of {top['slow_actions']} of the {n} slow actions.")
         reason += usual_line
     if n and felt_issues + ([also] if also else []):
         reason += f" Also, not near the slow actions: {_join(felt_issues + ([also] if also else []))}."
