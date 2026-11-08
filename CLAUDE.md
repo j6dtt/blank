@@ -123,6 +123,16 @@ unset `<REQUIRED>` base URLs.
   only when Aternity knows it. Each finding is a sentence about a record;
   a source with nothing says so. A hang and its own health event share one
   cause.
+- `after_start.py`: a slow action up to `AFTER_START_MIN` (10) after a
+  start-up of its PC, against the same app activity on all PCs of its
+  kind (virtual / physical) in the `FLEET_HOURS` (24) before: runs right
+  after a start-up and later, share slow and median (`activity_history`
+  and `boots` for everyone). "Slower" = `RATIO` times the share or the
+  median, `MIN_RUNS` on each side. With nothing at the slow actions and
+  no change before, the slowest action's comparison is the headline
+  ("… right after a start-up: 67% of those on virtual desktops are
+  slow", level possible); the others go to "checked". Live: launches
+  right after logon are slow, most on virtual desktops (verify, Nov 2026).
 - `answer.py`: the plain-language answer at the top of the page and the
   CLI report (title, what the user felt, other users, what went wrong, what
   changed, what to do), plus `problem_text`, the sentence for each problem. The
@@ -226,6 +236,12 @@ unset `<REQUIRED>` base URLs.
   it back.
 - TLS certificates are deliberately not checked (`verify=False` in
   `http.py`; Riverbed hosts use self-signed certs). Don't add a
-  `verify_tls` setting back.
+  `verify_tls` setting back. (Serving the UI over HTTPS is separate:
+  `serve --tls-port/--cert/--key`, both ports in one process with one
+  stop for both; certs in `./certs`, gitignored; host 8444, as haproxy
+  holds 8443.)
+- The page is titled "GO Preservation Society" (parchment, archive green,
+  brass; colours only through the `:root` variables, serif from fonts
+  already on Windows: the live host has no internet).
 - The web UI has no authentication. Don't add features that assume it does.
 - Keep secrets out of `config.yaml` (it is gitignored). Pass them as env vars.

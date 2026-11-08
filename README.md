@@ -60,7 +60,13 @@ Other users of these apps:
    The answer names the problem at the most slow actions: "likely" when
    that is more than half of them, "possibly" when fewer. No scores.
    With nothing at the slow actions it names the slowest one: "Microsoft
-   Outlook Launch took 61.8 s (Major): no cause found".
+   Outlook Launch took 61.8 s (Major): no cause found". When that action
+   came up to 10 min after the PC started up, the same activity on all PCs
+   of its kind (virtual desktops or physical PCs) in the 24 h before is
+   counted, right after a start-up and later. If it is slower right after
+   a start-up there, the headline says so: "Microsoft Outlook Launch took
+   61.8 s (Major) right after a start-up: 67% of those on virtual desktops
+   are slow".
 6. **What went wrong (the main point).** Slow actions are one kind of
    issue, next to hangs, app crashes and health events: with no slow
    action the answer still counts what happened ("7 hangs, 2 app crashes,
@@ -163,9 +169,17 @@ code from `./src`. To fix code, edit `src/uxcorrelate/*.py` and run
 lists what to do before the first start. Healthy means the web server is up; it
 does not mean Aternity or NetIM are reachable (`verify` checks that).
 
-**Web UI.** Open `http://<docker-host>:8080`. The `ports` setting in
-`compose.yaml` decides who can reach it: `["127.0.0.1:8080:8080"]` is the
-Docker host only, `["8080:8080"]` is the whole network. The UI has no login.
+**Web UI** (titled "GO Preservation Society"). Open `http://<docker-host>:8080`
+or `https://<docker-host>:8444`. The `ports` setting in `compose.yaml`
+decides who can reach it: `"127.0.0.1:8080:8080"` is the Docker host only,
+`"8080:8080"` is the whole network. The UI has no login.
+
+HTTPS is port 8443 in the container, 8444 on the host (the host's 8443 is
+haproxy's). It needs the certificate and key in `./certs`
+(`ssl.lab.int.crt`, `ssl.lab.int.key`, not in git), readable by uid 1000,
+the container's user. Missing or unreadable, the log says "HTTPS (port
+8443) is off" and the page stays on http. To turn HTTPS off, comment out
+the TLS lines of `command` and the `8444:8443` port in `compose.yaml`.
 
 **CLI.** Run it inside the running container:
 

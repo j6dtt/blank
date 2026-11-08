@@ -26,6 +26,7 @@ from typing import Any
 from .aternity import AternityClient, is_virtual, odata_quote, odata_time
 from .config import (DISK_FREE_COLUMNS, PROCESS_COLUMN, SOFTWARE_REMOVED, SOFTWARE_UPDATE_GAP_MIN, TIME_COLUMNS,
                      VDI_COLUMNS, Settings)
+from .after_start import AFTER_START_MIN  # "right after a start-up", as investigations
 from .correlate import slow_rule
 from .http import ApiError
 from .models import parse_time, to_float
@@ -967,7 +968,6 @@ def _hangs_and_updates(settings, client, schema, now, log) -> list[Check]:
 
 
 AFTER_START_DAYS = 4  # actions and start-ups read, half a day at a time
-AFTER_START_MIN = 10  # "right after a start-up": up to this many minutes after its time
 
 
 def _after_start_up(settings, client, schema, now) -> list[Check]:

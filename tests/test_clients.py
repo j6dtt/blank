@@ -186,7 +186,7 @@ def test_one_activity_history_asks_only_for_what_it_compares():
     assert "USERNAME eq 'lee'" in flt and "DEVICE_NAME eq" not in flt
     assert seen[0]["$select"].split(",") == ["TIMEFRAME", "USERNAME", "DEVICE_NAME", "ACTIVITY_RESPONSE_TIME",
                                              "SLA_STATUS", "HRC_CPU_UTIL", "HRC_PHYSICAL_MEMORY_UTIL",
-                                             "HRC_DISK_QUEUE_LENGTH"]
+                                             "HRC_DISK_QUEUE_LENGTH", "VIRTUALIZATION"]
     assert (s.response_time, s.status, s.cpu, s.memory, s.disk_queue) == (9.5, "Major", 41.0, None, 0.2)
 
 

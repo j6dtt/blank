@@ -14,6 +14,7 @@ import re
 from collections import Counter
 from datetime import datetime
 
+from .after_start import sentence as after_start_sentence
 from .cause import ISSUE_ORDER, UNKNOWN_VERSION, change_text
 from .models import plural
 
@@ -198,8 +199,16 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
                  netim_on: bool, mapped: list, user_ip: str | None, logons: dict | None,
                  minutes: int, split: dict | None, normal: list | None = None,
                  checked: dict | None = None, changed: dict | None = None,
-                 calm: list[dict] | None = None) -> dict:
+                 calm: list[dict] | None = None, after_start: list[dict] | None = None) -> dict:
     n = len(slow)
+    worst = max((s for s in slow if s.response_time is not None), key=lambda s: s.response_time, default=None)
+    # the slowest action came right after a start-up, and on all PCs of its kind that
+    # activity is slower right after one: the headline when nothing else explains it
+    start_lead = next((c for c in after_start or [] if c["slower"] and worst is not None
+                       and (c["application"], c["activity"], c["seconds"])
+                       == (worst.application, worst.activity, worst.response_time)), None)
+    if any(g["slow_actions"] for g in problems) or any(c["since"] and c["changes"] for c in normal or []):
+        start_lead = None
     # calm: start-ups near a slow action with nothing longer than normal (not problems,
     # correlate.py leaves them out); the reason says they were near
     at_slow = [g for g in problems if g["slow_actions"]]
@@ -242,6 +251,12 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
             checks.append(f"Network between {d} (a virtual desktop) and the device the user sat at"
                           + (f" ({', '.join(used[:3])})" if used else "") + ": not checked, Aternity "
                           "gives no delay for it.")
+    # every other slow activity right after a start-up, against all PCs (once: not the headline's)
+    for c in after_start or []:
+        if c is not start_lead:
+            checks.append(after_start_sentence(c) + (
+                " Slower right after a start-up." if c["slower"] else
+                "" if not c["enough"] else " Not slower right after a start-up: not the reason."))
     for c in normal or []:
         for step in c["todo"]:
             if step not in todo:
@@ -282,7 +297,6 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
     usual_line = (f" Other {', '.join(impact['applications'])} users had slow actions about as often as normal at this time "
                   "(see Other users)." if as_usual else "")
     near = "the slow action" if n == 1 else f"any of the {n} slow actions"
-    worst = max((s for s in slow if s.response_time is not None), key=lambda s: s.response_time, default=None)
     # with no cause found, the headline still says what the user felt: the slowest action
     felt_title = None
     if worst is not None:
@@ -315,6 +329,16 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         title = f"Possibly: what changed on {lead['device']} before {lead['name']} became slow"
         reason = (f"{nothing} Compared with normal shows it slow since {_day(lead['since'])} "
                   f"and what changed on {lead['device']} just before.{usual_line}")
+    elif start_lead:
+        # nothing at the slow action, but that activity is slow right after a start-up on many PCs
+        c = start_lead
+        name = f"{c['application']} {c['activity']}" if c["activity"] else c["application"]
+        level = "possible"
+        title = (f"{name} took {c['seconds']:.1f} s" + (f" ({worst.status})" if worst.status else "")
+                 + f" right after a start-up: {c['after']['share']:.0%} of those on {c['kind']} are slow")
+        reason = f"{nothing} {after_start_sentence(c)}{usual_line}"
+        todo.insert(0, f"{name} right after a start-up is slow on many {c['kind']}, not only for {who}. "
+                       f"Aternity does not say why: a question for whoever builds the {c['kind']}.")
     elif top is None and as_usual:
         level, title = "unsure", felt_title or "Nothing unusual found"
         reason = nothing + usual_line

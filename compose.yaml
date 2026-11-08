@@ -10,7 +10,22 @@ x-settings:
   # Host address:port for the web UI. The UI has no
   # login: use "8080:8080" only on a trusted network,
   # "127.0.0.1:8080:8080" for this host only.
-  ports: &ports ["8080:8080"]
+  # HTTPS is 8443 in the container. On the host 8443
+  # is haproxy's, so it is 8444 here; comment it out
+  # for http only.
+  ports: &ports
+    - "8080:8080"
+    - "8444:8443"
+  # HTTPS: certificate and key in ./certs (not in git;
+  # readable by uid 1000, the container's user).
+  # Comment out the TLS lines = http only.
+  command: &command
+    - serve
+    - --host=0.0.0.0
+    - --port=8080
+    - --tls-port=8443
+    - --cert=/certs/ssl.lab.int.crt
+    - --key=/certs/ssl.lab.int.key
 
 # Before the first start:
 #   1. cp config.example.yaml config.yaml, fill <REQUIRED>
@@ -29,7 +44,7 @@ services:
     pull_policy: never
     container_name: uxcorrelate
     restart: unless-stopped
-    command: ["serve", "--host", "0.0.0.0", "--port", "8080"]
+    command: *command
     ports: *ports
     env_file:
       - path: .env
@@ -39,3 +54,4 @@ services:
     volumes:
       - ./src:/app/src:ro
       - ./config.yaml:/config/config.yaml:ro
+      - ./certs:/certs:ro

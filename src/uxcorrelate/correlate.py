@@ -36,6 +36,7 @@ from statistics import mean
 from typing import Protocol
 
 from .config import BACKGROUND_EVENT, NetimMetric, Settings
+from .after_start import compare as compare_after_start
 from .answer import build_answer, problem_text
 from .cause import explain
 from .impact import who_else
@@ -443,9 +444,13 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
                       lambda s: is_slow(s, settings), req.username or req.device,
                       None if req.username else req.device, user_ip, user_location,
                       any(s.virtual for s in slow))
+    # slow actions right after a start-up of their PC, against the same activity on all PCs
+    after_start = compare_after_start(aternity, slow, logons.get("starts", []), lambda s: is_slow(s, settings),
+                                      warnings)
     warnings.extend(w for w in getattr(aternity, "warnings", []) if w not in warnings)
     answer = build_answer(groups, samples, slow, req.username or req.device, impact, netim is not None,
-                          mapped, user_ip, logons, minutes, _time_split(slow), normal, checked, changed, calm)
+                          mapped, user_ip, logons, minutes, _time_split(slow), normal, checked, changed, calm,
+                          after_start)
     log.info("Done in %.0f s: %s", time.monotonic() - started, answer["title"])
     return {
         "request": {

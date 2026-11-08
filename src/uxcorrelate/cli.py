@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
+import contextlib
 import json
 import logging
+import os
 import re
+import signal
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -14,6 +18,8 @@ from .correlate import InvestigationRequest, investigate
 from .http import ApiError
 from .models import parse_time
 from .report import render_logons, render_text
+
+log = logging.getLogger("uxcorrelate")
 
 
 def parse_duration(text: str) -> timedelta:
@@ -81,7 +87,35 @@ def cmd_serve(args) -> int:
             return not (isinstance(a, tuple) and len(a) >= 3 and str(a[0]).startswith("127.0.0.1")
                         and a[2] == "/")
     logging.getLogger("uvicorn.access").addFilter(NoHealthCheck())
-    uvicorn.run(create_app(args.config), host=args.host, port=args.port)
+    app = create_app(args.config)
+    configs = [uvicorn.Config(app, host=args.host, port=args.port)]
+    if args.tls_port:
+        unreadable = [f for f in (args.cert, args.key) if not (f and os.access(f, os.R_OK))]
+        if unreadable:
+            log.warning("HTTPS (port %s) is off: %s missing or not readable by this container. "
+                        "The page is on http port %s only.", args.tls_port, ", ".join(map(str, unreadable)),
+                        args.port)
+        else:
+            configs.append(uvicorn.Config(app, host=args.host, port=args.tls_port,
+                                          ssl_certfile=args.cert, ssl_keyfile=args.key))
+            log.info("HTTPS on port %s with %s", args.tls_port, args.cert)
+
+    class Server(uvicorn.Server):  # one stop for every port, below
+        @contextlib.contextmanager
+        def capture_signals(self):
+            yield
+
+    servers = [Server(c) for c in configs]
+
+    def stop(*_):
+        for s in servers:
+            s.should_exit = True
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, stop)
+
+    async def every_port():
+        await asyncio.gather(*(s.serve() for s in servers))
+    asyncio.run(every_port())
     return 0
 
 
@@ -159,6 +193,9 @@ def main(argv: list[str] | None = None) -> int:
     srv = sub.add_parser("serve", help="run the web UI and REST API")
     srv.add_argument("--host", default="127.0.0.1")
     srv.add_argument("--port", type=int, default=8080)
+    srv.add_argument("--tls-port", type=int, help="also serve HTTPS on this port (needs --cert and --key)")
+    srv.add_argument("--cert", help="certificate file (PEM) for --tls-port")
+    srv.add_argument("--key", help="private key file (PEM) for --tls-port")
     srv.set_defaults(func=cmd_serve)
 
     smp = sub.add_parser("aternity-sample", help="print sample rows of an Aternity OData entity")

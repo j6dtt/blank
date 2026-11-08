@@ -207,7 +207,8 @@ class AternityClient:
             clauses.append(f"{f['username']} eq {odata_quote(username)}")
         elif device:
             clauses.append(f"{f['device']} eq {odata_quote(device)}")
-        logical = ("timestamp", "username", "device", "response_time", "status", "cpu", "memory", "disk_queue")
+        logical = ("timestamp", "username", "device", "response_time", "status", "cpu", "memory", "disk_queue",
+                   "virtualization")
         # a failure (e.g. a timeout on 30 days) is a warning: the investigation goes on without it
         rows = self._optional(key, "comparison with normal", " and ".join(clauses),
                               select=[f[k] for k in logical if f.get(k)])
@@ -220,7 +221,8 @@ class AternityClient:
                     timestamp=ts, username=str(row.get(f["username"]) or ""),
                     device=str(row.get(f["device"]) or ""), application=application, activity=activity,
                     response_time=num("response_time"), status=row.get(f.get("status", "")) or None,
-                    cpu=num("cpu"), memory=num("memory"), disk_queue=num("disk_queue")))
+                    cpu=num("cpu"), memory=num("memory"), disk_queue=num("disk_queue"),
+                    virtual=is_virtual(row.get(f.get("virtualization", "")))))
         return out
 
     def boots(self, start: datetime, end: datetime, username: str | None = None,
