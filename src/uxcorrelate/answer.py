@@ -266,7 +266,19 @@ def _changes_phrase(c: dict) -> str:
         return f"Possibly: {x['name']} {x['change'] or 'changed'} on {_day(x['time'])}"
     first, last = min(x["time"] for x in ch), max(x["time"] for x in ch)
     when = f"on {_day(first)}" if _day(first) == _day(last) else f"between {_day(first)} and {_day(last)}"
-    return f"{plural(k, 'change')} logged on {c['device']} {when}: possibly one of them"
+    return f"{plural(k, 'change')} logged there {when}: possibly one of them"
+
+
+def _since_phrase(c: dict) -> str:
+    """ "Microsoft Outlook Preview Mail on D041: slow 2 of 9 times from Nov 6 (4.4 s, usually 0.2 s);
+    normal on each of the 4 days before." What was counted, never "slow since" (runs in between
+    may have been fast)."""
+    k, runs = c.get("from_slow"), c.get("from_runs")
+    count = f"slow {k} of {runs} times" if runs else "slow"
+    before = (f"normal on each of the {c['days_used']} days before" if not c["slow_days"] else
+              f"normal on {_day(c['normal_day'])}" if c.get("normal_day") else "normal before")
+    return (f"{c['name']} on {c['device']}: {count} from {_day(c['since'])} ({c['took']} s, usually "
+            f"{c['usual']} s); {before}.")
 
 
 def _usual_from(c: dict) -> str:
@@ -330,9 +342,11 @@ def _pick_headline(at_slow: list[dict], slow: list, normal: list[dict], after_st
                                         f"{_after_when(st)} a start-up (on {st['kind']} {st['after']['share']:.0%} "
                                         f"are slow then, {st['later']['share']:.0%} later)"))
             elif nm is not None:
-                fact = (f"usually {nm['usual']} s, slow since {_day(nm['since'])} after "
+                counted = (f"slow {nm['from_slow']} of {nm['from_runs']} times" if nm.get("from_runs")
+                           else "slow") + f" from {_day(nm['since'])}" if nm["since"] else ""
+                fact = (f"usually {nm['usual']} s, {counted}, after "
                         f"{plural(nm.get('changed') or len(nm['changes']), 'change')} there" if nm["since"] and nm["changes"]
-                        else f"usually {nm['usual']} s, slow since {_day(nm['since'])}, no change to check logged"
+                        else f"usually {nm['usual']} s, {counted}, no change to check logged"
                         if nm["since"] else
                         "slow on most runs every day it was used, not new"
                         if nm.get("enough") and nm["days_used"] and nm["slow_days"] == nm["days_used"] else
@@ -513,9 +527,9 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         reason = f"{nothing} See Other users."
     elif cls in ("C", "D"):
         level = "possible" if cls == "C" else "unsure"
-        title = f"{c['name']} slow on {c['device']} since {_day(c['since'])}: {c['took']} s, usually {c['usual']} s. "
+        title = _since_phrase(c) + " "
         title += _changes_phrase(c) if cls == "C" else (
-            f"No change to check was logged on {c['device']} before it"
+            "No change to check was logged there before it"
             + (" (on a virtual desktop the log can run late)" if c["virtual"] else ""))
         reason = f"{nothing} {_usual_from(c)}"
         if cls == "C":

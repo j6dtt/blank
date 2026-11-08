@@ -478,8 +478,9 @@ def test_each_slow_action_is_compared_with_its_own_normal_and_what_changed():
         "disk queue up to 0.3 (usually 0.1).",
     ]]
     assert "On NB-12: check what changed before Billing Open Invoice became slow (Print Agent)." in a["todo"]
-    assert a["level"] == "possible" and a["title"] == ("Billing Open Invoice slow on NB-12 since Oct 18: 9.0 s, "
-                                                      "usually 2.0 s. Possibly: Print Agent updated on Oct 17")
+    assert a["level"] == "possible" and a["title"] == ("Billing Open Invoice on NB-12: slow 23 of 23 times from "
+                                                      "Oct 18 (9.0 s, usually 2.0 s); normal on Oct 17. "
+                                                      "Possibly: Print Agent updated on Oct 17")
     # how much the usual rests on, so a reader can judge it
     assert a["reason"] == ("No problem was recorded within 5 min of any of the 3 slow actions. The usual time is "
                            "from 60 runs in the last 30 days. What changed on NB-12 is listed under What changed.")

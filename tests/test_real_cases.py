@@ -334,7 +334,8 @@ class OutlookPreviewNew(SameMinuteReading):
     """The full Nov 6-8 page (live), names made up: besides the Teams Launch on VD-14,
     on VD-41 (logon 08:12, CPU 91.75% with a normal action at 08:15) Outlook Launch
     takes 40.6 s at 09:15 (others typical 33.5 s) while an AAD token broker hang
-    starts in the same minute; Preview Mail takes 3.6 and 5.2 s (4.4 s typical, as prod showed) (usually 0.2 s for
+    starts in the same minute; Preview Mail takes 3.6 and 5.2 s (4.4 s typical, as prod showed), with 4
+    fast runs (0.2 s) after them, so it is slow 2 of 6 times, not "since" (usually 0.2 s for
     the user, on the 3 days before, last on another desktop; others 0.1 s). VD-41's
     log on Nov 5 13:11: three updates (Teams Meeting Add-in, OneDrive, the agent)
     and 27 "Uninstalled" rows with no install (Microsoft 365 Apps among them)."""
@@ -351,7 +352,8 @@ class OutlookPreviewNew(SameMinuteReading):
         rows = super().user_activity(*a, **k) + [
             mk(self.LOGON41 + timedelta(minutes=3), "Open Mail", 1.0, 91.75),
             mk(self.OL_LAUNCH, "Launch", 40.6, 30.0, "Minor")] + [
-            mk(t, "Preview Mail", rt, 7.9, "Minor") for t, rt in zip(self.PREVIEW, (3.6, 5.2))]
+            mk(t, "Preview Mail", rt, 7.9, "Minor") for t, rt in zip(self.PREVIEW, (3.6, 5.2))] + [
+            mk(self.PREVIEW[0] + timedelta(hours=h), "Preview Mail", 0.2, 7.9) for h in (2, 4, 24, 26)]
         return sorted(rows, key=lambda s: s.timestamp)
 
     def boots(self, start, end, username=None, **k):
@@ -405,8 +407,9 @@ def test_the_full_page_of_nov_8_tells_the_real_change_only():
     a = investigate(InvestigationRequest(start=c.START, end=c.END, username="user2"), c(), None, settings)["answer"]
     # the only slowdown new for this user, after a real change on its desktop
     # what the user felt, the usual, since when, and the changes by count and day (names in What changed)
-    assert a["title"] == ("Microsoft Outlook Preview Mail slow on VD-41 since Nov 6: 4.4 s, usually 0.2 s. "
-                          "3 changes logged on VD-41 on Nov 5: possibly one of them")
+    assert a["title"] == ("Microsoft Outlook Preview Mail on VD-41: slow 2 of 6 times from Nov 6 (4.4 s, usually "
+                          "0.2 s); normal on each of the 3 days before. 3 changes logged there on Nov 5: possibly "
+                          "one of them")
     # every other slow action at the top, each with what is known of it
     assert a["reason"].endswith(
         "Also slow: Microsoft Outlook Launch 40.6 s on VD-41, others typical 33.5 s; Microsoft Teams Launch "

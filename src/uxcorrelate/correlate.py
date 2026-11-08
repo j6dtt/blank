@@ -507,7 +507,7 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
     for g in groups:
         g.pop("_times"), g.pop("_all")
     normal = compare_actions(aternity, slow, req.start, req.end, req.username, lambda s: is_slow(s, settings),
-                             window)
+                             window, samples)
     th = settings.thresholds
     measured = [s for s in slow if any(v is not None for v in (s.cpu, s.memory, s.disk_queue))]
     top = lambda k: max((round(getattr(s, k), 1) for s in measured if getattr(s, k) is not None),  # noqa: E731

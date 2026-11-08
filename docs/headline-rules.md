@@ -31,8 +31,8 @@ The headline counts what the user hit:
 |---|---|---|---|
 | A | A problem within `bucket_minutes` of slow actions | "Likely: Microsoft Outlook crashed on VD-41 at 3 of them; 2 more issues (see What went wrong)" | Likely if at over half the slow actions, else Possibly |
 | B | Many other users of the same apps slow at once, more than on other days | "Many users behind <point> were slow at the same time" | none |
-| C | It became slow after changes on the PC | "Microsoft Outlook Preview Mail slow on VD-41 since Nov 6: 4.4 s, usually 0.2 s. 3 changes logged on VD-41 on Nov 5: possibly one of them" | Possibly |
-| D | It became slow and no change to check was logged | "… No change to check was logged on VD-41 before it (on a virtual desktop the log can run late)" | none |
+| C | It became slow after changes on the PC | "Microsoft Outlook Preview Mail on VD-41: slow 2 of 6 times from Nov 6 (4.4 s, usually 0.2 s); normal on each of the 3 days before. 3 changes logged there on Nov 5: possibly one of them" | Possibly |
+| D | It became slow and no change to check was logged | "… No change to check was logged there before it (on a virtual desktop the log can run late)" | none |
 | E | Right after a start-up, and slower then on every PC of its kind | "Microsoft Teams Launch took 43.8 s on VD-14 (Minor), 3 min after a start-up. On virtual desktops 93% are slow then, 62% later" | none |
 | F | Aternity marked most runs slow on every day the user ran it | "… usually 45.0 s. Aternity marked most runs slow on each of the 7 days user1 used it: not new" | none |
 | G | Other users as slow as usual at this time | "Other Microsoft Outlook users were as slow as usual at this time" | none |
@@ -51,6 +51,11 @@ Details:
   Several are counted, by day or span. Their names stay in "What
   changed on <PC>". A batch of 5+ "Uninstalled" rows in one minute is
   never counted.
+- **C, D: what was counted, never "slow since".** The runs of that
+  activity on that PC from the first slow one ("slow 2 of 6 times from
+  Nov 6"): runs in between may have been fast. Then what was normal
+  before: every day ("normal on each of the 3 days before") or the
+  last normal day. The PC is named once; later it is "there".
 - **C, D, F subject:** the slow app and activity with the most slow
   actions, then the slowest. That can beat the slowest action overall.
 - **Thin data is said:** the reason gives "The usual time is from N

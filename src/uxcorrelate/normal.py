@@ -42,7 +42,7 @@ def _status(mine: list) -> str | None:
 
 
 def compare_actions(aternity, slow: list, start, end, username: str | None, is_slow,
-                    window: timedelta = timedelta(minutes=5)) -> list[dict]:
+                    window: timedelta = timedelta(minutes=5), samples: list | None = None) -> list[dict]:
     """One entry per slow application + activity: sentences ("text") and steps ("todo")."""
     if not slow or not hasattr(aternity, "activity_history"):
         return []
@@ -95,7 +95,7 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
             if d not in bad:
                 break
             run.insert(0, d)
-        since, changes, todo, changed = None, [], [], 0
+        since, changes, todo, changed, normal_day, from_runs = None, [], [], 0, None, []
         if enough:
             line = (f"Aternity marked most runs slow on {len(bad)} of the {len(days)} days {who} used it "
                     f"in the {back}")
@@ -114,7 +114,10 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
                 normal = last.timestamp
                 first = (min(s.timestamp for s in by_day[run[0]] if is_slow(s)) if run
                          else min(s.timestamp for s in mine))
-                since = first
+                since, normal_day = first, normal
+                # every run of it on this PC from the first slow one: "slow 2 of 9 times", not "slow since"
+                from_runs = [s for s in hist + [x for x in samples or slow if (x.application, x.activity) == (app, act)]
+                             if s.device == dev and s.timestamp >= first and s.response_time is not None]
                 if any(s.virtual for s in mine) and last.device and last.device != dev:
                     # pooled virtual desktops: the normal run was on another desktop
                     text.append(f"The last normal {name} was on {last.device}, another virtual desktop: "
@@ -141,5 +144,7 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
                     "changes": changes, "changed": changed, "enough": enough, "runs": len(hist), "back": back,
                     "worst": round(worst, 1) if worst is not None else None,
                     "virtual": any(s.virtual for s in mine), "status": _status(mine),
+                    "from_runs": len(from_runs), "from_slow": sum(1 for s in from_runs if is_slow(s)),
+                    "normal_day": normal_day.isoformat().replace("+00:00", "Z") if normal_day else None,
                     "text": text, "todo": todo})
     return out

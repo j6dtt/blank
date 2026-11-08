@@ -29,6 +29,7 @@ def normal(app="ERP", activity="Open", device="PC1", took=6.0, usual=1.0, since=
             "worst": took, "usual": usual, "others_typical": None, "others": 0, "slow_days": slow_days,
             "days_used": days_used, "since": since, "changes": list(changes), "changed": len(changes),
             "enough": enough, "runs": 12, "back": "last 5 days", "virtual": virtual, "status": "Minor",
+            "from_runs": 9 if since else 0, "from_slow": 2 if since else 0, "normal_day": None,
             "text": [f"{app} {activity} took {took} s."], "todo": []}
 
 
@@ -61,21 +62,23 @@ def test_b_many_users_slow_at_once():
 
 def test_c_one_change_is_named():
     c = normal(since="2026-11-06T09:00:00Z", changes=[change("Print Agent")])
-    assert headline([act(0)], normal=[c]) == ("ERP Open slow on PC1 since Nov 6: 6.0 s, usually 1.0 s. "
+    # what was counted from the first slow run, never "slow since" (runs in between may be fast)
+    assert headline([act(0)], normal=[c]) == ("ERP Open on PC1: slow 2 of 9 times from Nov 6 (6.0 s, usually 1.0 s); "
+                                              "normal on each of the 5 days before. "
                                               "Possibly: Print Agent updated on Nov 5")
 
 
 def test_c_changes_on_several_days_are_counted():
     c = normal(since="2026-11-06T09:00:00Z", changes=[change("A", 3), change("B", 5)])
-    assert headline([act(0)], normal=[c]).endswith("2 changes logged on PC1 between Nov 3 and Nov 5: "
+    assert headline([act(0)], normal=[c]).endswith("2 changes logged there between Nov 3 and Nov 5: "
                                                    "possibly one of them")
 
 
 def test_d_new_with_no_change_logged_says_the_log_can_run_late_on_a_virtual_desktop():
     c = normal(device="VD-1", since="2026-11-06T09:00:00Z", virtual=True)
     assert headline([act(0, device="VD-1", virtual=True)], normal=[c]) == (
-        "ERP Open slow on VD-1 since Nov 6: 6.0 s, usually 1.0 s. No change to check was logged on VD-1 "
-        "before it (on a virtual desktop the log can run late)")
+        "ERP Open on VD-1: slow 2 of 9 times from Nov 6 (6.0 s, usually 1.0 s); normal on each of the 5 days "
+        "before. No change to check was logged there before it (on a virtual desktop the log can run late)")
 
 
 def test_e_right_after_a_start_up_on_every_pc_of_its_kind():
@@ -114,7 +117,7 @@ def test_several_apps_each_get_their_own_line():
     mail = normal(app="Mail", activity="Send", took=9.0, usual=None, enough=False)
     mail["others_typical"] = 2.0
     a = build_answer([], slow, slow, "amy", None, True, [], None, None, 5, None, normal=[c, mail])
-    assert a["title"].startswith("ERP Open slow on PC1 since Nov 6")  # the class beats the slowest
+    assert a["title"].startswith("ERP Open on PC1: slow 2 of 9 times from Nov 6")  # the class beats the slowest
     assert a["reason"].endswith("Also slow: Mail Send 9.0 s on PC1, others typical 2.0 s.")
 
 
