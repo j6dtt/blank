@@ -1,8 +1,10 @@
 # Questions for the Aternity admin
 
 What UX Correlator could not get from our Aternity, found by
-`uxcorrelate verify` on the live host (Oct 31 – Nov 1, 2026). Each item
-says what we saw, why it matters, and what to ask. Most important first.
+`uxcorrelate verify` on the live host (Oct 31 – Nov 1, 2026; items 1-9)
+and an investigation of one user's slow Outlook (Nov 6-8; items 10-13).
+Each item says what we saw, why it matters, and what to ask. Most
+important first within each group.
 
 ## 1. Remote display latency is empty for our VMware Horizon desktops
 
@@ -108,6 +110,12 @@ says what we saw, why it matters, and what to ask. Most important first.
 - **Ask:** Does `INSTALLED_SW_CHANGE_TIMESTAMP` mark the install, or when
   the agent next reported the inventory? On a pooled desktop rebuilt from an
   image, what does the agent log after a refresh?
+- **Also seen (Nov 5):** on one virtual desktop, in the same minute: 3
+  updates (Teams Meeting Add-in, OneDrive, the Aternity agent) and 27
+  "Uninstalled" rows with no install, Microsoft 365 Apps among them,
+  though Outlook kept running. Is that what an image refresh looks like
+  in the log? The tool treats 5 or more such rows in one minute as one
+  line, never as changes to check.
 
 ## 9. Can raw activity data be kept longer?
 
@@ -117,6 +125,48 @@ says what we saw, why it matters, and what to ask. Most important first.
   measured over those 8 days, and a before and after of an update has only
   a few days on either side.
 - **Ask:** Is 8 days the tenant's setting, and can it be raised?
+
+## 10. Which versions are installed on a device now?
+
+- **Seen:** Outlook Preview Mail went from 0.2 s to 4-5 s on two virtual
+  desktops of one user. One logged 3 updates the day before (among them
+  the Teams Meeting Add-in for Microsoft Office); the other logged no
+  change in 14 days.
+- **Why it matters:** if the second desktop already had the new add-in,
+  the add-in is still a suspect; if it had the old one, it is not. The
+  change log shows changes, not what is installed.
+- **Ask:** Which data source gives the software and versions installed on
+  a device at a point in time? Can it be published to the REST API?
+
+## 11. Is the CPU on an activity row that action's own reading?
+
+- **Seen:** in `BUSINESS_ACTIVITIES_RAW`, two actions of one user can
+  share a timestamp, each with a different CPU value (e.g. 58.5% and
+  88.98% within a minute).
+- **Why it matters:** the tool counts a CPU, memory or disk queue value
+  only for the action it came with. If it is a device sample shared by
+  the rows of that minute, that rule is wrong.
+- **Ask:** Are the CPU, memory and disk queue on an activity row measured
+  during that action, or taken from a device sample? Over what span?
+
+## 12. Does Aternity record Outlook add-ins?
+
+- **Seen:** the only suspect for the slower Preview Mail is an Outlook
+  add-in update, and nothing in our data sources names the add-ins
+  Outlook loads.
+- **Why it matters:** add-ins are a common cause of slow Outlook actions.
+- **Ask:** Does Aternity record which Outlook add-ins are loaded, their
+  load times, or add-ins Outlook disabled? In which data source?
+
+## 13. What does each activity measure, and where are its limits?
+
+- **Seen:** Preview Mail at 3.6 s and Teams Launch at 43.8 s are both
+  `SLA_STATUS` 'Minor'.
+- **Why it matters:** the tool uses Aternity's status as "slow", so a
+  reader needs to know what it means for each activity.
+- **Ask:** For Outlook Preview Mail and the Launch activities, when does
+  the timing start and stop? Where are the Minor and Major limits of each
+  activity set, and what are they?
 
 ## Not for the Aternity admin (NetIM)
 
