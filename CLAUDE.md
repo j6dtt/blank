@@ -211,6 +211,11 @@ unset `<REQUIRED>` base URLs.
   real name is very close. It checks every configured Aternity data source/column (against
   OData `$metadata`), NetIM metric class/metric (against NetIM's list, then
   one real fetch) and topology name, and prints the closest real names.
+- `names.py`: the usernames and device names offered as you type in the
+  Username and Device boxes (`/api/names`): every one seen in Aternity's
+  activity (those two columns only), the last 24 hours at start, then each
+  hour; dropped after 8 days unseen. One background read per process (the
+  HTTP and HTTPS servers share it). Any name can still be typed.
 - `http.py` is the shared REST client (basic auth, retries on 429/5xx);
   `models.py` holds the dataclasses and `parse_time`.
 - `report.py` renders the text report, `cli.py` is the argparse entry point,

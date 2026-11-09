@@ -75,6 +75,14 @@
   #progress { margin-top: 10px; font-size: 13px; }
   #progress .now { font-weight: 600; }
   #progress ol { margin: 6px 0 0; padding-left: 18px; color: var(--muted); max-height: 9em; overflow-y: auto; }
+  /* names offered as you type (Username, Device) */
+  label.pick { position: relative; }
+  .picks { position: absolute; top: 100%; left: 0; right: 0; z-index: 5; margin: 2px 0 0; padding: 4px 0; list-style: none;
+           background: var(--panel); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 2px 6px rgba(60, 45, 20, .15);
+           max-height: 260px; overflow-y: auto; font-size: 13px; color: var(--text); }
+  .picks li { padding: 4px 10px; cursor: pointer; overflow-wrap: anywhere; }
+  .picks li.on, .picks li:hover { background: var(--bg); }
+  .picks li.note { color: var(--muted); font-size: 12px; cursor: default; background: none; }
 </style>
 </head>
 <body>
@@ -87,8 +95,8 @@
 <main>
   <section class="panel" id="invForm">
     <form id="f">
-      <label>Username<input name="username" placeholder="Aternity user name"></label>
-      <label>Device<input name="device" placeholder="Aternity device name"></label>
+      <label class="pick">Username<input name="username" data-names="username" autocomplete="off" placeholder="type part of it"></label>
+      <label class="pick">Device<input name="device" data-names="device" autocomplete="off" placeholder="type part of it"></label>
       <label>Application<input name="application" list="apps" placeholder="optional"></label>
       <label>Start (local)<input name="start" type="datetime-local" required></label>
       <label>End (local)<input name="end" type="datetime-local" required></label>
@@ -100,8 +108,8 @@
   </section>
   <section class="panel" id="logForm" hidden>
     <form id="lf">
-      <label>Username<input name="username" placeholder="optional"></label>
-      <label>Device<input name="device" placeholder="optional"></label>
+      <label class="pick">Username<input name="username" data-names="username" autocomplete="off" placeholder="optional"></label>
+      <label class="pick">Device<input name="device" data-names="device" autocomplete="off" placeholder="optional"></label>
       <label>Location<input name="location" placeholder="optional (Aternity location)"></label>
       <label>Start (local)<input name="start" type="datetime-local" required></label>
       <label>End (local)<input name="end" type="datetime-local" required></label>
@@ -242,6 +250,52 @@ async function runJob(url, body, button, show) {
     show(await waitFor(job.id, started));
   } catch (e) { $("error").textContent = e.message; }
   finally { button.disabled = false; $("progress").hidden = true; }
+}
+
+// Username and Device boxes: names seen in Aternity's activity, offered as you type.
+// Up/Down to move, Enter or a click to pick, Esc to close; any name can still be typed.
+const NAME_KIND = { username: "usernames", device: "devices" };
+for (const box of document.querySelectorAll("input[data-names]")) {
+  const kind = box.dataset.names;
+  const list = document.createElement("ul");
+  list.className = "picks"; list.hidden = true;
+  box.after(list);
+  let timer, on = -1;
+  const items = () => [...list.querySelectorAll("li[data-name]")];
+  const mark = (i) => { on = i; items().forEach((li, k) => li.classList.toggle("on", k === i)); items()[i]?.scrollIntoView({ block: "nearest" }); };
+  const close = () => { list.hidden = true; on = -1; };
+  const pick = (name) => { box.value = name; close(); };
+  async function show() {
+    const q = box.value.trim();
+    if (!q) return close();
+    try {
+      const r = await fetch(`api/names?kind=${kind}&q=${encodeURIComponent(q)}`);
+      const m = await r.json();
+      if (!r.ok || box.value.trim() !== q) return;
+      const since = m.since ? new Date(m.since).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+      const note = !m.count ? "Still reading Aternity's activity: type the full name, or try again in a minute"
+        : !m.names.length ? `No match among ${m.count.toLocaleString()} ${NAME_KIND[kind]} with activity since ${since}`
+        : m.more ? `${m.more} more: type more of the name`
+        : `From ${m.count.toLocaleString()} ${NAME_KIND[kind]} with activity since ${since}` + (m.partial ? " (Aternity's reply was cut short: some may be missing)" : "");
+      list.innerHTML = m.names.map((n) => `<li data-name="${esc(n)}">${esc(n)}</li>`).join("") + `<li class="note">${esc(note)}</li>`;
+      list.hidden = false; mark(m.names.length === 1 ? 0 : -1);
+    } catch { close(); }
+  }
+  box.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(show, 150); });
+  box.addEventListener("keydown", (ev) => {
+    if (list.hidden) return;
+    const n = items().length;
+    if (ev.key === "ArrowDown" && n) { ev.preventDefault(); mark((on + 1) % n); }
+    else if (ev.key === "ArrowUp" && n) { ev.preventDefault(); mark((on - 1 + n) % n); }
+    else if (ev.key === "Enter" && on >= 0) { ev.preventDefault(); pick(items()[on].dataset.name); }
+    else if (ev.key === "Escape") close();
+  });
+  list.addEventListener("mousedown", (ev) => {
+    ev.preventDefault();  // keep the box focused
+    const li = ev.target.closest("li[data-name]");
+    if (li) pick(li.dataset.name);
+  });
+  box.addEventListener("blur", close);
 }
 
 $("f").addEventListener("submit", (ev) => {

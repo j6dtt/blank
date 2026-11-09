@@ -6,6 +6,7 @@ import logging
 import threading
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from .correlate import InvestigationRequest, investigate
 from .http import ApiError, short_error
 from .logons import logon_report
 from .models import utc
+from .names import KINDS, NameList, keep_filled
 
 STATIC = Path(__file__).parent / "static"
 KEEP_JOBS = 20
@@ -85,6 +87,32 @@ def create_app(config_path: str | None = None) -> FastAPI:
             time.sleep(NETIM_REFRESH_S)
 
     threading.Thread(target=index_netim, daemon=True, name="netim-index").start()
+
+    # Usernames and device names for the boxes, read from Aternity in the background
+    # (started with the server, not in tests that never start it).
+    names = app.state.names = NameList()
+
+    def aternity_client():
+        from .aternity import AternityClient
+        settings = load_settings(config_path)
+        return AternityClient(settings.aternity) if settings.aternity.base_url else None
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        # the HTTP and HTTPS servers share this app and both start it: read Aternity once
+        if not names.started:
+            names.started = True
+            threading.Thread(target=keep_filled, args=(names, aternity_client, time.sleep), daemon=True,
+                             name="name-list").start()
+        yield
+
+    app.router.lifespan_context = lifespan
+
+    @app.get("/api/names")
+    def name_matches(kind: str, q: str = ""):
+        if kind not in KINDS:
+            raise HTTPException(400, f"kind must be one of {', '.join(KINDS)}")
+        return names.match(kind, q)
 
     def sources():
         from .aternity import AternityClient
