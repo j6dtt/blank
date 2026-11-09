@@ -71,6 +71,7 @@
   nav { margin-left: auto; display: flex; gap: 6px; }
   nav button { background: transparent; color: var(--head-muted); border: 1px solid rgba(244, 234, 210, .3); padding: 5px 12px; }
   nav button.on { background: var(--brass); color: #1b1a14; border-color: var(--brass); }
+  .badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 999px; background: var(--bad); color: #fff; font-size: 11px; line-height: 18px; text-align: center; }
   .comp td { color: var(--muted); border-bottom: 0; padding-top: 0; font-size: 12px; }
   .scroll { max-height: 320px; overflow-y: auto; }
   #progress { margin-top: 10px; font-size: 13px; }
@@ -107,6 +108,12 @@
   .answer .src { font-size: 12px; margin-top: 6px; }
   .answer td { vertical-align: middle; }
   .answer button.link { padding: 0; white-space: nowrap; }
+  /* Care list: one tile per user with an issue today, the others as names */
+  .tile .name { font: 700 18px/1.2 var(--serif); }
+  .careOk { margin-top: 12px; font-size: 12px; }
+  .careOk button { background: var(--bg); color: var(--accent); border: 1px solid var(--border); padding: 3px 10px; font-size: 12px; margin: 0 4px 4px 0; }
+  #cDetailBody ul { margin: 4px 0 10px; padding-left: 18px; font-size: 13px; }
+  #cDetailBody h3 { font-size: 14px; margin: 12px 0 4px; }
   /* names offered as you type (Username, Device) */
   label.pick { position: relative; }
   .picks { position: absolute; top: 100%; left: 0; right: 0; z-index: 5; margin: 2px 0 0; padding: 4px 0; list-style: none;
@@ -123,7 +130,7 @@
     <text x="15" y="21" text-anchor="middle" font-family="Georgia, serif" font-size="11" font-weight="700"
       fill="var(--brass)" style="fill:var(--brass)">J6</text></svg>
   <h1>J6 Preservation Society</h1><span>Aternity end-user experience × NetIM infrastructure</span>
-  <nav><button id="tabToday" class="on">Today</button><button id="tabInv">Investigate</button><button id="tabLog">Slow start-ups</button></nav></header>
+  <nav><button id="tabToday" class="on">Today</button><button id="tabCare">Care list<span class="badge" id="careCount" hidden></span></button><button id="tabInv">Investigate</button><button id="tabLog">Slow start-ups</button></nav></header>
 <main>
   <div id="todayBox">
     <section class="panel">
@@ -165,6 +172,23 @@
       <p class="muted" style="font-size:12px;margin:10px 0 0">The AI only picks what to count and words the answer.
         Every number comes from this app's own counts, shown under each answer; a sentence with any other number
         is replaced by ours. <button type="button" class="link" id="chatClear" hidden>Clear the answers</button></p>
+    </section>
+  </div>
+  <div id="careBox" hidden>
+    <section class="panel">
+      <div class="todayHead"><h2>Care list</h2><span class="muted" id="cWhen"></span></div>
+      <div class="muted" id="cStatus"></div>
+      <div class="tiles" id="cTiles"></div>
+      <div class="careOk" id="cOk"></div>
+      <ul class="muted notes" id="cNotes"></ul>
+      <p class="muted" style="font-size:12px;margin:8px 0 0">An issue: an event Aternity rates Critical or Major, or more
+        Major slow actions by this time of day than on any of their own days before. A new issue runs an
+        investigation by itself (one an hour per user). Click a tile or a name for more.</p>
+    </section>
+    <section class="panel" id="cDetail" hidden style="margin-top:16px">
+      <div class="todayHead" style="justify-content:space-between"><h2 id="cDetailTitle"></h2>
+        <button type="button" class="link" id="cDetailClose">✕ Close</button></div>
+      <div id="cDetailBody"></div>
     </section>
   </div>
   <section class="panel" id="invForm" hidden>
@@ -296,15 +320,20 @@ async function init() {
 }
 
 // Three tabs; switching keeps each tab's form and last result.
+const TAB_LINK = { today: "today", care: "care", inv: "investigate", log: "startups" };
 function mode(tab) {
-  const inv = tab === "inv", logons = tab === "log", today = tab === "today";
+  const inv = tab === "inv", logons = tab === "log", today = tab === "today", care = tab === "care";
   $("tabToday").classList.toggle("on", today); $("tabInv").classList.toggle("on", inv); $("tabLog").classList.toggle("on", logons);
-  $("todayBox").hidden = !today; $("invForm").hidden = !inv; $("logForm").hidden = !logons;
+  $("tabCare").classList.toggle("on", care);
+  $("todayBox").hidden = !today; $("careBox").hidden = !care; $("invForm").hidden = !inv; $("logForm").hidden = !logons;
   $("out").hidden = !inv || !$("out").dataset.has; $("lout").hidden = !logons || !$("lout").dataset.has;
   $("error").textContent = "";
+  history.replaceState(null, "", "#" + TAB_LINK[tab]);
   if (today) loadToday();
+  if (care) loadCare();
 }
 $("tabToday").addEventListener("click", () => mode("today"));
+$("tabCare").addEventListener("click", () => mode("care"));
 $("tabInv").addEventListener("click", () => mode("inv"));
 $("tabLog").addEventListener("click", () => mode("log"));
 
@@ -454,6 +483,99 @@ $("tWhoList").addEventListener("click", (ev) => {
   if (!b || !todayWho) return;
   const r = todayWho.rows[Number(b.dataset.i)];
   investigateNow({ ...r, application: todayWho.application });
+});
+
+// ---- Care list: named users, checked every 15 min; a tile per user with an issue today ----
+let careTimer = null, careData = null;
+async function loadCare() {
+  clearTimeout(careTimer);
+  try {
+    const r = await fetch("api/care");
+    const c = await r.json();
+    if (!r.ok) throw new Error(detail(c));
+    careData = c;
+    $("careCount").hidden = !c.count; $("careCount").textContent = c.count || "";
+    if (!$("careBox").hidden) renderCare(c);
+  } catch (e) { if (!$("careBox").hidden) $("cStatus").textContent = "Could not load the Care list: " + e.message; }
+  careTimer = setTimeout(loadCare, (careData && !careData.ready ? 5 : 300) * 1000);
+}
+const pcText = (u) => u.pcs.length ? u.pcs.map((p) => p.device + (p.kind && p.kind !== "not known" ? ` (${p.kind})` : "")).join(", ")
+  : "No PC in use today";
+const usualWords = (u) => !u ? "" : u.enough ? `their usual by this time: ${u.low} to ${u.high} (${u.days} ${u.kind} before)`
+  : `their usual: ${u.days} of the 3 ${u.kind} needed so far`;
+function whyText(u) {
+  if (u.investigating === "now") return "Investigating now…";
+  if (u.investigating === "waiting") return "Investigation waiting its turn.";
+  if (!u.why) return "";
+  return u.why.error ? `Investigation failed: ${u.why.error}` : `Why: ${u.why.title}`;
+}
+function renderCare(c) {
+  $("cStatus").textContent = c.ready ? "" : `Waiting for Today's first read of Aternity (${c.status || "starting"}).`;
+  $("cWhen").textContent = c.ready ? `${new Date(c.date + "T12:00:00Z").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}`
+    + ` · as of ${c.as_of_local} · ${c.checked} ${c.checked === 1 ? "user" : "users"} checked every 15 min` : "";
+  const tiles = c.users.filter((u) => u.status !== "ok"), ok = c.users.filter((u) => u.status === "ok");
+  $("cTiles").innerHTML = tiles.map((u) => {
+    const head = u.status === "unknown" ? `<span class="sev" style="background:var(--muted)">not found</span>`
+      : `<div>${sevTag(u.level)} <span class="muted" style="font-size:12px">since ${esc(u.since_local)}</span></div>`;
+    const lines = u.status === "unknown" ? [u.note] : u.issues.slice(0, 2).map((i) => i.text);
+    const more = u.issues.length > 2 ? `<div class="u">+${u.issues.length - 2} more</div>` : "";
+    const why = whyText(u);
+    const days = u.days.map((d, k) => ({ day: d.date, pcs: d.issues, window: k === u.days.length - 1 }));
+    return `<div class="tile click" role="button" tabindex="0" data-user="${esc(u.username)}">${head}`
+      + `<div class="name">${esc(u.title)}</div>${u.label ? `<div class="u">${esc(u.username)}</div>` : ""}`
+      + `<div class="u">${esc(pcText(u))}</div>` + lines.map((x) => `<div class="u"><b>${esc(x)}</b></div>`).join("") + more
+      + (why ? `<div class="u">${esc(why)}</div>` : "")
+      + (u.status === "unknown" ? "" : spark(days, "issues", "Issues per day")) + `<div class="more">Show more ▸</div></div>`;
+  }).join("");
+  $("cOk").innerHTML = ok.length ? `<span class="muted">No issue today: </span>`
+    + ok.map((u) => `<button type="button" data-user="${esc(u.username)}" title="${esc(u.username)}">${esc(u.title)}</button>`).join("") : "";
+  $("cNotes").innerHTML = (c.notes || []).map((x) => `<li>${esc(x)}</li>`).join("");
+}
+let careUser = null;
+async function openCare(username) {
+  $("cDetail").hidden = false;
+  $("cDetailTitle").textContent = "Loading…"; $("cDetailBody").innerHTML = "";
+  $("cDetail").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  try {
+    const r = await fetch(`api/care/user?${new URLSearchParams({ username })}`);
+    const d = await r.json();
+    if (!r.ok) throw new Error(detail(d));
+    careUser = d;
+    $("cDetailTitle").textContent = d.label ? `${d.label} (${d.username})` : d.username;
+    const rep = d.report;
+    let html = `<p>${esc(pcText(d))}. Today: ${n(d.actions)} actions measured, ${n(d.major)} rated Major; ${esc(usualWords(d.usual))}.</p>`;
+    html += `<h3>Today</h3>` + (d.issues.length ? `<ul>${d.issues.map((i) => `<li>${sevTag(i.level)} ${esc(i.text)}</li>`).join("")}</ul>` : `<p class="muted">No issue today.</p>`);
+    html += `<h3>Investigation</h3>`;
+    if (rep && rep.result) html += `<p><b>${esc(rep.title)}</b> ${esc(rep.reason || "")}<br><span class="muted">Ran by itself ${esc(rep.at_local)}, over ${esc(rep.span_local)}.</span></p>`
+      + `<button type="button" id="cOpen">Open the investigation ▸</button> `;
+    else if (rep && rep.error) html += `<p>The last one failed: ${esc(rep.error)}</p>`;
+    else html += `<p class="muted">${esc(whyText(d) || "None yet: one runs by itself when an issue comes.")}</p>`;
+    html += `<button type="button" class="link" id="cRun">Investigate again now ▸</button>`;
+    html += `<h3>Issues over ${d.days.length} days</h3>` + (d.history.length
+      ? `<ul>${d.history.map((i) => `<li>${esc(i.when_local)} ${sevTag(i.level)} ${esc(i.text)}</li>`).join("")}</ul>` : `<p class="muted">None.</p>`);
+    $("cDetailBody").innerHTML = html;
+  } catch (e) { $("cDetailTitle").textContent = "Could not load: " + e.message; }
+}
+for (const id of ["cTiles", "cOk"]) {
+  $(id).addEventListener("click", (ev) => { const el = ev.target.closest("[data-user]"); if (el) openCare(el.dataset.user); });
+  $(id).addEventListener("keydown", (ev) => {
+    const el = ev.target.closest(".tile[data-user]");
+    if (el && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); openCare(el.dataset.user); }
+  });
+}
+$("cDetailClose").addEventListener("click", () => { $("cDetail").hidden = true; });
+$("cDetailBody").addEventListener("click", (ev) => {
+  if (!careUser) return;
+  if (ev.target.id === "cOpen") {  // the investigation that already ran: shown, not run again
+    const rep = careUser.report, f = $("f");
+    f.username.value = rep.username; f.device.value = ""; f.application.value = "";
+    f.start.value = toLocalInput(new Date(rep.start)); f.end.value = toLocalInput(new Date(rep.end));
+    mode("inv");
+    render(rep.result);
+  } else if (ev.target.id === "cRun") {
+    const first = careUser.issues.length ? new Date(careUser.issues[0].since) : new Date(Date.now() - 4 * 3600e3);
+    investigateNow({ username: careUser.username, start: new Date(first - 30 * 60e3).toISOString(), end: new Date().toISOString() });
+  }
 });
 
 // ---- the chat: a question → the AI picks a building block → our counts → its sentence ----
@@ -810,10 +932,10 @@ function render(d) {
     : `<tr><td class="muted">No NetIM object on the path of ${esc(d.endpoints.map((e) => e.device).join(" and ") || "the PC")}: the network was not checked.</td></tr>`;
 }
 // Other PCs per day as small bars: one row's own scale, its highest day labelled.
-function spark(days) {
+function spark(days, unit = "PCs", what = "Other PCs per day") {
   if (!days.length) return `<span class="muted" style="font-size:12px">not read</span>`;
   const step = 6, h = 24, top = Math.max(...days.map((d) => d.pcs), 1);
-  const label = (d) => `${new Date(d.day + "T00:00:00Z").toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })}: ${d.pcs.toLocaleString()} PCs`;
+  const label = (d) => `${new Date(d.day + "T00:00:00Z").toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" })}: ${d.pcs.toLocaleString()} ${unit}`;
   const bars = days.map((d, i) => {
     const y = d.pcs ? Math.max(2, Math.round(d.pcs / top * h)) : 1;
     return `<g><title>${esc(label(d))}${d.window ? " (this window)" : ""}</title><rect class="hit" x="${i * step}" y="0" width="${step}" height="${h}"/>`
@@ -821,7 +943,7 @@ function spark(days) {
   }).join("");
   const hi = days.reduce((a, b) => (b.pcs > a.pcs ? b : a));
   return `<div class="sparkWrap"><svg class="spark" width="${days.length * step}" height="${h}" role="img" `
-    + `aria-label="${esc(`Other PCs per day, ${days.length} days, highest ${label(hi)}`)}">${bars}</svg><span class="num">max ${top.toLocaleString()}</span></div>`;
+    + `aria-label="${esc(`${what}, ${days.length} days, highest ${label(hi)}`)}">${bars}</svg><span class="num">max ${top.toLocaleString()}</span></div>`;
 }
 $("aRollup").addEventListener("click", (ev) => {
   const b = ev.target.closest("button[data-issue]");
@@ -905,7 +1027,8 @@ function chart(tl, req) {
   return svg + "</svg>";
 }
 init();
-mode("today");
+mode(Object.keys(TAB_LINK).find((k) => "#" + TAB_LINK[k] === location.hash) || "today");
+if ($("careBox").hidden) loadCare();  // the tab's count shows from any tab
 </script>
 </body>
 </html>

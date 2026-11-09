@@ -140,6 +140,19 @@ The usual for actions builds up over the first week from the counts saved
 in `./data` each night (`mkdir -p data && chmod a+rwx data` before the
 first start).
 
+Care list tab (second): users named under `care_list` in config.yaml (up
+to 50, read every 15 minutes, no restart), each checked every 15 minutes.
+An issue is an event Aternity rates Critical or Major, or more Major slow
+actions by this time of day than on any of the user's own days before. A
+user with an issue today gets a tile (Critical first); a new issue runs an
+investigation by itself (at most one an hour per user) and its headline is
+the tile's "Why". The others are listed by name under the tiles. Click a
+tile or a name: today's issues, the investigation ("Open the investigation
+▸" shows it on the Investigate tab without running it again; "Investigate
+again now ▸" runs a new one) and the issues of the last 8 days. The tab's
+red count is the users with an issue now; `…/#care` opens the tab.
+Issues are kept 8 days in `./data/care` (with usernames).
+
 Investigate tab, top to bottom:
 
 - **Answer**: the likely cause in one line, and at how many slow actions;

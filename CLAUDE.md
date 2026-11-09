@@ -235,6 +235,21 @@ unset `<REQUIRED>` base URLs.
   user + PC (`SLOW_PAD` / `EVENT_PAD` around their first and last). The
   reader also keeps each action's PC kind (`VIRTUALIZATION`: virtual /
   physical, saved nightly as `kinds`) and each health event's application.
+- `care.py`: the "Care list" tab, second (`/api/care`, `/api/care/user`;
+  link `#care`, as `#today`, `#investigate`, `#startups`): users in
+  `care_list` (config.yaml, read at every check, `CARE_MAX` 50) checked
+  after each read of the Today reader (`keep_reading(..., care=)`), from
+  rows it holds (`Hour.user_devs`/`user_runs`/`dev_kind`). Issue: an event
+  in `TILE_SEVERITIES` with their username today, or more Major actions by
+  this time of day than on any of their own days before with a PC in use
+  (same kind of day, `USUAL_DAYS`, `MIN_USUAL`; their `HISTORY_DAYS` read
+  by username once a day, spelled as Aternity writes it via `NameList`).
+  A new issue queues an investigation (`Care.work`, one at a time, one per
+  user per `RUN_EVERY`), `INV_PAD` before their first issue to now; its
+  title is the tile's "Why", the page opens it without a re-run. Issues
+  and the latest investigation: `<data>/care/<user>.json`, `KEEP_DAYS`
+  (usernames on disk, agreed). Tiles for issues and names not seen in 8
+  days; the others as names. Slow start-ups and alerts: step 2.
 - `chat.py`: "Ask about today", under the Today tab (`/api/chat`). The AI
   (`ai.chat` by name, else the first of `ai.services`; GPT on prod) picks
   one building block of `TOOLS` (slow_actions, events, who, investigate),

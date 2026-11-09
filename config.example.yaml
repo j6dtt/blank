@@ -69,6 +69,13 @@ timezone: ""
 #        object_type: INTERFACE, metric_class: IFC_UTIL,
 #        metric: utilizationOut, threshold: 80}
 
+# The Care list tab: users checked every 15 min (up to 50). Read at every
+# check: no restart needed. username: exactly as in Aternity (the Username
+# box on the Investigate tab suggests names); label: optional, shown big.
+care_list: []
+# - username: <as in Aternity>
+#   label: <shown on the tile>
+
 # Optional: self-hosted AI services for the chat (OpenAI-style chat API).
 # Keys never go here: put each in .env, under the name given in key_env.
 # `uxcorrelate verify --ai` checks each service and says what to change.

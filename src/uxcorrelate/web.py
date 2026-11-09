@@ -12,9 +12,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from .care import Care
 from .chat import ask, chat_service
 from .config import load_settings
 from .correlate import InvestigationRequest, investigate
@@ -104,6 +106,14 @@ def create_app(config_path: str | None = None) -> FastAPI:
     except Exception:  # a broken config.yaml: the reader says so
         zone = ""
     today = app.state.today = Today(zone, os.environ.get("UXCORRELATE_DATA") or None)
+    care = app.state.care = Care(today, lambda: load_settings(config_path).care_list,
+                                 os.environ.get("UXCORRELATE_DATA") or None, names)
+
+    def care_investigate(username: str, start: datetime, end: datetime) -> dict:
+        """A Care list user's investigation, as the Investigate tab would run it."""
+        settings, aternity, netim = sources()
+        req = InvestigationRequest(start=start, end=end, username=username)
+        return jsonable_encoder(investigate(req, aternity, netim, settings))
 
     def aternity_client():
         from .aternity import AternityClient
@@ -116,7 +126,11 @@ def create_app(config_path: str | None = None) -> FastAPI:
         if not today.started:
             today.started = True
             threading.Thread(target=keep_reading, args=(today, names, aternity_client, time.sleep),
-                             daemon=True, name="today").start()
+                             kwargs={"care": care}, daemon=True, name="today").start()
+        if not care.started:
+            care.started = True
+            threading.Thread(target=care.work, args=(care_investigate, time.sleep), daemon=True,
+                             name="care").start()
         yield
 
     app.router.lifespan_context = lifespan
@@ -124,6 +138,18 @@ def create_app(config_path: str | None = None) -> FastAPI:
     @app.get("/api/today")
     def today_view():
         return today.view(datetime.now(timezone.utc))
+
+    @app.get("/api/care")
+    def care_view():
+        return care.view(datetime.now(timezone.utc))
+
+    @app.get("/api/care/user")
+    def care_user(username: str):
+        """One Care list user: today's issues, 8 days of them, and the latest investigation."""
+        got = care.detail(username, datetime.now(timezone.utc))
+        if got is None:
+            raise HTTPException(404, f"{username} is not on the Care list (care_list in config.yaml).")
+        return got
 
     @app.get("/api/today/who")
     def today_who(kind: str, name: str = "", category: str = ""):

@@ -109,6 +109,9 @@ class Hour:
     kinds: dict = field(default_factory=dict)  # (app, PC kind) -> Counter(runs, TOP_STATUS); kind: virtual/physical/not known
     kind_devs: dict = field(default_factory=dict)  # PC kind -> PCs active
     kind_top_devs: dict = field(default_factory=dict)  # PC kind -> PCs with TOP_STATUS
+    user_devs: dict = field(default_factory=dict)  # username (lower case) -> PCs used (for the Care list)
+    user_runs: Counter = field(default_factory=Counter)  # username (lower case) -> actions measured
+    dev_kind: dict = field(default_factory=dict)  # PC -> PC kind
     read_at: datetime | None = None
     partial: bool = False
     final: bool = False  # read LATE_MIN or more after it ended
@@ -168,6 +171,11 @@ class Today:
             if dev:
                 h.devs.add(dev)
                 h.kind_devs.setdefault(pc, set()).add(dev)
+                h.dev_kind[dev] = pc
+            if user:
+                h.user_runs[user.lower()] += 1
+                if dev:
+                    h.user_devs.setdefault(user.lower(), set()).add(dev)
             runs = h.apps.setdefault(app, Counter())
             runs["runs"] += 1
             by_kind = h.kinds.setdefault((app, pc), Counter())
@@ -513,8 +521,10 @@ def _read_health(today: Today, client, now: datetime) -> None:
     log.info("Today: %d health event rows so far today", len(today.health))
 
 
-def keep_reading(today: Today, names, make_client, sleep, clock=lambda: datetime.now(timezone.utc)) -> None:
-    """Runs in a background thread: the last 24 hours first, then every REFRESH_MIN."""
+def keep_reading(today: Today, names, make_client, sleep, clock=lambda: datetime.now(timezone.utc),
+                 care=None) -> None:
+    """Runs in a background thread: the last 24 hours first, then every REFRESH_MIN.
+    After each read, the Care list's users are checked against what was read."""
     try:
         client = make_client()
     except Exception as exc:  # a broken config.yaml: investigations say so themselves
@@ -537,6 +547,8 @@ def keep_reading(today: Today, names, make_client, sleep, clock=lambda: datetime
     today.ready = True
     log.info("Today ready: %d hours of activity read; %d usernames and %d devices known",
              len(starts), len(names.seen["username"]) if names else 0, len(names.seen["device"]) if names else 0)
+    if care is not None:
+        care.check(client, clock())
     while True:
         sleep(REFRESH_MIN * 60)
         try:
@@ -549,3 +561,5 @@ def keep_reading(today: Today, names, make_client, sleep, clock=lambda: datetime
         today.finish(now)
         _read_health(today, client, now)
         today.as_of = now
+        if care is not None:
+            care.check(client, clock())

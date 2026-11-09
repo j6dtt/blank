@@ -316,6 +316,13 @@ class AiService:
 
 
 @dataclass
+class CareUser:
+    """One user on the Care list tab: checked every 15 minutes."""
+    username: str = ""  # exactly as in Aternity
+    label: str = ""     # shown big on the tile (usernames are not friendly)
+
+
+@dataclass
 class AiConfig:
     services: list[AiService] = field(default_factory=list)
     chat: str = ""  # the name of the service the chat uses; empty: the first one set
@@ -357,6 +364,7 @@ class Settings:
     thresholds: Thresholds = field(default_factory=Thresholds)
     topology: Topology = field(default_factory=Topology)
     ai: AiConfig = field(default_factory=AiConfig)
+    care_list: list[CareUser] = field(default_factory=list)
     # a problem counts for a slow action recorded up to this many minutes before or after it
     bucket_minutes: int = 5
     # unit of WINDOWS_MACHINE_BOOTS durations, shown next to them
@@ -399,6 +407,12 @@ def load_settings(path: str | os.PathLike | None = None) -> Settings:
         if metrics is not None:
             settings.netim.metrics = [NetimMetric(**m) for m in metrics]
         settings.ai.chat = str((raw.get("ai") or {}).get("chat") or "").strip()
+        for entry in raw.get("care_list") or []:
+            user = CareUser(username=entry) if isinstance(entry, str) else CareUser(
+                username=str((entry or {}).get("username") or ""), label=str((entry or {}).get("label") or ""))
+            user.username, user.label = user.username.strip(), user.label.strip()
+            if user.username:
+                settings.care_list.append(user)
         for entry in (raw.get("ai") or {}).get("services") or []:
             service = AiService()
             _merge_dataclass(service, entry)
