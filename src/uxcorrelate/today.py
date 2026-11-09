@@ -238,7 +238,8 @@ class Today:
                 self.saved[d] = json.loads(path.read_text())
         except (OSError, ValueError) as exc:
             self.note("files", f"The saved daily counts in {self.store} could not be read ({short_error(exc)}): "
-                               "the usual for actions cannot build up.")
+                               "the usual for actions cannot build up. The folder must be writable by the "
+                               "container (uid 1000).")
 
     def save(self, d: date, summary: dict) -> None:
         with self.lock:

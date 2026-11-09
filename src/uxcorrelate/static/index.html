@@ -271,6 +271,7 @@ $("tabLog").addEventListener("click", () => mode("log"));
 const SEV = { Critical: "var(--bad)", Major: "var(--warn)", Minor: "var(--muted)" };
 const sevTag = (s) => `<span class="sev" style="background:${SEV[s] || "var(--muted)"}">${esc(s || "no severity")}</span>`;
 const n = (v) => Number(v ?? 0).toLocaleString();
+const pcs = (v) => `${n(v)} ${v === 1 ? "PC" : "PCs"}`;
 let todayTimer = null;
 
 // "by 14:00: 192; the 5 working days before had 101 to 126" (value: today's, when the tile's big number is not it)
@@ -319,10 +320,10 @@ function renderToday(t) {
   const s = t.slow;
   const tiles = t.none.map((sev) => `<div class="tile">${sevTag(sev)}<div class="big">0</div><div class="what">No ${esc(sev)} crash or event</div>`
       + `<div class="u">Aternity rated none ${esc(sev)} today.</div></div>`)
-    .concat(t.tiles.map((e) => `<div class="tile">${sevTag(e.severity)}<div class="big">${n(e.pcs)} PCs</div>`
+    .concat(t.tiles.map((e) => `<div class="tile">${sevTag(e.severity)}<div class="big">${pcs(e.pcs)}</div>`
       + `<div class="what">${esc(e.name)} <span class="muted">(${esc(e.category)})</span></div>`
       + `<div class="u">${usualText(e.usual, t.kind)}</div>${eventSpark(e, t.date)}</div>`))
-    .concat([`<div class="tile">${sevTag(s.status)}<div class="big">${n(s.pcs)} PCs</div>`
+    .concat([`<div class="tile">${sevTag(s.status)}<div class="big">${pcs(s.pcs)}</div>`
       + `<div class="what">${esc(s.status)} slow actions</div>`
       + `<div class="u">${n(s.actions)} actions, ${n(s.users)} users; ${n(s.active_pcs)} PCs active today.</div>`
       + `<div class="u">${s.by ? usualText(s.usual, t.kind, s.by, s.by_pcs) : "Compared after the first hour of the day."}</div></div>`]);
