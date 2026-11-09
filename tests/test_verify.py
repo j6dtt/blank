@@ -484,3 +484,51 @@ def test_verify_compares_actions_right_after_a_start_up_with_later_ones():
         "Mail Launch, virtual, right after: 2 runs, median 59.0 s, 2 of 2 (100%) slow",
         "Mail Launch, virtual, later: 2 runs, median 22.5 s, 1 of 2 (50%) slow",
     ]
+
+
+def test_verify_overview_shows_aternitys_own_status_severity_and_incidents():
+    """What a "today's issues" overview could rest on: Aternity's words, never ours."""
+    from pathlib import Path
+    from uxcorrelate.verify import verify_overview
+
+    def handler(request):
+        path = request.url.path
+        if path.endswith("/$metadata"):
+            text = (Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text()
+            return httpx.Response(200, text=text.replace('<EntitySet Name="ANOMALY_DETECTION_INCIDENTS"',
+                                                         '<EntitySet Name="GONE"'))
+        if path.endswith("/BUSINESS_ACTIVITIES_RAW"):
+            return httpx.Response(200, json={"value": [
+                {"SLA_STATUS": "Normal", "DEVICE_NAME": "PC1"}, {"SLA_STATUS": "Normal", "DEVICE_NAME": "PC2"},
+                {"SLA_STATUS": "Major", "DEVICE_NAME": "PC2"}]})
+        if path.endswith("/DEVICE_HEALTH_RAW"):
+            ev = lambda d, sev, name: {"DEVICE_NAME": d, "HEALTH_EVENT_SEVERITY": sev,  # noqa: E731
+                                       "HEALTH_EVENT_CATEGORY": "Application", "HEALTH_EVENT_NAME": name}
+            return httpx.Response(200, json={"value": [ev("PC1", "High", "App Crash"), ev("PC2", "High", "App Crash"),
+                                                       ev("PC2", "Low", "App Hang")]})
+        if path.endswith("/INCIDENTS"):
+            return httpx.Response(200, json={"value": [
+                {"INCIDENT_CREATION_TIMESTAMP": "2026-11-08T09:00:00Z", "INCIDENT_STATE": "Open",
+                 "INCIDENT_LIVE_IMPACT": "12", "APPLICATION_NAME": "ERP", "ACTIVITY_NAME": "Open"}]})
+        return httpx.Response(200, json={"value": []})
+
+    settings = Settings()
+    settings.aternity.base_url = "https://aternity.test/aternity.odata/v2.0"
+    text = render_checks(verify_overview(settings, AternityClient(settings.aternity,
+                                                                  transport=httpx.MockTransport(handler))))
+    flat = " ".join(text.split())
+    assert "3 activity rows in the last 60 min; a working day of 10 such hours is about 30 rows" in flat
+    assert "'Normal': 2 rows on 2 PCs" in text and "'Major': 1 rows on 1 PCs" in text
+    assert "'High': 2 rows on 2 PCs" in text and "Application / App Crash: 2 PCs, severity 'High' 2" in flat
+    assert "INCIDENTS Published. 1 rows in the last 7 days; per day: Nov 08 1." in flat
+    assert "INCIDENT_STATE: 'Open' 1" in text
+    assert "SERVICE_DESK_ALERTS_RAW Published. 0 rows in the last 7 days: nothing to show from it." in flat
+    assert "ANOMALY_DETECTION_INCIDENTS Not published by this Aternity" in flat
+
+
+def test_overview_sources_are_riverbeds_own_names():
+    from pathlib import Path
+    from uxcorrelate.config import OVERVIEW_SOURCES
+    schema = parse_odata_metadata((Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
+    for entity, spec in OVERVIEW_SOURCES.items():
+        assert {spec["time"], *spec["values"]} <= schema[entity], entity

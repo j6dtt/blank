@@ -24,7 +24,7 @@ from statistics import median
 from typing import Any
 
 from .aternity import AternityClient, is_virtual, odata_quote, odata_time
-from .config import (DISK_FREE_COLUMNS, PROCESS_COLUMN, SOFTWARE_REMOVED, SOFTWARE_UPDATE_GAP_MIN, TIME_COLUMNS,
+from .config import (DISK_FREE_COLUMNS, OVERVIEW_SOURCES, PROCESS_COLUMN, SOFTWARE_REMOVED, SOFTWARE_UPDATE_GAP_MIN, TIME_COLUMNS,
                      VDI_COLUMNS, Settings)
 from .after_start import AFTER_START_MIN  # "right after a start-up", as investigations
 from .correlate import slow_rule
@@ -272,7 +272,7 @@ def verify_aternity(settings: Settings, client: AternityClient) -> list[Check]:
         + _app_usage(settings, client, schema) + _start_up_parts(settings, client, schema) \
         + _change_log(settings, client, schema) + _vdi(settings, client, schema) \
         + _remote_display(settings, client, schema) + _process_sources(client, schema) \
-        + _fleet(settings, client, schema)
+        + _fleet(settings, client, schema) + _overview(settings, client, schema)
 
 
 def _raw(row: dict, fields: dict, keys) -> str:
@@ -1358,6 +1358,101 @@ def verify_netim(settings: Settings, client: NetimClient) -> list[Check]:
         checks.append(Check("NetIM", "alerts", None,
                             "Off (netim.alerts_path is empty). NetIM's HELP > API Documentation "
                             "shows the active-alerts path if you want them."))
+    return checks
+
+
+def verify_overview(settings: Settings, client: AternityClient) -> list[Check]:
+    """Only the "overview: …" checks (minutes less than the whole verify)."""
+    try:
+        schema = parse_odata_metadata(client.http.request("GET", "/$metadata", headers={"Accept": "application/xml"}).text)
+    except (ApiError, ET.ParseError) as exc:
+        return [Check("Aternity", "connection", False, f"Could not read $metadata: {exc.short() if isinstance(exc, ApiError) else exc}",
+                      "Check aternity.base_url, aternity.username and ATERNITY_PASSWORD.")]
+    return _overview(settings, client, schema)
+
+
+def _overview(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
+    """What a "today's issues" overview could rest on: how much activity there is to
+    read, which status and severity words Aternity itself uses (never ours), and
+    whether it publishes its own incidents and alerts."""
+    cfg, now, checks = settings.aternity, datetime.now(timezone.utc), []
+
+    def per_value(rows, column, device) -> list[str]:
+        by: dict = {}
+        for r in rows:
+            by.setdefault(repr(r.get(column)), []).append(r.get(device))
+        return [f"{value}: {len(devs)} rows on {len(set(devs))} PCs"
+                for value, devs in sorted(by.items(), key=lambda kv: -len(kv[1]))]
+
+    # activity: how many rows an hour (the load of reading a day), and Aternity's status words
+    act, a = cfg.entities.get("activities"), cfg.fields.get("activities", {})
+    if act in schema and a.get("status") in schema[act]:
+        try:
+            for minutes in (60, 10):  # an hour; if that is cut short, 10 minutes for the rate
+                mark = len(client.warnings)
+                rows = client.query(act, _between(a["timestamp"], now - timedelta(minutes=minutes), now),
+                                    select=[a["status"], a["device"]], raw=True)
+                cut = _cut_short(client, mark)
+                if not cut:
+                    break
+            rate = len(rows) * 60 // minutes
+            checks.append(Check("Aternity", "overview: activity to read", None,
+                                f"{len(rows)} activity rows in the last {minutes} min"
+                                + (f" (about {rate} an hour)" if minutes != 60 else "")
+                                + f"; a working day of 10 such hours is about {rate * 10} rows. "
+                                f"Aternity's status ({a['status']}) on them:",
+                                rows=per_value(rows, a["status"], a["device"]) + cut))
+        except ApiError as exc:
+            checks.append(Check("Aternity", "overview: activity to read", None, f"error: {exc.short()}"))
+
+    # health events: Aternity's severity words, and what the biggest events are called
+    ev, h = cfg.entities.get("health_events"), cfg.fields.get("health_events", {})
+    if ev in schema and h.get("severity") in schema[ev]:
+        try:
+            mark = len(client.warnings)
+            rows = client.query(ev, _between(h["timestamp"], now - timedelta(hours=24), now),
+                                select=[h[k] for k in ("device", "severity", "category", "name")], raw=True)
+            top: dict = {}
+            for r in rows:
+                key = (r.get(h["category"]), r.get(h["name"]))
+                top.setdefault(key, []).append(r)
+            widest = sorted(top.items(), key=lambda kv: -len({r.get(h["device"]) for r in kv[1]}))[:8]
+            checks.append(Check("Aternity", "overview: health events", None,
+                                f"{len(rows)} health event rows in the last 24 hours. Aternity's severity "
+                                f"({h['severity']}) on them, then the 8 events on the most PCs:",
+                                rows=per_value(rows, h["severity"], h["device"])
+                                + [f"{cat} / {name}: {len({r.get(h['device']) for r in rs})} PCs, severity "
+                                   f"{_values(rs, h['severity'], 3)}" for (cat, name), rs in widest]
+                                + _cut_short(client, mark)))
+        except ApiError as exc:
+            checks.append(Check("Aternity", "overview: health events", None, f"error: {exc.short()}"))
+
+    # Aternity's own incidents and alerts: published? what do they say?
+    for entity, spec in OVERVIEW_SOURCES.items():
+        item = f"overview: {entity}"
+        if entity not in schema:
+            checks.append(Check("Aternity", item, None, "Not published by this Aternity: an overview cannot "
+                                                        "use it."))
+            continue
+        have = [c for c in spec["values"] if c in schema[entity]]
+        missing = [c for c in spec["values"] if c not in schema[entity]]
+        if spec["time"] not in schema[entity]:
+            checks.append(Check("Aternity", item, None, f"Published, but without its time column "
+                                f"{spec['time']}. Its columns: {', '.join(sorted(schema[entity]))[:300]}"))
+            continue
+        try:
+            rows = client.query(entity, _between(spec["time"], now - timedelta(days=7), now),
+                                select=[spec["time"]] + have, top=500, raw=True)
+        except ApiError as exc:
+            checks.append(Check("Aternity", item, None, f"Published, but reading it gave an error: {exc.short()}"))
+            continue
+        per = Counter(t.date() for t in (parse_time(r.get(spec["time"])) for r in rows) if t)
+        days = ", ".join(f"{d.strftime('%b %d')} {n}" for d, n in sorted(per.items()))
+        checks.append(Check("Aternity", item, None,
+                            f"Published. {len(rows)} rows in the last 7 days{' (the first 500)' if len(rows) == 500 else ''}"
+                            + (f"; per day: {days}." if rows else ": nothing to show from it.")
+                            + (f" Not published: {', '.join(missing)}." if missing else ""),
+                            rows=[f"{c}: {_values(rows, c, 6)}" for c in have] if rows else []))
     return checks
 
 

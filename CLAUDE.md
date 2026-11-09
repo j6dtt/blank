@@ -223,6 +223,11 @@ unset `<REQUIRED>` base URLs.
   OpenAI-style API is assumed until `verify --ai` has run on prod
   (`verify.verify_ai`: key, reachable, login header, plain reply, right
   pick in 3 tries + no pick outside the data, counts repeated right).
+- `verify --overview` (`verify._overview`, also at the end of a full verify):
+  what a "today's issues" overview could rest on: activity rows an hour,
+  Aternity's own status and severity words with counts, and whether its
+  incidents and alerts (`OVERVIEW_SOURCES` in `config.py`) are published.
+  The overview and chat page are not built yet.
 - `http.py` is the shared REST client (basic auth, retries on 429/5xx);
   `models.py` holds the dataclasses and `parse_time`.
 - `report.py` renders the text report, `cli.py` is the argparse entry point,

@@ -61,6 +61,16 @@ VDI_COLUMNS = {
     "boots": {"image_build": "DEVICE_IMAGE_BUILD_NUMBER"},
     "inventory": {"sccm_client": "SCCM_CLIENT_VERSION", "image_build": "DEVICE_IMAGE_BUILD_NUMBER"},
 }
+# Aternity's own incidents and alerts (names from Riverbed's $metadata), read only
+# by `verify --overview` so far: does the live tenant publish them, and what do
+# their state / impact values say. No user or device column is listed here.
+OVERVIEW_SOURCES = {
+    "INCIDENTS": {"time": "INCIDENT_CREATION_TIMESTAMP",
+                  "values": ("INCIDENT_STATE", "INCIDENT_LIVE_IMPACT", "APPLICATION_NAME", "ACTIVITY_NAME")},
+    "SERVICE_DESK_ALERTS_RAW": {"time": "TIMEFRAME", "values": ("SD_ALERT_RULE_NAME", "SD_ALERT_RULE_EVENT_NAME")},
+    "ANOMALY_DETECTION_INCIDENTS": {"time": "INCIDENT_CREATION_TIMESTAMP",
+                                    "values": ("INCIDENT_STATE", "INCIDENT_TYPE", "INCIDENT_OBJECT_TYPE")},
+}
 # `verify` lists every published data source with a process column (which ones
 # could tell the busiest processes), and its time column
 PROCESS_COLUMN = "PROCESS_NAME"

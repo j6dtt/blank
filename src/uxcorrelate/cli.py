@@ -147,6 +147,11 @@ def cmd_verify(args) -> int:
     from .verify import Check, render_checks, verify_ai, verify_aternity, verify_vdi_network, verify_netim
     settings = load_settings(args.config)
     checks: list[Check] = []
+    if args.overview:  # only what a "today's issues" overview could rest on
+        from .verify import verify_overview
+        checks = verify_overview(settings, AternityClient(settings.aternity))
+        print(render_checks(checks))
+        return 1 if any(c.ok is False for c in checks) else 0
     if args.ai:  # only the AI services: seconds, not the minutes the Riverbed checks take
         checks = verify_ai(settings)
         print(render_checks(checks))
@@ -216,6 +221,8 @@ def main(argv: list[str] | None = None) -> int:
     chk.set_defaults(func=cmd_netim_check)
 
     ver = sub.add_parser("verify", help="check every configured name against live Aternity and NetIM")
+    ver.add_argument("--overview", action="store_true",
+                     help="only the checks for a \"today's issues\" overview (Aternity)")
     ver.add_argument("--ai", action="store_true", help="only the AI services (ai.services in config.yaml)")
     ver.set_defaults(func=cmd_verify)
 
