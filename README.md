@@ -169,7 +169,7 @@ code from `./src`. To fix code, edit `src/uxcorrelate/*.py` and run
 lists what to do before the first start. Healthy means the web server is up; it
 does not mean Aternity or NetIM are reachable (`verify` checks that).
 
-**Web UI** (titled "GO Preservation Society"). Open `http://<docker-host>:8080`
+**Web UI** (titled "J6 Preservation Society"). Open `http://<docker-host>:8080`
 or `https://<docker-host>:8444`. The `ports` setting in `compose.yaml`
 decides who can reach it: `"127.0.0.1:8080:8080"` is the Docker host only,
 `"8080:8080"` is the whole network. The UI has no login.

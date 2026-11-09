@@ -279,7 +279,7 @@ unset `<REQUIRED>` base URLs.
   `serve --tls-port/--cert/--key`, both ports in one process with one
   stop for both; certs in `./certs`, gitignored; host 8444, as haproxy
   holds 8443.)
-- The page is titled "GO Preservation Society" (parchment, archive green,
+- The page is titled "J6 Preservation Society" (parchment, archive green,
   brass; colours only through the `:root` variables, serif from fonts
   already on Windows: the live host has no internet).
 - The web UI has no authentication. Don't add features that assume it does.
