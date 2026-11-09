@@ -331,6 +331,9 @@ unset `<REQUIRED>` base URLs.
   bundle and never builds; bump `x-image` in `compose.yaml` when
   dependencies change. Base is the official `python:3.13-alpine`, two
   stages into `FROM scratch`, no pip; only pyproject dependencies.
+- Kubernetes: `k8s/uxcorrelate.yaml` (one pod, `Recreate`; code, data and
+  config.yaml on an NFS volume as with compose; Secret from `.env`; TLS at
+  the ingress). Keep it in step with `compose.yaml`.
 - The bundle (`dist/uxcorrelate-<version>.tar`) must stay under 25 MB
   (prod transfer limit; the script refuses bigger). It is made only when
   every test passes. Adding a dependency means checking that size.

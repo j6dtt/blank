@@ -251,6 +251,15 @@ Copy that one file to the live host. It holds the runtime image, `src/`,
 `compose.yaml`, `config.example.yaml`, this README and `INSTALL.txt`, which
 has the install, code-fix and upgrade steps.
 
+### Kubernetes
+
+`k8s/uxcorrelate.yaml` runs the same image as one pod, with `src/`, `data/`
+and `config.yaml` in the app folder on NFS, passwords in a Secret made from
+`.env`, and TLS at the ingress. The top of the file has the full steps:
+what to fill in, first time, day to day (code fix, passwords, certificate,
+logs, verify) and going back to compose. One pod only: a second would read
+Aternity twice.
+
 ## Connect to Riverbed
 
 ### What you need

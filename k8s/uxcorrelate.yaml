@@ -1,0 +1,247 @@
+# ===================== SETTINGS =====================
+# UX Correlator on Kubernetes. Fill in every <...> in
+# this file (the objects below use them too):
+#   <REGISTRY>       registry the cluster pulls from
+#                    (step 2)
+#   <NFS_SERVER>     NFS server of the app folder
+#   <NFS_PATH>       the app folder's path on it: the
+#                    folder with src/, data/,
+#                    config.yaml, .env, certs/
+#   <MEMORY>         memory limit (step 1)
+#   <HOST>           the name users type in the
+#                    browser; the certificate in
+#                    certs/ must be for this name
+#   <INGRESS_CLASS>  kubectl get ingressclass
+# ====================================================
+#
+# ------------------- HOW IT RUNS --------------------
+# browser ─https─▶ Ingress (<HOST>, certificate)
+#   ─▶ Service :80 ─▶ ONE pod :8080, which mounts
+#   the app folder on NFS:
+#     src/        → /app/src   code, read-only
+#     the folder  → /srv/app   config.yaml, read-only
+#     data/       → /data      daily counts, Care list
+# Passwords and keys: Secret "uxcorrelate-env", made
+# from .env by hand, given to the pod as environment
+# variables (as compose's env_file does). This file
+# holds no password.
+# One pod, never more: it reads Aternity in the
+# background, so a second pod would read it twice and
+# run every Care list investigation twice.
+# The web UI has no login: anyone who can reach
+# <HOST> can use it.
+#
+# ------------------- FIRST TIME ---------------------
+# 1. On the host that runs compose today, in the app
+#    folder. MEM USAGE times 2 is <MEMORY> (after the
+#    app has run a day):
+#      docker stats --no-stream uxcorrelate
+#      chmod a+rwx data; chmod -R o+rX src
+#    The cluster's nodes must be able to mount this
+#    folder over NFS (<NFS_SERVER>:<NFS_PATH>).
+#
+# 2. Put the image in the registry, from a host with
+#    docker that can push there. Skip the first two
+#    lines if it already has the image
+#    (docker images | grep uxcorrelate-runtime):
+#      tar xf uxcorrelate-<version>.tar
+#      docker load < uxcorrelate-<version>/image.tar.xz
+#      docker tag uxcorrelate-runtime:3 <REGISTRY>/uxcorrelate-runtime:3
+#      docker push <REGISTRY>/uxcorrelate-runtime:3
+#
+# 3. Fill in the SETTINGS values. Then nothing should
+#    be printed by:
+#      grep -n "<" k8s/uxcorrelate.yaml | grep -v "#"
+#
+# 4. .env: one KEY=value per line, no quotes around
+#    values (kubectl keeps quotes; compose drops them).
+#
+# 5. Stop compose: both must never run at once.
+#      docker compose down
+#
+# 6. From the app folder, with kubectl:
+#      kubectl create namespace uxcorrelate
+#      kubectl -n uxcorrelate create secret generic uxcorrelate-env --from-env-file=.env
+#      kubectl -n uxcorrelate create secret tls uxcorrelate-tls --cert=certs/<name>.crt --key=certs/<name>.key
+#      kubectl apply -f k8s/uxcorrelate.yaml
+#
+# 7. Check it runs:
+#      kubectl -n uxcorrelate get pods
+#    shows 1/1 Running; within minutes
+#      kubectl -n uxcorrelate logs deploy/uxcorrelate --tail=20
+#    shows "Today ready". Then open https://<HOST>/
+#    (the Today tab fills once the last 24 h are read).
+#
+# ------------------- DAY TO DAY ---------------------
+# Code fix: copy the files into src/ in the app
+# folder, then:
+#   kubectl -n uxcorrelate rollout restart deploy/uxcorrelate
+# care_list in config.yaml: seen at the next 15-min
+# check, no restart. Other config.yaml settings:
+# rollout restart (as above).
+# Password or AI key changed in .env: load it again,
+# then rollout restart:
+#   kubectl -n uxcorrelate create secret generic uxcorrelate-env --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
+# New certificate (the app needs no restart):
+#   kubectl -n uxcorrelate create secret tls uxcorrelate-tls --cert=certs/<name>.crt --key=certs/<name>.key --dry-run=client -o yaml | kubectl apply -f -
+# New image tag (x-image in compose.yaml changed):
+# step 2 with the new tag, change "image:" below, then
+#   kubectl apply -f k8s/uxcorrelate.yaml
+# Logs, as they come:
+#   kubectl -n uxcorrelate logs deploy/uxcorrelate -f
+# verify and other CLI commands:
+#   kubectl -n uxcorrelate exec deploy/uxcorrelate -- uxcorrelate verify
+#
+# ---------------- BACK TO COMPOSE -------------------
+# Stop the pod, then start compose: data/ and
+# config.yaml are where they were.
+#   kubectl -n uxcorrelate scale deploy/uxcorrelate --replicas=0
+#   docker compose up -d
+# Remove it from the cluster (the NFS folder is kept):
+#   kubectl delete -f k8s/uxcorrelate.yaml
+#   kubectl delete namespace uxcorrelate
+# ====================================================
+# The app folder on NFS. Retain: deleting this never
+# touches the folder.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: uxcorrelate-app
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes: [ReadWriteMany]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  nfs:
+    server: "<NFS_SERVER>"
+    path: "<NFS_PATH>"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: uxcorrelate-app
+  namespace: uxcorrelate
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: ""
+  volumeName: uxcorrelate-app
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: uxcorrelate
+  namespace: uxcorrelate
+spec:
+  replicas: 1  # never more (see SETTINGS)
+  strategy:
+    type: Recreate  # the old pod stops before the new one starts
+  selector:
+    matchLabels:
+      app: uxcorrelate
+  template:
+    metadata:
+      labels:
+        app: uxcorrelate
+    spec:
+      securityContext:  # the image's own user (uxc, 1000)
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+      containers:
+        - name: uxcorrelate
+          image: "<REGISTRY>/uxcorrelate-runtime:3"
+          imagePullPolicy: IfNotPresent
+          # http only: TLS ends at the ingress
+          args: ["serve", "--host", "0.0.0.0", "--port", "8080"]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: UXCORRELATE_CONFIG
+              value: /srv/app/config.yaml
+            - name: UXCORRELATE_DATA
+              value: /data
+          envFrom:
+            - secretRef:
+                name: uxcorrelate-env  # the passwords and keys from .env
+          volumeMounts:
+            - name: app
+              mountPath: /app/src
+              subPath: src
+              readOnly: true
+            # the folder, not the file: an edited config.yaml
+            # is seen without a restart
+            - name: app
+              mountPath: /srv/app
+              readOnly: true
+            # daily counts and Care list issues; writable by 1000
+            - name: app
+              mountPath: /data
+              subPath: data
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 30
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: "<MEMORY>"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: app
+          persistentVolumeClaim:
+            claimName: uxcorrelate-app
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: uxcorrelate
+  namespace: uxcorrelate
+spec:
+  selector:
+    app: uxcorrelate
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: uxcorrelate
+  namespace: uxcorrelate
+spec:
+  ingressClassName: "<INGRESS_CLASS>"
+  tls:
+    - hosts: ["<HOST>"]
+      secretName: uxcorrelate-tls  # the certificate in certs/
+  rules:
+    - host: "<HOST>"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: uxcorrelate
+                port:
+                  name: http
