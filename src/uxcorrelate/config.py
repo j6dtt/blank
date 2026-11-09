@@ -61,6 +61,13 @@ VDI_COLUMNS = {
     "boots": {"image_build": "DEVICE_IMAGE_BUILD_NUMBER"},
     "inventory": {"sccm_client": "SCCM_CLIENT_VERSION", "image_build": "DEVICE_IMAGE_BUILD_NUMBER"},
 }
+# Aternity's own words, seen on the live tenant (verify --overview, Nov 2026):
+# activity SLA_STATUS Normal / Undefined / Minor / Major (no Critical), health
+# event severity Minor / Major / Critical. The "Today" tab shows them as given.
+TOP_STATUS = "Major"  # the worst SLA_STATUS of an activity
+SEVERITY_ORDER = ("Critical", "Major", "Minor")  # worst first; others after them
+TILE_SEVERITIES = ("Critical", "Major")  # the health events at the top of "Today"
+
 # Aternity's own incidents and alerts (names from Riverbed's $metadata), read only
 # by `verify --overview` so far: does the live tenant publish them, and what do
 # their state / impact values say. No user or device column is listed here.
@@ -353,6 +360,8 @@ class Settings:
     bucket_minutes: int = 5
     # unit of WINDOWS_MACHINE_BOOTS durations, shown next to them
     boot_unit: str = "s"
+    # where "Today" starts and ends (midnight there), e.g. America/New_York; empty: UTC
+    timezone: str = ""
 
 
 def _merge_dataclass(obj: Any, data: dict[str, Any]) -> None:
@@ -384,6 +393,8 @@ def load_settings(path: str | os.PathLike | None = None) -> Settings:
             settings.bucket_minutes = int(raw["bucket_minutes"])
         if "boot_unit" in raw:
             settings.boot_unit = str(raw["boot_unit"])
+        if raw.get("timezone"):
+            settings.timezone = str(raw["timezone"]).strip()
         if metrics is not None:
             settings.netim.metrics = [NetimMetric(**m) for m in metrics]
         for entry in (raw.get("ai") or {}).get("services") or []:

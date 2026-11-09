@@ -213,9 +213,22 @@ unset `<REQUIRED>` base URLs.
   one real fetch) and topology name, and prints the closest real names.
 - `names.py`: the usernames and device names offered as you type in the
   Username and Device boxes (`/api/names`): every one seen in Aternity's
-  activity (those two columns only), the last 24 hours at start, then each
-  hour; dropped after 8 days unseen. One background read per process (the
-  HTTP and HTTPS servers share it). Any name can still be typed.
+  activity, fed by the Today reader; dropped after 8 days unseen. Any name
+  can still be typed.
+- `today.py`: the "Today" tab, first (`/api/today`): what Aternity itself
+  rated today, from midnight in `timezone` (config.yaml; empty = UTC):
+  health events with severity in `TILE_SEVERITIES` (Critical, Major) as
+  tiles, other events on the most PCs, `TOP_STATUS` (Major) slow actions
+  per hour and per application. Each against the same kind of day before
+  (working Mon-Fri / weekend; `usual`: more / fewer than any of them, or as
+  usual), at the same time of day. One background reader per process
+  (`keep_reading`; HTTP and HTTPS share it): activity an hour at a time,
+  the last 24 h at start, then every 15 min the current hour and each hour
+  once more 15 min after it ends (late rows logged); health events today
+  every 15 min, the 14 days before once a day. Activity is kept ~8 days, so
+  each finished day's counts are saved in `$UXCORRELATE_DATA/days/<date>.json`
+  (`./data`, writable by uid 1000; counts and app names, no user or PC);
+  only complete days count as usual. The chat under it is not built yet.
 - `ai.py`: client for the self-hosted AI services (`ai.services` in
   config.yaml, key from the env var named in `key_env`) the chat will
   use; the chat is not built yet. The AI never reads Aternity or counts:

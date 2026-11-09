@@ -57,7 +57,8 @@
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
   th { color: var(--muted); font-weight: 600; }
-  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 16px; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap: 16px; }
+  main > *, .grid2 > * { min-width: 0; }  /* a wide table scrolls inside its panel, the page never does */
   .warn { color: var(--warn); }
   .err { color: var(--bad); white-space: pre-wrap; }
   svg text { fill: var(--muted); font-size: 11px; }
@@ -75,6 +76,19 @@
   #progress { margin-top: 10px; font-size: 13px; }
   #progress .now { font-weight: 600; }
   #progress ol { margin: 6px 0 0; padding-left: 18px; color: var(--muted); max-height: 9em; overflow-y: auto; }
+  /* Today: Aternity's own severity, the same colour everywhere (Critical red, Major amber, Minor grey) */
+  .todayHead { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .todayHead h2 { margin: 0; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr)); gap: 10px; margin-top: 12px; }
+  .tile { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; display: grid; gap: 4px; align-content: start; }
+  .tile .big { font: 700 26px/1.1 var(--serif); }
+  .tile .what { font-weight: 600; }
+  .tile .u { font-size: 12px; color: var(--muted); }
+  .tile .u b { color: var(--text); }
+  .sev { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; color: #fff; justify-self: start; }
+  .hbar { height: 10px; border-radius: 0 3px 3px 0; min-width: 2px; }
+  .notes { margin: 10px 0 0; padding-left: 18px; font-size: 12px; }
+  #tEvents td, #tApps td { vertical-align: middle; }
   /* names offered as you type (Username, Device) */
   label.pick { position: relative; }
   .picks { position: absolute; top: 100%; left: 0; right: 0; z-index: 5; margin: 2px 0 0; padding: 4px 0; list-style: none;
@@ -91,9 +105,29 @@
     <text x="15" y="21" text-anchor="middle" font-family="Georgia, serif" font-size="11" font-weight="700"
       fill="var(--brass)" style="fill:var(--brass)">J6</text></svg>
   <h1>J6 Preservation Society</h1><span>Aternity end-user experience × NetIM infrastructure</span>
-  <nav><button id="tabInv" class="on">Investigate</button><button id="tabLog">Slow start-ups</button></nav></header>
+  <nav><button id="tabToday" class="on">Today</button><button id="tabInv">Investigate</button><button id="tabLog">Slow start-ups</button></nav></header>
 <main>
-  <section class="panel" id="invForm">
+  <div id="todayBox">
+    <section class="panel">
+      <div class="todayHead"><h2>Today's issues</h2><span class="muted" id="tWhen"></span></div>
+      <div class="muted" id="tStatus"></div>
+      <div class="tiles" id="tTiles"></div>
+      <ul class="muted notes" id="tNotes"></ul>
+    </section>
+    <div class="grid2" id="tCharts" style="margin-top:16px">
+      <section class="panel"><h2 id="tHoursTitle">Major slow actions per hour</h2><div id="tHours"></div>
+        <div class="legend" id="tHoursLegend"></div></section>
+      <section class="panel"><h2 id="tAppsTitle">Applications with the most Major slow actions</h2>
+        <div class="tableWrap"><table id="tApps"></table></div></section>
+    </div>
+    <section class="panel" id="tEventsBox" style="margin-top:16px">
+      <h2>Other crashes and events on the most PCs today</h2>
+      <div class="tableWrap"><table id="tEvents"></table></div>
+      <p class="muted" style="font-size:12px;margin:6px 0 0">Severity is Aternity's own. Bars: PCs per day over the
+        7 days before; green is today so far. Hover a bar for its day.</p>
+    </section>
+  </div>
+  <section class="panel" id="invForm" hidden>
     <form id="f">
       <label class="pick">Username<input name="username" data-names="username" autocomplete="off" placeholder="type part of it"></label>
       <label class="pick">Device<input name="device" data-names="device" autocomplete="off" placeholder="type part of it"></label>
@@ -220,15 +254,129 @@ async function init() {
   } catch (e) { $("error").textContent = "Could not load settings: " + e; }
 }
 
-// Two modes; switching keeps each mode's form and last result.
-function mode(logons) {
-  $("tabInv").classList.toggle("on", !logons); $("tabLog").classList.toggle("on", logons);
-  $("invForm").hidden = logons; $("logForm").hidden = !logons;
-  $("out").hidden = logons || !$("out").dataset.has; $("lout").hidden = !logons || !$("lout").dataset.has;
+// Three tabs; switching keeps each tab's form and last result.
+function mode(tab) {
+  const inv = tab === "inv", logons = tab === "log", today = tab === "today";
+  $("tabToday").classList.toggle("on", today); $("tabInv").classList.toggle("on", inv); $("tabLog").classList.toggle("on", logons);
+  $("todayBox").hidden = !today; $("invForm").hidden = !inv; $("logForm").hidden = !logons;
+  $("out").hidden = !inv || !$("out").dataset.has; $("lout").hidden = !logons || !$("lout").dataset.has;
   $("error").textContent = "";
+  if (today) loadToday();
 }
-$("tabInv").addEventListener("click", () => mode(false));
-$("tabLog").addEventListener("click", () => mode(true));
+$("tabToday").addEventListener("click", () => mode("today"));
+$("tabInv").addEventListener("click", () => mode("inv"));
+$("tabLog").addEventListener("click", () => mode("log"));
+
+// ---- Today: what Aternity rated Critical or Major today, against the same kind of day before ----
+const SEV = { Critical: "var(--bad)", Major: "var(--warn)", Minor: "var(--muted)" };
+const sevTag = (s) => `<span class="sev" style="background:${SEV[s] || "var(--muted)"}">${esc(s || "no severity")}</span>`;
+const n = (v) => Number(v ?? 0).toLocaleString();
+let todayTimer = null;
+
+// "by 14:00: 192; the 5 working days before had 101 to 126" (value: today's, when the tile's big number is not it)
+function usualText(u, kind, by, value) {
+  const when = (by ? `by ${by}` : "by this time") + (value !== undefined ? `: ${n(value)}` : "");
+  if (!u || !u.enough) return `Usual: not known yet (${u?.days ?? 0} of the 3 ${esc(kind)} needed)`;
+  const had = `the ${u.days} ${esc(kind)} before had ${u.low === u.high ? n(u.low) : `${n(u.low)} to ${n(u.high)}`}`;
+  if (u.verdict === "more") return `<b>▲ More than usual</b> ${when}; ${had}`;
+  if (u.verdict === "fewer") return `▼ Fewer than usual ${when}; ${had}`;
+  return `As usual ${when}; ${had}`;
+}
+function eventSpark(e, date) {
+  const days = e.days.filter((d) => d.pcs !== null).map((d) => ({ day: d.date, pcs: d.pcs }));
+  return spark(days.concat([{ day: date, pcs: e.pcs, window: true }]));
+}
+
+async function loadToday() {
+  clearTimeout(todayTimer);
+  let t;
+  try {
+    const r = await fetch("api/today");
+    t = await r.json();
+    if (!r.ok) throw new Error(t.detail || `HTTP ${r.status}`);
+  } catch (e) {
+    $("tStatus").textContent = "Could not load today's issues: " + e.message;
+    todayTimer = setTimeout(loadToday, 60e3);
+    return;
+  }
+  const ready = t.ready;
+  $("tCharts").hidden = $("tEventsBox").hidden = !ready;
+  $("tTiles").innerHTML = $("tNotes").innerHTML = "";
+  if (!ready) {
+    $("tWhen").textContent = "";
+    $("tStatus").textContent = t.off || `${t.status}… This page fills in by itself.`;
+    if (!t.off) todayTimer = setTimeout(loadToday, 5e3);
+    return;
+  }
+  renderToday(t);
+  todayTimer = setTimeout(() => { if (!$("todayBox").hidden) loadToday(); }, 5 * 60e3);
+}
+
+function renderToday(t) {
+  const day = new Date(t.date + "T00:00:00Z").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+  $("tWhen").textContent = `${day}, from midnight ${t.zone} · as of ${t.as_of_local} · updated every ${t.refresh_minutes} min`;
+  $("tStatus").textContent = "";
+  const s = t.slow;
+  const tiles = t.none.map((sev) => `<div class="tile">${sevTag(sev)}<div class="big">0</div><div class="what">No ${esc(sev)} crash or event</div>`
+      + `<div class="u">Aternity rated none ${esc(sev)} today.</div></div>`)
+    .concat(t.tiles.map((e) => `<div class="tile">${sevTag(e.severity)}<div class="big">${n(e.pcs)} PCs</div>`
+      + `<div class="what">${esc(e.name)} <span class="muted">(${esc(e.category)})</span></div>`
+      + `<div class="u">${usualText(e.usual, t.kind)}</div>${eventSpark(e, t.date)}</div>`))
+    .concat([`<div class="tile">${sevTag(s.status)}<div class="big">${n(s.pcs)} PCs</div>`
+      + `<div class="what">${esc(s.status)} slow actions</div>`
+      + `<div class="u">${n(s.actions)} actions, ${n(s.users)} users; ${n(s.active_pcs)} PCs active today.</div>`
+      + `<div class="u">${s.by ? usualText(s.usual, t.kind, s.by, s.by_pcs) : "Compared after the first hour of the day."}</div></div>`]);
+  $("tTiles").innerHTML = tiles.join("");
+  $("tNotes").innerHTML = t.notes.map((x) => `<li>${esc(x)}</li>`).join("");
+
+  $("tHoursTitle").textContent = `${s.status} slow actions per hour (${t.zone})`;
+  $("tHours").innerHTML = hoursChart(t.hours, s.status);
+  const usualKnown = t.hours.some((h) => h.usual !== null);
+  $("tHoursLegend").innerHTML = `<span><i style="background:var(--warn)"></i>Today (the last bar: this hour so far)</span>`
+    + (usualKnown ? `<span><i style="background:var(--text);height:2px;vertical-align:3px"></i>Usual: the middle of the ${esc(t.kind)} before</span>`
+                  : `<span>Usual: not known yet</span>`);
+
+  $("tAppsTitle").textContent = `Applications with the most ${s.status} slow actions`;
+  const top = Math.max(1, ...t.applications.map((a) => a.actions));
+  $("tApps").innerHTML = t.applications.length
+    ? `<tr><th>Application</th><th>${esc(s.status)} slow actions</th><th class="num">PCs</th></tr>` + t.applications.map((a) =>
+      `<tr><td>${esc(a.application)}</td><td><div style="display:flex;align-items:center;gap:6px">`
+      + `<div class="hbar" style="background:var(--warn);width:${Math.max(1, a.actions / top * 100) * 0.7}%" title="${n(a.actions)} of ${n(a.runs)} actions"></div>`
+      + `<span class="num">${n(a.actions)} <span class="muted">of ${n(a.runs)}</span></span></div></td><td class="num">${n(a.pcs)}</td></tr>`).join("")
+    : `<tr><td class="muted">No ${esc(s.status)} slow action today.</td></tr>`;
+
+  const shown = new Set(t.tiles.map((e) => e.category + "\u0000" + e.name));
+  const others = t.events.filter((e) => !shown.has(e.category + "\u0000" + e.name));
+  const most = Math.max(1, ...others.map((e) => e.pcs));
+  $("tEvents").innerHTML = others.length
+    ? `<tr><th>Severity</th><th>Crash or event</th><th>PCs today</th><th>Usual</th><th>7 days before</th></tr>` + others.map((e) =>
+      `<tr><td>${sevTag(e.severity)}</td><td>${esc(e.name)} <span class="muted">(${esc(e.category)})</span></td>`
+      + `<td><div style="display:flex;align-items:center;gap:6px"><div class="hbar" style="background:${SEV[e.severity] || "var(--muted)"};width:${Math.max(1, e.pcs / most * 100) * 0.6}px"></div>`
+      + `<span class="num">${n(e.pcs)}</span></div></td><td class="muted" style="font-size:12px">${usualText(e.usual, t.kind)}</td><td>${eventSpark(e, t.date)}</td></tr>`).join("")
+    : `<tr><td class="muted">No other crash or event today.</td></tr>`;
+}
+
+// One bar per hour of the day (24 slots), the usual as a line across each slot.
+function hoursChart(hours, status) {
+  const W = 560, H = 190, L = 34, B = 22, T = 8, slot = (W - L) / 24;
+  const top = Math.max(1, ...hours.map((h) => Math.max(h.count ?? 0, h.usual ?? 0)));
+  const y = (v) => T + (H - T - B) * (1 - v / top);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${esc(status)} slow actions per hour today">`
+    + `<line x1="${L}" y1="${y(0)}" x2="${W}" y2="${y(0)}" stroke="var(--border)"/>`
+    + `<line x1="${L}" y1="${y(top)}" x2="${W}" y2="${y(top)}" stroke="var(--border)" stroke-dasharray="3 3"/>`
+    + `<text x="${L - 4}" y="${y(top) + 4}" text-anchor="end">${n(top)}</text><text x="${L - 4}" y="${y(0) + 4}" text-anchor="end">0</text>`;
+  hours.forEach((h) => {
+    const i = Number(h.hour.slice(0, 2)), x = L + i * slot;
+    const tip = `${h.hour}: ${h.count === null ? "not read" : `${n(h.count)} ${status} slow actions`}${h.now ? " so far" : ""}`
+      + `${h.usual !== null ? `, usually ${n(h.usual)}` : ""}${h.rows !== null ? ` (${n(h.rows)} actions in all)` : ""}`;
+    svg += `<g><title>${esc(tip)}</title><rect x="${x}" y="${T}" width="${slot}" height="${H - T - B}" fill="transparent"/>`;
+    if (h.count) svg += `<rect x="${x + 2}" y="${y(h.count)}" width="${slot - 4}" height="${y(0) - y(h.count)}" rx="2" fill="var(--warn)" opacity="${h.now ? 0.55 : 1}"/>`;
+    if (h.usual !== null) svg += `<line x1="${x + 1}" x2="${x + slot - 1}" y1="${y(h.usual)}" y2="${y(h.usual)}" stroke="var(--text)" stroke-width="2"/>`;
+    svg += `</g>`;
+  });
+  for (let i = 0; i < 24; i += 3) svg += `<text x="${L + i * slot + slot / 2}" y="${H - 6}" text-anchor="middle">${String(i).padStart(2, "0")}</text>`;
+  return svg + "</svg>";
+}
 
 function formBody(f, keys) {
   const body = {};
@@ -594,6 +742,7 @@ function chart(tl, req) {
   return svg + "</svg>";
 }
 init();
+mode("today");
 </script>
 </body>
 </html>

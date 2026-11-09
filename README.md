@@ -114,6 +114,16 @@ Other users of these apps:
 
 ## The web page
 
+Today tab (opens first): what Aternity itself rated today, from midnight
+in `timezone` (config.yaml). Tiles for crashes and events Aternity rates
+Critical or Major and for its Major slow actions, each against the same
+kind of day before ("More than usual", "As usual", "Fewer than usual");
+Major slow actions per hour and per application; other crashes and events
+on the most PCs, each with its 7 days before. It updates every 15 minutes.
+The usual for actions builds up over the first week from the counts saved
+in `./data` each night (`mkdir -p data && chmod a+rwx data` before the
+first start).
+
 Investigate tab, top to bottom:
 
 - **Answer**: the likely cause in one line, and at how many slow actions;

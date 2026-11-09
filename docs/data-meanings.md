@@ -21,8 +21,10 @@ questions.md`).
 
 **M1. `SLA_STATUS` 'Minor' / 'Major' means the action was slow for the user.**
 ASSUMED. Aternity's own verdict against each activity's limits; the
-limits and what 'Undefined' means are not known.
-Rests on it: every "slow action" count, the headline.
+limits and what 'Undefined' means are not known. Values seen in one hour
+(OBSERVED, Nov 9 2026): Normal 9,170 rows, Undefined 794, Minor 347, Major
+243; no 'Critical'. 'Major' is taken as the worst ("Today" tab).
+Rests on it: every "slow action" count, the headline, the "Today" tab.
 Confirm: admin questions 7 and 13.
 
 **M2. `ACTIVITY_RESPONSE_TIME` is in seconds.**
@@ -86,6 +88,15 @@ ASSUMED. Rests on it: where an app failed.
 app.**
 ASSUMED from the name. Rests on it: background crashes counted at any
 slow action, "Other things".
+
+**M22. `HEALTH_EVENT_SEVERITY` is Aternity's own rating of an event kind:
+Critical, Major, Minor.**
+OBSERVED (24 hours, Nov 9 2026): one severity per event name. System Crash
+Critical (5 PCs); Application Crash and Application Crash (After Hang)
+Major; Background Process Crash, Low Memory Pagefaults, Unexpected
+Shutdown, DotNet runtime errors Minor. Shown as given, never re-rated.
+Rests on it: the Critical and Major tiles of the "Today" tab.
+Confirm: admin question 7.
 
 **M15. 'Low Virtual Memory' with "Percent Remaining Memory: 100%".**
 UNKNOWN. Confirm: admin question 7.

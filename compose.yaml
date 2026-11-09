@@ -30,6 +30,7 @@ x-settings:
 # Before the first start:
 #   1. cp config.example.yaml config.yaml, fill <REQUIRED>
 #   2. put ATERNITY_PASSWORD / NETIM_PASSWORD in ./.env
+#      and: mkdir -p data && chmod a+rwx data
 #   3. docker compose up -d, then check the connection:
 #      docker compose exec uxcorrelate uxcorrelate verify
 # Code fix: edit ./src/uxcorrelate/*.py, then
@@ -51,7 +52,11 @@ services:
         required: false
     environment:
       UXCORRELATE_CONFIG: /config/config.yaml
+      UXCORRELATE_DATA: /data
     volumes:
       - ./src:/app/src:ro
       - ./config.yaml:/config/config.yaml:ro
       - ./certs:/certs:ro
+      # the "Today" tab's daily counts (no user or PC names);
+      # writable by uid 1000, the container's user
+      - ./data:/data

@@ -42,6 +42,10 @@ bucket_minutes: 5
 # unit of boot and logon durations, shown next to them
 boot_unit: s
 
+# "Today" runs from midnight in this time zone (as in Windows / Linux:
+# Area/City, e.g. America/Chicago). Empty: UTC.
+timezone: ""
+
 # --- Only if `uxcorrelate verify` reports a wrong name ----------------
 # The Aternity data sources and columns, NetIM API paths and NetIM metrics
 # have built-in defaults (src/uxcorrelate/config.py). When verify says one
