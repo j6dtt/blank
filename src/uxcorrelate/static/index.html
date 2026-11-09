@@ -501,7 +501,7 @@ const pcText = (u) => u.pcs.length ? u.pcs.map((p) => p.device + (p.kind && p.ki
   : "No PC in use today";
 // An OK tile's one line: what was measured today against their own usual
 const okText = (u) => !u.actions ? "No issue: not seen using a PC today."
-  : `No issue: ${n(u.actions)} actions today, ${n(u.major)} rated Major`
+  : `No issue: ${n(u.actions)} action${u.actions === 1 ? "" : "s"} today, ${n(u.major)} rated Major`
     + (u.usual && u.usual.enough ? ` (usual by now: ${u.usual.low} to ${u.usual.high}).` : ".");
 const usualWords = (u) => !u ? "" : u.enough ? `their usual by this time: ${u.low} to ${u.high} (${u.days} ${u.kind} before)`
   : `their usual: ${u.days} of the 3 ${u.kind} needed so far`;
@@ -530,7 +530,9 @@ function renderCare(c) {
       + `<div class="name">${esc(u.title)}</div>${u.label ? `<div class="u">${esc(u.username)}</div>` : ""}`
       + `<div class="u">${esc(pcText(u))}</div>` + lines.map((x) => `<div class="u"><b>${esc(x)}</b></div>`).join("") + more + gone
       + (why ? `<div class="u">${esc(why)}</div>` : "")
-      + (u.status === "unknown" ? "" : spark(days, "issues", "Issues per day")) + `<div class="more">Show more ▸</div></div>`;
+      + (u.status === "unknown" ? "" : !days.some((d) => d.pcs) ? `<div class="u">No issue in the last ${days.length} days.</div>`
+        : `<div class="u">Issues per day, last ${days.length} days:</div>` + spark(days, "issues", "Issues per day"))
+      + `<div class="more">Show more ▸</div></div>`;
   }).join("");
   $("cNotes").innerHTML = (c.notes || []).map((x) => `<li>${esc(x)}</li>`).join("");
 }
@@ -948,9 +950,9 @@ function spark(days, unit = "PCs", what = "Other PCs per day") {
     return `<g><title>${esc(label(d))}${d.window ? " (this window)" : ""}</title><rect class="hit" x="${i * step}" y="0" width="${step}" height="${h}"/>`
       + `<rect class="${d.window ? "now" : "past"}" x="${i * step}" y="${h - y}" width="${step - 2}" height="${y}" rx="1"/></g>`;
   }).join("");
-  const hi = days.reduce((a, b) => (b.pcs > a.pcs ? b : a));
+  const hi = days.reduce((a, b) => (b.pcs > a.pcs ? b : a));  // the label says the real highest, 0 included
   return `<div class="sparkWrap"><svg class="spark" width="${days.length * step}" height="${h}" role="img" `
-    + `aria-label="${esc(`${what}, ${days.length} days, highest ${label(hi)}`)}">${bars}</svg><span class="num">max ${top.toLocaleString()}</span></div>`;
+    + `aria-label="${esc(`${what}, ${days.length} days, highest ${label(hi)}`)}">${bars}</svg><span class="num">max ${hi.pcs.toLocaleString()}</span></div>`;
 }
 $("aRollup").addEventListener("click", (ev) => {
   const b = ev.target.closest("button[data-issue]");
