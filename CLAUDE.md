@@ -275,13 +275,22 @@ unset `<REQUIRED>` base URLs.
 - `report.py` renders the text report, `cli.py` is the argparse entry point,
   and `web.py` is the FastAPI app.
 - `static/index.html` is the single-page UI. It is dependency-free and draws
-  its chart with inline SVG.
+  its charts with inline SVG. Tabs, in order: Today, Care list,
+  Investigate, Slow start-ups (`mode()`; each with a link, `TAB_LINK`).
+  Every "Investigate ▸" (Today lists, the chat, the Care list) goes
+  through `investigateNow()`: fill the Investigate form and run it at once.
+  Two scripts must not declare the same top-level name (the later one wins
+  silently: a second `renderWho` once broke the Today list).
 - `tests/`: pytest. HTTP is mocked with `httpx.MockTransport`; the engine is
   tested with `tests/synthetic.py` (fake Aternity/NetIM, branch WAN
   saturation scenario) and stubs. There is no demo mode in the product; don't
   add one back.
 
 ## Conventions and gotchas
+
+- New features run on a stage instance (a second Docker host) before the
+  live one; the user copies files there by hand. Each step names the
+  instance it is for.
 
 - **Riverbed names and layouts come from Riverbed's own material only**,
   never from guesses: a real Aternity `$metadata` and NetIM layouts from the
