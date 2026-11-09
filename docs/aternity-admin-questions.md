@@ -14,13 +14,20 @@ important first within each group.
   (`VIRTUALIZATION` = 'true', client type 'Remote Device'). The devices
   users sit at (`CLIENT_DEVICE_NAME`, mostly names starting "WT") are not
   Aternity devices: none of the 20 most used is in `DEVICE_INVENTORY`.
+- **Seen again, Nov 9:** Aternity's own dashboard shows a "Remote Display
+  Latency" chart, so Aternity measures it; but still no `REMOTE_DISPLAY_*`
+  data source is in the REST API's `$metadata`. In 3 hours of activity,
+  `ACTIVITY_REMOTE_DISPLAY_LATENCY_AVG` had a value on 2 of 15,697 virtual
+  desktop actions: 1 desktop of 1,211, 1 user, values 0.001 and 0.002 as
+  sent (no documented unit). Too few to use.
 - **Why it matters:** this is the delay a Horizon user feels between their
   own device and the desktop. Without it, the network is not checked for
   virtual desktop users.
-- **Ask:** What does Aternity need to measure remote display latency for
-  Horizon (Blast / PCoIP): a setting, a licence, an agent version, an agent
-  on the client device? Can it be turned on, and can the
-  `REMOTE_DISPLAY_LATENCY_*` data sources be published to the REST API?
+- **Ask:** The dashboard has it: can the data behind the "Remote Display
+  Latency" chart (`REMOTE_DISPLAY_LATENCY_RAW`, `_HOURLY`) be published to
+  the REST API? How many desktops does that chart cover? If only a few:
+  what does Aternity need to measure it for Horizon (Blast / PCoIP): a
+  setting, a licence, an agent version, an agent on the client device?
 
 ## 2. Network round-trip time is empty on every activity
 
