@@ -1457,13 +1457,13 @@ def _overview(settings: Settings, client: AternityClient, schema: dict[str, set[
 
 
 AI = "AI service"
-# question, and the settings a right pick must have (app: the word must be in it)
+# question, and the building block (tool) and settings a right pick has (words: in it, any case)
 AI_TRIES = (
-    ("Which crashes hit the most PCs in the last 7 days?", {"what": "crashes", "days": 7}),
-    ("How many slow actions did Microsoft Teams have on virtual desktops, per day?",
-     {"what": "slow_actions", "pcs": "virtual", "group_by": "day", "app": "teams"}),
-    ("Which location has the most Microsoft Outlook hangs?",
-     {"what": "hangs", "group_by": "location", "app": "outlook"}),
+    ("Which crashes hit the most PCs in the last 7 days?", {"tool": "events", "group_by": "event", "days": 7}),
+    ("Are virtual desktops slower than physical PCs today?", {"tool": "slow_actions", "group_by": "pc_kind"}),
+    ("Which users had the most slow actions in Microsoft Outlook today?",
+     {"tool": "who", "what": "slow", "app": "outlook"}),
+    ("Investigate the user mossley", {"tool": "investigate", "username": "mossley"}),
 )
 AI_OUTSIDE = "What is the weather in Paris today?"  # not in the data: no pick is the right answer
 AI_COUNTS = {"period": "last 7 days", "partial": False,  # made-up counts, to see if they are repeated right
@@ -1480,11 +1480,13 @@ def _picked(call) -> str:
 
 
 def _right(call, want: dict) -> bool:
-    if not call or call[0] != "count":
+    if not call or call[0] != want["tool"]:
         return False
     for key, value in want.items():
+        if key == "tool":
+            continue
         got = str(call[1].get(key, "")).strip().lower()
-        if (value not in got) if key == "app" else (got != str(value)):
+        if (value not in got) if isinstance(value, str) and key in ("app", "username") else (got != str(value)):
             return False
     return True
 
@@ -1496,7 +1498,8 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
     import os
     import time
 
-    from .ai import COUNT_TOOL, LOGINS, SYSTEM, AiClient, reply_message, tool_call
+    from .ai import LOGINS, AiClient, reply_message, tool_call
+    from .chat import SYSTEM, TOOLS
     env = os.environ if env is None else env
     if not settings.ai.services:
         return [Check(AI, "services", None, AI_SETUP)]
@@ -1591,7 +1594,7 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
         for question, want in AI_TRIES:
             started = time.monotonic()
             try:
-                reply = client.chat(ask(question), [COUNT_TOOL])
+                reply = client.chat(ask(question), TOOLS)
             except ApiError as exc:
                 stop = exc
                 break
@@ -1601,8 +1604,8 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
                 right += 1
                 first = first or (question, reply, call)
             else:
-                rows.append(f"\"{question}\": {_picked(call)}; a right pick has "
-                            f"{', '.join(f'{k}={v}' for k, v in want.items())}")
+                rows.append(f"\"{question}\": {_picked(call)}; a right pick is {want['tool']}("
+                            f"{', '.join(f'{k}={v}' for k, v in want.items() if k != 'tool')})")
         if stop is not None:
             add("picks the right question", False, "The service refused a question sent with our building "
                 f"block (tool calling): {stop.short()}.", "This model or service may not do tool calling: the "
@@ -1610,7 +1613,7 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
             continue
         outside = None
         try:
-            outside = tool_call(client.chat(ask(AI_OUTSIDE), [COUNT_TOOL]))
+            outside = tool_call(client.chat(ask(AI_OUTSIDE), TOOLS))
         except ApiError as exc:
             rows.append(f"\"{AI_OUTSIDE}\": {exc.short()}")
         if outside:
@@ -1629,7 +1632,7 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
         try:
             answer = client.chat(ask(question) + [
                 {"role": "assistant", "content": reply.get("content") or "", "tool_calls": reply["tool_calls"]},
-                {"role": "tool", "tool_call_id": call[2], "content": json.dumps(AI_COUNTS)}], [COUNT_TOOL])
+                {"role": "tool", "tool_call_id": call[2], "content": json.dumps(AI_COUNTS)}], TOOLS)
         except ApiError as exc:
             add("repeats the counts", False, f"The service refused the counts sent back to it: {exc.short()}.",
                 "Tell Claude this line.")

@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from .chat import ask, chat_service
 from .config import load_settings
 from .correlate import InvestigationRequest, investigate
 from .http import ApiError, short_error
@@ -49,6 +50,11 @@ class InvestigateBody(BaseModel):
     start: datetime
     end: datetime
     bucket_minutes: int | None = None
+
+
+class ChatBody(BaseModel):
+    question: str
+    history: list[dict] = []
 
 
 class LogonBody(BaseModel):
@@ -126,6 +132,31 @@ def create_app(config_path: str | None = None) -> FastAPI:
             raise HTTPException(400, "kind must be slow, app or event")
         return today.who(datetime.now(timezone.utc), kind, name, category)
 
+    @app.post("/api/chat")
+    def chat_ask(body: ChatBody):
+        """A question on the Today tab: the AI picks a building block, our code counts."""
+        from .ai import AiClient
+        service = chat_service(load_settings(config_path))
+        if service is None:
+            raise HTTPException(503, "The chat needs an AI service: ai.services in config.yaml "
+                                     "(uxcorrelate verify --ai checks it).")
+        if not body.question.strip():
+            raise HTTPException(400, "Type a question.")
+        if not today.ready:
+            raise HTTPException(503, "Still reading Aternity: ask again in a minute.")
+        client = AiClient(service, os.environ.get(service.key_env, "") if service.key_env else "")
+        try:
+            answer = ask(body.question, body.history, client, today, names, datetime.now(timezone.utc))
+        except ApiError as exc:
+            log.warning("Chat: the AI service %s did not answer (%s)", service.name, exc.short())
+            raise HTTPException(502, f"The AI service {service.name} did not answer ({exc.short()}). Try again; "
+                                     "`uxcorrelate verify --ai` checks it.")
+        r = answer["result"]
+        log.info("Chat: \"%s\" answered in %.1f s by %s%s%s", answer["question"][:80], answer["seconds"],
+                 service.name, f" with {r['block']} ({', '.join(f'{k}={v}' for k, v in r['args'].items() if v)})"
+                 if r else " with no building block", f"; {answer['note']}" if answer["note"] else "")
+        return answer
+
     @app.get("/api/names")
     def name_matches(kind: str, q: str = ""):
         if kind not in KINDS:
@@ -152,9 +183,11 @@ def create_app(config_path: str | None = None) -> FastAPI:
             settings, _, _ = sources()
         except ApiError as exc:
             raise HTTPException(503, str(exc))
+        service = chat_service(settings)
         return {
             "applications": sorted(settings.topology.applications),
             "bucket_minutes": settings.bucket_minutes,
+            "chat": service.name or service.model if service else None,
         }
 
     def run_investigation(body: InvestigateBody) -> dict:

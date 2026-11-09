@@ -318,6 +318,7 @@ class AiService:
 @dataclass
 class AiConfig:
     services: list[AiService] = field(default_factory=list)
+    chat: str = ""  # the name of the service the chat uses; empty: the first one set
 
 
 @dataclass
@@ -397,6 +398,7 @@ def load_settings(path: str | os.PathLike | None = None) -> Settings:
             settings.timezone = str(raw["timezone"]).strip()
         if metrics is not None:
             settings.netim.metrics = [NetimMetric(**m) for m in metrics]
+        settings.ai.chat = str((raw.get("ai") or {}).get("chat") or "").strip()
         for entry in (raw.get("ai") or {}).get("services") or []:
             service = AiService()
             _merge_dataclass(service, entry)

@@ -233,19 +233,28 @@ unset `<REQUIRED>` base URLs.
   from the reader's own rows: Major actions with activity and time, health
   events with username); its Investigate ▸ runs an investigation of that
   user + PC (`SLOW_PAD` / `EVENT_PAD` around their first and last). The
-  chat under it is not built yet.
+  reader also keeps each action's PC kind (`VIRTUALIZATION`: virtual /
+  physical, saved nightly as `kinds`) and each health event's application.
+- `chat.py`: "Ask about today", under the Today tab (`/api/chat`). The AI
+  (`ai.chat` by name, else the first of `ai.services`; GPT on prod) picks
+  one building block of `TOOLS` (slow_actions, events, who, investigate),
+  our code counts from what the Today reader holds (no extra Aternity
+  load), the AI words it. Every number in its sentence must be in the
+  counts given, the question or the settings (`numbers`/`allowed`), and
+  no worked-out comparison (`RATIO`, "3 times worse"); otherwise our own
+  sentence (`say`) is shown, with a note. The counts table is always
+  shown. investigate only resolves names (`NameList`, exact or the one
+  match) and a window: its button runs the Investigate tab. Hangs per
+  app and software changes are not blocks yet (to measure with verify).
 - `ai.py`: client for the self-hosted AI services (`ai.services` in
-  config.yaml, key from the env var named in `key_env`) the chat will
-  use; the chat is not built yet. The AI never reads Aternity or counts:
-  it picks a building block (`COUNT_TOOL`, provisional), our code counts.
-  OpenAI-style API is assumed until `verify --ai` has run on prod
-  (`verify.verify_ai`: key, reachable, login header, plain reply, right
-  pick in 3 tries + no pick outside the data, counts repeated right).
+  config.yaml, key from the env var named in `key_env`). OpenAI-style API
+  (`verify.verify_ai`, passed on prod for both services: key, reachable,
+  login header, plain reply, the right block in 4 tries + no pick outside
+  the data, counts repeated right; it tests `chat.TOOLS` and `SYSTEM`).
 - `verify --overview` (`verify._overview`, also at the end of a full verify):
   what a "today's issues" overview could rest on: activity rows an hour,
   Aternity's own status and severity words with counts, and whether its
   incidents and alerts (`OVERVIEW_SOURCES` in `config.py`) are published.
-  The overview and chat page are not built yet.
 - `http.py` is the shared REST client (basic auth, retries on 429/5xx);
   `models.py` holds the dataclasses and `parse_time`.
 - `report.py` renders the text report, `cli.py` is the argparse entry point,

@@ -191,10 +191,10 @@ def test_the_reader_fills_today_and_the_name_list_then_waits(tmp_path):
                      lambda s: (_ for _ in ()).throw(Stop()), clock=lambda: NOW)
     acts = [x for x in seen if x[0] == "BUSINESS_ACTIVITIES_RAW"]
     assert len(acts) == 25 and acts[0][1] == ("TIMEFRAME,USERNAME,DEVICE_NAME,APPLICATION_NAME,SLA_STATUS,"
-                                              "ACTIVITY_NAME,ACTIVITY_RESPONSE_TIME")
+                                              "ACTIVITY_NAME,ACTIVITY_RESPONSE_TIME,VIRTUALIZATION")
     assert acts[0][2] == "TIMEFRAME ge 2026-11-09T20:00:00Z and TIMEFRAME lt 2026-11-09T21:00:00Z"  # newest first
     health = [x for x in seen if x[0] == "DEVICE_HEALTH_RAW"]
-    assert "USERNAME" in health[0][1].split(",")
+    assert {"USERNAME", "APPLICATION_NAME"} <= set(health[0][1].split(","))
     assert len(health) == 15 and health[-1][2].endswith("lt 2026-11-09T20:30:00Z")  # 14 days before, then today
     v = t.view(NOW)
     assert v["ready"] and v["slow"]["pcs"] == 1 and v["tiles"][0]["name"] == "System Crash"

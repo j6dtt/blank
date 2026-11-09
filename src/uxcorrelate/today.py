@@ -35,7 +35,7 @@ from pathlib import Path
 from statistics import median
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .aternity import odata_time
+from .aternity import is_virtual, odata_time
 from .config import SEVERITY_ORDER, TILE_SEVERITIES, TOP_STATUS
 from .http import short_error
 from .models import parse_time, to_float
@@ -69,6 +69,12 @@ def zone_of(name: str):
                                      "the day runs from midnight UTC.")
 
 
+def pc_kind(value) -> str:
+    """Aternity's VIRTUALIZATION value as "virtual", "physical" or "not known"."""
+    v = is_virtual(value)
+    return "not known" if v is None else "virtual" if v else "physical"
+
+
 def working(d: date) -> bool:
     return d.weekday() < 5
 
@@ -100,6 +106,9 @@ class Hour:
     top_users: set = field(default_factory=set)
     devs: set = field(default_factory=set)
     top_rows: list = field(default_factory=list)  # (time, PC, user, app, activity, seconds) of TOP_STATUS actions
+    kinds: dict = field(default_factory=dict)  # (app, PC kind) -> Counter(runs, TOP_STATUS); kind: virtual/physical/not known
+    kind_devs: dict = field(default_factory=dict)  # PC kind -> PCs active
+    kind_top_devs: dict = field(default_factory=dict)  # PC kind -> PCs with TOP_STATUS
     read_at: datetime | None = None
     partial: bool = False
     final: bool = False  # read LATE_MIN or more after it ended
@@ -111,8 +120,9 @@ class Today:
         self.store = Path(store) / "days" if store else None
         self.hours: dict[datetime, Hour] = {}
         self.saved: dict[date, dict] = {}  # summaries of past days, from the files
-        self.health: list[tuple] = []  # today's: (time, device, kind, severity, user)
+        self.health: list[tuple] = []  # today's: (time, device, kind, severity, user, application)
         self.health_days: dict[date, dict] = {}  # day -> kind -> {device: first second of the day}
+        self.health_apps: dict[date, dict] = {}  # day before -> (kind, application) -> devices
         self.health_sev: dict = {}  # kind -> Aternity's severity
         self.health_for: date | None = None  # the day the days before were read for
         self.health_read: set[date] = set()  # days before that were read (some may have no event)
@@ -153,13 +163,20 @@ class Today:
         for r in rows:
             status, dev, user = r.get(f["status"]), r.get(f["device"]), r.get(f["username"])
             app = r.get(f["application"]) or NO_APP
+            pc = pc_kind(r.get(f["virtualization"]) if f.get("virtualization") else None)
             h.status[str(status) if status is not None else "(none)"] += 1
             if dev:
                 h.devs.add(dev)
+                h.kind_devs.setdefault(pc, set()).add(dev)
             runs = h.apps.setdefault(app, Counter())
             runs["runs"] += 1
+            by_kind = h.kinds.setdefault((app, pc), Counter())
+            by_kind["runs"] += 1
             if status == TOP_STATUS:
                 runs[TOP_STATUS] += 1
+                by_kind[TOP_STATUS] += 1
+                if dev:
+                    h.kind_top_devs.setdefault(pc, set()).add(dev)
                 if dev:  # its own time; the hour's start if it has none, so the list matches the counts
                     h.top_rows.append((parse_time(r.get(f["timestamp"])) or start, dev, user, app,
                                        r.get(f.get("activity", "")), to_float(r.get(f.get("response_time", "")))))
@@ -193,7 +210,16 @@ class Today:
         apps: dict[str, Counter] = {}
         app_devs: dict[str, set] = {}
         devs, users = set(), set()
+        kinds: dict[str, Counter] = {}
+        kind_devs: dict[str, set] = {}
+        kind_top: dict[str, set] = {}
         for h in hours:
+            for (_, pc), c in h.kinds.items():
+                kinds.setdefault(pc, Counter()).update(c)
+            for pc, ds in h.kind_devs.items():
+                kind_devs.setdefault(pc, set()).update(ds)
+            for pc, ds in h.kind_top_devs.items():
+                kind_top.setdefault(pc, set()).update(ds)
             by_hour.setdefault(str(h.hour), Counter()).update(h.status)
             for dev in h.top_devs:
                 first[dev] = min(first.get(dev, 24), h.hour)
@@ -213,7 +239,10 @@ class Today:
                 # PCs with a TOP_STATUS action by the end of each local hour (for "by 14:00")
                 "top_pcs_by_hour": [sum(1 for v in first.values() if v <= hh) for hh in range(24)],
                 "apps": {a: {"runs": apps[a]["runs"], TOP_STATUS: apps[a][TOP_STATUS],
-                             "pcs": len(app_devs.get(a, ()))} for a in top}}
+                             "pcs": len(app_devs.get(a, ()))} for a in top},
+                # virtual desktops / physical PCs (VIRTUALIZATION): runs, TOP_STATUS, PCs active, PCs with TOP_STATUS
+                "kinds": {pc: {"runs": c["runs"], TOP_STATUS: c[TOP_STATUS], "pcs": len(kind_devs.get(pc, ())),
+                               "top_pcs": len(kind_top.get(pc, ()))} for pc, c in kinds.items()}}
 
     def finish(self, now: datetime) -> None:
         """Save each day before today once its last hour was read again (or 2 hours on)."""
@@ -275,6 +304,7 @@ class Today:
                    days_read: tuple = ()) -> dict:
         """Today's health event rows, or those of the days before (days_read: the days they cover)."""
         days: dict[date, dict] = {}
+        apps: dict[date, dict] = {}
         parsed, sevs = [], {}
         for r in rows:
             t, dev = parse_time(r.get(f["timestamp"])), r.get(f["device"])
@@ -284,10 +314,12 @@ class Today:
             sev = r.get(f["severity"])
             if sev:
                 sevs.setdefault(kind, Counter())[sev] += 1
-            parsed.append((t, dev, kind, sev, r.get(f["username"]) if f.get("username") else None))
+            app = (r.get(f["application"]) if f.get("application") else None) or NO_APP
+            parsed.append((t, dev, kind, sev, r.get(f["username"]) if f.get("username") else None, app))
             secs = (t - self.midnight(self.day(t))).total_seconds()
             first = days.setdefault(self.day(t), {}).setdefault(kind, {})
             first[dev] = min(first.get(dev, secs), secs)
+            apps.setdefault(self.day(t), {}).setdefault((kind, app), set()).add(dev)
         with self.lock:
             for kind, c in sevs.items():
                 self.health_sev[kind] = c  # Aternity gives one severity per event kind (Nov 2026)
@@ -295,8 +327,10 @@ class Today:
                 self.health = parsed
             else:
                 self.health_days.update(days)
+                self.health_apps.update(apps)
                 for d in days_read:
                     self.health_days.setdefault(d, {})
+                    self.health_apps.setdefault(d, {})
                     self.health_read.add(d)
         if partial:
             self.note("health", "Aternity's reply for health events was cut short: some may be missing.")
@@ -355,8 +389,8 @@ class Today:
 
         # health events, by kind
         pcs: dict = {}
-        for _, dev, k, _, _ in health:
-            pcs.setdefault(k, set()).add(dev)
+        for x in health:
+            pcs.setdefault(x[2], set()).add(x[1])
         before = sorted((d for d in health_days if d < t and kind_of(d) == kind), reverse=True)[:USUAL_DAYS]
         week = [t - timedelta(days=n) for n in range(7, 0, -1)]
 
@@ -431,7 +465,7 @@ def _read_hour(today: Today, names, client, start: datetime, now: datetime) -> N
     try:
         rows = client.query(entity, f"{ts} ge {odata_time(start)} and {ts} lt {odata_time(start + HOUR)}",
                             select=[f[k] for k in ("timestamp", "username", "device", "application", "status",
-                                                   "activity", "response_time") if f.get(k)])
+                                                   "activity", "response_time", "virtualization") if f.get(k)])
     except Exception as exc:  # Aternity down: the next read tries again
         today.note("activity", f"Aternity activity could not be read ({short_error(exc)}); trying again in "
                                f"{REFRESH_MIN} min.")
@@ -453,8 +487,8 @@ def _read_hour(today: Today, names, client, start: datetime, now: datetime) -> N
 
 def _read_health(today: Today, client, now: datetime) -> None:
     entity, f = client.cfg.entities["health_events"], client.cfg.fields["health_events"]
-    ts, cols = f["timestamp"], [f[k] for k in ("timestamp", "device", "category", "name", "severity", "username")
-                                if f.get(k)]
+    ts, cols = f["timestamp"], [f[k] for k in ("timestamp", "device", "category", "name", "severity", "username",
+                                               "application") if f.get(k)]
     t = today.day(now)
     spans = []
     if today.health_for != t:  # the days before, once a day

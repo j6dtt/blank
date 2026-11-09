@@ -73,6 +73,7 @@ timezone: ""
 # Keys never go here: put each in .env, under the name given in key_env.
 # `uxcorrelate verify --ai` checks each service and says what to change.
 ai:
+  chat: ""            # the name of the service the Today chat uses; empty: the first one below
   services: []
   # - name: ""        # your label for it, shown by verify
   #   base_url: ""    # the service's API address, up to and including /v1

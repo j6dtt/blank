@@ -7,8 +7,8 @@ import httpx
 from uxcorrelate.config import AiService, Settings, load_settings
 from uxcorrelate.verify import AI_OUTSIDE, AI_TRIES, render_checks, verify_ai
 
-PICKS = {q: dict(want, app={"teams": "Microsoft Teams", "outlook": "Microsoft Outlook"}.get(want.get("app"), None))
-         for q, want in AI_TRIES}
+FULL = {"outlook": "Microsoft Outlook", "mossley": "MOSSLEY"}  # what a model sends for the words asked
+PICKS = {q: {k: FULL.get(v, v) if isinstance(v, str) else v for k, v in want.items()} for q, want in AI_TRIES}
 
 
 def service(seen, picks=PICKS, login="bearer", models=("model-a", "model-b"), tools=True, numbers="2,885 and 412"):
@@ -30,8 +30,9 @@ def service(seen, picks=PICKS, login="bearer", models=("model-a", "model-b"), to
             return reply(f"The widest are {numbers} PCs.")
         pick = picks.get(last["content"]) if "tools" in body else None
         if pick:
-            args = json.dumps({k: v for k, v in pick.items() if v is not None})
-            return reply(None, [{"id": "call-1", "type": "function", "function": {"name": "count", "arguments": args}}])
+            args = json.dumps({k: v for k, v in pick.items() if v is not None and k != "tool"})
+            return reply(None, [{"id": "call-1", "type": "function",
+                                 "function": {"name": pick["tool"], "arguments": args}}])
         return reply("ready" if "tools" not in body else "I cannot answer that from the data.")
 
     def reply(content, calls=None):
@@ -57,7 +58,7 @@ def test_a_good_service_passes_every_check_and_the_key_is_never_printed():
     seen = []
     checks, text = run(seen)
     assert [c.ok for c in checks.values()] == [None, True, True, True, True]
-    assert "Right in 3 of 3 tries" in checks["picks the right question"].message
+    assert "Right in 4 of 4 tries" in checks["picks the right question"].message
     assert "made no pick (right)" in checks["picks the right question"].message
     assert "2 of the 2 counts" in checks["repeats the counts"].message
     assert "k-1" not in text and "AI service:" in text and "All checks passed." in text
@@ -87,12 +88,13 @@ def test_a_model_not_listed_shows_the_closest_names():
 def test_wrong_picks_and_a_pick_for_an_outside_question_fail_with_what_it_picked():
     picks = dict(PICKS)
     first = AI_TRIES[0][0]
-    picks[first] = {"what": "hangs", "days": 7}
-    picks[AI_OUTSIDE] = {"what": "crashes"}
+    picks[first] = {"tool": "events", "group_by": "day", "days": 7}
+    picks[AI_OUTSIDE] = {"tool": "events"}
     checks, _ = run(picks=picks)
     c = checks["picks the right question"]
-    assert c.ok is False and "Right in 2 of 3 tries" in c.message and "made a pick (wrong)" in c.message
-    assert any(first in r and "picked count(what=hangs, days=7)" in r for r in c.rows)
+    assert c.ok is False and "Right in 3 of 4 tries" in c.message and "made a pick (wrong)" in c.message
+    assert any(first in r and "picked events(group_by=day, days=7); a right pick is events(group_by=event, days=7)"
+               in r for r in c.rows)
 
 
 def test_a_service_without_tool_calling_is_said():

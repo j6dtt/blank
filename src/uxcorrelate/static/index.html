@@ -95,6 +95,18 @@
   #tWhoList td { vertical-align: middle; }
   #tWhoList button.link { padding: 0; white-space: nowrap; }
   #tEvents td, #tApps td { vertical-align: middle; }
+  /* the chat under Today: the AI's sentence, then our own counts */
+  .chatForm { display: flex; gap: 8px; margin-top: 10px; }
+  .chatForm input { flex: 1; min-width: 0; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chips button { background: var(--bg); color: var(--accent); border: 1px solid var(--border); padding: 4px 10px; font-size: 12px; }
+  .answer { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 12px; }
+  .answer .q { color: var(--muted); font-size: 12px; }
+  .answer .a { font-size: 15px; margin: 4px 0 8px; }
+  .answer .note { font-size: 12px; color: var(--warn); margin-bottom: 6px; }
+  .answer .src { font-size: 12px; margin-top: 6px; }
+  .answer td { vertical-align: middle; }
+  .answer button.link { padding: 0; white-space: nowrap; }
   /* names offered as you type (Username, Device) */
   label.pick { position: relative; }
   .picks { position: absolute; top: 100%; left: 0; right: 0; z-index: 5; margin: 2px 0 0; padding: 4px 0; list-style: none;
@@ -115,7 +127,8 @@
 <main>
   <div id="todayBox">
     <section class="panel">
-      <div class="todayHead"><h2>Today's issues</h2><span class="muted" id="tWhen"></span></div>
+      <div class="todayHead"><h2>Today's issues</h2><span class="muted" id="tWhen"></span>
+        <button type="button" class="link" id="tAskLink">Ask a question ▾</button></div>
       <div class="muted" id="tStatus"></div>
       <div class="tiles" id="tTiles"></div>
       <ul class="muted notes" id="tNotes"></ul>
@@ -139,6 +152,19 @@
       <div class="tableWrap"><table id="tEvents"></table></div>
       <p class="muted" style="font-size:12px;margin:6px 0 0">Severity is Aternity's own. Bars: PCs per day over the
         7 days before; green is today so far. Hover a bar for its day. Click a row for its users and PCs.</p>
+    </section>
+    <section class="panel" id="tChat" style="margin-top:16px">
+      <div class="todayHead"><h2>Ask about today</h2><span class="muted" id="chatWho"></span></div>
+      <form id="chatForm" class="chatForm" autocomplete="off">
+        <input name="q" id="chatQ" maxlength="500" placeholder="e.g. Which apps had the most Major slow actions today?">
+        <button id="chatGo">Ask</button>
+      </form>
+      <div class="chips" id="chatChips"></div>
+      <div class="muted" id="chatBusy" style="margin-top:8px"></div>
+      <div id="chatAnswers"></div>
+      <p class="muted" style="font-size:12px;margin:10px 0 0">The AI only picks what to count and words the answer.
+        Every number comes from this app's own counts, shown under each answer; a sentence with any other number
+        is replaced by ours. <button type="button" class="link" id="chatClear" hidden>Clear the answers</button></p>
     </section>
   </div>
   <section class="panel" id="invForm" hidden>
@@ -265,6 +291,7 @@ async function init() {
     $("lf").start.value = toLocalInput(new Date(end - 24 * 3600e3));
     $("lf").end.value = toLocalInput(end);
     $("apps").innerHTML = info.applications.map((a) => `<option value="${esc(a)}">`).join("");
+    chatReady(info.chat);
   } catch (e) { $("error").textContent = "Could not load settings: " + e; }
 }
 
@@ -411,17 +438,85 @@ for (const id of ["tTiles", "tApps", "tEvents"]) {
   });
 }
 $("tWhoClose").addEventListener("click", () => { $("tWho").hidden = true; });
+// Investigate ▸ (Today lists and the chat): fill the Investigate form and run it at once.
+function investigateNow(p) {
+  const f = $("f");
+  f.username.value = p.username || "";
+  f.device.value = p.device || "";
+  f.application.value = p.application || "";
+  f.start.value = toLocalInput(new Date(p.start));
+  f.end.value = toLocalInput(new Date(p.end));
+  mode("inv");
+  f.requestSubmit();  // as the Investigate button would
+}
 $("tWhoList").addEventListener("click", (ev) => {
   const b = ev.target.closest("button[data-i]");
   if (!b || !todayWho) return;
-  const r = todayWho.rows[Number(b.dataset.i)], f = $("f");
-  f.username.value = r.username || "";
-  f.device.value = r.device || "";
-  f.application.value = todayWho.application || "";
-  f.start.value = toLocalInput(new Date(r.start));
-  f.end.value = toLocalInput(new Date(r.end));
-  mode("inv");
-  f.requestSubmit();  // runs it at once, as the Investigate button would
+  const r = todayWho.rows[Number(b.dataset.i)];
+  investigateNow({ ...r, application: todayWho.application });
+});
+
+// ---- the chat: a question → the AI picks a building block → our counts → its sentence ----
+const CHAT_EXAMPLES = ["Which apps had the most Major slow actions today?", "Which crashes hit the most PCs this week?",
+  "Are virtual desktops slower than physical PCs today?", "Who had the most slow actions in Outlook today?"];
+let chatHistory = [], chatAnswers = [];
+function chatReady(service) {
+  $("chatForm").hidden = !service; $("chatChips").hidden = !service;
+  $("chatWho").textContent = service ? `answered with ${service}` : "";
+  if (!service) $("chatBusy").textContent = "The chat needs an AI service: ai.services in config.yaml (uxcorrelate verify --ai checks it).";
+  $("chatChips").innerHTML = CHAT_EXAMPLES.map((q) => `<button type="button">${esc(q)}</button>`).join("");
+}
+$("tAskLink").addEventListener("click", () => { $("tChat").scrollIntoView({ behavior: "smooth" }); $("chatQ").focus(); });
+$("chatChips").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button");
+  if (b) { $("chatQ").value = b.textContent; $("chatForm").requestSubmit(); }
+});
+$("chatForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const q = $("chatQ").value.trim();
+  if (!q || $("chatGo").disabled) return;
+  $("chatGo").disabled = true;
+  const started = Date.now();
+  const tick = () => { $("chatBusy").textContent = `Asking… ${Math.round((Date.now() - started) / 1000)} s`; };
+  tick(); const timer = setInterval(tick, 1000);
+  try {
+    const r = await fetch("api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: q, history: chatHistory.slice(-3) }) });
+    const a = await r.json();
+    if (!r.ok) throw new Error(detail(a));
+    chatHistory.push({ q: a.question, a: a.answer });
+    chatAnswers.unshift(a); chatAnswers = chatAnswers.slice(0, 10);
+    $("chatQ").value = "";
+    $("chatBusy").textContent = "";
+    renderChat();
+  } catch (e) { $("chatBusy").textContent = "No answer: " + e.message; }
+  finally { clearInterval(timer); $("chatGo").disabled = false; }
+});
+$("chatClear").addEventListener("click", () => { chatHistory = []; chatAnswers = []; renderChat(); });
+const cell = (v) => v === null || v === undefined ? "—" : typeof v === "number" ? v.toLocaleString() : esc(v);
+function renderChat() {
+  $("chatClear").hidden = !chatAnswers.length;
+  $("chatAnswers").innerHTML = chatAnswers.map((a, i) => {
+    const r = a.result;
+    let html = `<div class="answer"><div class="q">${esc(a.question)} · ${a.seconds} s</div><div class="a">${esc(a.answer)}</div>`;
+    if (a.note) html += `<div class="note">${esc(a.note)}</div>`;
+    if (r) {
+      if (r.action) html += `<div><button type="button" data-a="${i}">Investigate ▸ ${esc([r.action.username, r.action.device].filter(Boolean).join(" on "))}, ${esc(r.period)}</button></div>`;
+      else if (r.rows.length) html += `<div class="tableWrap"><table><tr>${r.runs ? "<th></th>" : ""}${r.columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>`
+        + r.rows.map((row, k) => `<tr>${r.runs ? `<td><button type="button" class="link" data-a="${i}" data-k="${k}">Investigate ▸</button></td>` : ""}`
+          + row.map((v) => `<td${typeof v === "number" ? ' class="num"' : ""}>${cell(v)}</td>`).join("") + "</tr>").join("") + "</table></div>";
+      const src = r.action ? "" : "Counted: " + esc([r.title, r.period, r.total].filter(Boolean).join(" · "));
+      const notes = r.notes.map(esc);
+      if (src || notes.length) html += `<div class="muted src">${[src, ...notes].filter(Boolean).join("<br>")}</div>`;
+    }
+    return html + "</div>";
+  }).join("");
+}
+$("chatAnswers").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-a]");
+  if (!b) return;
+  const r = chatAnswers[Number(b.dataset.a)].result;
+  investigateNow(b.dataset.k !== undefined ? r.runs[Number(b.dataset.k)] : r.action);
 });
 
 // One bar per hour of the day (24 slots), the usual as a line across each slot.

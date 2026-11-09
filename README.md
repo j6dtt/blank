@@ -127,7 +127,16 @@ gives each one's slowest action, an event list how many times. Their
 "Investigate ▸" opens the Investigate tab and runs it at once for that
 user and PC, from 30 minutes before their first one to 30 minutes after
 the last (an hour each side for events; for an application, only that
-application). The usual for actions builds up over the first week from the counts saved
+application). "Ask about today" (at the bottom; "Ask a question ▾" at
+the top jumps there): type a question, or click an example. The AI
+picks what to count and words a sentence; this app does the counting, and
+the counts are shown under the sentence. A sentence with a number that is
+not in the counts is replaced by the app's own. It answers about Major
+slow actions (by application, hour, activity, day, virtual or physical),
+crashes and events (today and the 14 days before), who had them today,
+and "Investigate <user or PC>" (a button that runs it). Earlier questions
+are remembered for follow-ups until "Clear the answers" or a reload.
+The usual for actions builds up over the first week from the counts saved
 in `./data` each night (`mkdir -p data && chmod a+rwx data` before the
 first start).
 

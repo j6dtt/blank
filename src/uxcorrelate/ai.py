@@ -1,8 +1,7 @@
 """The self-hosted AI service the chat will use (OpenAI-style chat API).
 
 The AI never reads Aternity and never counts: it picks one of our reviewed
-building blocks (a "tool": what to count, grouped by what, for which app,
-PCs and days), our code reads the counts, and the AI words the answer.
+building blocks (`chat.TOOLS`), our code counts, and the AI words the answer.
 
 Assumed, until `uxcorrelate verify --ai` has run against the live services:
 the service speaks the OpenAI chat API (POST <base_url>/chat/completions,
@@ -22,26 +21,6 @@ from .config import AiService
 from .http import RestClient
 
 LOGINS = ("bearer", "api-key")  # "Authorization: Bearer <key>" or an "api-key: <key>" header
-
-# The building blocks, as the one tool the AI may call. Provisional: the
-# chat is not built yet; verify uses this to see whether a model can pick.
-COUNT_TOOL = {"type": "function", "function": {
-    "name": "count",
-    "description": "Count what happened on the company's PCs, from Aternity. The only source of numbers.",
-    "parameters": {"type": "object", "required": ["what"], "properties": {
-        "what": {"type": "string", "enum": ["slow_actions", "hangs", "crashes", "start_ups", "software_changes"],
-                 "description": "What to count."},
-        "group_by": {"type": "string", "enum": ["app", "activity", "pc", "user", "location", "day", "failure"],
-                     "description": "One row per value of this."},
-        "app": {"type": "string", "description": "Only this application, e.g. Microsoft Outlook."},
-        "pcs": {"type": "string", "enum": ["all", "virtual", "physical"], "description": "Which PCs."},
-        "days": {"type": "integer", "description": "How many days back from now."},
-    }}}}
-
-SYSTEM = ("You answer questions about the experience of PC users in one company. Numbers come only from the "
-          "count tool: call it to answer. If a question cannot be answered with it, say so in one sentence "
-          "and call no tool. Never state a number the tool did not give.")
-
 
 class AiClient:
     def __init__(self, cfg: AiService, key: str = "", login: str = "",
