@@ -178,9 +178,9 @@
       <div class="muted" id="cStatus"></div>
       <div class="tiles" id="cTiles"></div>
       <ul class="muted notes" id="cNotes"></ul>
-      <p class="muted" style="font-size:12px;margin:8px 0 0">An issue: an event Aternity rates Critical or Major (it stays
-        for the day), or more Major slow actions by this time of day than on any of their own days before (over after an
-        hour with none, or when they are back within that). A new issue runs an investigation by itself (one an hour per user). Click
+      <p class="muted" style="font-size:12px;margin:8px 0 0">An issue: an event Aternity rates Critical or Major, or more
+        Major slow actions by this time of day than on any of their own days before. It is over after an hour with no new
+        one (slow actions also when they are back within their usual). A new issue runs an investigation by itself (one an hour per user). Click
         a tile for more.</p>
     </section>
     <section class="panel" id="cDetail" hidden style="margin-top:16px">
@@ -522,8 +522,9 @@ function renderCare(c) {
       : `<div>${sevTag(u.level)} <span class="muted" style="font-size:12px">since ${esc(u.since_local)}</span></div>`;
     const lines = u.status === "unknown" ? [u.note] : ok ? [okText(u)] : u.issues.slice(0, 2).map((i) => i.text);
     const more = u.issues.length > 2 ? `<div class="u">+${u.issues.length - 2} more</div>` : "";
-    const gone = u.cleared.map((i) => `<div class="u">More Major slow actions than usual from ${esc(i.since_local)};`
-      + ` over: ${esc(i.over)}.</div>`).join("");
+    const gone = u.cleared.map((i) => `<div class="u">${i.kind === "slow"
+      ? `More Major slow actions than usual from ${esc(i.since_local)}; over: ${esc(i.over)}.`
+      : `${esc(i.text)} Over: ${esc(i.over)}.`}</div>`).join("");
     const why = ok ? (u.why && u.why.title ? `Earlier today: ${u.why.title}` : "") : whyText(u);
     const days = u.days.map((d, k) => ({ day: d.date, pcs: d.issues, window: k === u.days.length - 1 }));
     return `<div class="tile click" role="button" tabindex="0" data-user="${esc(u.username)}">${head}`

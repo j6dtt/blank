@@ -251,8 +251,10 @@ unset `<REQUIRED>` base URLs.
   (usernames on disk, agreed). A slow issue is a spell: over (`cleared`,
   `ended`) after `QUIET` (1 h) with no Major action (the day's count alone
   held it all day on stage) or back within their usual; a later spell is a
-  new issue (key `slow <day> <n>`), a late row within `QUIET` rejoins it;
-  events stay for the day. Every user has a tile:
+  new issue (key `slow <day> <n>`), a late row within `QUIET` rejoins it.
+  Events of one kind are spells too (user's choice): over after `QUIET`
+  with no new one; matched to saved issues by kind and overlap; one first
+  seen when already over is kept as over, not investigated. Every user has a tile:
   issue, then not seen in 8 days, then "✓ OK" (actions, Major, usual by
   now, cleared spells). Slow start-ups and alerts: step 2.
 - `chat.py`: "Ask about today", under the Today tab (`/api/chat`). The AI

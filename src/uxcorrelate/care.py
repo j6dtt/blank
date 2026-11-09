@@ -13,7 +13,9 @@ is checked after each read of the Today reader, from rows already read:
   seen on stage), or when they are back within their usual by that time of
   day. A Major action after that, still above their usual, starts a new
   spell; a late row less than QUIET after the last one joins it again.
-  An event is a moment: it stays for the day;
+  Events of one kind (category + name) are spells the same way: over after
+  QUIET with no new one (user's choice, 2026-11-09); one seen only after it
+  was over is kept as over, with no investigation;
 - a new issue runs an investigation of the user (one at a time, at most one
   per user each RUN_EVERY), from INV_PAD before their first issue today to
   now. Its headline is the tile's "Why"; the page opens the whole of it.
@@ -156,7 +158,7 @@ class Care:
             for issue in new:
                 log.info("Care list: new issue for %s: %s", self._who(u), issue["text"])
             for issue in cleared:
-                log.info("Care list: %s: slow spell over (%s)", self._who(u), self._over(issue))
+                log.info("Care list: %s: \"%s\" is over (%s)", self._who(u), issue["text"], self._over(issue))
             if new:
                 last = self.reports.get(user)
                 if user not in self.pending and self.running != user and (
@@ -259,16 +261,25 @@ class Care:
         for x in events:
             if sev.get(x[2], x[3]) in TILE_SEVERITIES:
                 kinds.setdefault(x[2], []).append(x)
-        for k, xs in kinds.items():
-            apps = sorted({x[5] for x in xs if x[5] and x[5] != "(no application)"})
-            found.append({"key": f"event {t} {k[0]}/{k[1]}", "kind": "event", "level": sev.get(k, xs[0][3]),
-                          "since": _iso(xs[0][0]), "day": t.isoformat(),
-                          "text": f"{k[1]} ({k[0]})" + (f" {len(xs)} times" if len(xs) > 1 else "")
-                                  + (f" in {', '.join(apps[:3])}" if apps else "")
-                                  + f", first at {today.local(xs[0][0]):%H:%M} on "
-                                  + ", ".join(sorted({x[1] for x in xs})) + "."})
-            if not self.names.get(user) and xs[0][4]:
-                self.names[user] = xs[0][4]
+        for k, all_ in kinds.items():
+            spells = [[all_[0]]]  # events of this kind less than QUIET apart
+            for x in all_[1:]:
+                if x[0] - spells[-1][-1][0] < QUIET:
+                    spells[-1].append(x)
+                else:
+                    spells.append([x])
+            for xs in spells:
+                apps = sorted({x[5] for x in xs if x[5] and x[5] != "(no application)"})
+                found.append({"key": f"event {t} {k[0]}/{k[1]} {_iso(xs[0][0])}", "kind": "event",
+                              "what": f"{k[0]}/{k[1]}", "level": sev.get(k, xs[0][3]), "since": _iso(xs[0][0]),
+                              "last": _iso(xs[-1][0]), "quiet": now - xs[-1][0] >= QUIET, "day": t.isoformat(),
+                              "text": f"{k[1]} ({k[0]})" + (f" {len(xs)} times" if len(xs) > 1 else "")
+                                      + (f" in {', '.join(apps[:3])}" if apps else "")
+                                      + f", first at {today.local(xs[0][0]):%H:%M}"
+                                      + (f", the last at {today.local(xs[-1][0]):%H:%M}" if len(xs) > 1 else "")
+                                      + " on " + ", ".join(sorted({x[1] for x in xs})) + "."})
+            if not self.names.get(user) and all_[0][4]:
+                self.names[user] = all_[0][4]
         if major and major[0][2]:
             self.names.setdefault(user, major[0][2])
         return found
@@ -278,7 +289,6 @@ class Care:
         cut = (t - timedelta(days=KEEP_DAYS)).isoformat()
         with self.lock:
             mine = [i for i in self.issues.get(user, []) if i["day"] > cut]
-            known = {i["key"]: i for i in mine}
             new, cleared = [], []
             slow = [i for i in mine if i["kind"] == "slow" and i["day"] == t.isoformat()]
             last = slow[-1] if slow else None
@@ -299,10 +309,26 @@ class Care:
                 mine.append(now_slow)
                 new.append(now_slow)
             for f in found:
-                if f["kind"] == "slow":
+                if f["kind"] != "event":
                     continue
-                if f["key"] in known:
-                    known[f["key"]].update(text=f["text"], level=f["level"])
+                f = dict(f)
+                quiet = f.pop("quiet")
+                # the issue this spell grew from: same kind, same day, overlapping (spells only grow)
+                i = next((i for i in mine if i["kind"] == "event" and i["day"] == f["day"]
+                          and (i.get("what") or i["key"].split(" ", 2)[2]) == f["what"]
+                          and f["since"] <= i.get("last", i["since"]) and f["last"] >= i["since"]), None)
+                if i is not None:
+                    i.update(text=f["text"], level=f["level"], last=f["last"], what=f["what"],
+                             since=min(i["since"], f["since"]))
+                    if quiet and not i.get("cleared"):
+                        i.update(cleared=_iso(now), ended="quiet")
+                        cleared.append(i)
+                    elif not quiet and i.get("cleared"):
+                        for k in ("cleared", "ended"):  # a late row joined it again
+                            i.pop(k, None)
+                elif quiet:  # first seen when it was already over: kept, not investigated
+                    f.update(cleared=_iso(now), ended="quiet")
+                    mine.append(f)
                 else:
                     mine.append(f)
                     new.append(f)

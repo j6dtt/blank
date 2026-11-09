@@ -133,18 +133,51 @@ def test_as_many_as_on_a_day_before_is_not_an_issue():
 
 
 def test_a_critical_or_major_event_is_an_issue_a_minor_one_is_not():
-    t0 = datetime(2026, 11, 9, 17, 42, tzinfo=timezone.utc)  # 11:42 Chicago
+    t0 = datetime(2026, 11, 9, 20, 5, tzinfo=timezone.utc)  # 14:05 Chicago
     events = [ev(t0, "MQ2208", "VD-7", "System Crash", "Critical"),
               ev(t0, "MQ2208", "VD-7", "Application Crash", "Major", "Application", "Mail"),
-              ev(t0 + HOUR, "MQ2208", "VD-7", "Application Crash", "Major", "Application", "Mail"),
+              ev(t0 + timedelta(minutes=20), "MQ2208", "VD-7", "Application Crash", "Major", "Application", "Mail"),
               ev(t0, "MQ2208", "VD-7", "Low Memory Pagefaults", "Minor")]
     care = Care(today_with(0, events), lambda: USERS[:1])
     care.check(client(), NOW)
     mq = care.view(NOW)["users"][0]
-    assert mq["level"] == "Critical" and mq["since_local"] == "11:42"
+    assert mq["level"] == "Critical" and mq["since_local"] == "14:05"
     assert [i["text"] for i in mq["issues"]] == [
-        "System Crash (System), first at 11:42 on VD-7.",
-        "Application Crash (Application) 2 times in Mail, first at 11:42 on VD-7."]
+        "System Crash (System), first at 14:05 on VD-7.",
+        "Application Crash (Application) 2 times in Mail, first at 14:05, the last at 14:25 on VD-7."]
+
+
+def test_an_event_is_over_after_an_hour_with_no_new_one_and_a_later_one_is_a_new_issue():
+    at = lambda h, m: datetime(2026, 11, 9, h + 6, m, tzinfo=timezone.utc)  # noqa: E731  (Chicago time)
+    crash = lambda h, m: ev(at(h, m), "MQ2208", "VD-7", "Application Crash", "Major", "Application", "Mail")  # noqa
+    care = Care(today_with(0, [crash(9, 0), crash(14, 0), crash(14, 40)]), lambda: USERS[:1])
+    care.check(client(), at(14, 50))
+    issues = care.issues["mq2208"]  # 09:00 was over before it was first seen: kept, not investigated
+    assert [(i["since"][11:16], "cleared" in i) for i in issues] == [("15:00", True), ("20:00", False)]
+    assert care.pending == ["mq2208"]
+    care.run_next(lambda u, s, e: {"answer": {"title": "Mail crashed on VD-7"}}, at(14, 50))
+    care.check(client(), at(15, 45))  # 65 min after 14:40
+    mq = care.view(at(15, 45))["users"][0]
+    assert (mq["status"], mq["issues"]) == ("ok", [])
+    assert [i["over"] for i in mq["cleared"]] == ["none in the hour after 09:00", "none in the hour after 14:40"]
+    assert mq["cleared"][1]["text"] == "Application Crash (Application) 2 times in Mail, first at 14:00, " \
+                                       "the last at 14:40 on VD-7."
+    # 17:00: a new crash, a new issue and a new investigation
+    care.today.set_health([crash(9, 0), crash(14, 0), crash(14, 40), crash(17, 0)], H, today=True)
+    care.check(client(), at(17, 5))
+    assert len(care.issues["mq2208"]) == 3 and care.view(at(17, 5))["users"][0]["status"] == "issue"
+    assert care.pending == ["mq2208"]
+
+
+def test_an_open_event_saved_by_the_build_before_is_the_same_issue():
+    t0 = datetime(2026, 11, 9, 20, 5, tzinfo=timezone.utc)  # 14:05 Chicago
+    care = Care(today_with(0, [ev(t0, "MQ2208", "VD-7", "System Crash", "Critical")]), lambda: USERS[:1])
+    care.issues["mq2208"] = [{"key": "event 2026-11-09 System/System Crash", "kind": "event", "level": "Critical",
+                              "since": "2026-11-09T20:05:00Z", "day": "2026-11-09", "text": "System Crash"}]
+    care.check(client(), NOW)
+    assert len(care.issues["mq2208"]) == 1 and care.pending == []
+    care.check(client(), NOW + HOUR)
+    assert care.issues["mq2208"][0]["ended"] == "quiet" and care.issues["mq2208"][0]["last"] == "2026-11-09T20:05:00Z"
 
 
 def test_the_investigation_runs_once_an_hour_and_its_headline_is_the_why():

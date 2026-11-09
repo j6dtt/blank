@@ -144,9 +144,9 @@ Care list tab (second): users named under `care_list` in config.yaml (up
 to 50, read every 15 minutes, no restart), each checked every 15 minutes.
 An issue is an event Aternity rates Critical or Major, or more Major slow
 actions by this time of day than on any of the user's own days before.
-An event stays for the day; a slow spell is over after an hour with no
-Major slow action, or once the user is back within their usual by that
-time of day (a later Major action, still above their usual, is a new one). Every user has a tile:
+Either is over after an hour with no new one (slow actions also once the
+user is back within their usual by that time of day); a later one is a new
+issue. The tile keeps a line saying when it was and how it ended. Every user has a tile:
 those with an issue first (Critical first), then names not seen in 8 days,
 then green "✓ OK" tiles (actions today, how many Major, their usual by
 now, and any slow spell that cleared). A new issue runs an investigation
