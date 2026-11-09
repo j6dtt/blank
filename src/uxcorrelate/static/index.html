@@ -442,7 +442,7 @@ function render(d) {
   $("objects").innerHTML = d.mapped_objects.length
     ? `<tr><th>NetIM object checked</th><th>Why</th></tr>` + d.mapped_objects.map((m) =>
         `<tr><td>${esc(m.name)}</td><td class="muted">${esc(m.reason)}</td></tr>`).join("")
-    : `<tr><td class="muted">No NetIM object on this PC's path: the network was not checked.</td></tr>`;
+    : `<tr><td class="muted">No NetIM object on the path of ${esc(d.endpoints.map((e) => e.device).join(" and ") || "the PC")}: the network was not checked.</td></tr>`;
 }
 // Other PCs per day as small bars: one row's own scale, its highest day labelled.
 function spark(days) {

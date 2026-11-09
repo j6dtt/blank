@@ -27,6 +27,7 @@ log = logging.getLogger("uxcorrelate")
 BASELINE_DAYS = 30
 PAIRS = 3  # the app + activity pairs with the most slow actions
 MIN_HISTORY = 5  # earlier runs needed to say what is normal
+MIN_SLOW = 2  # slow runs on a PC needed to say it became slow (one is a blip)
 PC = (("cpu", "CPU", " %"), ("memory", "memory", " %"), ("disk_queue", "disk queue", ""))
 
 
@@ -96,12 +97,15 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
                 break
             run.insert(0, d)
         since, changes, todo, changed, normal_day, from_runs, pcs = None, [], [], 0, None, [], []
+        persistent, before_slow = False, None
         if enough:
             line = (f"Aternity marked most runs slow on {len(bad)} of the {len(days)} days {who} used it "
                     f"in the {back}")
+            before_slow = sum(1 for h in hist if is_slow(h))
             if not bad:
-                line = (f"On each of the {len(days)} days {who} used it in the {back}, most runs were not slow: "
-                        "being slow is new.")
+                # how many earlier runs were slow too: "most runs not slow" can hide a few
+                line = (f"On each of the {len(days)} days {who} used it in the {back}, most runs were not slow "
+                        f"({before_slow} of {len(hist)} slow).")
             elif len(run) == len(days):
                 line += ": every day, so it is not new."
             elif run:
@@ -140,10 +144,16 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
                 if len(pcs) > 1:
                     text.append(f"Slow on {len(pcs)} PCs: " + ", ".join(
                         f"{p['device']} {p['slow']} of {p['runs']} times ({p['took']} s)" for p in pcs) + ".")
+                # became slow = slow on 2+ runs and on most runs since the first slow one, on a PC;
+                # otherwise occasional: no slowdown to explain, no change to check
+                persistent = any(p["slow"] >= MIN_SLOW and p["slow"] * 2 > p["runs"] for p in pcs)
+                total = (sum(p["slow"] for p in pcs), sum(p["runs"] for p in pcs))
+                text.append(f"Since {_day(first)}: slow {total[0]} of {total[1]} times"
+                            + (": being slow is new." if persistent else ": occasional, not a slowdown."))
                 text += [p["text"] for p in pcs if p["text"]]
                 own = next(p for p in pcs if p["device"] == dev)
                 changes, changed = own["changes"], own["changed"]
-                for p in pcs:
+                for p in pcs if persistent else []:
                     if p["changes"]:
                         names = ", ".join(dict.fromkeys(c["name"] for c in p["changes"] if c["name"]))
                         quiet = [q["device"] for q in pcs if not q["changes"]]
@@ -167,6 +177,7 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
                     "worst": round(worst, 1) if worst is not None else None,
                     "virtual": any(s.virtual for s in mine), "status": _status(mine),
                     "pcs": [{k: v for k, v in p.items() if k != "text"} for p in pcs],
+                    "persistent": persistent, "before_slow": before_slow, "before_runs": len(hist),
                     "from_runs": len(from_runs), "from_slow": sum(1 for s in from_runs if is_slow(s)),
                     "normal_day": normal_day.isoformat().replace("+00:00", "Z") if normal_day else None,
                     "text": text, "todo": todo})

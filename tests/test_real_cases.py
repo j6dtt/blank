@@ -272,7 +272,8 @@ def test_a_busy_pc_after_logon_is_told_plainly():
     assert "(see Other things on VD-14 and VD-41)" in a["reason"]
     assert not any("2856" in m[2] for m in result["timeline"]["marks"])
     assert hang["text"] == "Adobe Acrobat was not responding on VD-41" and hang["possible"] == []
-    assert any("as uninstalled on Nov 5 with no install logged, but it failed after that" in w for w in hang["why"])
+    # its "uninstalled" row is one of the 27 in one minute: told once in What changed, not here
+    assert not any("as uninstalled on Nov 5" in w for w in hang["why"])
     assert not any("Adobe Acrobat" in t and "Check the" in t for t in a["todo"])
     # the 25 removals of one minute: one line; the real update listed
     vd41 = next(c for c in a["changes"] if c["device"] == "VD-41")
@@ -334,9 +335,9 @@ class OutlookPreviewNew(SameMinuteReading):
     """The full Nov 6-8 page (live), names made up: besides the Teams Launch on VD-14,
     on VD-41 (logon 08:12, CPU 91.75% with a normal action at 08:15) Outlook Launch
     takes 40.6 s at 09:15 (others typical 33.5 s) while an AAD token broker hang
-    starts in the same minute; Preview Mail is slow once on each desktop (VD-41 Nov 6, VD-14 Nov 8
-    09:58; 4.4 s typical of the two, as prod showed), with fast runs after each: VD-41 1 of 11
-    times, as prod showed; VD-14 has no change logged (usually 0.2 s for
+    starts in the same minute; Preview Mail is slow once on each desktop (VD-41 3.6 s on Nov 6,
+    VD-14 5.2 s on Nov 8 09:58), each 1 of 11 times: occasional, not a slowdown, so not
+    the headline; VD-14 has no change logged (usually 0.2 s for
     the user, on the 3 days before, last on another desktop; others 0.1 s). VD-41's
     log on Nov 5 13:11: three updates (Teams Meeting Add-in, OneDrive, the agent)
     and 27 "Uninstalled" rows with no install (Microsoft 365 Apps among them)."""
@@ -353,12 +354,13 @@ class OutlookPreviewNew(SameMinuteReading):
         rows = super().user_activity(*a, **k) + [
             mk(self.LOGON41 + timedelta(minutes=3), "Open Mail", 1.0, 91.75),
             mk(self.OL_LAUNCH, "Launch", 40.6, 30.0, "Minor"),
-            # one slow Preview Mail on each desktop (prod: VD-41 2 of 47 slow, VD-14 2 of 26);
-            # which one took 5.2 s and which 3.6 s is not known from prod yet
-            mk(self.PREVIEW[0], "Preview Mail", 5.2, 7.9, "Minor"),
-            mk(self.PREVIEW[1], "Preview Mail", 3.6, 7.9, "Minor", "VD-14")] + [
+            # one slow Preview Mail on each desktop, each slow 1 of 11 times (prod, Nov 9 run):
+            # VD-41 3.6 s on Nov 6, VD-14 5.2 s on Nov 8
+            mk(self.PREVIEW[0], "Preview Mail", 3.6, 7.9, "Minor"),
+            mk(self.PREVIEW[1], "Preview Mail", 5.2, 7.9, "Minor", "VD-14")] + [
             mk(self.PREVIEW[0] + timedelta(hours=h), "Preview Mail", 0.2, 7.9) for h in range(1, 11)] + [
-            mk(self.PREVIEW[1] + timedelta(minutes=m), "Preview Mail", 0.2, 7.9, None, "VD-14") for m in (10, 20)]
+            mk(self.PREVIEW[1] + timedelta(minutes=m), "Preview Mail", 0.2, 7.9, None, "VD-14")
+            for m in range(1, 11)]
         return sorted(rows, key=lambda s: s.timestamp)
 
     def boots(self, start, end, username=None, **k):
@@ -405,34 +407,27 @@ class OutlookPreviewNew(SameMinuteReading):
         return [c for c in rows if start <= c.timestamp <= end]
 
 
-def test_the_full_page_of_nov_8_tells_the_real_change_only():
+def test_the_full_page_of_nov_8_has_no_slowdown_to_blame():
     settings = Settings()
     settings.thresholds.slow_status = ["Minor", "Major"]
     c = OutlookPreviewNew
     a = investigate(InvestigationRequest(start=c.START, end=c.END, username="user2"), c(), None, settings)["answer"]
-    # the only slowdown new for this user, after a real change on its desktop
-    # what the user felt, the usual, since when, and the changes by count and day (names in What changed)
-    # slow on both desktops (prod), each told with its own count and time; the changes on one
-    # desktop do not explain a slow run on the other, where nothing changed
-    assert a["title"] == ("Microsoft Outlook Preview Mail slow on 2 desktops from Nov 6: VD-41 1 of 11 times "
-                          "(5.2 s), VD-14 1 of 3 times (3.6 s); usually 0.2 s, normal on each of the 3 days "
-                          "before. 3 changes on VD-41 on Nov 5, none on VD-14: they do not explain it alone")
-    assert a["level"] == "unsure"
-    assert any(t.endswith("It was slow on VD-14 too, where no change was logged: the changes do not explain "
-                          "it alone.") for t in a["todo"])
-    # every other slow action at the top, each with what is known of it
-    assert a["reason"].endswith(
-        "Also slow: Microsoft Outlook Launch 40.6 s on VD-41, others typical 33.5 s; Microsoft Teams Launch "
-        "43.8 s on VD-14, 3 min after a start-up (on virtual desktops 93% are slow then, 62% later). Also, not "
-        "near the slow actions: 3 hangs (see Other things on VD-14 and VD-41).")
+    # Preview Mail was slow 1 of 11 times on each desktop: occasional, not a slowdown, so it
+    # never leads; the Teams launch after a logon does, as on most virtual desktops
+    assert a["title"] == ("Microsoft Teams Launch took 43.8 s on VD-14 (Minor), 3 min after a start-up. "
+                          "On virtual desktops 93% are slow then, 62% later")
+    assert ("Also slow: Microsoft Outlook Launch 40.6 s on VD-41, others typical 33.5 s; Microsoft Outlook Preview "
+            "Mail 3.6 s on VD-41 and 5.2 s on VD-14: slow 2 of 22 times from Nov 6, usually 0.2 s (before: 0 of 6 "
+            "slow).") in a["reason"]
+    # no step to check changes that are not a suspect
+    assert not any("check what changed" in t for t in a["todo"])
     assert a["pcs_label"] == "VD-14 and VD-41" and "these PCs" not in str(a)
     preview = next(n for n in a["normal"] if n[0].startswith("Microsoft Outlook Preview Mail"))
-    assert any(x.endswith("most runs were not slow: being slow is new.") for x in preview)
+    assert "most runs were not slow (0 of 6 slow)." in " ".join(preview)
+    assert "Since Nov 6: slow 2 of 22 times: occasional, not a slowdown." in preview
     changed = next(x for x in preview if x.startswith("Changed on VD-41"))
     assert "27 programs logged as uninstalled in the same minute, with no install logged (not changes to check)" \
         in changed and "Visual C++" not in changed
-    step = next(t for t in a["todo"] if t.startswith("On VD-41: check what changed"))
-    assert "Teams Meeting Add-in" in step and "Visual C++" not in step and "Microsoft 365" not in step
     # the AAD hang: not counted for Outlook, but said to be in the same minute
     aad = next(f for f in a["elsewhere"] if f["text"].startswith("AAD token broker plugin"))
     assert any(w.startswith("One was in the same minute as the slow Microsoft Outlook Launch on VD-41.")

@@ -51,6 +51,15 @@ Details:
   Several are counted, by day or span. Their names stay in "What
   changed on <PC>". A batch of 5+ "Uninstalled" rows in one minute is
   never counted.
+- **C, D only for a real slowdown:** slow on at least 2 runs, and on
+  most runs since the first slow one, on a PC (`normal.py` `persistent`,
+  `MIN_SLOW`). Otherwise it is occasional: never the headline, no step
+  to check changes, an "Also slow" line with both counts ("Microsoft
+  Outlook Preview Mail 3.6 s on VD-41 and 5.2 s on VD-14: slow 2 of 22
+  times from Nov 6, usually 0.2 s (before: 0 of 32 slow)"). If the
+  slowest action is occasional and nothing else fits (G, H), the
+  headline says so: "…, slow 2 of 22 times from Nov 6, usually 0.2 s:
+  occasional. No cause found".
 - **C, D: what was counted, never "slow since".** The runs of that
   activity on that PC from the first slow one ("slow 2 of 6 times from
   Nov 6"): runs in between may have been fast. Then what was normal
@@ -68,6 +77,17 @@ Details:
   runs in the last D days".
 - **PCs by name:** "Other things on VD-41", "on VD-41 and VD-14", "on the
   3 PCs"; never "these PCs".
+
+## Weak assumptions, written down (not changed until a case shows them)
+
+- **A rests on time alone:** a problem within `bucket_minutes` of slow
+  actions. A crash that hits hundreds of other PCs counts as strongly
+  as one only this PC has.
+- **A PC reading counts only for its own action:** depends on what an
+  activity row's CPU is (admin question 11).
+- **F ("not new") is a majority per day:** with about 8 days kept,
+  few days carry it.
+- **The class order is a judgment**, not a Riverbed rule.
 
 ## What cannot be a verdict
 

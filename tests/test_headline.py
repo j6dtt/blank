@@ -29,7 +29,8 @@ def normal(app="ERP", activity="Open", device="PC1", took=6.0, usual=1.0, since=
             "worst": took, "usual": usual, "others_typical": None, "others": 0, "slow_days": slow_days,
             "days_used": days_used, "since": since, "changes": list(changes), "changed": len(changes),
             "enough": enough, "runs": 12, "back": "last 5 days", "virtual": virtual, "status": "Minor",
-            "from_runs": 9 if since else 0, "from_slow": 2 if since else 0, "normal_day": None,
+            "from_runs": 9 if since else 0, "from_slow": 7 if since else 0, "normal_day": None,
+            "persistent": bool(since), "before_slow": 0, "before_runs": 12,
             "text": [f"{app} {activity} took {took} s."], "todo": []}
 
 
@@ -63,7 +64,7 @@ def test_b_many_users_slow_at_once():
 def test_c_one_change_is_named():
     c = normal(since="2026-11-06T09:00:00Z", changes=[change("Print Agent")])
     # what was counted from the first slow run, never "slow since" (runs in between may be fast)
-    assert headline([act(0)], normal=[c]) == ("ERP Open on PC1: slow 2 of 9 times from Nov 6 (6.0 s, usually 1.0 s); "
+    assert headline([act(0)], normal=[c]) == ("ERP Open on PC1: slow 7 of 9 times from Nov 6 (6.0 s, usually 1.0 s); "
                                               "normal on each of the 5 days before. "
                                               "Possibly: Print Agent updated on Nov 5")
 
@@ -77,7 +78,7 @@ def test_c_changes_on_several_days_are_counted():
 def test_d_new_with_no_change_logged_says_the_log_can_run_late_on_a_virtual_desktop():
     c = normal(device="VD-1", since="2026-11-06T09:00:00Z", virtual=True)
     assert headline([act(0, device="VD-1", virtual=True)], normal=[c]) == (
-        "ERP Open on VD-1: slow 2 of 9 times from Nov 6 (6.0 s, usually 1.0 s); normal on each of the 5 days "
+        "ERP Open on VD-1: slow 7 of 9 times from Nov 6 (6.0 s, usually 1.0 s); normal on each of the 5 days "
         "before. No change to check was logged there before it (on a virtual desktop the log can run late)")
 
 
@@ -117,7 +118,7 @@ def test_several_apps_each_get_their_own_line():
     mail = normal(app="Mail", activity="Send", took=9.0, usual=None, enough=False)
     mail["others_typical"] = 2.0
     a = build_answer([], slow, slow, "amy", None, True, [], None, None, 5, None, normal=[c, mail])
-    assert a["title"].startswith("ERP Open on PC1: slow 2 of 9 times from Nov 6")  # the class beats the slowest
+    assert a["title"].startswith("ERP Open on PC1: slow 7 of 9 times from Nov 6")  # the class beats the slowest
     assert a["reason"].endswith("Also slow: Mail Send 9.0 s on PC1, others typical 2.0 s.")
 
 
@@ -132,7 +133,7 @@ def test_the_pcs_are_named_never_these_pcs():
 
 def _two(changes_b):
     c = normal(device="VD-1", since="2026-11-06T09:00:00Z", changes=[change("Print Agent")], virtual=True, n=2)
-    c["pcs"] = [{"device": "VD-1", "runs": 9, "slow": 1, "took": 6.0, "changes": c["changes"], "changed": 1},
+    c["pcs"] = [{"device": "VD-1", "runs": 9, "slow": 7, "took": 6.0, "changes": c["changes"], "changed": 1},
                 {"device": "VD-2", "runs": 4, "slow": 1, "took": 5.0, "changes": changes_b,
                  "changed": len(changes_b)}]
     slow = [act(0, device="VD-1", virtual=True), act(9, device="VD-2", virtual=True, seconds=5.0)]
@@ -141,7 +142,7 @@ def _two(changes_b):
 
 def test_c_slow_on_two_pcs_one_unchanged_does_not_blame_the_changes():
     a = _two([])
-    assert a["title"] == ("ERP Open slow on 2 desktops from Nov 6: VD-1 1 of 9 times (6.0 s), VD-2 1 of 4 times "
+    assert a["title"] == ("ERP Open slow on 2 desktops from Nov 6: VD-1 7 of 9 times (6.0 s), VD-2 1 of 4 times "
                           "(5.0 s); usually 1.0 s, normal on each of the 5 days before. 1 change on VD-1 on Nov 5, "
                           "none on VD-2: they do not explain it alone")
     assert a["level"] == "unsure"
@@ -151,3 +152,31 @@ def test_c_slow_on_two_pcs_both_changed():
     a = _two([change("Print Agent", 4)])
     assert a["title"].endswith("1 change on VD-1 on Nov 5 and 1 change on VD-2 on Nov 4: possibly one of them")
     assert a["level"] == "possible"
+
+
+def test_occasional_slowness_is_never_the_headline():
+    """Slow 2 of 22 times since the first slow run: not a slowdown, an "Also slow" line."""
+    c = normal(since="2026-11-06T09:00:00Z", changes=[change("Print Agent")], took=4.0, usual=0.2)
+    c.update(persistent=False, before_slow=0, before_runs=32, pcs=[
+        {"device": "PC1", "runs": 11, "slow": 1, "took": 3.6, "changes": c["changes"], "changed": 1},
+        {"device": "PC2", "runs": 11, "slow": 1, "took": 5.2, "changes": [], "changed": 0}])
+    slow = [act(0, seconds=3.6), act(9, device="PC2", seconds=5.2)]
+    a = build_answer([], slow, slow, "amy", None, True, [], None, None, 5, None, normal=[c])
+    assert a["title"] == ("2 slow actions, slowest ERP Open 5.2 s on PC2 (Minor), slow 2 of 22 times from Nov 6, "
+                          "usually 0.2 s: occasional. No cause found")
+    assert not any("check what changed" in t for t in a["todo"])
+
+
+def test_occasional_beside_another_verdict_is_an_also_line():
+    c = normal(since="2026-11-06T09:00:00Z", changes=[change("Print Agent")], took=4.0, usual=0.2)
+    c.update(persistent=False, before_slow=1, before_runs=32, pcs=[
+        {"device": "PC1", "runs": 11, "slow": 1, "took": 3.6, "changes": c["changes"], "changed": 1}])
+    e = {"application": "Mail", "activity": "Send", "kind": "physical PCs", "count": 1, "device": "PC1",
+         "seconds": 9.0, "minutes": 3, "slower": True, "enough": True, "hours": 24,
+         "after": {"runs": 50, "slow": 45, "share": .9, "median": 9.0},
+         "later": {"runs": 50, "slow": 10, "share": .2, "median": 2.0}}
+    slow = [act(0, seconds=3.6), act(5, app="Mail", activity="Send", seconds=9.0)]
+    a = build_answer([], slow, slow, "amy", None, True, [], None, None, 5, None, normal=[c], after_start=[e])
+    assert a["title"].startswith("Mail Send took 9.0 s on PC1 (Minor), 3 min after a start-up")
+    assert a["reason"].endswith("Also slow: ERP Open 3.6 s on PC1: slow 1 of 11 times from Nov 6, usually 0.2 s "
+                                "(before: 1 of 32 slow).")

@@ -314,6 +314,27 @@ def _since_phrase(c: dict) -> str:
             f"{c['usual']} s); {before}.")
 
 
+def _occasional(c: dict) -> str:
+    """ "Microsoft Outlook Preview Mail 3.6 s on VD-41 and 5.2 s on VD-14: slow 2 of 22 times
+    from Nov 6, usually 0.2 s (before: 0 of 32 slow)" """
+    pcs = c.get("pcs") or [{"device": c["device"], "took": c["took"], "slow": c.get("from_slow") or 0,
+                            "runs": c.get("from_runs") or 0}]
+    where = _join([f"{p['took']} s on {p['device']}" for p in pcs])
+    slow, runs = sum(p["slow"] for p in pcs), sum(p["runs"] for p in pcs)
+    return (f"{c['name']} {where}: slow {slow} of {runs} times from {_day(c['since'])}, usually {c['usual']} s"
+            + (f" (before: {c['before_slow']} of {c['before_runs']} slow)" if c.get("before_slow") is not None
+               else ""))
+
+
+def _occasional_tail(c: dict | None) -> str:
+    """ ", slow 2 of 22 times from Nov 6, usually 0.2 s: occasional" after what the user felt."""
+    if not c:
+        return ""
+    pcs = c.get("pcs") or [{"slow": c.get("from_slow") or 0, "runs": c.get("from_runs") or 0}]
+    return (f", slow {sum(p['slow'] for p in pcs)} of {sum(p['runs'] for p in pcs)} times from "
+            f"{_day(c['since'])}, usually {c['usual']} s: occasional")
+
+
 def _usual_from(c: dict) -> str:
     """How much the usual time rests on, so a reader can judge it."""
     return f"The usual time is from {plural(c['runs'], 'run')} in the {c['back']}."
@@ -324,14 +345,16 @@ def _group_line(name: str, took, dev: str, fact: str) -> str:
 
 
 def _pick_headline(at_slow: list[dict], slow: list, normal: list[dict], after_start: list[dict],
-                   impact: dict | None) -> dict:
+                   impact: dict | None, worst=None) -> dict:
     """Which class of verdict the headline gives (docs/headline-rules.md), its subject, the
     start-up comparisons told at the top, and one line for each other slow app + activity."""
     named = [{**c, "name": _name(c["application"], c["activity"])} for c in normal if c.get("took") is not None]
     by = lambda xs: max(xs, key=lambda c: (c["slow_actions"], c.get("worst") or 0)) if xs else None  # noqa: E731
     cands = {
-        "C": by([c for c in named if c["since"] and _changed_anywhere(c)]),
-        "D": by([c for c in named if c["since"] and not _changed_anywhere(c)]),
+        # "became slow" only when slow on most runs since (normal.py "persistent"); occasional
+        # slowness never leads the headline
+        "C": by([c for c in named if c["since"] and c.get("persistent") and _changed_anywhere(c)]),
+        "D": by([c for c in named if c["since"] and c.get("persistent") and not _changed_anywhere(c)]),
         "F": by([c for c in named if c.get("enough") and c["days_used"] and c["slow_days"] == c["days_used"]]),
     }
     starts = [c for c in after_start if c["slower"]]
@@ -356,11 +379,18 @@ def _pick_headline(at_slow: list[dict], slow: list, normal: list[dict], after_st
     else:
         cls, subject = "H", None
     told_start = [subject] if cls == "E" else []
-    also = []
-    if cls in ("A", "C", "D", "E", "F"):
+    also, occasional = [], None
+    if cls in ("G", "H") and worst is not None:
+        # nothing explains it: the headline names the slowest action, the others get their line
+        subject = next((c for c in named if (c["application"], c["activity"]) == (worst.application, worst.activity)),
+                       None)
+        if subject is not None and subject["since"] and not subject.get("persistent"):
+            occasional = subject
+    if cls in ("A", "C", "D", "E", "F", "G", "H"):
         # a problem row without its slow actions listed covers them all
         covered = set(top.get("slow_idx", range(len(slow)))) if cls == "A" else set()
-        key = (subject["application"], subject["activity"]) if subject else None
+        key = ((subject["application"], subject["activity"]) if subject else
+               (worst.application, worst.activity) if cls in ("G", "H") and worst is not None else None)
         for (app, act) in dict.fromkeys((s.application, s.activity) for s in slow):
             mine = [i for i, s in enumerate(slow) if (s.application, s.activity) == (app, act)]
             if (app, act) == key or (cls == "A" and set(mine) <= covered):
@@ -374,6 +404,8 @@ def _pick_headline(at_slow: list[dict], slow: list, normal: list[dict], after_st
                 also.append(_group_line(_name(app, act), f"{st['seconds']:.1f}", st["device"],
                                         f"{_after_when(st)} a start-up (on {st['kind']} {st['after']['share']:.0%} "
                                         f"are slow then, {st['later']['share']:.0%} later)"))
+            elif nm is not None and nm["since"] and not nm.get("persistent"):
+                also.append(_occasional(nm))
             elif nm is not None:
                 counted = f"{_counted(nm)} from {_day(nm['since'])}" if nm["since"] else ""
                 fact = (f"usually {nm['usual']} s, {counted}, " + (
@@ -388,8 +420,9 @@ def _pick_headline(at_slow: list[dict], slow: list, normal: list[dict], after_st
                 also.append(_group_line(nm["name"], nm["took"], nm["device"], fact))
             elif times:
                 also.append(_group_line(_name(app, act), f"{times[-1]:.1f}", dev, ""))
-    return {"class": cls, "subject": subject, "start": subject if cls == "E" else None,
-            "told_start": told_start, "also": also}
+    return {"class": cls, "subject": subject if cls not in ("G", "H") else None,
+            "start": subject if cls == "E" else None, "told_start": told_start, "also": also,
+            "occasional": occasional}
 
 
 def build_answer(problems: list[dict], samples: list, slow: list, who: str, impact: dict | None,
@@ -409,7 +442,7 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
     # correlate.py leaves them out); the reason says they were near
     # problems at slow actions: most slow actions first, then by kind (HEAD_ORDER)
     at_slow = sorted((g for g in problems if g["slow_actions"]), key=_head_rank)
-    head = _pick_headline(at_slow, slow, normal or [], after_start or [], impact)
+    head = _pick_headline(at_slow, slow, normal or [], after_start or [], impact, worst)
     found, todo = [], []
     for g in at_slow:
         why = g.get("why") or {}
@@ -588,12 +621,12 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         reason = f"{nothing} {_usual_from(c)}{usual_line}"
     elif cls == "G":
         level = "unsure"
-        title = (f"{_felt_all(slow, worst)}. Other {_join(impact['applications'])} users were as slow as usual "
-                 "at this time")
+        title = (f"{_felt_all(slow, worst)}{_occasional_tail(head['occasional'])}. Other "
+                 f"{_join(impact['applications'])} users were as slow as usual at this time")
         reason = nothing + usual_line
     else:
         level = "unsure"
-        title = f"{_felt_all(slow, worst)}. No cause found" + (
+        title = f"{_felt_all(slow, worst)}{_occasional_tail(head['occasional'])}. No cause found" + (
             f" in what could be read ({plural(len(unread), 'source')} not read: see Warnings)" if unread else "")
         reason = nothing
         if split:

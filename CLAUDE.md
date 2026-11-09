@@ -167,7 +167,9 @@ unset `<REQUIRED>` base URLs.
   trend, app usage is kept about 8 days) and other PCs per day as bars;
   each detail is said once, in its own section. The headline is two sentences,
   what the user felt then one verdict, by the classes A-H in
-  `docs/headline-rules.md` (`_pick_headline`; order provisional); each
+  `docs/headline-rules.md` (`_pick_headline`; order provisional; "became
+  slow" only when slow on most runs since, else occasional, never the
+  headline); each
   other slow app + activity is an "Also slow" line in the reason; PCs
   are named ("Other things on VD-41"), never "these PCs". The question is
   what went wrong for the user, not only what was slow: with no slow action

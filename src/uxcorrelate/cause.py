@@ -557,6 +557,7 @@ def _changes(rows: list[dict], g, first, why, virtual=False) -> None:
     names = {n.lower().rsplit(".", 1)[0] for n in map(plain, (g["app"], f.get("component"), f.get("sub_component"))) if n}
     names -= set(NO_PROGRAM) | {m.rsplit(".", 1)[0] for m in WINDOWS_MODULES}
     versions = {plain(f.get(k)) for k in ("component_version", "sub_component_version")} - {""}
+    batch = batch_removals(rows)  # told once in What changed, never one by one
     for c in rows:
         match = _matches(c, names, versions)
         before = c["time"] <= first
@@ -567,7 +568,7 @@ def _changes(rows: list[dict], g, first, why, virtual=False) -> None:
         if c["change"] in SOFTWARE_REMOVED:
             # paired removals are updates by now: this one has no install logged. The
             # software failed after it, so it was still there: not a removal, not a cause
-            if before:
+            if before and id(c) not in batch:
                 why["text"].append(f"Aternity logged {c['name']} {c['version'] or ''} as uninstalled on "
                                    f"{_day(c['time'])} with no install logged, but it failed after that, so it was "
                                    "still there: that row is not a removal.".replace("  ", " "))

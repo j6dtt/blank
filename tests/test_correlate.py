@@ -473,6 +473,7 @@ def test_each_slow_action_is_compared_with_its_own_normal_and_what_changed():
         "Usually 2.0 s for lee (typical of 60 in the last 30 days).",
         "Other users within 5 min: typical 2.1 s (3 users).",  # those at 09:40 are not near
         "Aternity marked most runs slow on 10 of the 30 days lee used it in the last 30 days, every day since Oct 18.",
+        "Since Oct 18: slow 23 of 23 times: being slow is new.",
         "Changed on NB-12 between Oct 17 and Oct 18: Oct 17 Print Agent updated 4.1 → 4.2.",
         "NB-12 at those slow actions: CPU up to 35.0 % (usually 20.0 %), memory up to 72.0 % (usually 50.0 %), "
         "disk queue up to 0.3 (usually 0.1).",
