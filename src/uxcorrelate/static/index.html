@@ -179,8 +179,8 @@
       <div class="tiles" id="cTiles"></div>
       <ul class="muted notes" id="cNotes"></ul>
       <p class="muted" style="font-size:12px;margin:8px 0 0">An issue: an event Aternity rates Critical or Major (it stays
-        for the day), or more Major slow actions by this time of day than on any of their own days before (it clears
-        when they are back within that). A new issue runs an investigation by itself (one an hour per user). Click
+        for the day), or more Major slow actions by this time of day than on any of their own days before (over after an
+        hour with none, or when they are back within that). A new issue runs an investigation by itself (one an hour per user). Click
         a tile for more.</p>
     </section>
     <section class="panel" id="cDetail" hidden style="margin-top:16px">
@@ -523,7 +523,7 @@ function renderCare(c) {
     const lines = u.status === "unknown" ? [u.note] : ok ? [okText(u)] : u.issues.slice(0, 2).map((i) => i.text);
     const more = u.issues.length > 2 ? `<div class="u">+${u.issues.length - 2} more</div>` : "";
     const gone = u.cleared.map((i) => `<div class="u">More Major slow actions than usual from ${esc(i.since_local)};`
-      + ` back within their usual at ${esc(i.cleared_local)}.</div>`).join("");
+      + ` over: ${esc(i.over)}.</div>`).join("");
     const why = ok ? (u.why && u.why.title ? `Earlier today: ${u.why.title}` : "") : whyText(u);
     const days = u.days.map((d, k) => ({ day: d.date, pcs: d.issues, window: k === u.days.length - 1 }));
     return `<div class="tile click" role="button" tabindex="0" data-user="${esc(u.username)}">${head}`
@@ -550,7 +550,7 @@ async function openCare(username) {
     const rep = d.report;
     let html = `<p>${esc(pcText(d))}. Today: ${n(d.actions)} actions measured, ${n(d.major)} rated Major; ${esc(usualWords(d.usual))}.</p>`;
     const today = d.issues.map((i) => `<li>${sevTag(i.level)} ${esc(i.text)}</li>`)
-      .concat(d.cleared.map((i) => `<li>${sevTag(i.level)} <span class="muted">Cleared at ${esc(i.cleared_local)}:</span> ${esc(i.text)}</li>`));
+      .concat(d.cleared.map((i) => `<li>${sevTag(i.level)} ${esc(i.text)} <span class="muted">Over: ${esc(i.over)}.</span></li>`));
     html += `<h3>Today</h3>` + (today.length ? `<ul>${today.join("")}</ul>` : `<p class="muted">No issue today.</p>`);
     html += `<h3>Investigation</h3>`;
     if (rep && rep.result) html += `<p><b>${esc(rep.title)}</b> ${esc(rep.reason || "")}<br><span class="muted">Ran by itself ${esc(rep.at_local)}, over ${esc(rep.span_local)}.</span></p>`
@@ -561,7 +561,7 @@ async function openCare(username) {
     const before = d.history.filter((i) => i.day !== d.days[d.days.length - 1].date);  // today's are above
     html += `<h3>The ${d.days.length - 1} days before</h3>` + (before.length
       ? `<ul>${before.map((i) => `<li>${esc(i.when_local)} ${sevTag(i.level)} ${esc(i.text)}`
-        + `${i.cleared_local ? ` <span class="muted">(cleared at ${esc(i.cleared_local)})</span>` : ""}</li>`).join("")}</ul>` : `<p class="muted">None.</p>`);
+        + `${i.over ? ` <span class="muted">Over: ${esc(i.over)}.</span>` : ""}</li>`).join("")}</ul>` : `<p class="muted">None.</p>`);
     $("cDetailBody").innerHTML = html;
   } catch (e) { $("cDetailTitle").textContent = "Could not load: " + e.message; }
 }

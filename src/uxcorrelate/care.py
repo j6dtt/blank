@@ -8,9 +8,12 @@ is checked after each read of the Today reader, from rows already read:
   used a PC (their own usual: the same kind of day, USUAL_DAYS at most,
   MIN_USUAL needed; read from their last HISTORY_DAYS of activity, by
   username, once a day);
-- a slow-actions issue clears by itself at the first check where they are
-  back within their usual by that time of day (a later rise is a new one);
-  an event is a moment: it stays for the day;
+- a slow-actions issue is a spell: it is over after QUIET with no Major
+  action (the count is for the whole day, so it alone would hold all day:
+  seen on stage), or when they are back within their usual by that time of
+  day. A Major action after that, still above their usual, starts a new
+  spell; a late row less than QUIET after the last one joins it again.
+  An event is a moment: it stays for the day;
 - a new issue runs an investigation of the user (one at a time, at most one
   per user each RUN_EVERY), from INV_PAD before their first issue today to
   now. Its headline is the tile's "Why"; the page opens the whole of it.
@@ -43,6 +46,8 @@ HISTORY_DAYS = 8  # activity is kept about 8 days on the live tenant
 KEEP_DAYS = 8
 RUN_EVERY = HOUR  # at most one investigation per user in this time
 INV_PAD = timedelta(minutes=30)
+QUIET = HOUR  # a slow spell is over after this long with no Major action
+QUIET_WORDS = "the hour"  # QUIET in words: "none in the hour after 09:45"
 WAIT_S = 10  # the investigation worker looks for work this often
 
 
@@ -151,8 +156,7 @@ class Care:
             for issue in new:
                 log.info("Care list: new issue for %s: %s", self._who(u), issue["text"])
             for issue in cleared:
-                log.info("Care list: %s is back within their usual: \"%s\" cleared", self._who(u),
-                         issue["text"])
+                log.info("Care list: %s: slow spell over (%s)", self._who(u), self._over(issue))
             if new:
                 last = self.reports.get(user)
                 if user not in self.pending and self.running != user and (
@@ -161,6 +165,12 @@ class Care:
             if new or found or cleared:
                 self.save(user)
         self.as_of = now
+
+    def _over(self, i: dict) -> str:
+        """How a slow spell ended, in words."""
+        if i.get("ended") == "usual":
+            return f"back within their usual at {self.today.local(_when(i['cleared'])):%H:%M}"
+        return f"none in {QUIET_WORDS} after {self.today.local(_when(i.get('last') or i['since'])):%H:%M}"
 
     def _who(self, u: CareUser) -> str:
         return f"{u.label} ({u.username})" if u.label else u.username
@@ -231,11 +241,17 @@ class Care:
         found = []
         u_ = self.usual(user, now)
         if u_ and u_["enough"] and len(major) > u_["high"]:
-            since = major[u_["high"]][0]  # the action that made it more than on any day before
+            k = len(major) - 1  # the latest spell: Major actions less than QUIET apart
+            while k > 0 and major[k][0] - major[k - 1][0] < QUIET:
+                k -= 1
+            last = major[-1][0]
+            # from the action that made it more than on any day before, within this spell
+            since = max(major[k][0], major[u_["high"]][0])
             apps = Counter(r[3] for r in major).most_common(2)
             found.append({"key": f"slow {t}", "kind": "slow", "level": TOP_STATUS, "since": _iso(since),
-                          "day": t.isoformat(),
-                          "text": f"{len(major)} {TOP_STATUS} slow actions by {today.local(now):%H:%M}; on the "
+                          "last": _iso(last), "quiet": now - last >= QUIET, "day": t.isoformat(),
+                          "text": f"{len(major)} {TOP_STATUS} slow actions by {today.local(now):%H:%M}, the last "
+                                  f"at {today.local(last):%H:%M}; on the "
                                   f"{u_['days']} {u_['kind']} before that they used a PC: {u_['low']} to "
                                   f"{u_['high']} by this time. Most in "
                                   + ", ".join(f"{a} ({n})" for a, n in apps) + "."})
@@ -266,16 +282,22 @@ class Care:
             new, cleared = [], []
             slow = [i for i in mine if i["kind"] == "slow" and i["day"] == t.isoformat()]
             last = slow[-1] if slow else None
-            now_slow = next((f for f in found if f["kind"] == "slow"), None)
-            if now_slow and last is not None and not last.get("cleared"):
-                last.update(text=now_slow["text"])
-            elif now_slow:  # the first today, or a new rise after one cleared
+            over = next((dict(f) for f in found if f["kind"] == "slow"), None)  # above their usual today
+            now_slow = over if over and not over.pop("quiet") else None  # ... with a Major action within QUIET
+            end = last.get("last", last["since"]) if last is not None else None
+            if last is not None and not last.get("cleared") and (now_slow is None or now_slow["since"] > end):
+                if over and now_slow is None:
+                    last["last"] = over["last"]  # every Major action since it opened was in it
+                last.update(cleared=_iso(now), ended="quiet" if over else "usual")
+                cleared.append(last)
+            if now_slow and last is not None and now_slow["since"] <= last.get("last", last["since"]):
+                for k in ("cleared", "ended"):  # the same spell: a late row joined it again
+                    last.pop(k, None)
+                last.update(text=now_slow["text"], last=now_slow["last"])
+            elif now_slow:  # the first today, or a new spell
                 now_slow["key"] = f"slow {t} {len(slow) + 1}"
                 mine.append(now_slow)
                 new.append(now_slow)
-            elif last is not None and not last.get("cleared"):
-                last["cleared"] = _iso(now)
-                cleared.append(last)
             for f in found:
                 if f["kind"] == "slow":
                     continue
@@ -366,7 +388,7 @@ class Care:
         today_all = [i for i in issues if i["day"] == t.isoformat()]
         mine = [i for i in today_all if not i.get("cleared")]
         cleared = [dict(i, cleared_local=today.local(_when(i["cleared"])).strftime("%H:%M"),
-                        since_local=today.local(_when(i["since"])).strftime("%H:%M"))
+                        since_local=today.local(_when(i["since"])).strftime("%H:%M"), over=self._over(i))
                    for i in today_all if i.get("cleared")]
         rank = {s: i for i, s in enumerate(SEVERITY_ORDER)}
         h = self.history.get(user)
@@ -408,6 +430,7 @@ class Care:
             i["when_local"] = self.today.local(_when(i["since"])).strftime("%a %b %d %H:%M")
             if i.get("cleared"):
                 i["cleared_local"] = self.today.local(_when(i["cleared"])).strftime("%H:%M")
+                i["over"] = self._over(i)
         if report:
             local = lambda k: self.today.local(_when(report[k]))  # noqa: E731
             report = dict(report, at_local=local("at").strftime("%b %d %H:%M"),

@@ -31,12 +31,13 @@ def act(t, user, pc, status, app="Mail", virtual=True):
 
 
 def today_with(majors: int, event=None) -> Today:
-    """MQ2208 (as Aternity writes it) with `majors` Major actions this morning on VD-7; tz9013 with one."""
+    """MQ2208 (as Aternity writes it) with `majors` Major actions on VD-7 from 14:00, 10 min apart; tz9013
+    with one."""
     t = Today(ZONE)
-    nine = t.midnight(date(2026, 11, 9)) + 9 * HOUR
-    rows = [act(nine + timedelta(minutes=10 * k), "MQ2208", "VD-7", "Major") for k in range(majors)]
-    rows += [act(nine, "MQ2208", "VD-7", "Normal"), act(nine, "tz9013", "PC-3", "Major", "ERP", False)]
-    t.add_hour(nine, rows, F, NOW)
+    two = t.midnight(date(2026, 11, 9)) + 14 * HOUR
+    rows = [act(two + timedelta(minutes=10 * k), "MQ2208", "VD-7", "Major") for k in range(majors)]
+    rows += [act(two, "MQ2208", "VD-7", "Normal"), act(two, "tz9013", "PC-3", "Major", "ERP", False)]
+    t.add_hour(two, rows, F, NOW)
     t.set_health(event or [], H, today=True)
     t.ready = True
     return t
@@ -81,9 +82,10 @@ def test_more_major_actions_than_on_their_own_days_before_is_an_issue_and_queues
     v = care.view(NOW)
     assert v["count"] == 1 and [u["title"] for u in v["users"]] == ["Payroll lead", "ghost1", "tz9013"]
     mq = v["users"][0]
-    assert (mq["status"], mq["level"], mq["since_local"], mq["username"]) == ("issue", "Major", "09:20", "MQ2208")
+    assert (mq["status"], mq["level"], mq["since_local"], mq["username"]) == ("issue", "Major", "14:20", "MQ2208")
     assert mq["usual"] == {"enough": True, "days": 5, "low": 0, "high": 2, "kind": "working days"}  # weekend left out
-    assert mq["issues"][0]["text"].startswith("3 Major slow actions by 14:30; on the 5 working days before that "
+    assert mq["issues"][0]["text"].startswith("3 Major slow actions by 14:30, the last at 14:20; on the 5 working "
+                                              "days before that "
                                               "they used a PC: 0 to 2 by this time. Most in Mail (3).")
     assert mq["pcs"] == [{"device": "VD-7", "kind": "virtual"}] and (mq["actions"], mq["major"]) == (4, 3)
     assert mq["investigating"] == "waiting" and care.pending == ["mq2208"]
@@ -154,7 +156,7 @@ def test_the_investigation_runs_once_an_hour_and_its_headline_is_the_why():
         calls.append((username, start, end))
         return {"answer": {"title": "Mail was slow on VD-7", "reason": "Its CPU was high.", "level": "found"}}
     assert care.run_next(investigate, NOW) == "mq2208" and care.run_next(investigate, NOW) is None
-    assert calls == [("MQ2208", datetime(2026, 11, 9, 14, 50, tzinfo=timezone.utc), NOW)]  # 30 min before 09:20
+    assert calls == [("MQ2208", datetime(2026, 11, 9, 19, 50, tzinfo=timezone.utc), NOW)]  # 30 min before 14:20
     mq = care.view(NOW)["users"][0]
     assert mq["why"]["title"] == "Mail was slow on VD-7" and mq["investigating"] is None
     # a new issue 20 minutes later: said, but no second investigation within the hour
@@ -166,31 +168,62 @@ def test_the_investigation_runs_once_an_hour_and_its_headline_is_the_why():
     detail = care.detail("mq2208", later)
     assert detail["report"]["result"]["answer"]["title"] == "Mail was slow on VD-7"
     assert (detail["report"]["at_local"], detail["report"]["span_local"]) == ("Nov 09 14:30",
-                                                                            "08:50 to 14:30 America/Chicago")
+                                                                            "13:50 to 14:30 America/Chicago")
     assert [i["kind"] for i in detail["history"]] == ["event", "slow"]  # newest first
 
 
-def test_a_slow_issue_clears_when_they_are_back_within_their_usual_and_a_new_rise_is_a_new_issue():
-    care = Care(today_with(3), lambda: USERS[:1])
+def test_a_slow_spell_is_over_after_an_hour_with_no_major_action_and_a_later_one_is_a_new_issue():
+    care = Care(today_with(3), lambda: USERS[:1])  # Major at 14:00, 14:10, 14:20
     care.check(client(), NOW)
     care.run_next(lambda u, s, e: {"answer": {"title": "Mail was slow on VD-7"}}, NOW)
-    # 22:30 in Chicago: their days before had one more Major at 22:00, so 3 is now within 1 to 3
-    late = NOW + 8 * HOUR
+    at = lambda h, m: datetime(2026, 11, 9, h + 6, m, tzinfo=timezone.utc)  # noqa: E731  (Chicago time)
+    care.check(client(), at(15, 10))
+    assert care.view(at(15, 10))["users"][0]["status"] == "issue"  # 50 min after the last
+    care.check(client(), at(15, 25))  # 65 min: over, though 3 is still more than their usual 0 to 2
+    mq = care.view(at(15, 25))["users"][0]
+    assert (mq["status"], mq["issues"], mq["level"]) == ("ok", [], None)
+    assert [(i["since_local"], i["over"]) for i in mq["cleared"]] == [("14:20", "none in the hour after 14:20")]
+    assert mq["why"]["title"] == "Mail was slow on VD-7"  # the investigation of the day stays
+    assert care.detail("mq2208", at(15, 25))["history"][0]["over"] == "none in the hour after 14:20"
+    care.check(client(), at(15, 25))
+    assert len(care.issues["mq2208"]) == 1  # over once
+    # a late row: a Major at 15:15, read at 15:40, is less than an hour after 14:20: the same spell again
+    three = care.today.midnight(date(2026, 11, 9)) + 15 * HOUR
+    care.today.add_hour(three, [act(at(15, 15), "MQ2208", "VD-7", "Major")], F, at(15, 40))
+    care.check(client(), at(15, 40))
+    slow = care.issues["mq2208"]
+    assert len(slow) == 1 and "cleared" not in slow[0] and slow[0]["last"] == "2026-11-09T21:15:00Z"
+    assert care.pending == []  # not a new issue
+    care.check(client(), at(16, 20))
+    assert care.issues["mq2208"][0]["cleared"] == "2026-11-09T22:20:00Z"
+    # 17:00, still more than their usual: a new spell, a new issue, a new investigation (over an hour on)
+    five = care.today.midnight(date(2026, 11, 9)) + 17 * HOUR
+    care.today.add_hour(five, [act(at(17, 0), "MQ2208", "VD-7", "Major")], F, at(17, 5))
+    care.check(client(), at(17, 5))
+    slow = care.issues["mq2208"]
+    assert [("cleared" in i, i["since"]) for i in slow] == [(True, "2026-11-09T20:20:00Z"),
+                                                             (False, "2026-11-09T23:00:00Z")]
+    assert slow[1]["key"].endswith(" 2") and care.pending == ["mq2208"]
+    assert care.view(at(17, 5))["users"][0]["since_local"] == "17:00"
+
+
+def test_an_open_slow_issue_saved_by_the_build_before_ends_at_its_last_major_action():
+    care = Care(today_with(3), lambda: USERS[:1])
+    care.check(client(), NOW)
+    care.issues["mq2208"] = [{"key": "slow 2026-11-09", "kind": "slow", "level": "Major", "day": "2026-11-09",
+                              "since": "2026-11-09T20:00:00Z", "text": "3 Major slow actions by 14:30"}]  # no "last"
+    care.check(client(), datetime(2026, 11, 9, 21, 25, tzinfo=timezone.utc))
+    assert care.issues["mq2208"][0]["last"] == "2026-11-09T20:20:00Z"
+    assert care.view(NOW + HOUR)["users"][0]["cleared"][0]["over"] == "none in the hour after 14:20"
+
+
+def test_a_slow_spell_is_over_when_they_are_back_within_their_usual():
+    care = Care(today_with(3), lambda: USERS[:1])
+    care.check(client(), NOW)
+    late = NOW + 8 * HOUR  # 22:30: their days before had one more Major at 22:00, so 3 is within 1 to 3
     care.check(client(), late)
     mq = care.view(late)["users"][0]
-    assert (mq["status"], mq["issues"], mq["level"]) == ("ok", [], None)
-    assert [(i["cleared_local"], i["text"][:25]) for i in mq["cleared"]] == [("22:30", "3 Major slow actions by 1")]
-    assert mq["why"]["title"] == "Mail was slow on VD-7"  # the investigation of the day stays
-    assert care.detail("mq2208", late)["history"][0]["cleared_local"] == "22:30"
-    care.check(client(), late)  # still within: cleared once
-    assert len(care.issues["mq2208"]) == 1
-    # one more Major at 22:20: more than on any day before again, a second issue that day
-    ten = care.today.midnight(date(2026, 11, 9)) + 22 * HOUR
-    care.today.add_hour(ten, [act(ten + timedelta(minutes=20), "MQ2208", "VD-7", "Major")], F, late)
-    care.check(client(), late)
-    slow = care.issues["mq2208"]
-    assert [i.get("cleared") is None for i in slow] == [False, True] and slow[1]["key"].endswith(" 2")
-    assert care.view(late)["users"][0]["status"] == "issue" and care.pending == ["mq2208"]  # 8 h after the last
+    assert mq["status"] == "ok" and [i["over"] for i in mq["cleared"]] == ["back within their usual at 22:30"]
 
 
 def test_every_user_has_a_tile_ok_with_what_was_checked():

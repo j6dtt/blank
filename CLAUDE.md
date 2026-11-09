@@ -248,9 +248,11 @@ unset `<REQUIRED>` base URLs.
   user per `RUN_EVERY`), `INV_PAD` before their first issue to now; its
   title is the tile's "Why", the page opens it without a re-run. Issues
   and the latest investigation: `<data>/care/<user>.json`, `KEEP_DAYS`
-  (usernames on disk, agreed). A slow issue clears (`cleared`) at the
-  first check back within their usual; a later rise is a new one (key
-  `slow <day> <n>`); events stay for the day. Every user has a tile:
+  (usernames on disk, agreed). A slow issue is a spell: over (`cleared`,
+  `ended`) after `QUIET` (1 h) with no Major action (the day's count alone
+  held it all day on stage) or back within their usual; a later spell is a
+  new issue (key `slow <day> <n>`), a late row within `QUIET` rejoins it;
+  events stay for the day. Every user has a tile:
   issue, then not seen in 8 days, then "✓ OK" (actions, Major, usual by
   now, cleared spells). Slow start-ups and alerts: step 2.
 - `chat.py`: "Ask about today", under the Today tab (`/api/chat`). The AI
