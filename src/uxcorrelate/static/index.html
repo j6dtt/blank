@@ -110,8 +110,6 @@
   .answer button.link { padding: 0; white-space: nowrap; }
   /* Care list: one tile per user with an issue today, the others as names */
   .tile .name { font: 700 18px/1.2 var(--serif); }
-  .careOk { margin-top: 12px; font-size: 12px; }
-  .careOk button { background: var(--bg); color: var(--accent); border: 1px solid var(--border); padding: 3px 10px; font-size: 12px; margin: 0 4px 4px 0; }
   #cDetailBody ul { margin: 4px 0 10px; padding-left: 18px; font-size: 13px; }
   #cDetailBody h3 { font-size: 14px; margin: 12px 0 4px; }
   /* names offered as you type (Username, Device) */
@@ -179,11 +177,11 @@
       <div class="todayHead"><h2>Care list</h2><span class="muted" id="cWhen"></span></div>
       <div class="muted" id="cStatus"></div>
       <div class="tiles" id="cTiles"></div>
-      <div class="careOk" id="cOk"></div>
       <ul class="muted notes" id="cNotes"></ul>
-      <p class="muted" style="font-size:12px;margin:8px 0 0">An issue: an event Aternity rates Critical or Major, or more
-        Major slow actions by this time of day than on any of their own days before. A new issue runs an
-        investigation by itself (one an hour per user). Click a tile or a name for more.</p>
+      <p class="muted" style="font-size:12px;margin:8px 0 0">An issue: an event Aternity rates Critical or Major (it stays
+        for the day), or more Major slow actions by this time of day than on any of their own days before (it clears
+        when they are back within that). A new issue runs an investigation by itself (one an hour per user). Click
+        a tile for more.</p>
     </section>
     <section class="panel" id="cDetail" hidden style="margin-top:16px">
       <div class="todayHead" style="justify-content:space-between"><h2 id="cDetailTitle"></h2>
@@ -501,6 +499,10 @@ async function loadCare() {
 }
 const pcText = (u) => u.pcs.length ? u.pcs.map((p) => p.device + (p.kind && p.kind !== "not known" ? ` (${p.kind})` : "")).join(", ")
   : "No PC in use today";
+// An OK tile's one line: what was measured today against their own usual
+const okText = (u) => !u.actions ? "No issue: not seen using a PC today."
+  : `No issue: ${n(u.actions)} actions today, ${n(u.major)} rated Major`
+    + (u.usual && u.usual.enough ? ` (usual by now: ${u.usual.low} to ${u.usual.high}).` : ".");
 const usualWords = (u) => !u ? "" : u.enough ? `their usual by this time: ${u.low} to ${u.high} (${u.days} ${u.kind} before)`
   : `their usual: ${u.days} of the 3 ${u.kind} needed so far`;
 function whyText(u) {
@@ -513,22 +515,23 @@ function renderCare(c) {
   $("cStatus").textContent = c.ready ? "" : `Waiting for Today's first read of Aternity (${c.status || "starting"}).`;
   $("cWhen").textContent = c.ready ? `${new Date(c.date + "T12:00:00Z").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}`
     + ` · as of ${c.as_of_local} · ${c.checked} ${c.checked === 1 ? "user" : "users"} checked every 15 min` : "";
-  const tiles = c.users.filter((u) => u.status !== "ok"), ok = c.users.filter((u) => u.status === "ok");
-  $("cTiles").innerHTML = tiles.map((u) => {
+  $("cTiles").innerHTML = c.users.map((u) => {
+    const ok = u.status === "ok";
     const head = u.status === "unknown" ? `<span class="sev" style="background:var(--muted)">not found</span>`
+      : ok ? `<span class="sev" style="background:var(--ok)">✓ OK</span>`
       : `<div>${sevTag(u.level)} <span class="muted" style="font-size:12px">since ${esc(u.since_local)}</span></div>`;
-    const lines = u.status === "unknown" ? [u.note] : u.issues.slice(0, 2).map((i) => i.text);
+    const lines = u.status === "unknown" ? [u.note] : ok ? [okText(u)] : u.issues.slice(0, 2).map((i) => i.text);
     const more = u.issues.length > 2 ? `<div class="u">+${u.issues.length - 2} more</div>` : "";
-    const why = whyText(u);
+    const gone = u.cleared.map((i) => `<div class="u">More Major slow actions than usual from ${esc(i.since_local)};`
+      + ` back within their usual at ${esc(i.cleared_local)}.</div>`).join("");
+    const why = ok ? (u.why && u.why.title ? `Earlier today: ${u.why.title}` : "") : whyText(u);
     const days = u.days.map((d, k) => ({ day: d.date, pcs: d.issues, window: k === u.days.length - 1 }));
     return `<div class="tile click" role="button" tabindex="0" data-user="${esc(u.username)}">${head}`
       + `<div class="name">${esc(u.title)}</div>${u.label ? `<div class="u">${esc(u.username)}</div>` : ""}`
-      + `<div class="u">${esc(pcText(u))}</div>` + lines.map((x) => `<div class="u"><b>${esc(x)}</b></div>`).join("") + more
+      + `<div class="u">${esc(pcText(u))}</div>` + lines.map((x) => `<div class="u"><b>${esc(x)}</b></div>`).join("") + more + gone
       + (why ? `<div class="u">${esc(why)}</div>` : "")
       + (u.status === "unknown" ? "" : spark(days, "issues", "Issues per day")) + `<div class="more">Show more ▸</div></div>`;
   }).join("");
-  $("cOk").innerHTML = ok.length ? `<span class="muted">No issue today: </span>`
-    + ok.map((u) => `<button type="button" data-user="${esc(u.username)}" title="${esc(u.username)}">${esc(u.title)}</button>`).join("") : "";
   $("cNotes").innerHTML = (c.notes || []).map((x) => `<li>${esc(x)}</li>`).join("");
 }
 let careUser = null;
@@ -544,19 +547,23 @@ async function openCare(username) {
     $("cDetailTitle").textContent = d.label ? `${d.label} (${d.username})` : d.username;
     const rep = d.report;
     let html = `<p>${esc(pcText(d))}. Today: ${n(d.actions)} actions measured, ${n(d.major)} rated Major; ${esc(usualWords(d.usual))}.</p>`;
-    html += `<h3>Today</h3>` + (d.issues.length ? `<ul>${d.issues.map((i) => `<li>${sevTag(i.level)} ${esc(i.text)}</li>`).join("")}</ul>` : `<p class="muted">No issue today.</p>`);
+    const today = d.issues.map((i) => `<li>${sevTag(i.level)} ${esc(i.text)}</li>`)
+      .concat(d.cleared.map((i) => `<li>${sevTag(i.level)} <span class="muted">Cleared at ${esc(i.cleared_local)}:</span> ${esc(i.text)}</li>`));
+    html += `<h3>Today</h3>` + (today.length ? `<ul>${today.join("")}</ul>` : `<p class="muted">No issue today.</p>`);
     html += `<h3>Investigation</h3>`;
     if (rep && rep.result) html += `<p><b>${esc(rep.title)}</b> ${esc(rep.reason || "")}<br><span class="muted">Ran by itself ${esc(rep.at_local)}, over ${esc(rep.span_local)}.</span></p>`
       + `<button type="button" id="cOpen">Open the investigation ▸</button> `;
     else if (rep && rep.error) html += `<p>The last one failed: ${esc(rep.error)}</p>`;
     else html += `<p class="muted">${esc(whyText(d) || "None yet: one runs by itself when an issue comes.")}</p>`;
     html += `<button type="button" class="link" id="cRun">Investigate again now ▸</button>`;
-    html += `<h3>Issues over ${d.days.length} days</h3>` + (d.history.length
-      ? `<ul>${d.history.map((i) => `<li>${esc(i.when_local)} ${sevTag(i.level)} ${esc(i.text)}</li>`).join("")}</ul>` : `<p class="muted">None.</p>`);
+    const before = d.history.filter((i) => i.day !== d.days[d.days.length - 1].date);  // today's are above
+    html += `<h3>The ${d.days.length - 1} days before</h3>` + (before.length
+      ? `<ul>${before.map((i) => `<li>${esc(i.when_local)} ${sevTag(i.level)} ${esc(i.text)}`
+        + `${i.cleared_local ? ` <span class="muted">(cleared at ${esc(i.cleared_local)})</span>` : ""}</li>`).join("")}</ul>` : `<p class="muted">None.</p>`);
     $("cDetailBody").innerHTML = html;
   } catch (e) { $("cDetailTitle").textContent = "Could not load: " + e.message; }
 }
-for (const id of ["cTiles", "cOk"]) {
+for (const id of ["cTiles"]) {
   $(id).addEventListener("click", (ev) => { const el = ev.target.closest("[data-user]"); if (el) openCare(el.dataset.user); });
   $(id).addEventListener("keydown", (ev) => {
     const el = ev.target.closest(".tile[data-user]");

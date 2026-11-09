@@ -8,9 +8,13 @@ is checked after each read of the Today reader, from rows already read:
   used a PC (their own usual: the same kind of day, USUAL_DAYS at most,
   MIN_USUAL needed; read from their last HISTORY_DAYS of activity, by
   username, once a day);
+- a slow-actions issue clears by itself at the first check where they are
+  back within their usual by that time of day (a later rise is a new one);
+  an event is a moment: it stays for the day;
 - a new issue runs an investigation of the user (one at a time, at most one
   per user each RUN_EVERY), from INV_PAD before their first issue today to
   now. Its headline is the tile's "Why"; the page opens the whole of it.
+Every user has a tile: issues first, then names not seen, then the rest.
 Each user's issues (KEEP_DAYS) and latest investigation are saved in
 <data>/care/<user>.json: usernames on disk (agreed 2026-11-09).
 """
@@ -143,15 +147,18 @@ class Care:
             if client is not None and (h is None or h["for"] != t):
                 self._read_history(client, u, now)
             found = self.issues_now(u, now)
-            new = self._merge(user, found, t)
+            new, cleared = self._merge(user, found, t, now)
             for issue in new:
                 log.info("Care list: new issue for %s: %s", self._who(u), issue["text"])
+            for issue in cleared:
+                log.info("Care list: %s is back within their usual: \"%s\" cleared", self._who(u),
+                         issue["text"])
             if new:
                 last = self.reports.get(user)
                 if user not in self.pending and self.running != user and (
                         last is None or now - _when(last["at"]) >= RUN_EVERY):
                     self.pending.append(user)
-            if new or found:
+            if new or found or cleared:
                 self.save(user)
         self.as_of = now
 
@@ -250,21 +257,35 @@ class Care:
             self.names.setdefault(user, major[0][2])
         return found
 
-    def _merge(self, user: str, found: list[dict], t: date) -> list[dict]:
-        """Today's issues into the user's list; the new ones."""
+    def _merge(self, user: str, found: list[dict], t: date, now: datetime) -> tuple[list, list]:
+        """Today's issues into the user's list: (the new ones, the slow ones that cleared)."""
         cut = (t - timedelta(days=KEEP_DAYS)).isoformat()
         with self.lock:
             mine = [i for i in self.issues.get(user, []) if i["day"] > cut]
             known = {i["key"]: i for i in mine}
-            new = []
+            new, cleared = [], []
+            slow = [i for i in mine if i["kind"] == "slow" and i["day"] == t.isoformat()]
+            last = slow[-1] if slow else None
+            now_slow = next((f for f in found if f["kind"] == "slow"), None)
+            if now_slow and last is not None and not last.get("cleared"):
+                last.update(text=now_slow["text"])
+            elif now_slow:  # the first today, or a new rise after one cleared
+                now_slow["key"] = f"slow {t} {len(slow) + 1}"
+                mine.append(now_slow)
+                new.append(now_slow)
+            elif last is not None and not last.get("cleared"):
+                last["cleared"] = _iso(now)
+                cleared.append(last)
             for f in found:
+                if f["kind"] == "slow":
+                    continue
                 if f["key"] in known:
                     known[f["key"]].update(text=f["text"], level=f["level"])
                 else:
                     mine.append(f)
                     new.append(f)
             self.issues[user] = mine
-        return new
+        return new, cleared
 
     # -- investigations ---------------------------------------------------------
     def run_next(self, investigate, now: datetime) -> str | None:
@@ -316,7 +337,8 @@ class Care:
             tiles.append(self.tile(u, now))
         issue = sorted((x for x in tiles if x["status"] == "issue"),
                        key=lambda x: (rank.get(x["level"], 9), -_when(x["since"]).timestamp()))
-        other = sorted((x for x in tiles if x["status"] != "issue"), key=lambda x: (x["title"].lower()))
+        other = sorted((x for x in tiles if x["status"] != "issue"),
+                       key=lambda x: (x["status"] != "unknown", x["title"].lower()))  # names not seen first
         notes = list(self.notes.values())
         if self.skipped:
             notes.append(f"care_list has {len(self.users) + self.skipped} users: the first {CARE_MAX} are checked, "
@@ -341,12 +363,16 @@ class Care:
         with self.lock:
             issues = [dict(i) for i in self.issues.get(user, [])]
             report = self.reports.get(user)
-        mine = [i for i in issues if i["day"] == t.isoformat()]
+        today_all = [i for i in issues if i["day"] == t.isoformat()]
+        mine = [i for i in today_all if not i.get("cleared")]
+        cleared = [dict(i, cleared_local=today.local(_when(i["cleared"])).strftime("%H:%M"),
+                        since_local=today.local(_when(i["since"])).strftime("%H:%M"))
+                   for i in today_all if i.get("cleared")]
         rank = {s: i for i, s in enumerate(SEVERITY_ORDER)}
         h = self.history.get(user)
         status = "issue" if mine else "ok"
         note = None
-        if not mine and h is not None and not h["rows"] and not actions:
+        if not today_all and h is not None and not h["rows"] and not actions:
             status, note = "unknown", f"Not seen in Aternity's activity in {HISTORY_DAYS} days: check the name in " \
                                       "care_list in config.yaml."
         days = []
@@ -365,6 +391,7 @@ class Care:
                 "since_local": today.local(_when(min(i["since"] for i in mine))).strftime("%H:%M") if mine else None,
                 "pcs": [{"device": d, "kind": kinds.get(d)} for d in pcs], "actions": actions, "major": major,
                 "usual": self.usual(user, now), "issues": sorted(mine, key=lambda i: i["since"]),
+                "cleared": cleared,
                 "days": days, "why": why, "investigating": "now" if self.running == user else
                 "waiting" if waiting else None}
 
@@ -379,6 +406,8 @@ class Care:
             report = self.reports.get(user)
         for i in issues:
             i["when_local"] = self.today.local(_when(i["since"])).strftime("%a %b %d %H:%M")
+            if i.get("cleared"):
+                i["cleared_local"] = self.today.local(_when(i["cleared"])).strftime("%H:%M")
         if report:
             local = lambda k: self.today.local(_when(report[k]))  # noqa: E731
             report = dict(report, at_local=local("at").strftime("%b %d %H:%M"),

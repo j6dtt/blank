@@ -143,13 +143,17 @@ first start).
 Care list tab (second): users named under `care_list` in config.yaml (up
 to 50, read every 15 minutes, no restart), each checked every 15 minutes.
 An issue is an event Aternity rates Critical or Major, or more Major slow
-actions by this time of day than on any of the user's own days before. A
-user with an issue today gets a tile (Critical first); a new issue runs an
-investigation by itself (at most one an hour per user) and its headline is
-the tile's "Why". The others are listed by name under the tiles. Click a
-tile or a name: today's issues, the investigation ("Open the investigation
-▸" shows it on the Investigate tab without running it again; "Investigate
-again now ▸" runs a new one) and the issues of the last 8 days. The tab's
+actions by this time of day than on any of the user's own days before.
+An event stays for the day; slow actions clear by themselves once the user
+is back within their usual by that time of day. Every user has a tile:
+those with an issue first (Critical first), then names not seen in 8 days,
+then green "✓ OK" tiles (actions today, how many Major, their usual by
+now, and any slow spell that cleared). A new issue runs an investigation
+by itself (at most one an hour per user) and its headline is the tile's
+"Why". Click a tile: today's issues, the investigation ("Open the
+investigation ▸" shows it on the Investigate tab without running it again;
+"Investigate again now ▸" runs a new one) and the issues of the 7 days
+before. The tab's
 red count is the users with an issue now; `…/#care` opens the tab.
 Issues are kept 8 days in `./data/care` (with usernames).
 

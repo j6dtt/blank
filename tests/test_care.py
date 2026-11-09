@@ -170,6 +170,39 @@ def test_the_investigation_runs_once_an_hour_and_its_headline_is_the_why():
     assert [i["kind"] for i in detail["history"]] == ["event", "slow"]  # newest first
 
 
+def test_a_slow_issue_clears_when_they_are_back_within_their_usual_and_a_new_rise_is_a_new_issue():
+    care = Care(today_with(3), lambda: USERS[:1])
+    care.check(client(), NOW)
+    care.run_next(lambda u, s, e: {"answer": {"title": "Mail was slow on VD-7"}}, NOW)
+    # 22:30 in Chicago: their days before had one more Major at 22:00, so 3 is now within 1 to 3
+    late = NOW + 8 * HOUR
+    care.check(client(), late)
+    mq = care.view(late)["users"][0]
+    assert (mq["status"], mq["issues"], mq["level"]) == ("ok", [], None)
+    assert [(i["cleared_local"], i["text"][:25]) for i in mq["cleared"]] == [("22:30", "3 Major slow actions by 1")]
+    assert mq["why"]["title"] == "Mail was slow on VD-7"  # the investigation of the day stays
+    assert care.detail("mq2208", late)["history"][0]["cleared_local"] == "22:30"
+    care.check(client(), late)  # still within: cleared once
+    assert len(care.issues["mq2208"]) == 1
+    # one more Major at 22:20: more than on any day before again, a second issue that day
+    ten = care.today.midnight(date(2026, 11, 9)) + 22 * HOUR
+    care.today.add_hour(ten, [act(ten + timedelta(minutes=20), "MQ2208", "VD-7", "Major")], F, late)
+    care.check(client(), late)
+    slow = care.issues["mq2208"]
+    assert [i.get("cleared") is None for i in slow] == [False, True] and slow[1]["key"].endswith(" 2")
+    assert care.view(late)["users"][0]["status"] == "issue" and care.pending == ["mq2208"]  # 8 h after the last
+
+
+def test_every_user_has_a_tile_ok_with_what_was_checked():
+    care = Care(today_with(2), lambda: USERS[:2])
+    care.check(client(), NOW)
+    v = care.view(NOW)
+    assert [(u["title"], u["status"]) for u in v["users"]] == [("Payroll lead", "ok"), ("tz9013", "ok")]
+    mq = v["users"][0]
+    assert (mq["actions"], mq["major"], mq["usual"]["low"], mq["usual"]["high"]) == (3, 2, 0, 2)
+    assert mq["cleared"] == [] and mq["pcs"] == [{"device": "VD-7", "kind": "virtual"}]
+
+
 def test_a_failed_investigation_is_said():
     care = Care(today_with(3), lambda: USERS[:1])
     care.check(client(), NOW)
