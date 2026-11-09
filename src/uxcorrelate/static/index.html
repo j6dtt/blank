@@ -88,6 +88,12 @@
   .sev { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; color: #fff; justify-self: start; }
   .hbar { height: 10px; border-radius: 0 3px 3px 0; min-width: 2px; }
   .notes { margin: 10px 0 0; padding-left: 18px; font-size: 12px; }
+  .tile.click { cursor: pointer; }
+  .tile.click:hover, .tile.click:focus-visible { border-color: var(--brass); }
+  .tile .more { font-size: 12px; color: var(--accent); font-weight: 600; }
+  #tWho .todayHead { justify-content: space-between; }
+  #tWhoList td { vertical-align: middle; }
+  #tWhoList button.link { padding: 0; white-space: nowrap; }
   #tEvents td, #tApps td { vertical-align: middle; }
   /* names offered as you type (Username, Device) */
   label.pick { position: relative; }
@@ -118,13 +124,21 @@
       <section class="panel"><h2 id="tHoursTitle">Major slow actions per hour</h2><div id="tHours"></div>
         <div class="legend" id="tHoursLegend"></div></section>
       <section class="panel"><h2 id="tAppsTitle">Applications with the most Major slow actions</h2>
-        <div class="tableWrap"><table id="tApps"></table></div></section>
+        <div class="tableWrap"><table id="tApps"></table></div>
+        <p class="muted" style="font-size:12px;margin:6px 0 0">Click a row for its users and PCs.</p></section>
     </div>
+    <section class="panel" id="tWho" hidden style="margin-top:16px">
+      <div class="todayHead"><h2 id="tWhoTitle"></h2><button type="button" class="link" id="tWhoClose">✕ Close</button></div>
+      <div class="tableWrap scroll"><table id="tWhoList"></table></div>
+      <p class="muted" style="font-size:12px;margin:6px 0 0">Investigate ▸ opens the Investigate tab and runs it at once for that
+        user and PC, from 30 min before their first one to 30 min after the last (an hour around an event).
+        Times are <span id="tWhoZone"></span>.</p>
+    </section>
     <section class="panel" id="tEventsBox" style="margin-top:16px">
       <h2>Other crashes and events on the most PCs today</h2>
       <div class="tableWrap"><table id="tEvents"></table></div>
       <p class="muted" style="font-size:12px;margin:6px 0 0">Severity is Aternity's own. Bars: PCs per day over the
-        7 days before; green is today so far. Hover a bar for its day.</p>
+        7 days before; green is today so far. Hover a bar for its day. Click a row for its users and PCs.</p>
     </section>
   </div>
   <section class="panel" id="invForm" hidden>
@@ -320,13 +334,14 @@ function renderToday(t) {
   const s = t.slow;
   const tiles = t.none.map((sev) => `<div class="tile">${sevTag(sev)}<div class="big">0</div><div class="what">No ${esc(sev)} crash or event</div>`
       + `<div class="u">Aternity rated none ${esc(sev)} today.</div></div>`)
-    .concat(t.tiles.map((e) => `<div class="tile">${sevTag(e.severity)}<div class="big">${pcs(e.pcs)}</div>`
+    .concat(t.tiles.map((e) => `<div class="tile click" role="button" tabindex="0" data-kind="event" data-name="${esc(e.name)}" data-category="${esc(e.category)}">${sevTag(e.severity)}<div class="big">${pcs(e.pcs)}</div>`
       + `<div class="what">${esc(e.name)} <span class="muted">(${esc(e.category)})</span></div>`
-      + `<div class="u">${usualText(e.usual, t.kind)}</div>${eventSpark(e, t.date)}</div>`))
-    .concat([`<div class="tile">${sevTag(s.status)}<div class="big">${pcs(s.pcs)}</div>`
+      + `<div class="u">${usualText(e.usual, t.kind)}</div>${eventSpark(e, t.date)}<div class="more">Show who ▸</div></div>`))
+    .concat([`<div class="tile${s.pcs ? ` click" role="button" tabindex="0" data-kind="slow` : ""}">${sevTag(s.status)}<div class="big">${pcs(s.pcs)}</div>`
       + `<div class="what">${esc(s.status)} slow actions</div>`
       + `<div class="u">${n(s.actions)} actions, ${n(s.users)} users; ${n(s.active_pcs)} PCs active today.</div>`
-      + `<div class="u">${s.by ? usualText(s.usual, t.kind, s.by, s.by_pcs) : "Compared after the first hour of the day."}</div></div>`]);
+      + `<div class="u">${s.by ? usualText(s.usual, t.kind, s.by, s.by_pcs) : "Compared after the first hour of the day."}</div>`
+      + `${s.pcs ? `<div class="more">Show who ▸</div>` : ""}</div>`]);
   $("tTiles").innerHTML = tiles.join("");
   $("tNotes").innerHTML = t.notes.map((x) => `<li>${esc(x)}</li>`).join("");
 
@@ -341,7 +356,7 @@ function renderToday(t) {
   const top = Math.max(1, ...t.applications.map((a) => a.actions));
   $("tApps").innerHTML = t.applications.length
     ? `<tr><th>Application</th><th>${esc(s.status)} slow actions</th><th class="num">PCs</th></tr>` + t.applications.map((a) =>
-      `<tr><td>${esc(a.application)}</td><td><div style="display:flex;align-items:center;gap:6px">`
+      `<tr class="click" tabindex="0" data-kind="app" data-name="${esc(a.application)}"><td>${esc(a.application)}</td><td><div style="display:flex;align-items:center;gap:6px">`
       + `<div class="hbar" style="background:var(--warn);width:${Math.max(1, a.actions / top * 100) * 0.7}%" title="${n(a.actions)} of ${n(a.runs)} actions"></div>`
       + `<span class="num">${n(a.actions)} <span class="muted">of ${n(a.runs)}</span></span></div></td><td class="num">${n(a.pcs)}</td></tr>`).join("")
     : `<tr><td class="muted">No ${esc(s.status)} slow action today.</td></tr>`;
@@ -351,11 +366,63 @@ function renderToday(t) {
   const most = Math.max(1, ...others.map((e) => e.pcs));
   $("tEvents").innerHTML = others.length
     ? `<tr><th>Severity</th><th>Crash or event</th><th>PCs today</th><th>Usual</th><th>7 days before</th></tr>` + others.map((e) =>
-      `<tr><td>${sevTag(e.severity)}</td><td>${esc(e.name)} <span class="muted">(${esc(e.category)})</span></td>`
+      `<tr class="click" tabindex="0" data-kind="event" data-name="${esc(e.name)}" data-category="${esc(e.category)}"><td>${sevTag(e.severity)}</td><td>${esc(e.name)} <span class="muted">(${esc(e.category)})</span></td>`
       + `<td><div style="display:flex;align-items:center;gap:6px"><div class="hbar" style="background:${SEV[e.severity] || "var(--muted)"};width:${Math.max(1, e.pcs / most * 100) * 0.6}px"></div>`
       + `<span class="num">${n(e.pcs)}</span></div></td><td class="muted" style="font-size:12px">${usualText(e.usual, t.kind)}</td><td>${eventSpark(e, t.date)}</td></tr>`).join("")
     : `<tr><td class="muted">No other crash or event today.</td></tr>`;
 }
+
+// ---- Today: a tile or a row → the users and PCs behind it → Investigate runs at once ----
+let todayWho = null;
+async function openTodayWho(el) {
+  const box = $("tWho"), q = { kind: el.dataset.kind, name: el.dataset.name || "", category: el.dataset.category || "" };
+  // the list opens under what was clicked: the tiles, the charts or the events
+  (el.closest("#tTiles") ? el.closest(".panel") : el.closest("#tCharts") || el.closest(".panel")).after(box);
+  box.hidden = false;
+  $("tWhoTitle").textContent = "Loading…";
+  $("tWhoList").innerHTML = "";
+  box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  try {
+    const r = await fetch(`api/today/who?${new URLSearchParams(q)}`);
+    const w = await r.json();
+    if (!r.ok) throw new Error(w.detail || `HTTP ${r.status}`);
+    todayWho = w;
+    renderTodayWho(w);
+  } catch (e) { $("tWhoTitle").textContent = "Could not load the list: " + e.message; }
+}
+function renderTodayWho(w) {
+  const shown = w.total > w.rows.length ? ` (the ${w.rows.length} with the most shown)` : "";
+  $("tWhoZone").textContent = w.zone;
+  $("tWhoTitle").textContent = `${w.what} today: ${pcs(w.pcs)}, ${n(w.users)} ${w.users === 1 ? "user" : "users"}${shown}`;
+  const event = w.kind === "event";
+  $("tWhoList").innerHTML = w.rows.length
+    ? `<tr><th></th><th>User</th><th>PC</th><th>${event ? "Times" : "Major slow"}</th>${event ? "" : "<th>Slowest</th>"}<th>When</th></tr>`
+      + w.rows.map((r, i) => `<tr><td><button type="button" class="link" data-i="${i}">Investigate ▸</button></td><td>${esc(r.username ?? "—")}</td><td>${esc(r.device)}</td><td class="num">${n(r.count)}</td>`
+        + (event ? "" : `<td>${w.application ? "" : esc(r.application) + (r.activity ? ", " : "")}${esc(r.activity ?? "")}`
+          + `${r.seconds !== null && r.seconds !== undefined ? ` <b>${r.seconds.toFixed(1)} s</b>` : ""}</td>`)
+        + `<td>${r.first === r.last ? esc(r.first) : `${esc(r.first)}–${esc(r.last)}`}</td></tr>`).join("")
+    : `<tr><td class="muted">Nobody: it may have just left today's counts. Reload the page.</td></tr>`;
+}
+for (const id of ["tTiles", "tApps", "tEvents"]) {
+  $(id).addEventListener("click", (ev) => { const el = ev.target.closest("[data-kind]"); if (el) openTodayWho(el); });
+  $(id).addEventListener("keydown", (ev) => {
+    const el = ev.target.closest("[data-kind]");
+    if (el && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); openTodayWho(el); }
+  });
+}
+$("tWhoClose").addEventListener("click", () => { $("tWho").hidden = true; });
+$("tWhoList").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-i]");
+  if (!b || !todayWho) return;
+  const r = todayWho.rows[Number(b.dataset.i)], f = $("f");
+  f.username.value = r.username || "";
+  f.device.value = r.device || "";
+  f.application.value = todayWho.application || "";
+  f.start.value = toLocalInput(new Date(r.start));
+  f.end.value = toLocalInput(new Date(r.end));
+  mode("inv");
+  f.requestSubmit();  // runs it at once, as the Investigate button would
+});
 
 // One bar per hour of the day (24 slots), the usual as a line across each slot.
 function hoursChart(hours, status) {

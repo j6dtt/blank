@@ -190,9 +190,11 @@ def test_the_reader_fills_today_and_the_name_list_then_waits(tmp_path):
         keep_reading(t, names, lambda: AternityClient(cfg, transport=httpx.MockTransport(handler)),
                      lambda s: (_ for _ in ()).throw(Stop()), clock=lambda: NOW)
     acts = [x for x in seen if x[0] == "BUSINESS_ACTIVITIES_RAW"]
-    assert len(acts) == 25 and acts[0][1] == "TIMEFRAME,USERNAME,DEVICE_NAME,APPLICATION_NAME,SLA_STATUS"
+    assert len(acts) == 25 and acts[0][1] == ("TIMEFRAME,USERNAME,DEVICE_NAME,APPLICATION_NAME,SLA_STATUS,"
+                                              "ACTIVITY_NAME,ACTIVITY_RESPONSE_TIME")
     assert acts[0][2] == "TIMEFRAME ge 2026-11-09T20:00:00Z and TIMEFRAME lt 2026-11-09T21:00:00Z"  # newest first
     health = [x for x in seen if x[0] == "DEVICE_HEALTH_RAW"]
+    assert "USERNAME" in health[0][1].split(",")
     assert len(health) == 15 and health[-1][2].endswith("lt 2026-11-09T20:30:00Z")  # 14 days before, then today
     v = t.view(NOW)
     assert v["ready"] and v["slow"]["pcs"] == 1 and v["tiles"][0]["name"] == "System Crash"
@@ -206,9 +208,61 @@ def test_not_set_and_still_reading_are_said():
     assert "Aternity is not set" in t.off
 
 
+def test_who_lists_the_users_and_pcs_behind_a_tile_or_a_row_with_a_span_to_investigate():
+    t = Today(ZONE)
+    nine = t.midnight(date(2026, 11, 9)) + 9 * HOUR  # 15:00 UTC
+    G = dict(F, activity="ACTIVITY_NAME", response_time="ACTIVITY_RESPONSE_TIME")
+
+    def run(minute, pc, app, secs, user=None, status="Major"):
+        return dict(act(pc, status, app, user), TIMEFRAME=(nine + timedelta(minutes=minute)).isoformat(),
+                    ACTIVITY_NAME="Open", ACTIVITY_RESPONSE_TIME=secs)
+    t.add_hour(nine, [run(5, "PC1", "ERP", 12.0), run(40, "PC1", "ERP", 30.5), run(20, "PC1", "Mail", 9.0),
+                      run(10, "PC2", "ERP", 50.0), run(15, "PC3", "ERP", 3.0, status="Minor")], G, NOW)
+    t.add_hour(nine + 5 * HOUR, [run(5 * 60 + 25, "PC4", "Mail", 4.0)], G, NOW)  # 14:25, 5 min before NOW
+    t.set_health([ev(nine, "PC1", "Application Crash", "Major") | {"USERNAME": "u-PC1"},
+                  ev(nine + HOUR, "PC1", "Application Crash", "Major") | {"USERNAME": "u-PC1"},
+                  ev(nine, "PC9", "Application Crash", "Major"),  # no user: still listed by its PC
+                  ev(nine, "PC2", "Low Memory", "Minor", "System")], dict(H, username="USERNAME"), today=True)
+
+    slow = t.who(NOW, "slow")
+    assert (slow["what"], slow["total"], slow["pcs"], slow["users"]) == ("Major slow actions", 3, 3, 3)
+    pc1 = slow["rows"][0]  # most slow actions first; Minor is not counted
+    assert (pc1["device"], pc1["username"], pc1["count"]) == ("PC1", "u-PC1", 3)
+    assert (pc1["application"], pc1["activity"], pc1["seconds"]) == ("ERP", "Open", 30.5)  # its slowest
+    assert (pc1["first"], pc1["last"]) == ("09:05", "09:40")  # Chicago time
+    assert (pc1["start"], pc1["end"]) == ("2026-11-09T14:35:00Z", "2026-11-09T16:10:00Z")  # 30 min each side
+    assert [r["device"] for r in slow["rows"]] == ["PC1", "PC2", "PC4"]  # then the slowest
+    assert slow["rows"][2]["end"] == "2026-11-09T20:30:00Z"  # never after now
+
+    erp = t.who(NOW, "app", "ERP")
+    assert erp["application"] == "ERP" and [(r["device"], r["count"]) for r in erp["rows"]] == [("PC1", 2), ("PC2", 1)]
+    assert t.who(NOW, "app", "Nothing")["rows"] == []
+    t.add_hour(nine + HOUR, [run(65, "PC5", None, 8.0)], G, NOW)
+    none = t.who(NOW, "app", "(no application)")
+    assert [r["device"] for r in none["rows"]] == ["PC5"] and none["application"] is None  # not put in the form
+
+    crash = t.who(NOW, "event", "Application Crash", "Application")
+    assert crash["what"] == "Application Crash (Application)" and crash["application"] is None
+    assert [(r["device"], r["username"], r["count"]) for r in crash["rows"]] == [("PC1", "u-PC1", 2), ("PC9", None, 1)]
+    assert (crash["rows"][0]["start"], crash["rows"][0]["end"]) == ("2026-11-09T14:00:00Z", "2026-11-09T17:00:00Z")
+    assert "seconds" not in crash["rows"][0]  # events have no time taken
+    assert t.who(NOW, "event", "Application Crash", "System")["rows"] == []  # the category counts too
+
+
+def test_who_shows_at_most_the_limit_but_counts_them_all():
+    t = Today(ZONE)
+    nine = t.midnight(date(2026, 11, 9)) + 9 * HOUR
+    t.add_hour(nine, [act(f"PC{i}", "Major") for i in range(70)], F, NOW)
+    w = t.who(NOW, "slow")
+    assert (w["total"], w["pcs"], len(w["rows"])) == (70, 70, 50)
+    assert w["rows"][0]["first"] == "09:00"  # no time in the row: the hour's start
+
+
 def test_the_endpoint():
     app = web.create_app()
     http = TestClient(app)  # not started: no background read in tests
     assert http.get("/api/today").json()["ready"] is False
     app.state.today.ready = True
     assert http.get("/api/today").json()["ready"] is True
+    assert http.get("/api/today/who", params={"kind": "slow"}).json()["rows"] == []
+    assert http.get("/api/today/who", params={"kind": "nope"}).status_code == 400

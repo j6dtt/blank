@@ -228,7 +228,12 @@ unset `<REQUIRED>` base URLs.
   every 15 min, the 14 days before once a day. Activity is kept ~8 days, so
   each finished day's counts are saved in `$UXCORRELATE_DATA/days/<date>.json`
   (`./data`, writable by uid 1000; counts and app names, no user or PC);
-  only complete days count as usual. The chat under it is not built yet.
+  only complete days count as usual. A tile or row opens who is behind it
+  (`/api/today/who`, `Today.who`: user + PC, most first, `WHO` at most,
+  from the reader's own rows: Major actions with activity and time, health
+  events with username); its Investigate ▸ runs an investigation of that
+  user + PC (`SLOW_PAD` / `EVENT_PAD` around their first and last). The
+  chat under it is not built yet.
 - `ai.py`: client for the self-hosted AI services (`ai.services` in
   config.yaml, key from the env var named in `key_env`) the chat will
   use; the chat is not built yet. The AI never reads Aternity or counts:

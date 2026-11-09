@@ -119,6 +119,13 @@ def create_app(config_path: str | None = None) -> FastAPI:
     def today_view():
         return today.view(datetime.now(timezone.utc))
 
+    @app.get("/api/today/who")
+    def today_who(kind: str, name: str = "", category: str = ""):
+        """The users and PCs behind a tile or a row of the Today tab."""
+        if kind not in ("slow", "app", "event"):
+            raise HTTPException(400, "kind must be slow, app or event")
+        return today.who(datetime.now(timezone.utc), kind, name, category)
+
     @app.get("/api/names")
     def name_matches(kind: str, q: str = ""):
         if kind not in KINDS:

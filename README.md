@@ -119,8 +119,15 @@ in `timezone` (config.yaml). Tiles for crashes and events Aternity rates
 Critical or Major and for its Major slow actions, each against the same
 kind of day before ("More than usual", "As usual", "Fewer than usual");
 Major slow actions per hour and per application; other crashes and events
-on the most PCs, each with its 7 days before. It updates every 15 minutes.
-The usual for actions builds up over the first week from the counts saved
+on the most PCs, each with its 7 days before. It updates every 15 minutes
+(the open tab fetches every 5).
+Click a tile ("Show who"), an application row or an event row for the
+users and PCs behind it, most first (50 at most): a slow action list
+gives each one's slowest action, an event list how many times. Their
+"Investigate ▸" opens the Investigate tab and runs it at once for that
+user and PC, from 30 minutes before their first one to 30 minutes after
+the last (an hour each side for events; for an application, only that
+application). The usual for actions builds up over the first week from the counts saved
 in `./data` each night (`mkdir -p data && chmod a+rwx data` before the
 first start).
 

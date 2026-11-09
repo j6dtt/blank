@@ -38,7 +38,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from .aternity import odata_time
 from .config import SEVERITY_ORDER, TILE_SEVERITIES, TOP_STATUS
 from .http import short_error
-from .models import parse_time
+from .models import parse_time, to_float
 
 log = logging.getLogger("uxcorrelate")
 REFRESH_MIN = 15
@@ -49,7 +49,11 @@ USUAL_DAYS = 5  # days of the same kind compared with
 MIN_USUAL = 3  # days needed to say what is usual
 KEEP_FILES_DAYS = 60
 TOP = 10  # rows in each chart
+WHO = 50  # rows in a list opened by a click
+SLOW_PAD = timedelta(minutes=30)  # Investigate: from 30 min before a user's first Major action to 30 min after the last
+NO_APP = "(no application)"
 HOUR = timedelta(hours=1)
+EVENT_PAD = HOUR  # and an hour around an event
 LATE = timedelta(minutes=LATE_MIN)
 
 
@@ -95,6 +99,7 @@ class Hour:
     top_devs: set = field(default_factory=set)
     top_users: set = field(default_factory=set)
     devs: set = field(default_factory=set)
+    top_rows: list = field(default_factory=list)  # (time, PC, user, app, activity, seconds) of TOP_STATUS actions
     read_at: datetime | None = None
     partial: bool = False
     final: bool = False  # read LATE_MIN or more after it ended
@@ -106,7 +111,7 @@ class Today:
         self.store = Path(store) / "days" if store else None
         self.hours: dict[datetime, Hour] = {}
         self.saved: dict[date, dict] = {}  # summaries of past days, from the files
-        self.health: list[tuple] = []  # today's: (time, device, kind, severity)
+        self.health: list[tuple] = []  # today's: (time, device, kind, severity, user)
         self.health_days: dict[date, dict] = {}  # day -> kind -> {device: first second of the day}
         self.health_sev: dict = {}  # kind -> Aternity's severity
         self.health_for: date | None = None  # the day the days before were read for
@@ -147,7 +152,7 @@ class Today:
                  read_at=read_at, partial=partial, final=read_at >= start + HOUR + LATE)
         for r in rows:
             status, dev, user = r.get(f["status"]), r.get(f["device"]), r.get(f["username"])
-            app = r.get(f["application"]) or "(no application)"
+            app = r.get(f["application"]) or NO_APP
             h.status[str(status) if status is not None else "(none)"] += 1
             if dev:
                 h.devs.add(dev)
@@ -155,6 +160,9 @@ class Today:
             runs["runs"] += 1
             if status == TOP_STATUS:
                 runs[TOP_STATUS] += 1
+                if dev:  # its own time; the hour's start if it has none, so the list matches the counts
+                    h.top_rows.append((parse_time(r.get(f["timestamp"])) or start, dev, user, app,
+                                       r.get(f.get("activity", "")), to_float(r.get(f.get("response_time", "")))))
                 if dev:
                     h.top_devs.add(dev)
                     h.app_devs.setdefault(app, set()).add(dev)
@@ -276,7 +284,7 @@ class Today:
             sev = r.get(f["severity"])
             if sev:
                 sevs.setdefault(kind, Counter())[sev] += 1
-            parsed.append((t, dev, kind, sev))
+            parsed.append((t, dev, kind, sev, r.get(f["username"]) if f.get("username") else None))
             secs = (t - self.midnight(self.day(t))).total_seconds()
             first = days.setdefault(self.day(t), {}).setdefault(kind, {})
             first[dev] = min(first.get(dev, secs), secs)
@@ -347,7 +355,7 @@ class Today:
 
         # health events, by kind
         pcs: dict = {}
-        for _, dev, k, _ in health:
+        for _, dev, k, _, _ in health:
             pcs.setdefault(k, set()).add(dev)
         before = sorted((d for d in health_days if d < t and kind_of(d) == kind), reverse=True)[:USUAL_DAYS]
         week = [t - timedelta(days=n) for n in range(7, 0, -1)]
@@ -379,6 +387,41 @@ class Today:
                 "none": none, "hours": per_hour, "applications": app_rows, "events": events,
                 "health_days": len(before), "notes": notes, "refresh_minutes": REFRESH_MIN}
 
+    def who(self, now: datetime, kind: str, name: str = "", category: str = "") -> dict:
+        """The users and PCs behind a tile or a row (kind: "slow", "app" or "event"), with
+        the time span to investigate. Most first, WHO at most."""
+        t = self.day(now)
+        with self.lock:
+            if kind == "event":
+                rows = [(x[0], x[1], x[4]) for x in self.health
+                        if self.day(x[0]) == t and x[2] == (category, name)]
+            else:
+                rows = [r for h in self.hours.values() if h.day == t for r in h.top_rows
+                        if kind == "slow" or r[3] == name]
+        groups: dict = {}
+        for r in rows:
+            groups.setdefault((r[2] or None, r[1]), []).append(r)
+        pad = EVENT_PAD if kind == "event" else SLOW_PAD
+        out = []
+        for (user, pc), rs in groups.items():
+            rs.sort(key=lambda r: r[0])
+            first, last = rs[0][0], rs[-1][0]
+            row = {"username": user, "device": pc, "count": len(rs),
+                   "first": self.local(first).strftime("%H:%M"), "last": self.local(last).strftime("%H:%M"),
+                   "start": (first - pad).isoformat().replace("+00:00", "Z"),
+                   "end": min(last + pad, now).replace(microsecond=0).isoformat().replace("+00:00", "Z")}
+            if kind != "event":
+                worst = max(rs, key=lambda r: r[5] if r[5] is not None else -1)
+                row.update(application=worst[3], activity=worst[4], seconds=worst[5])
+            out.append(row)
+        out.sort(key=lambda r: (-r["count"], -(r.get("seconds") or 0), r["last"]))
+        what = (f"{name} ({category})" if kind == "event" else
+                f"{TOP_STATUS} slow actions" + (f" in {name}" if kind == "app" else ""))
+        return {"kind": kind, "what": what, "application": name if kind == "app" and name != NO_APP else None,
+                "total": len(out), "pcs": len({r["device"] for r in out}),
+                "users": len({r["username"] for r in out if r["username"]}), "rows": out[:WHO],
+                "zone": self.zone_label}
+
 
 # -- the background reader ---------------------------------------------------
 def _read_hour(today: Today, names, client, start: datetime, now: datetime) -> None:
@@ -387,7 +430,8 @@ def _read_hour(today: Today, names, client, start: datetime, now: datetime) -> N
     mark = len(client.warnings)
     try:
         rows = client.query(entity, f"{ts} ge {odata_time(start)} and {ts} lt {odata_time(start + HOUR)}",
-                            select=[f[k] for k in ("timestamp", "username", "device", "application", "status")])
+                            select=[f[k] for k in ("timestamp", "username", "device", "application", "status",
+                                                   "activity", "response_time") if f.get(k)])
     except Exception as exc:  # Aternity down: the next read tries again
         today.note("activity", f"Aternity activity could not be read ({short_error(exc)}); trying again in "
                                f"{REFRESH_MIN} min.")
@@ -409,7 +453,8 @@ def _read_hour(today: Today, names, client, start: datetime, now: datetime) -> N
 
 def _read_health(today: Today, client, now: datetime) -> None:
     entity, f = client.cfg.entities["health_events"], client.cfg.fields["health_events"]
-    ts, cols = f["timestamp"], [f[k] for k in ("timestamp", "device", "category", "name", "severity")]
+    ts, cols = f["timestamp"], [f[k] for k in ("timestamp", "device", "category", "name", "severity", "username")
+                                if f.get(k)]
     t = today.day(now)
     spans = []
     if today.health_for != t:  # the days before, once a day
