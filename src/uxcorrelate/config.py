@@ -285,6 +285,25 @@ class NetimConfig:
 
 
 @dataclass
+class AiService:
+    """One self-hosted AI service for the chat (OpenAI-style chat API)."""
+    name: str = ""       # your label for it
+    base_url: str = ""   # up to and including /v1 (the part before /chat/completions)
+    model: str = ""      # the model's name on that service
+    key_env: str = "AI_API_KEY"  # the .env line that holds its key (the key itself never goes in config.yaml)
+    login: str = ""      # "bearer" or "api-key"; empty: verify finds which one the service takes
+    chat_path: str = "/chat/completions"
+    models_path: str = "/models"
+    query: dict[str, str] = field(default_factory=dict)  # extra URL values, e.g. an api-version
+    timeout: float = 120.0
+
+
+@dataclass
+class AiConfig:
+    services: list[AiService] = field(default_factory=list)
+
+
+@dataclass
 class Thresholds:
     # An activity is slow when Aternity's own status for it (SLA_STATUS) is one
     # of these values. `uxcorrelate verify` lists the values your tenant uses.
@@ -319,6 +338,7 @@ class Settings:
     netim: NetimConfig = field(default_factory=NetimConfig)
     thresholds: Thresholds = field(default_factory=Thresholds)
     topology: Topology = field(default_factory=Topology)
+    ai: AiConfig = field(default_factory=AiConfig)
     # a problem counts for a slow action recorded up to this many minutes before or after it
     bucket_minutes: int = 5
     # unit of WINDOWS_MACHINE_BOOTS durations, shown next to them
@@ -356,6 +376,10 @@ def load_settings(path: str | os.PathLike | None = None) -> Settings:
             settings.boot_unit = str(raw["boot_unit"])
         if metrics is not None:
             settings.netim.metrics = [NetimMetric(**m) for m in metrics]
+        for entry in (raw.get("ai") or {}).get("services") or []:
+            service = AiService()
+            _merge_dataclass(service, entry)
+            settings.ai.services.append(service)
 
     env = os.environ
     settings.aternity.base_url = env.get("ATERNITY_URL", settings.aternity.base_url)

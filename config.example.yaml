@@ -64,3 +64,13 @@ boot_unit: s
 #     - {key: if_util_out, label: "Interface utilization out (%)",
 #        object_type: INTERFACE, metric_class: IFC_UTIL,
 #        metric: utilizationOut, threshold: 80}
+
+# Optional: self-hosted AI services for the chat (OpenAI-style chat API).
+# Keys never go here: put each in .env, under the name given in key_env.
+# `uxcorrelate verify --ai` checks each service and says what to change.
+ai:
+  services: []
+  # - name: ""        # your label for it, shown by verify
+  #   base_url: ""    # the service's API address, up to and including /v1
+  #   model: ""       # the model's name on that service (verify lists them)
+  #   key_env: ""     # the .env line that holds its key, e.g. AI_KEY_1

@@ -1361,10 +1361,199 @@ def verify_netim(settings: Settings, client: NetimClient) -> list[Check]:
     return checks
 
 
+AI = "AI service"
+# question, and the settings a right pick must have (app: the word must be in it)
+AI_TRIES = (
+    ("Which crashes hit the most PCs in the last 7 days?", {"what": "crashes", "days": 7}),
+    ("How many slow actions did Microsoft Teams have on virtual desktops, per day?",
+     {"what": "slow_actions", "pcs": "virtual", "group_by": "day", "app": "teams"}),
+    ("Which location has the most Microsoft Outlook hangs?",
+     {"what": "hangs", "group_by": "location", "app": "outlook"}),
+)
+AI_OUTSIDE = "What is the weather in Paris today?"  # not in the data: no pick is the right answer
+AI_COUNTS = {"period": "last 7 days", "partial": False,  # made-up counts, to see if they are repeated right
+             "rows": [{"failure": "Sample Agent crash", "pcs": 2885}, {"failure": "Sample Viewer crash", "pcs": 412}]}
+AI_SETUP = ("Chat is off: no AI service is set. Add to config.yaml, per service: ai: / services: / "
+            "- name: <your label> / base_url: <its API address, up to and including /v1> / model: <the "
+            "model's name there> / key_env: <the .env line that holds its key>. Layout: config.example.yaml.")
+
+
+def _picked(call) -> str:
+    if not call:
+        return "made no pick"
+    return f"picked {call[0]}({', '.join(f'{k}={v}' for k, v in call[1].items())})"
+
+
+def _right(call, want: dict) -> bool:
+    if not call or call[0] != "count":
+        return False
+    for key, value in want.items():
+        got = str(call[1].get(key, "")).strip().lower()
+        if (value not in got) if key == "app" else (got != str(value)):
+            return False
+    return True
+
+
+def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
+    """Each AI service in ai.services: key, reachable, a plain reply, picking the right
+    building block for a question, and repeating the counts it is given."""
+    import json
+    import os
+    import time
+
+    from .ai import COUNT_TOOL, LOGINS, SYSTEM, AiClient, reply_message, tool_call
+    env = os.environ if env is None else env
+    if not settings.ai.services:
+        return [Check(AI, "services", None, AI_SETUP)]
+    checks: list[Check] = []
+    for n, cfg in enumerate(settings.ai.services, 1):
+        name = cfg.name or f"service {n}"
+        add = lambda item, ok, message, fix="", rows=(): checks.append(  # noqa: E731
+            Check(AI, f"{name}: {item}", ok, message, fix, rows=list(rows)))
+        where = f"ai.services, the entry named \"{name}\""
+        if not cfg.base_url:
+            add("settings", False, "base_url not set.", f"Set base_url in config.yaml ({where}).")
+            continue
+        key = env.get(cfg.key_env, "") if cfg.key_env else ""
+        add("key", None, f"{cfg.key_env} is set (not shown)." if key else
+            f"No key: {cfg.key_env or 'key_env'} is not set in .env. Trying without one. If the service needs "
+            "a key: add the line to .env, then `docker compose up -d` (a restart does not re-read .env).")
+
+        # reachable, and which login header it takes
+        client, models, listed, refused = None, [], False, None
+        for login in ([cfg.login] if cfg.login else LOGINS) if key else [""]:
+            client = AiClient(cfg, key, login, transport)
+            started = time.monotonic()
+            try:
+                models, listed = client.models(), True
+            except ApiError as exc:
+                if exc.status in (401, 403):
+                    refused = exc
+                    continue
+                if exc.status is None:
+                    add("reachable", False, f"No answer from the service: {exc.short()}.",
+                        f"Check base_url in config.yaml ({where}) and that this host is allowed to reach the "
+                        "AI service. Tell Claude this line.")
+                    client = None
+                else:  # it answered: only the model list is missing
+                    add("reachable", None, f"The service answered, but has no model list at "
+                        f"{cfg.models_path} ({exc.short()}). Going on with the model set.")
+                refused = None
+                break
+            refused = None
+            took = time.monotonic() - started
+            how = f" Login: {login}." if login else ""
+            add("reachable", True, f"Answered in {took:.1f} s.{how} {len(models)} models listed: "
+                f"{', '.join(models[:12])}{' …' if len(models) > 12 else ''}.")
+            if login and not cfg.login and login != LOGINS[0]:
+                add("login", None, f"It takes the key in an \"{login}\" header. Add `login: {login}` to "
+                    f"config.yaml ({where}) so the chat uses it too.")
+            break
+        if refused is not None:
+            add("reachable", False, (f"The service refused the key ({refused.short()}), as a Bearer key and "
+                                     "as an api-key header." if key and not cfg.login else
+                                     f"The service refused the key ({refused.short()})." if key else
+                                     f"The service wants a key ({refused.short()}) and none is set."),
+                f"Check the .env line {cfg.key_env}, then `docker compose up -d` "
+                "(a restart does not re-read .env).")
+            continue
+        if client is None:
+            continue
+        if not cfg.model:
+            add("model", False, "model not set.", f"Set model in config.yaml ({where}) to one of the names "
+                "listed above.")
+            continue
+        if listed and cfg.model not in models:
+            close = _closest(cfg.model, models)
+            add("model", False, f"\"{cfg.model}\" is not in the service's list.{_closest_text(close)}",
+                f"Set model in config.yaml ({where}) to a listed name.")
+            continue
+
+        # a plain reply
+        started = time.monotonic()
+        try:
+            raw = client.chat_raw([{"role": "user", "content": "Reply with the single word: ready"}])
+        except ApiError as exc:
+            fix = (f"No chat API at base_url + {cfg.chat_path}. Ask the AI service's admin for its chat "
+                   f"address and set base_url ({where}) to the part before {cfg.chat_path}."
+                   if exc.status == 404 else
+                   f"The key was refused for chat. Try `login: api-key` (or `login: bearer`) in config.yaml "
+                   f"({where}), and check the .env line {cfg.key_env}." if exc.status in (401, 403)
+                   else "Tell Claude this line.")
+            add("plain reply", False, f"The model did not reply: {exc.short()}.", fix)
+            continue
+        message = reply_message(raw)
+        if message is None:
+            add("plain reply", False, f"The reply is not in the layout expected. Its keys: {_keys(raw)}.",
+                "Tell Claude these keys: " + CODE_FIX.format(file="ai.py (reply_message)"))
+            continue
+        add("plain reply", True, f"Replied \"{_cut(str(message.get('content') or '').strip(), 60)}\" in "
+            f"{time.monotonic() - started:.1f} s.")
+
+        # picks the right building block
+        ask = lambda q: [{"role": "system", "content": SYSTEM}, {"role": "user", "content": q}]  # noqa: E731
+        right, rows, first, times, stop = 0, [], None, [], None
+        for question, want in AI_TRIES:
+            started = time.monotonic()
+            try:
+                reply = client.chat(ask(question), [COUNT_TOOL])
+            except ApiError as exc:
+                stop = exc
+                break
+            times.append(time.monotonic() - started)
+            call = tool_call(reply)
+            if _right(call, want):
+                right += 1
+                first = first or (question, reply, call)
+            else:
+                rows.append(f"\"{question}\": {_picked(call)}; a right pick has "
+                            f"{', '.join(f'{k}={v}' for k, v in want.items())}")
+        if stop is not None:
+            add("picks the right question", False, "The service refused a question sent with our building "
+                f"block (tool calling): {stop.short()}.", "This model or service may not do tool calling: the "
+                "chat cannot use it as it is. Tell Claude this line.")
+            continue
+        outside = None
+        try:
+            outside = tool_call(client.chat(ask(AI_OUTSIDE), [COUNT_TOOL]))
+        except ApiError as exc:
+            rows.append(f"\"{AI_OUTSIDE}\": {exc.short()}")
+        if outside:
+            rows.append(f"\"{AI_OUTSIDE}\": {_picked(outside)}; it should make no pick")
+        add("picks the right question", right == len(AI_TRIES) and not outside,
+            f"Right in {right} of {len(AI_TRIES)} tries; for the 1 question outside the data it "
+            f"{'made a pick (wrong)' if outside else 'made no pick (right)'}. Replies took "
+            f"{min(times):.1f} to {max(times):.1f} s.",
+            "The chat would run the wrong counts with this model. Tell Claude these lines.", rows)
+
+        # repeats the counts it is given
+        if first is None:
+            add("repeats the counts", None, "Not tried: it needs one right pick first.")
+            continue
+        question, reply, call = first
+        try:
+            answer = client.chat(ask(question) + [
+                {"role": "assistant", "content": reply.get("content") or "", "tool_calls": reply["tool_calls"]},
+                {"role": "tool", "tool_call_id": call[2], "content": json.dumps(AI_COUNTS)}], [COUNT_TOOL])
+        except ApiError as exc:
+            add("repeats the counts", False, f"The service refused the counts sent back to it: {exc.short()}.",
+                "Tell Claude this line.")
+            continue
+        text = str(answer.get("content") or "")
+        digits = "".join(ch for ch in text if ch not in ",.   ")
+        want = [str(r["pcs"]) for r in AI_COUNTS["rows"]]
+        found = [w for w in want if w in digits]
+        add("repeats the counts", len(found) == len(want),
+            f"Given {' and '.join(want)}, its answer had {len(found)} of the {len(want)} counts.",
+            "The chat would show wrong numbers in its sentence. Tell Claude these lines.",
+            [f"its answer: {_cut(' '.join(text.split()), 220)}"])
+    return checks
+
+
 def render_checks(checks: list[Check]) -> str:
     mark = {True: "OK  ", False: "FAIL", None: "--  "}
     lines = []
-    for system in ("Aternity", "NetIM"):
+    for system in ("Aternity", "NetIM", AI):
         rows = [c for c in checks if c.system == system]
         if not rows:
             continue

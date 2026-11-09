@@ -216,6 +216,13 @@ unset `<REQUIRED>` base URLs.
   activity (those two columns only), the last 24 hours at start, then each
   hour; dropped after 8 days unseen. One background read per process (the
   HTTP and HTTPS servers share it). Any name can still be typed.
+- `ai.py`: client for the self-hosted AI services (`ai.services` in
+  config.yaml, key from the env var named in `key_env`) the chat will
+  use; the chat is not built yet. The AI never reads Aternity or counts:
+  it picks a building block (`COUNT_TOOL`, provisional), our code counts.
+  OpenAI-style API is assumed until `verify --ai` has run on prod
+  (`verify.verify_ai`: key, reachable, login header, plain reply, right
+  pick in 3 tries + no pick outside the data, counts repeated right).
 - `http.py` is the shared REST client (basic auth, retries on 429/5xx);
   `models.py` holds the dataclasses and `parse_time`.
 - `report.py` renders the text report, `cli.py` is the argparse entry point,

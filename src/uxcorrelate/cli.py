@@ -144,9 +144,13 @@ def cmd_netim_check(args) -> int:
 def cmd_verify(args) -> int:
     from .aternity import AternityClient
     from .netim import NetimClient
-    from .verify import Check, render_checks, verify_aternity, verify_vdi_network, verify_netim
+    from .verify import Check, render_checks, verify_ai, verify_aternity, verify_vdi_network, verify_netim
     settings = load_settings(args.config)
     checks: list[Check] = []
+    if args.ai:  # only the AI services: seconds, not the minutes the Riverbed checks take
+        checks = verify_ai(settings)
+        print(render_checks(checks))
+        return 1 if any(c.ok is False for c in checks) else 0
     for system, base_url, run, client_cls, cfg in (
         ("Aternity", settings.aternity.base_url, verify_aternity, AternityClient, settings.aternity),
         ("NetIM", settings.netim.base_url, verify_netim, NetimClient, settings.netim),
@@ -158,6 +162,8 @@ def cmd_verify(args) -> int:
         checks += run(settings, client_cls(cfg))
     if settings.aternity.base_url and settings.netim.base_url:
         checks += verify_vdi_network(settings, AternityClient(settings.aternity), NetimClient(settings.netim))
+    if settings.ai.services:
+        checks += verify_ai(settings)
     print(render_checks(checks))
     return 1 if any(c.ok is False for c in checks) else 0
 
@@ -210,6 +216,7 @@ def main(argv: list[str] | None = None) -> int:
     chk.set_defaults(func=cmd_netim_check)
 
     ver = sub.add_parser("verify", help="check every configured name against live Aternity and NetIM")
+    ver.add_argument("--ai", action="store_true", help="only the AI services (ai.services in config.yaml)")
     ver.set_defaults(func=cmd_verify)
 
     args = p.parse_args(argv)
