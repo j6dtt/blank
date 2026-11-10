@@ -152,6 +152,11 @@ def cmd_verify(args) -> int:
         checks = verify_overview(settings, AternityClient(settings.aternity))
         print(render_checks(checks))
         return 1 if any(c.ok is False for c in checks) else 0
+    if args.versions:  # only each application's version on what users feel
+        from .verify import verify_versions
+        checks = verify_versions(settings, AternityClient(settings.aternity))
+        print(render_checks(checks))
+        return 1 if any(c.ok is False for c in checks) else 0
     if args.software:  # only what Aternity's installed software list holds
         from .verify import verify_software
         checks = verify_software(settings, AternityClient(settings.aternity), pc=args.pc)
@@ -232,6 +237,8 @@ def main(argv: list[str] | None = None) -> int:
     ver.add_argument("--software", action="store_true",
                      help="only what Aternity's installed software list holds (no PC names shown)")
     ver.add_argument("--pc", help="with --software: only this PC's list, to compare with its Settings > Apps")
+    ver.add_argument("--versions", action="store_true",
+                     help="only each application's version on crashes, hangs and actions (no PC names shown)")
     ver.set_defaults(func=cmd_verify)
 
     args = p.parse_args(argv)

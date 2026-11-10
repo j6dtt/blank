@@ -25,9 +25,9 @@ from statistics import median
 from typing import Any
 
 from .aternity import AternityClient, is_virtual, odata_quote, odata_time
-from .config import (DISK_FREE_COLUMNS, OVERVIEW_SOURCES, PROCESS_COLUMN, SOFTWARE_COLUMNS, SOFTWARE_OS_UPDATE,
+from .config import (DISK_FREE_COLUMNS, OS_COLUMNS, OVERVIEW_SOURCES, PROCESS_COLUMN, SOFTWARE_COLUMNS, SOFTWARE_OS_UPDATE,
                      SOFTWARE_REMOVED, SOFTWARE_SOURCE, SOFTWARE_USER_SCOPE, SOFTWARE_UPDATE_GAP_MIN, TIME_COLUMNS,
-                     NO_VALUE, VDI_COLUMNS, Settings)
+                     NO_VALUE, TOP_STATUS, VDI_COLUMNS, VERSION_SOURCES, Settings)
 from .after_start import AFTER_START_MIN  # "right after a start-up", as investigations
 from .correlate import slow_rule
 from .http import ApiError
@@ -1394,10 +1394,12 @@ def verify_software(settings: Settings, client: AternityClient, pc: str | None =
     except (ApiError, ET.ParseError) as exc:
         return [Check("Aternity", "connection", False, f"Could not read $metadata: {exc.short() if isinstance(exc, ApiError) else exc}",
                       "Check aternity.base_url, aternity.username and ATERNITY_PASSWORD.")]
-    return _software(client, schema, pc)
+    inv = settings.aternity.entities.get("inventory"), settings.aternity.fields.get("inventory", {}).get("device")
+    return _software(client, schema, pc, inv)
 
 
-def _software(client: AternityClient, schema: dict[str, set[str]], pc: str | None = None) -> list[Check]:
+def _software(client: AternityClient, schema: dict[str, set[str]], pc: str | None = None,
+              inventory: tuple = (None, None)) -> list[Check]:
     """What the installed software list holds: columns filled and their values, a few
     PCs in full (several versions of one program on one PC?), whether name + version
     alone comes added up per PC (DEVICE_COUNT), and one program on every PC. No PC
@@ -1486,7 +1488,7 @@ def _software(client: AternityClient, schema: dict[str, set[str]], pc: str | Non
                             rows=multi[:8] + ([f"(+{len(multi) - 8} more)"] if len(multi) > 8 else [])))
 
     # name + version only: added up per PC by Aternity? versions in order? programs on few PCs?
-    top_name, installs = None, 0
+    top_name, installs, names = None, 0, {}
     if "pcs" in c:
         agg, secs, cut = read("software: per version, all PCs", select=[N, V, c["pcs"]], top=SW_PER_VERSION)
         if agg:
@@ -1554,30 +1556,24 @@ def _software(client: AternityClient, schema: dict[str, set[str]], pc: str | Non
                             + (f"; {installs:,} installs is about {installs // total} per PC" if installs and not first
                                else "") + ".", rows=cut))
 
-    # one program at 2+ versions on the same PC, on every PC: does VERSION_COUNT tell it?
-    if "version_count" in c:
-        vc = c["version_count"]
-        multi_rows, secs, cut = read("software: 2+ versions on one PC", filter=f"{vc} gt 1", select=[D, N, V, vc],
-                                     top=SW_ONE_NAME)
-        if multi_rows is not None:
-            pairs: dict = {}
-            for r in multi_rows:
-                x = pairs.setdefault((r.get(D), r.get(N)), [set(), number(r.get(vc))])
-                x[0].add(str(r.get(V)))
-            agree = sum(1 for vs, n in pairs.values() if len(vs) == n)
-            per_name = Counter(name for _, name in pairs)
-            example = {name: sorted(vs) for (_, name), (vs, _) in pairs.items()}
-            first = f" (the first {len(multi_rows):,})" if len(multi_rows) >= SW_ONE_NAME else ""
-            text = (f"{len(multi_rows):,} rows{first} with {short(vc)} over 1 ({secs:.1f} s): {len(per_name):,} "
-                    f"programs at 2+ versions on {len({p for p, _ in pairs}):,} PCs" + (f" of {total:,}" if total else "")
-                    + f"; for {agree:,} of these {len(pairs):,} program-on-a-PC, the PC's rows hold that many "
-                    "versions." + (" Programs on the most PCs:" if pairs else ""))
-            if not pairs and two_here:
-                text += (f" Yet {two_here} PCs have 2+ versions of {top_name} (above): {short(vc)} does not "
-                         "count them.")
-            checks.append(Check("Aternity", "software: 2+ versions on one PC", None, text,
-                                rows=[f"{n}: {k:,} PCs, e.g. {' + '.join(example[n][:3])}"
-                                      for n, k in per_name.most_common(8)] + cut))
+    # 2+ versions of a program on one PC: asked per name only, does Aternity count each PC
+    # once? Then installs (summed over versions) above PCs are PCs with 2+ versions.
+    if "pcs" in c and names:
+        byname, secs, cut = read("software: 2+ versions on one PC", select=[N, c["pcs"]], top=SW_PER_VERSION)
+        if byname:
+            pcs_of = {r.get(N): number(r.get(c["pcs"])) or 0 for r in byname}
+            over = sorted(((sum(names[n].values()) - k, n, k) for n, k in pcs_of.items()
+                           if n in names and sum(names[n].values()) > k), key=lambda x: (-x[0], str(x[1])))
+            check = (top_name, sum(names[top_name].values()) - pcs_of[top_name]) if top_name in pcs_of else None
+            text = (f"Name only: {len(byname):,} rows ({secs:.1f} s). {len(over):,} programs have more installs "
+                    f"than PCs, {sum(x[0] for x in over):,} more in all: a PC with 2 versions counts twice in "
+                    "installs, once in PCs.")
+            if check and one:
+                text += (f" Check: {check[0]}: {check[1]:,} more installs than PCs here, {two_here:,} PCs with 2+ "
+                         "versions above" + (" (the same)." if check[1] == two_here else " (NOT the same)."))
+            checks.append(Check("Aternity", "software: 2+ versions on one PC", None,
+                                text + (" Most:" if over else ""),
+                                rows=[f"{n}: {x:,} more installs than its {k:,} PCs" for x, n, k in over[:8]] + cut))
 
     # installed for one user only, and Windows updates: added up per name
     for key, value, item, what in (("scope", SOFTWARE_USER_SCOPE, "software: installed for one user", "programs"),
@@ -1596,6 +1592,238 @@ def _software(client: AternityClient, schema: dict[str, set[str]], pc: str | Non
                             f"({secs:.1f} s)." + (" On the most PCs:" if per else ""),
                             rows=[f"{n}: {k:,} PCs" + (f", not on {total - k:,}" if total and key == "type" else "")
                                   for n, k in per.most_common(8)] + cut))
+    _windows(client, schema, inventory, read, c, checks)
+    return checks
+
+
+def _windows(client, schema, inventory, read, c, checks) -> None:
+    """Windows on each PC (name, version, last updated) and each Windows update on the PCs
+    of each Windows version: an update is for one Windows version, so "not on N PCs" counts
+    only that version's PCs."""
+    inv, dev = inventory
+    o = {k: v for k, v in OS_COLUMNS.items() if inv in schema and v in schema[inv]}
+    if not inv or not dev or not {"name", "version"} <= set(o):
+        checks.append(Check("Aternity", "software: Windows on the PCs", None,
+                            f"{inv or 'The inventory'} gives no {OS_COLUMNS['name']} and {OS_COLUMNS['version']}: "
+                            "Windows updates cannot be counted per Windows version."))
+        return
+    mark, t0 = len(client.warnings), time.monotonic()
+    try:
+        rows = client.query(inv, select=[dev] + list(o.values()), top=SW_ONE_NAME, raw=True)
+    except ApiError as exc:
+        checks.append(Check("Aternity", "software: Windows on the PCs", None, f"error: {exc.short()}"))
+        return
+    secs, cut = time.monotonic() - t0, _cut_short(client, mark)
+    win = {r.get(dev): f"{r.get(o['name'])} {r.get(o['version'])}" for r in rows}
+    per = Counter(win.values())
+    weeks: Counter = Counter()  # Monday of the week Windows was last updated; None: 8+ weeks ago
+    if "updated" in o:
+        now = datetime.now(timezone.utc)
+        for r in rows:
+            t = parse_time(r.get(o["updated"]))
+            if t:
+                weeks[None if (now - t).days > 8 * 7 else (t - timedelta(days=t.weekday())).date()] += 1
+    dated = sum(weeks.values())
+    week_line = ", ".join([f"older {weeks[None]:,}"] * (None in weeks)
+                          + [f"{d:%b %d} {n:,}" for d, n in sorted((d, n) for d, n in weeks.items() if d)])
+    checks.append(Check("Aternity", "software: Windows on the PCs", None,
+                        f"{len(win):,} PCs in {inv} ({secs:.1f} s), {len(per)} Windows versions; last updated "
+                        f"known on {dated:,}. PCs per Windows version, then per week Windows was last updated:",
+                        rows=[f"{w}: {n:,} PCs" for w, n in per.most_common(6)]
+                        + ([f"weeks (Monday): {week_line}"] if weeks else []) + cut))
+    if "type" not in c:
+        return
+    got, secs, cut = read("software: Windows updates per Windows version",
+                          filter=f"{c['type']} eq {odata_quote(SOFTWARE_OS_UPDATE)}", select=[c["device"], c["name"]],
+                          top=SW_ONE_NAME * 2)
+    if not got:
+        return
+    has: dict = {}
+    for r in got:
+        has.setdefault(win.get(r.get(c["device"]), "not in the inventory"), Counter())[r.get(c["name"])] += 1
+    lines = []
+    for w, n in per.most_common(3):
+        top = has.get(w, Counter()).most_common(4)
+        lines += [f"{w} ({n:,} PCs): " + ("; ".join(f"{u} on {k:,}, not on {n - k:,}" for u, k in top) or "none")]
+    checks.append(Check("Aternity", "software: Windows updates per Windows version", None,
+                        f"{len(got):,} update rows on {len({r.get(c['device']) for r in got}):,} PCs ({secs:.1f} s). "
+                        "For the 3 Windows versions on the most PCs, their 4 most common updates:",
+                        rows=lines + cut))
+
+
+VER_DAYS = 7  # versions: the days compared, as the Software tab will
+VER_BACK = 400  # versions: how far back to look for the oldest day kept
+LOG_BACK = 14  # versions: days of the change log read for updates
+
+
+def verify_versions(settings: Settings, client: AternityClient) -> list[Check]:
+    """Only the "versions: …" checks: each application's version on what users feel."""
+    try:
+        schema = parse_odata_metadata(client.http.request("GET", "/$metadata", headers={"Accept": "application/xml"}).text)
+    except (ApiError, ET.ParseError) as exc:
+        return [Check("Aternity", "connection", False, f"Could not read $metadata: {exc.short() if isinstance(exc, ApiError) else exc}",
+                      "Check aternity.base_url, aternity.username and ATERNITY_PASSWORD.")]
+    return _versions(settings, client, schema)
+
+
+def _versions(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
+    """Is Aternity's application version filled on app usage (crashes, hang time), on
+    actions (Major) and on health events? How far back does each go, and does it come
+    added up per version when the PC is not asked for? For the application with the most
+    crashes: its versions, PCs, PCs with a crash and with hang time over VER_DAYS, as the
+    Software tab will count them. Then the updates in the change log (before and after
+    on the same PCs). No PC or user names."""
+    checks: list[Check] = []
+    now = datetime.now(timezone.utc)
+    span = lambda col: _between(col, now - timedelta(days=VER_DAYS), now)  # noqa: E731
+    filled = lambda v: v not in (None, "", *NO_VALUE)  # noqa: E731
+    amount = lambda v: to_float(v) or 0  # noqa: E731
+
+    def read(entity: str, item: str, **kw):
+        mark, t0 = len(client.warnings), time.monotonic()
+        try:
+            rows = client.query(entity, raw=True, **kw)
+        except ApiError as exc:
+            checks.append(Check("Aternity", item, None, f"error: {exc.short()}"))
+            return None, 0.0, []
+        return rows, time.monotonic() - t0, _cut_short(client, mark)
+
+    def oldest(entity: str, col: str) -> str:
+        try:
+            rows = client.query(entity, filter=f"{col} ge {odata_time(now - timedelta(days=VER_BACK))}", select=[col],
+                                orderby=f"{col} asc", top=1, raw=True)
+        except ApiError as exc:
+            return f"the oldest day kept could not be read ({exc.short()})"
+        t = parse_time(rows[0].get(col)) if rows else None
+        return f"the oldest day kept is {t:%b %d, %Y}" if t else "no oldest day found"
+
+    def usable(key: str, item: str) -> dict | None:
+        spec = VERSION_SOURCES[key]
+        entity = spec["entity"]
+        missing = [v for k, v in spec.items() if k != "entity" and v not in schema.get(entity, ())]
+        if entity not in schema or missing:
+            checks.append(Check("Aternity", item, None, f"{entity} is not published" if entity not in schema else
+                                f"{entity} is published without {', '.join(missing)}"))
+            return None
+        return spec
+
+    def first(rows, top) -> str:
+        return f" (the first {len(rows):,})" if len(rows) >= top else ""
+
+    # app usage: crashes and hang time per application version
+    u = usable("usage", "versions: app usage")
+    if u:
+        E, A, V, D = u["entity"], u["application"], u["version"], u["device"]
+        rows, secs, cut = read(E, "versions: app usage", filter=span(u["time"]),
+                               select=[A, V, u["crashes"], u["hang_time"]], top=SW_PER_VERSION)
+        if rows:
+            apps: dict = {}
+            for r in rows:
+                x = apps.setdefault(r.get(A), [set(), 0.0])
+                x[0].add(r.get(V))
+                x[1] += amount(r.get(u["crashes"]))
+            top = sorted(apps.items(), key=lambda kv: -kv[1][1])[:5]
+            checks.append(Check("Aternity", "versions: app usage", None,
+                                f"{E}, last {VER_DAYS} days, without PCs: {len(rows):,} rows"
+                                f"{first(rows, SW_PER_VERSION)} ({secs:.1f} s); the version is filled on "
+                                f"{sum(1 for r in rows if filled(r.get(V))):,}; {oldest(E, u['time'])}. "
+                                "Applications with the most crashes:",
+                                rows=[f"{a}: {len(x[0])} versions, {x[1]:,.0f} crashes" for a, x in top] + cut))
+            if top and top[0][1][1] > 0:
+                name = top[0][0]
+                per, secs, cut = read(E, "versions: crashes by version",
+                                      filter=f"{span(u['time'])} and {A} eq {odata_quote(name)}",
+                                      select=[D, V, u["crashes"], u["hang_time"]], top=SW_ONE_NAME)
+                if per:
+                    pairs = {(r.get(D), r.get(V)) for r in per}
+                    byv: dict = {}
+                    for r in per:
+                        x = byv.setdefault(r.get(V), [set(), set(), set()])
+                        x[0].add(r.get(D))
+                        if amount(r.get(u["crashes"])) > 0:
+                            x[1].add(r.get(D))
+                        if amount(r.get(u["hang_time"])) > 0:
+                            x[2].add(r.get(D))
+                    checks.append(Check(
+                        "Aternity", "versions: crashes by version", None,
+                        f"{name}, last {VER_DAYS} days, per PC: {len(per):,} rows{first(per, SW_ONE_NAME)} for "
+                        f"{len(pairs):,} PC-and-version pairs ({secs:.1f} s): "
+                        + ("one row per pair, Aternity adds up the days" if len(per) == len(pairs)
+                           else "several rows per pair (one per day?)")
+                        + f". {len(byv)} versions; per version, the PCs that ran it, with a crash, with hang time:",
+                        rows=[f"{v}: {len(x[0]):,} PCs, {len(x[1]):,} with a crash, {len(x[2]):,} with hang time"
+                              for v, x in sorted(byv.items(), key=lambda kv: -len(kv[1][0]))[:8]] + cut))
+
+    # actions: Aternity's Major per application version
+    a = usable("actions", "versions: actions")
+    if a:
+        E, A, V = a["entity"], a["application"], a["version"]
+        rows, secs, cut = read(E, "versions: actions", filter=span(a["time"]),
+                               select=[A, V, a["status"], a["volume"]], top=SW_PER_VERSION)
+        if rows:
+            apps = {}
+            for r in rows:
+                n = to_float(r.get(a["volume"]))
+                n = 1 if n is None else n
+                x = apps.setdefault(r.get(A), [{}, 0.0, 0.0])
+                v = x[0].setdefault(r.get(V), [0.0, 0.0])
+                v[0] += n
+                x[1] += n
+                if r.get(a["status"]) == TOP_STATUS:
+                    v[1] += n
+                    x[2] += n
+            top = sorted(apps.items(), key=lambda kv: -kv[1][2])[:5]
+            lines = [f"{name}: {len(x[0])} versions, {x[2]:,.0f} {TOP_STATUS} of {x[1]:,.0f} actions" for name, x in top]
+            if top:
+                lines += [f"  {top[0][0]} {v}: {n[1]:,.0f} {TOP_STATUS} of {n[0]:,.0f}" for v, n in
+                          sorted(top[0][1][0].items(), key=lambda kv: -kv[1][0])[:6]]
+            checks.append(Check("Aternity", "versions: actions", None,
+                                f"{E}, last {VER_DAYS} days, without PCs: {len(rows):,} rows"
+                                f"{first(rows, SW_PER_VERSION)} ({secs:.1f} s); the version is filled on "
+                                f"{sum(1 for r in rows if filled(r.get(V))):,}; {oldest(E, a['time'])}. "
+                                f"Applications with the most {TOP_STATUS} actions, then the first one per version:",
+                                rows=lines + cut))
+
+    # health events: the failing part's version
+    cfg = settings.aternity
+    he, h = cfg.entities.get("health_events"), cfg.fields.get("health_events", {})
+    cols = [h.get(k) for k in ("name", "application", "component", "component_version")]
+    if he in schema and all(cols) and set(cols) <= schema[he] and h.get("timestamp"):
+        rows, secs, cut = read(he, "versions: health events",
+                               filter=_between(h["timestamp"], now - timedelta(hours=24), now), select=cols,
+                               top=SW_SAMPLE)
+        if rows is not None:
+            kinds = Counter(tuple(str(r.get(col)) for col in cols) for r in rows)
+            checks.append(Check("Aternity", "versions: health events", None,
+                                f"{len(rows):,} health events in the last 24 hours{first(rows, SW_SAMPLE)} "
+                                f"({secs:.1f} s); the failing part's version is filled on "
+                                f"{sum(1 for r in rows if filled(r.get(cols[3]))):,}. Most common (event · "
+                                "application · part and version):",
+                                rows=[f"{k[0]} · {k[1]} · {k[2]} {k[3]}: {n}" for k, n in kinds.most_common(6)] + cut))
+
+    # the change log: updates, for before and after on the same PCs
+    ce, ch = cfg.entities.get("software_changes"), cfg.fields.get("software_changes", {})
+    pcs = SOFTWARE_COLUMNS["pcs"]
+    cols = [ch.get(k) for k in ("name", "change", "version_before", "version")]
+    if ce in schema and all(cols) and set(cols + [pcs]) <= schema[ce] and ch.get("timestamp"):
+        rows, secs, cut = read(ce, "versions: updates in the change log",
+                               filter=_between(ch["timestamp"], now - timedelta(days=LOG_BACK), now),
+                               select=cols + [pcs], top=SW_PER_VERSION)
+        if rows:
+            kinds, before, ups = Counter(), Counter(), Counter()
+            for r in rows:
+                n = int(amount(r.get(pcs))) or 1
+                kinds[r.get(cols[1])] += n
+                if filled(r.get(cols[2])):
+                    before[r.get(cols[1])] += n
+                    if r.get(cols[2]) != r.get(cols[3]):
+                        ups[(r.get(cols[0]), r.get(cols[2]), r.get(cols[3]))] += n
+            checks.append(Check("Aternity", "versions: updates in the change log", None,
+                                f"Last {LOG_BACK} days, without PCs: {len(rows):,} rows{first(rows, SW_PER_VERSION)} "
+                                f"({secs:.1f} s). Changes per type, with the version before filled: "
+                                + ", ".join(f"{k} {n:,} ({before[k]:,})" for k, n in kinds.most_common())
+                                + ". Updates (before to after) on the most PCs:",
+                                rows=[f"{n0}: {b} to {v}: {k:,} PCs" for (n0, b, v), k in ups.most_common(6)] + cut))
     return checks
 
 

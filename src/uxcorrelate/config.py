@@ -93,6 +93,19 @@ SOFTWARE_COLUMNS = {"device": "DEVICE_NAME", "name": "INSTALLED_SW_NAME", "versi
 # a PC's rows; name + version alone comes added up per PC (DEVICE_COUNT), ~42 per PC.
 SOFTWARE_USER_SCOPE = "Specific User"
 SOFTWARE_OS_UPDATE = "OS Update"
+# Windows on each PC (DEVICE_INVENTORY), for Windows updates per Windows version
+OS_COLUMNS = {"name": "OS_NAME", "version": "OS_VERSION", "updated": "OS_VERSION_UPDATE_DATE"}
+# Each application's version on what users feel (names from Riverbed's $metadata), read
+# only by `verify --versions` so far: filled on the live tenant? how far back? added up
+# per version when the PC is not asked for? Aternity writes the version on each record.
+VERSION_SOURCES = {
+    "usage": {"entity": "APPLICATIONS_DAILY", "time": "TIMEFRAME", "device": "DEVICE_NAME",
+              "application": "APPLICATION_NAME", "version": "APPLICATION_VERSION",
+              "crashes": "APPLICATION_CRASHES_TOTAL", "hang_time": "APPLICATION_HANG_TIME_TOTAL"},
+    "actions": {"entity": "BUSINESS_ACTIVITIES_DAILY", "time": "TIMEFRAME", "device": "DEVICE_NAME",
+                "application": "APPLICATION_NAME", "version": "APPLICATION_VERSION",
+                "status": "SLA_STATUS", "volume": "ACTIVITY_VOLUME"},
+}
 # `verify` lists every published data source with a process column (which ones
 # could tell the busiest processes), and its time column
 PROCESS_COLUMN = "PROCESS_NAME"

@@ -296,11 +296,20 @@ unset `<REQUIRED>` base URLs.
   alone comes added up per PC (`DEVICE_COUNT`; yes on the live tenant,
   ~42 programs per PC), most / newest / oldest version per program
   (`_version_key`, dotted numbers only), programs on `SW_FEW` PCs or
-  fewer, one program on every PC, the PCs in the list, `VERSION_COUNT
-  gt 1` (2+ versions on one PC), `SOFTWARE_USER_SCOPE` installs and
-  `SOFTWARE_OS_UPDATE` (Windows updates, not on N PCs). `--pc NAME`: only
-  that PC's list, to compare with its Settings > Apps. No PC or user
-  names (unless typed). Checks for prod are verify options, never pasted
+  fewer, one program on every PC, the PCs in the list, 2+ versions on
+  one PC (asked per name only: installs above PCs; `VERSION_COUNT` is 1
+  on every live row, useless), `SOFTWARE_USER_SCOPE` installs,
+  `SOFTWARE_OS_UPDATE`, Windows per PC (`OS_COLUMNS`, `_windows`) and
+  each update on its own Windows version's PCs. `--pc NAME`: only that
+  PC's list. No PC or user names (unless typed).
+- `verify --versions` (`verify._versions`): Aternity's own
+  `APPLICATION_VERSION` on what users feel (`VERSION_SOURCES`: daily app
+  usage with crashes / hang time, daily actions with Major), filled? the
+  oldest day kept? added up when the PC is not asked for? For the app
+  with the most crashes: per version, PCs, with a crash, with hang time
+  (`VER_DAYS`). Health events' failing-part version; change log updates
+  before to after (`LOG_BACK`). For the Software tab
+  (`docs/software-tab.md`, decisions taken 2026-11-10). Checks for prod are verify options, never pasted
   scripts: the user cannot paste on the prod hosts.
 - `http.py` is the shared REST client (basic auth, retries on 429/5xx);
   `models.py` holds the dataclasses and `parse_time`.

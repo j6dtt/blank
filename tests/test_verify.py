@@ -537,14 +537,19 @@ def test_overview_sources_are_riverbeds_own_names():
 
 def test_software_names_are_riverbeds_own():
     from pathlib import Path
-    from uxcorrelate.config import SOFTWARE_COLUMNS, SOFTWARE_SOURCE
+    from uxcorrelate.config import OS_COLUMNS, SOFTWARE_COLUMNS, SOFTWARE_SOURCE, VERSION_SOURCES
     schema = parse_odata_metadata((Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
     assert set(SOFTWARE_COLUMNS.values()) <= schema[SOFTWARE_SOURCE]
+    assert set(OS_COLUMNS.values()) <= schema["DEVICE_INVENTORY"]
+    for spec in VERSION_SOURCES.values():
+        assert {v for k, v in spec.items() if k != "entity"} <= schema[spec["entity"]], spec["entity"]
 
 
 def test_verify_software_shows_what_the_installed_list_holds_with_no_pc_names():
     """Filled columns, a few PCs in full, whether name + version comes added up, versions in
-    order, one program everywhere, 2+ versions on one PC, one user's installs, Windows updates."""
+    order, one program everywhere, 2+ versions on one PC, one user's installs, Windows per PC
+    and Windows updates per Windows version."""
+    from datetime import datetime, timedelta, timezone
     from pathlib import Path
     from uxcorrelate.verify import verify_software
 
@@ -552,30 +557,38 @@ def test_verify_software_shows_what_the_installed_list_holds_with_no_pc_names():
         return {"DEVICE_NAME": pc, "INSTALLED_SW_NAME": name, "INSTALLED_SW_VERSION": version,
                 "INSTALLED_SW_TYPE": kind, "INSTALLED_SW_SCOPE": scope, "INSTALLED_SW_VERSION_COUNT": n,
                 "INSTALLED_SW_COUNT": 1, "DEVICE_COUNT": 1}
-    every = [sw("HOST-A", "Java", "8.1", 2), sw("HOST-A", "Java", "11.0", 2), sw("HOST-A", "Edge", "120.0"),
+    every = [sw("HOST-A", "Java", "8.1"), sw("HOST-A", "Java", "11.0"), sw("HOST-A", "Edge", "120.0"),
              sw("HOST-B", "Java", "8.1"), sw("HOST-B", "Edge", "121.0"), sw("HOST-C", "Edge", "120.0"),
              sw("HOST-C", "Zoom", "5.1", scope="Specific User"), sw("HOST-B", "KB5031", "N/A", kind="OS Update"),
              sw("HOST-C", "KB5031", "N/A", kind="OS Update")]
+    now = datetime.now(timezone.utc)
+    windows = [{"DEVICE_NAME": pc, "OS_NAME": "Windows 11", "OS_VERSION": v,
+                "OS_VERSION_UPDATE_DATE": (now - timedelta(days=d)).strftime("%Y-%m-%dT%H:%M:%SZ")}
+               for pc, v, d in (("HOST-A", "24H2", 3), ("HOST-B", "24H2", 10), ("HOST-C", "23H2", 100))]
     seen = []
 
-    def added(rows, sel):  # Aternity adds up the PCs per the columns asked for
+    def added(rows, sel):  # Aternity adds up per the columns asked for; DEVICE_COUNT: each PC once
         cols = [k for k in sel.split(",") if k != "DEVICE_COUNT"]
-        per = Counter(tuple(r[k] for k in cols) for r in rows)
-        return [dict(zip(cols, key), DEVICE_COUNT=n) for key, n in per.items()]
+        per: dict = {}
+        for r in rows:
+            per.setdefault(tuple(r[k] for k in cols), set()).add(r["DEVICE_NAME"])
+        return [dict(zip(cols, key), DEVICE_COUNT=len(pcs)) for key, pcs in per.items()]
 
     def handler(request):
         if request.url.path.endswith("/$metadata"):
             return httpx.Response(200, text=(Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
+        if request.url.path.endswith("/DEVICE_INVENTORY"):
+            return httpx.Response(200, json={"value": windows})
         f, sel = request.url.params.get("$filter", ""), request.url.params.get("$select", "")
         seen.append(f)
         rows = every
         if "eq '" in f:
             column, value = f.split(" eq ")[0], f.split("'")[1]
             rows = [r for r in every if r[column] == value]
-        if f == "INSTALLED_SW_VERSION_COUNT gt 1":
-            rows = [r for r in every if r["INSTALLED_SW_VERSION_COUNT"] > 1]
         if "DEVICE_COUNT" in sel and "DEVICE_NAME" not in sel or sel == "DEVICE_NAME":
             rows = added(rows, sel + ",DEVICE_COUNT")
+        elif sel:
+            rows = [{k: r.get(k) for k in sel.split(",")} for r in rows]
         return httpx.Response(200, json={"value": rows})
 
     settings = Settings()
@@ -588,7 +601,6 @@ def test_verify_software_shows_what_the_installed_list_holds_with_no_pc_names():
     assert "The first 9 rows" in flat and "are from 3 PCs. Filled: DEVICE_NAME 9, NAME 9, VERSION 7" in flat
     assert "TYPE: 'Application' 7, 'OS Update' 2" in flat and "SCOPE: 'ALL' 8, 'Specific User' 1" in flat
     assert "PC 1: 3 rows, 2 programs, 1 at 2+ versions; PC 2: 3 rows, 3 programs, 0 at 2+ versions" in flat
-    assert "VERSION_COUNT equals the versions of that program on that PC for 8 of 8 programs" in flat
     assert "Java: 11.0, 8.1 (type Application)" in flat
     assert ("DEVICE_COUNT over 1 on 3: Aternity adds up the PCs per name and version, 9 installs of 4 programs. "
             "3 programs have only dotted-number versions (newest and oldest can be told); 4 are on 5 PCs or "
@@ -596,15 +608,66 @@ def test_verify_software_shows_what_the_installed_list_holds_with_no_pc_names():
     assert "Edge 120.0: 2 PCs" in flat
     assert "Edge: 2 versions, 3 installs; most 120.0 (2), newest 121.0 (1), oldest 120.0 (2)" in flat
     assert "Java: 2 versions, 3 installs; most 8.1 (2), newest 11.0 (1), oldest 8.1 (2)" in flat  # 11 > 8
+    assert "Zoom: 1 versions, 1 installs; most 5.1 (1) ·" in flat  # one version: no newest or oldest
     assert "Java: 3 rows on 2 PCs" in flat and "1 PCs have 2+ of them" in flat  # the most versions, then installs
     assert "3 PCs have software in the list" in flat and "9 installs is about 3 per PC" in flat
-    assert ("2 rows with VERSION_COUNT over 1 (0.0 s): 1 programs at 2+ versions on 1 PCs of 3; for 1 of these 1 "
-            "program-on-a-PC, the PC's rows hold that many versions. Programs on the most PCs: · Java: 1 PCs, e.g. "
-            "11.0 + 8.1") in flat
-    assert "Zoom: 1 versions, 1 installs; most 5.1 (1) ·" in flat  # one version: no newest or oldest
+    assert ("1 programs have more installs than PCs, 1 more in all: a PC with 2 versions counts twice in installs, "
+            "once in PCs. Check: Java: 1 more installs than PCs here, 1 PCs with 2+ versions above (the same). "
+            "Most: · Java: 1 more installs than its 2 PCs") in flat
     assert "SCOPE 'Specific User': 1 programs, 1 installs" in flat and "Zoom: 1 PCs" in flat
     assert "TYPE 'OS Update': 1 updates, 2 installs" in flat and "KB5031: 2 PCs, not on 1" in flat
+    assert "3 PCs in DEVICE_INVENTORY" in flat and "2 Windows versions; last updated known on 3" in flat
+    assert "Windows 11 24H2: 2 PCs" in flat and "weeks (Monday): older 1," in flat
+    assert "Windows 11 24H2 (2 PCs): KB5031 on 1, not on 1" in flat  # each update counted on its own version
+    assert "Windows 11 23H2 (1 PCs): KB5031 on 1, not on 0" in flat
 
     one = render_checks(verify_software(settings, client, pc="HOST-C"))  # named by the person asking
     assert "HOST-C: 3 rows" in one and "Settings > Apps" in one and "Zoom 5.1 (Application, Specific User)" in one
     assert "software: what is filled" not in one and seen[-1] == "DEVICE_NAME eq 'HOST-C'"
+
+
+def test_verify_versions_shows_the_application_version_on_what_users_feel():
+    """App usage, actions, health events and the change log, each with Aternity's version."""
+    from pathlib import Path
+    from uxcorrelate.verify import verify_versions
+    usage = [{"DEVICE_NAME": pc, "APPLICATION_NAME": app, "APPLICATION_VERSION": v, "TIMEFRAME": "2026-11-09T00:00:00Z",
+              "APPLICATION_CRASHES_TOTAL": c, "APPLICATION_HANG_TIME_TOTAL": h}
+             for pc, app, v, c, h in (("HOST-A", "Outlook", "16.1", 2, 0), ("HOST-B", "Outlook", "16.1", 0, 5),
+                                      ("HOST-C", "Outlook", "16.2", 0, 0), ("HOST-C", "Word", "16.2", 1, "N/A"))]
+    actions = [{"APPLICATION_NAME": "Outlook", "APPLICATION_VERSION": v, "SLA_STATUS": st, "ACTIVITY_VOLUME": n}
+               for v, st, n in (("16.1", "Major", 30), ("16.1", "Normal", 970), ("16.2", "Major", 2),
+                                ("16.2", "Normal", 98))]
+    health = [{"HEALTH_EVENT_NAME": "Application Crash", "APPLICATION_NAME": "Outlook",
+               "HEALTH_EVENT_COMPONENT": "OUTLOOK.EXE", "HEALTH_EVENT_COMPONENT_VERSION": "16.1"}] * 2
+    log = [{"INSTALLED_SW_NAME": "Teams Add-in", "INSTALLED_SW_CHANGE_TYPE": t, "INSTALLED_SW_VERSION_BEFORE_CHANGE": b,
+            "INSTALLED_SW_VERSION": v, "DEVICE_COUNT": n}
+           for t, b, v, n in (("Installed", "1.26.08901", "1.26.18801", 40), ("Uninstalled", "N/A", "1.26.08901", 38))]
+
+    def handler(request):
+        path, p = request.url.path, request.url.params
+        if path.endswith("/$metadata"):
+            return httpx.Response(200, text=(Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
+        if p.get("$orderby"):
+            return httpx.Response(200, json={"value": [{"TIMEFRAME": "2026-08-01T00:00:00Z"}]})
+        if path.endswith("/APPLICATIONS_DAILY"):
+            rows = [r for r in usage if "'Outlook'" not in p["$filter"] or r["APPLICATION_NAME"] == "Outlook"]
+            return httpx.Response(200, json={"value": [{k: r[k] for k in p["$select"].split(",")} for r in rows]})
+        rows = {"/BUSINESS_ACTIVITIES_DAILY": actions, "/DEVICE_HEALTH_RAW": health,
+                "/INSTALLED_SOFTWARE_CHANGE_LOG": log}
+        return httpx.Response(200, json={"value": next((v for k, v in rows.items() if path.endswith(k)), [])})
+
+    settings = Settings()
+    settings.aternity.base_url = "https://aternity.test/aternity.odata/v2.0"
+    text = render_checks(verify_versions(settings, AternityClient(settings.aternity,
+                                                                  transport=httpx.MockTransport(handler))))
+    flat = " ".join(text.split())
+    assert "HOST-" not in text
+    assert ("APPLICATIONS_DAILY, last 7 days, without PCs: 4 rows (0.0 s); the version is filled on 4; the oldest "
+            "day kept is Aug 01, 2026. Applications with the most crashes: · Outlook: 2 versions, 2 crashes") in flat
+    assert "for 3 PC-and-version pairs" in flat and "one row per pair, Aternity adds up the days" in flat
+    assert "16.1: 2 PCs, 1 with a crash, 1 with hang time" in flat and "16.2: 1 PCs, 0 with a crash" in flat
+    assert "Outlook: 2 versions, 32 Major of 1,100 actions" in flat and "Outlook 16.1: 30 Major of 1,000" in flat
+    assert ("2 health events in the last 24 hours (0.0 s); the failing part's version is filled on 2" in flat
+            and "Application Crash · Outlook · OUTLOOK.EXE 16.1: 2" in flat)
+    assert "Changes per type, with the version before filled: Installed 40 (40), Uninstalled 38 (0)" in flat
+    assert "Teams Add-in: 1.26.08901 to 1.26.18801: 40 PCs" in flat
