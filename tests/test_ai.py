@@ -163,7 +163,7 @@ def test_explain_a_number_of_its_own_fails_and_a_long_page_is_measured():
     assert c.ok is None and "right up to 12,000." in c.message
     assert c.rows[-1].startswith("40,000 characters: it did not find the line asked about (1,713 PCs)")
     checks, _ = run(reads=100)
-    assert checks["explains a long page"].ok is False and "not right at the smallest" in checks["explains a long page"].message
+    assert checks["explains a long page"].ok is False and "right at none" in checks["explains a long page"].message
 
 
 def test_explain_every_tab_has_meanings_and_two_made_up_panels():
@@ -183,3 +183,13 @@ def test_explain_every_tab_has_meanings_and_two_made_up_panels():
     assert "(459)" in explain.refused("That is 459 in all.", *ok)
     assert "twice" in explain.refused("That is twice as many as PCs.", *ok)
     assert explain.refused("  ", *ok) == "it gave no answer"
+
+
+def test_explain_our_own_words_and_a_no_break_space_are_not_held_against_a_model():
+    """Stage, Nov 2026: GPT's "half the start-ups took less" (our meaning of typical) was refused."""
+    tab, panel, lines, q, words = next(x for x in explain.SAMPLES if x[1] == "Start-ups: each measurement")
+    assert explain.refused("Typical is the middle value: half the start-ups took less.", tab, panel, lines, q) is None
+    assert explain.refused("1 in 10 over: 90% of start-ups took less than that.", tab, panel, lines, q) is None
+    assert "Half the" in explain.refused("Half the PCs are slow.", "today", "P", ["318 on 141 PCs"], "Explain.")
+    assert explain.says("Look at Sample\u00a0ERP first.", ("sample erp",)) and explain.odd("Sample\u00a0ERP") == "U+00A0"
+    assert not explain.says("Look at the mail first.", ("sample erp",)) and explain.odd("plain") == ""

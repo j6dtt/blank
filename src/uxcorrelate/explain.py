@@ -17,6 +17,8 @@ docs/data-meanings.md says how sure we are of Aternity's own values.
 
 from __future__ import annotations
 
+import unicodedata
+
 from . import after_start, care, impact, logons, normal, software, today
 from .chat import RATIO, allowed, clean, numbers
 from .cause import DISK_BACK
@@ -111,7 +113,7 @@ GLOSSARY: dict[str, dict[str, str]] = {
         "start-up": "A start of Windows or a logon as Aternity measured it. Rows of one PC within an hour are "
                     "one start-up; each column is one of Aternity's measurements.",
         "typical": "The middle value: half the start-ups took less, half took more.",
-        "1 in 10 over": "One start-up in ten took longer than this.",
+        "1 in 10 over": "One start-up in ten took longer than this; nine in ten (90%) took less.",
         "usual for this PC": f"That PC's own middle value over its last {logons.BASELINE_DAYS} days; "
                              f"{logons.MIN_HISTORY} earlier start-ups are needed. For a user on virtual "
                              "desktops, their start-ups on all their desktops are compared with each other.",
@@ -185,10 +187,29 @@ def refused(text: str, tab: str, panel: str, lines: list[str], question: str) ->
     extra = numbers(text) - allowed(given(tab, panel, lines), question, SYSTEM)
     if extra:
         return "a number that is not on the panel (" + ", ".join(f"{x:g}" for x in sorted(extra)[:3]) + ")"
-    ratio = RATIO.search(text)
-    if ratio:
-        return f"a comparison the panel does not give (\"{ratio.group(0)}\")"
+    have = plain(given(tab, panel, lines) + " " + question)
+    for ratio in RATIO.finditer(text):  # "half the start-ups took less" is our own meaning of typical
+        if plain(ratio.group(0)) not in have:
+            return f"a comparison the panel does not give (\"{ratio.group(0)}\")"
     return None
+
+
+def plain(text: str) -> str:
+    """Lower case, one space between words, no invisible characters: a model may write a
+    no-break space inside a name ("Sample\u00a0ERP")."""
+    text = unicodedata.normalize("NFKC", str(text or ""))
+    return " ".join("".join(c for c in text if unicodedata.category(c) != "Cf").lower().split())
+
+
+def says(text: str, words) -> bool:
+    return any(plain(w) in plain(text) for w in words)
+
+
+def odd(text: str) -> str:
+    """The unusual spaces and invisible characters of an answer, for a verify row."""
+    found = sorted({f"U+{ord(c):04X}" for c in str(text or "")
+                    if ord(c) > 127 and unicodedata.category(c) in ("Zs", "Cf", "Zl", "Zp")})
+    return ", ".join(found)
 
 
 # -- what `verify --ai` measures with (made-up names and numbers) --------------------------------

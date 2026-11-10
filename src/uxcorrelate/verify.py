@@ -2067,8 +2067,10 @@ def _explains(client, add) -> None:
             continue
         times.append(time.monotonic() - started)
         why = explain.refused(text, tab, panel, lines, question)
-        if why is None and not any(w in text.lower() for w in words):
+        if why is None and not explain.says(text, words):
             why = "it did not use what the panel says (none of: " + ", ".join(words) + ")"
+            if explain.odd(text):
+                why += "; its answer has unusual characters: " + explain.odd(text)
         if why is None:
             right += 1
         else:
@@ -2081,7 +2083,7 @@ def _explains(client, add) -> None:
         "\"Explain\" would show our own sentence instead of this model's for such panels. Tell Claude these "
         "lines.", rows)
 
-    best, rows = 0, []
+    best, wrong, rows = 0, 0, []
     for size in explain.SIZES:
         lines = explain.long_page(size)
         started = time.monotonic()
@@ -2096,14 +2098,16 @@ def _explains(client, add) -> None:
             why = f"it did not find the line asked about ({explain.LONG_ANSWER} PCs)"
         if why is not None:
             rows.append(f"{size:,} characters: {why}. Its answer: {_cut(' '.join(text.split()), 160)}")
-            break
+            wrong += 1
+            continue  # a bigger page is still measured
         best = size
         rows.append(f"{size:,} characters: right, in {time.monotonic() - started:.1f} s")
     sizes = ", ".join(f"{s:,}" for s in explain.SIZES)
-    add("explains a long page", True if best == explain.SIZES[-1] else None if best else False,
+    add("explains a long page", True if best == explain.SIZES[-1] and not wrong else None if best else False,
         f"Pages of {sizes} characters (a tile, a whole tab, a whole investigation): "
-        + (f"right up to {best:,}." if best else "not right at the smallest."),
-        "" if best else "Tell Claude these lines.", rows)
+        + (f"right up to {best:,}." if best and not (wrong and best == explain.SIZES[-1])
+           else f"right at {best:,}, not at every smaller size." if best else "right at none."),
+        "" if best and not wrong else "Tell Claude these lines.", rows)
 
 
 def render_checks(checks: list[Check]) -> str:
