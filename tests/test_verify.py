@@ -546,9 +546,9 @@ def test_software_names_are_riverbeds_own():
 
 
 def test_verify_software_shows_what_the_installed_list_holds_with_no_pc_names():
-    """Filled columns, a few PCs in full, whether name + version comes added up, versions in
-    order, one program everywhere, 2+ versions on one PC, one user's installs, Windows per PC
-    and Windows updates per Windows version."""
+    """In short: the list's size and one user's installs, 2+ versions on one PC (checked PC by
+    PC on the program with the most versions), Windows per PC and Windows updates per Windows
+    version."""
     from datetime import datetime, timedelta, timezone
     from pathlib import Path
     from uxcorrelate.verify import verify_software
@@ -597,25 +597,13 @@ def test_verify_software_shows_what_the_installed_list_holds_with_no_pc_names():
     text = render_checks(verify_software(settings, client))
     flat = " ".join(text.split())
     assert "HOST-" not in text  # no PC names
-    assert "INSTALLED_SOFTWARE is published with 12 of the 12 columns in Riverbed's list." in flat
-    assert "The first 9 rows" in flat and "are from 3 PCs. Filled: DEVICE_NAME 9, NAME 9, VERSION 7" in flat
-    assert "TYPE: 'Application' 7, 'OS Update' 2" in flat and "SCOPE: 'ALL' 8, 'Specific User' 1" in flat
-    assert "PC 1: 3 rows, 2 programs, 1 at 2+ versions; PC 2: 3 rows, 3 programs, 0 at 2+ versions" in flat
-    assert "Java: 11.0, 8.1 (type Application)" in flat
-    assert ("DEVICE_COUNT over 1 on 3: Aternity adds up the PCs per name and version, 9 installs of 4 programs. "
-            "3 programs have only dotted-number versions (newest and oldest can be told); 4 are on 5 PCs or "
-            "fewer.") in flat
-    assert "Edge 120.0: 2 PCs" in flat
-    assert "Edge: 2 versions, 3 installs; most 120.0 (2), newest 121.0 (1), oldest 120.0 (2)" in flat
-    assert "Java: 2 versions, 3 installs; most 8.1 (2), newest 11.0 (1), oldest 8.1 (2)" in flat  # 11 > 8
-    assert "Zoom: 1 versions, 1 installs; most 5.1 (1) ·" in flat  # one version: no newest or oldest
-    assert "Java: 3 rows on 2 PCs" in flat and "1 PCs have 2+ of them" in flat  # the most versions, then installs
-    assert "3 PCs have software in the list" in flat and "9 installs is about 3 per PC" in flat
-    assert ("1 programs have more installs than PCs, 1 more in all: a PC with 2 versions counts twice in installs, "
-            "once in PCs. Check: Java: 1 more installs than PCs here, 1 PCs with 2+ versions above (the same). "
-            "Most: · Java: 1 more installs than its 2 PCs") in flat
-    assert "SCOPE 'Specific User': 1 programs, 1 installs" in flat and "Zoom: 1 PCs" in flat
-    assert "TYPE 'OS Update': 1 updates, 2 installs" in flat and "KB5031: 2 PCs, not on 1" in flat
+    assert "software: what is filled" not in text and "versions, 3 installs; most" not in text  # answered on stage
+    assert "3 PCs, 4 programs, 9 installs (" in flat and "Not published" not in flat
+    assert "1 programs installed for one user only, 1 installs." in flat
+    assert ("1 programs have more installs than PCs, 1 more in all (" in flat
+            and "a PC with 2 versions counts twice in installs, once in PCs. Check on Java: 1 more installs than "
+                "PCs; read PC by PC, 1 PCs have 2+ versions (the same). Most: · Java: 1 more installs than its 2 PCs"
+            in flat)
     assert "3 PCs in DEVICE_INVENTORY" in flat and "2 Windows versions; last updated known on 3" in flat
     assert "Windows 11 24H2: 2 PCs" in flat and "weeks (Monday): older 1," in flat
     assert "Windows 11 24H2 (2 PCs): KB5031 on 1, not on 1" in flat  # each update counted on its own version
@@ -623,7 +611,7 @@ def test_verify_software_shows_what_the_installed_list_holds_with_no_pc_names():
 
     one = render_checks(verify_software(settings, client, pc="HOST-C"))  # named by the person asking
     assert "HOST-C: 3 rows" in one and "Settings > Apps" in one and "Zoom 5.1 (Application, Specific User)" in one
-    assert "software: what is filled" not in one and seen[-1] == "DEVICE_NAME eq 'HOST-C'"
+    assert "software: installed list" not in one and seen[-1] == "DEVICE_NAME eq 'HOST-C'"
 
 
 def test_verify_versions_shows_the_application_version_on_what_users_feel():

@@ -288,19 +288,16 @@ unset `<REQUIRED>` base URLs.
   what a "today's issues" overview could rest on: activity rows an hour,
   Aternity's own status and severity words with counts, and whether its
   incidents and alerts (`OVERVIEW_SOURCES` in `config.py`) are published.
-- `verify --software` (`verify._software`, only on its own): what
-  `INSTALLED_SOFTWARE` (`SOFTWARE_SOURCE`, `SOFTWARE_COLUMNS`) holds on the
-  tenant before any software red flag is designed: columns filled and
-  their values, `SW_PCS` PCs in full (programs at 2+ versions on one PC;
-  does `INSTALLED_SW_VERSION_COUNT` mean that?), whether name + version
-  alone comes added up per PC (`DEVICE_COUNT`; yes on the live tenant,
-  ~42 programs per PC), most / newest / oldest version per program
-  (`_version_key`, dotted numbers only), programs on `SW_FEW` PCs or
-  fewer, one program on every PC, the PCs in the list, 2+ versions on
-  one PC (asked per name only: installs above PCs; `VERSION_COUNT` is 1
-  on every live row, useless), `SOFTWARE_USER_SCOPE` installs,
-  `SOFTWARE_OS_UPDATE`, Windows per PC (`OS_COLUMNS`, `_windows`) and
-  each update on its own Windows version's PCs. `--pc NAME`: only that
+- `verify --software` (`verify._software`, only on its own), short: what
+  `INSTALLED_SOFTWARE` (`SOFTWARE_SOURCE`, `SOFTWARE_COLUMNS`) gives the
+  Software tab: PCs, programs, installs and `SOFTWARE_USER_SCOPE`
+  installs (name + version alone comes added up, `DEVICE_COUNT`; ~43
+  programs per PC on live), 2+ versions on one PC (asked per name only:
+  installs above PCs, checked PC by PC on the program with the most
+  versions; `VERSION_COUNT` is 1 on every live row, useless), Windows
+  per PC (`OS_COLUMNS`, `_windows`) and each `SOFTWARE_OS_UPDATE` on its
+  own Windows version's PCs. What was settled on stage (filled columns,
+  versions per program) is no longer printed. `--pc NAME`: only that
   PC's list. No PC or user names (unless typed).
 - `verify --versions` (`verify._versions`): Aternity's own
   `APPLICATION_VERSION` on what users feel (`VERSION_SOURCES`: daily app
