@@ -87,6 +87,12 @@ SOFTWARE_COLUMNS = {"device": "DEVICE_NAME", "name": "INSTALLED_SW_NAME", "versi
                     "related_to": "INSTALLED_SW_RELATED_TO", "volume": "INSTALLED_SW_INSTALLATION_VOLUME",
                     "changed": "INSTALLED_SW_LAST_CHANGE_TIMESTAMP", "count": "INSTALLED_SW_COUNT",
                     "version_count": "INSTALLED_SW_VERSION_COUNT", "pcs": "DEVICE_COUNT"}
+# Values seen in a live INSTALLED_SOFTWARE (verify --software, Nov 2026): SCOPE "ALL" or
+# "Specific User"; TYPE "Application", "OS Update" (no version, RELATED_TO "Microsoft
+# Windows") or "Update"; INSTALLATION_VOLUME, VERSION_COUNT, COUNT and DEVICE_COUNT 1 on
+# a PC's rows; name + version alone comes added up per PC (DEVICE_COUNT), ~42 per PC.
+SOFTWARE_USER_SCOPE = "Specific User"
+SOFTWARE_OS_UPDATE = "OS Update"
 # `verify` lists every published data source with a process column (which ones
 # could tell the busiest processes), and its time column
 PROCESS_COLUMN = "PROCESS_NAME"

@@ -293,8 +293,14 @@ unset `<REQUIRED>` base URLs.
   tenant before any software red flag is designed: columns filled and
   their values, `SW_PCS` PCs in full (programs at 2+ versions on one PC;
   does `INSTALLED_SW_VERSION_COUNT` mean that?), whether name + version
-  alone comes added up per PC (`DEVICE_COUNT`), one program on every PC.
-  No PC or user names. Checks for prod are verify options, never pasted
+  alone comes added up per PC (`DEVICE_COUNT`; yes on the live tenant,
+  ~42 programs per PC), most / newest / oldest version per program
+  (`_version_key`, dotted numbers only), programs on `SW_FEW` PCs or
+  fewer, one program on every PC, the PCs in the list, `VERSION_COUNT
+  gt 1` (2+ versions on one PC), `SOFTWARE_USER_SCOPE` installs and
+  `SOFTWARE_OS_UPDATE` (Windows updates, not on N PCs). `--pc NAME`: only
+  that PC's list, to compare with its Settings > Apps. No PC or user
+  names (unless typed). Checks for prod are verify options, never pasted
   scripts: the user cannot paste on the prod hosts.
 - `http.py` is the shared REST client (basic auth, retries on 429/5xx);
   `models.py` holds the dataclasses and `parse_time`.

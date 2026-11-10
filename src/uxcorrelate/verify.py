@@ -25,8 +25,8 @@ from statistics import median
 from typing import Any
 
 from .aternity import AternityClient, is_virtual, odata_quote, odata_time
-from .config import (DISK_FREE_COLUMNS, OVERVIEW_SOURCES, PROCESS_COLUMN, SOFTWARE_COLUMNS, SOFTWARE_REMOVED,
-                     SOFTWARE_SOURCE, SOFTWARE_UPDATE_GAP_MIN, TIME_COLUMNS,
+from .config import (DISK_FREE_COLUMNS, OVERVIEW_SOURCES, PROCESS_COLUMN, SOFTWARE_COLUMNS, SOFTWARE_OS_UPDATE,
+                     SOFTWARE_REMOVED, SOFTWARE_SOURCE, SOFTWARE_USER_SCOPE, SOFTWARE_UPDATE_GAP_MIN, TIME_COLUMNS,
                      NO_VALUE, VDI_COLUMNS, Settings)
 from .after_start import AFTER_START_MIN  # "right after a start-up", as investigations
 from .correlate import slow_rule
@@ -1376,20 +1376,28 @@ def verify_overview(settings: Settings, client: AternityClient) -> list[Check]:
 SW_SAMPLE = 1000  # software: the first rows, for what is filled
 SW_PCS = 3  # software: PCs read in full (names not shown)
 SW_PER_VERSION = 5000  # software: rows of name + version only
-SW_ONE_NAME = 20000  # software: rows of one program on every PC
+SW_ONE_NAME = 20000  # software: rows of one program on every PC (and of the PC list)
+SW_FEW = 5  # software: a program on this many PCs or fewer is on few
 
 
-def verify_software(settings: Settings, client: AternityClient) -> list[Check]:
-    """Only the "software: …" checks: what INSTALLED_SOFTWARE holds on this tenant."""
+def _version_key(v) -> tuple | None:
+    """A dotted version as numbers (1.26.18801 -> (1, 26, 18801)); None when it is not one."""
+    parts = str(v or "").split(".")
+    return tuple(int(p) for p in parts) if all(p.isdigit() for p in parts) else None
+
+
+def verify_software(settings: Settings, client: AternityClient, pc: str | None = None) -> list[Check]:
+    """Only the "software: …" checks: what INSTALLED_SOFTWARE holds on this tenant
+    (with `pc`: only that PC's list, to compare with its Settings > Apps)."""
     try:
         schema = parse_odata_metadata(client.http.request("GET", "/$metadata", headers={"Accept": "application/xml"}).text)
     except (ApiError, ET.ParseError) as exc:
         return [Check("Aternity", "connection", False, f"Could not read $metadata: {exc.short() if isinstance(exc, ApiError) else exc}",
                       "Check aternity.base_url, aternity.username and ATERNITY_PASSWORD.")]
-    return _software(client, schema)
+    return _software(client, schema, pc)
 
 
-def _software(client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
+def _software(client: AternityClient, schema: dict[str, set[str]], pc: str | None = None) -> list[Check]:
     """What the installed software list holds: columns filled and their values, a few
     PCs in full (several versions of one program on one PC?), whether name + version
     alone comes added up per PC (DEVICE_COUNT), and one program on every PC. No PC
@@ -1418,13 +1426,24 @@ def _software(client: AternityClient, schema: dict[str, set[str]]) -> list[Check
             return None, 0.0, []
         return rows, time.monotonic() - t0, _cut_short(client, mark)
 
+    short = lambda col: col.replace("INSTALLED_SW_", "")  # noqa: E731
+    if pc:  # one PC's whole list, named by the person who typed it
+        mine, secs, cut = read("software: one PC", filter=f"{D} eq {odata_quote(pc)}", select=list(c.values()))
+        if mine is not None:
+            kind = lambda r: ", ".join(str(r.get(c[k])) for k in ("type", "scope") if k in c)  # noqa: E731
+            checks.append(Check("Aternity", "software: one PC", None,
+                                f"{pc}: {len(mine)} rows ({secs:.1f} s). On that PC, compare with Settings > Apps "
+                                "> Installed apps: is each app there also here?",
+                                rows=[f"{r.get(N)} {r.get(V)} ({kind(r)})" for r in
+                                      sorted(mine, key=lambda r: str(r.get(N)).lower())] + cut))
+        return checks
+
     # what is filled, and the values of the small columns
     rows, secs, cut = read("software: what is filled", select=list(c.values()), top=SW_SAMPLE)
     if not rows:
         if rows is not None:
             checks.append(Check("Aternity", "software: what is filled", None, f"{S} has no rows."))
         return checks
-    short = lambda col: col.replace("INSTALLED_SW_", "")  # noqa: E731
     checks.append(Check("Aternity", "software: what is filled", None,
                         f"The first {len(rows)} rows ({secs:.1f} s) are from {len({r.get(D) for r in rows})} PCs. "
                         f"Filled: " + ", ".join(f"{short(v)} {sum(1 for r in rows if filled(r.get(v)))}"
@@ -1466,8 +1485,8 @@ def _software(client: AternityClient, schema: dict[str, set[str]]) -> list[Check
                             + (" Programs at 2+ versions on one PC:" if multi else ""),
                             rows=multi[:8] + ([f"(+{len(multi) - 8} more)"] if len(multi) > 8 else [])))
 
-    # name + version only: added up per PC by Aternity?
-    top_name = None
+    # name + version only: added up per PC by Aternity? versions in order? programs on few PCs?
+    top_name, installs = None, 0
     if "pcs" in c:
         agg, secs, cut = read("software: per version, all PCs", select=[N, V, c["pcs"]], top=SW_PER_VERSION)
         if agg:
@@ -1475,21 +1494,35 @@ def _software(client: AternityClient, schema: dict[str, set[str]]) -> list[Check
             added = sum(1 for n in counts if n > 1)
             names: dict = {}
             for r, n in zip(agg, counts):
-                x = names.setdefault(r.get(N), [set(), 0])
-                x[0].add(r.get(V))
-                x[1] += n
-            spread = sorted(names.items(), key=lambda kv: (-len(kv[1][0]), -kv[1][1]))
+                per = names.setdefault(r.get(N), {})
+                per[r.get(V)] = per.get(r.get(V), 0) + n
+            spread = sorted(names.items(), key=lambda kv: (-len(kv[1]), -sum(kv[1].values())))
             top_name = spread[0][0] if added else None
             first = f" (the first {len(agg)})" if len(agg) >= SW_PER_VERSION else ""
+            installs = 0 if first else sum(counts)
+            dotted = sum(1 for per in names.values() if all(_version_key(v) for v in per))
+            few = sorted((sum(per.values()), str(n)) for n, per in names.items() if sum(per.values()) <= SW_FEW)
+
+            def line(name, per):
+                most = max(per, key=lambda v: per[v])
+                text = f"{name}: {len(per)} versions, {sum(per.values()):,} installs; most {most} ({per[most]:,})"
+                if len(per) > 1 and all(_version_key(v) for v in per):
+                    new, old = max(per, key=_version_key), min(per, key=_version_key)
+                    text += f", newest {new} ({per[new]:,}), oldest {old} ({per[old]:,})"
+                return text
             checks.append(Check("Aternity", "software: per version, all PCs", None,
                                 f"Name and version only: {len(agg)} rows{first} ({secs:.1f} s); {short(c['pcs'])} "
                                 f"over 1 on {added}: "
                                 + ("Aternity adds up the PCs per name and version"
-                                   + ("" if first else f", {sum(counts):,} installs in all") if added
-                                   else "one row per PC, not added up") + ". Most PCs, then most versions:",
+                                   + (f", {installs:,} installs of {len(names):,} programs" if installs else "")
+                                   if added else "one row per PC, not added up")
+                                + f". {dotted:,} programs have only dotted-number versions (newest and oldest can be "
+                                f"told); {len(few):,} are on {SW_FEW} PCs or fewer. Most PCs, then most versions:",
                                 rows=[f"{r.get(N)} {r.get(V)}: {n:,} PCs" for r, n in
                                       sorted(zip(agg, counts), key=lambda x: -x[1])[:3]]
-                                + [f"{name}: {len(x[0])} versions, {x[1]:,} installs" for name, x in spread[:5]]
+                                + [line(name, per) for name, per in spread[:6]]
+                                + ([f"on {SW_FEW} PCs or fewer, e.g.: "
+                                    + "; ".join(f"{n} ({k})" for k, n in few[:6])] if few else [])
                                 + cut))
 
     # one program on every PC: its versions, and PCs with more than one of them
@@ -1508,6 +1541,61 @@ def _software(client: AternityClient, schema: dict[str, set[str]]) -> list[Check
                             f"{len(per_version)} versions; {sum(1 for v in per_pc.values() if len(v) > 1):,} PCs "
                             "have 2+ of them. PCs per version:",
                             rows=[f"{v}: {n:,} PCs" for v, n in per_version.most_common(6)] + cut))
+    two_here = sum(1 for v in per_pc.values() if len(v) > 1) if one else 0
+
+    # the PCs in the list: the base of every "N of M PCs"
+    total = None
+    listed, secs, cut = read("software: PCs in the list", select=[D], top=SW_ONE_NAME)
+    if listed:
+        total = len({r.get(D) for r in listed})
+        first = f" (the first {len(listed):,} rows)" if len(listed) >= SW_ONE_NAME else ""
+        checks.append(Check("Aternity", "software: PCs in the list", None,
+                            f"{total:,} PCs{first} have software in the list ({secs:.1f} s)"
+                            + (f"; {installs:,} installs is about {installs // total} per PC" if installs and not first
+                               else "") + ".", rows=cut))
+
+    # one program at 2+ versions on the same PC, on every PC: does VERSION_COUNT tell it?
+    if "version_count" in c:
+        vc = c["version_count"]
+        multi_rows, secs, cut = read("software: 2+ versions on one PC", filter=f"{vc} gt 1", select=[D, N, V, vc],
+                                     top=SW_ONE_NAME)
+        if multi_rows is not None:
+            pairs: dict = {}
+            for r in multi_rows:
+                x = pairs.setdefault((r.get(D), r.get(N)), [set(), number(r.get(vc))])
+                x[0].add(str(r.get(V)))
+            agree = sum(1 for vs, n in pairs.values() if len(vs) == n)
+            per_name = Counter(name for _, name in pairs)
+            example = {name: sorted(vs) for (_, name), (vs, _) in pairs.items()}
+            first = f" (the first {len(multi_rows):,})" if len(multi_rows) >= SW_ONE_NAME else ""
+            text = (f"{len(multi_rows):,} rows{first} with {short(vc)} over 1 ({secs:.1f} s): {len(per_name):,} "
+                    f"programs at 2+ versions on {len({p for p, _ in pairs}):,} PCs" + (f" of {total:,}" if total else "")
+                    + f"; for {agree:,} of these {len(pairs):,} program-on-a-PC, the PC's rows hold that many "
+                    "versions." + (" Programs on the most PCs:" if pairs else ""))
+            if not pairs and two_here:
+                text += (f" Yet {two_here} PCs have 2+ versions of {top_name} (above): {short(vc)} does not "
+                         "count them.")
+            checks.append(Check("Aternity", "software: 2+ versions on one PC", None, text,
+                                rows=[f"{n}: {k:,} PCs, e.g. {' + '.join(example[n][:3])}"
+                                      for n, k in per_name.most_common(8)] + cut))
+
+    # installed for one user only, and Windows updates: added up per name
+    for key, value, item, what in (("scope", SOFTWARE_USER_SCOPE, "software: installed for one user", "programs"),
+                                   ("type", SOFTWARE_OS_UPDATE, "software: Windows updates", "updates")):
+        if key not in c or "pcs" not in c:
+            continue
+        got, secs, cut = read(item, filter=f"{c[key]} eq {odata_quote(value)}", select=[N, c["pcs"]],
+                              top=SW_PER_VERSION)
+        if got is None:
+            continue
+        per = Counter()
+        for r in got:
+            per[r.get(N)] += number(r.get(c["pcs"])) or 0
+        checks.append(Check("Aternity", item, None,
+                            f"{short(c[key])} '{value}': {len(per):,} {what}, {sum(per.values()):,} installs "
+                            f"({secs:.1f} s)." + (" On the most PCs:" if per else ""),
+                            rows=[f"{n}: {k:,} PCs" + (f", not on {total - k:,}" if total and key == "type" else "")
+                                  for n, k in per.most_common(8)] + cut))
     return checks
 
 

@@ -543,46 +543,68 @@ def test_software_names_are_riverbeds_own():
 
 
 def test_verify_software_shows_what_the_installed_list_holds_with_no_pc_names():
-    """Filled columns, a few PCs in full, whether name + version comes added up, one program everywhere."""
+    """Filled columns, a few PCs in full, whether name + version comes added up, versions in
+    order, one program everywhere, 2+ versions on one PC, one user's installs, Windows updates."""
     from pathlib import Path
     from uxcorrelate.verify import verify_software
 
-    def sw(pc, name, version, n=1, kind="Application"):
+    def sw(pc, name, version, n=1, kind="Application", scope="ALL"):
         return {"DEVICE_NAME": pc, "INSTALLED_SW_NAME": name, "INSTALLED_SW_VERSION": version,
-                "INSTALLED_SW_TYPE": kind, "INSTALLED_SW_SCOPE": "N/A", "INSTALLED_SW_VERSION_COUNT": n,
+                "INSTALLED_SW_TYPE": kind, "INSTALLED_SW_SCOPE": scope, "INSTALLED_SW_VERSION_COUNT": n,
                 "INSTALLED_SW_COUNT": 1, "DEVICE_COUNT": 1}
-    every = [sw("HOST-A", "Java", "8.1", 2), sw("HOST-A", "Java", "11.0", 2), sw("HOST-A", "Edge", "120"),
-             sw("HOST-B", "Java", "8.1"), sw("HOST-B", "Edge", "121"), sw("HOST-C", "Edge", "120")]
+    every = [sw("HOST-A", "Java", "8.1", 2), sw("HOST-A", "Java", "11.0", 2), sw("HOST-A", "Edge", "120.0"),
+             sw("HOST-B", "Java", "8.1"), sw("HOST-B", "Edge", "121.0"), sw("HOST-C", "Edge", "120.0"),
+             sw("HOST-C", "Zoom", "5.1", scope="Specific User"), sw("HOST-B", "KB5031", "N/A", kind="OS Update"),
+             sw("HOST-C", "KB5031", "N/A", kind="OS Update")]
+    seen = []
+
+    def added(rows, sel):  # Aternity adds up the PCs per the columns asked for
+        cols = [k for k in sel.split(",") if k != "DEVICE_COUNT"]
+        per = Counter(tuple(r[k] for k in cols) for r in rows)
+        return [dict(zip(cols, key), DEVICE_COUNT=n) for key, n in per.items()]
 
     def handler(request):
         if request.url.path.endswith("/$metadata"):
             return httpx.Response(200, text=(Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
         f, sel = request.url.params.get("$filter", ""), request.url.params.get("$select", "")
-        if "DEVICE_NAME eq" in f:
-            pc = f.split("'")[1]
-            return httpx.Response(200, json={"value": [r for r in every if r["DEVICE_NAME"] == pc]})
-        if "INSTALLED_SW_NAME eq" in f:
-            name = f.split("'")[1]
-            return httpx.Response(200, json={"value": [{k: r[k] for k in sel.split(",")} for r in every
-                                                       if r["INSTALLED_SW_NAME"] == name]})
-        if sel == "INSTALLED_SW_NAME,INSTALLED_SW_VERSION,DEVICE_COUNT":  # Aternity adds up the PCs
-            per = Counter((r["INSTALLED_SW_NAME"], r["INSTALLED_SW_VERSION"]) for r in every)
-            return httpx.Response(200, json={"value": [{"INSTALLED_SW_NAME": n, "INSTALLED_SW_VERSION": v,
-                                                        "DEVICE_COUNT": k} for (n, v), k in per.items()]})
-        return httpx.Response(200, json={"value": every})
+        seen.append(f)
+        rows = every
+        if "eq '" in f:
+            column, value = f.split(" eq ")[0], f.split("'")[1]
+            rows = [r for r in every if r[column] == value]
+        if f == "INSTALLED_SW_VERSION_COUNT gt 1":
+            rows = [r for r in every if r["INSTALLED_SW_VERSION_COUNT"] > 1]
+        if "DEVICE_COUNT" in sel and "DEVICE_NAME" not in sel or sel == "DEVICE_NAME":
+            rows = added(rows, sel + ",DEVICE_COUNT")
+        return httpx.Response(200, json={"value": rows})
 
     settings = Settings()
     settings.aternity.base_url = "https://aternity.test/aternity.odata/v2.0"
-    text = render_checks(verify_software(settings, AternityClient(settings.aternity,
-                                                                  transport=httpx.MockTransport(handler))))
+    client = AternityClient(settings.aternity, transport=httpx.MockTransport(handler))
+    text = render_checks(verify_software(settings, client))
     flat = " ".join(text.split())
     assert "HOST-" not in text  # no PC names
     assert "INSTALLED_SOFTWARE is published with 12 of the 12 columns in Riverbed's list." in flat
-    assert "The first 6 rows" in flat and "are from 3 PCs. Filled: DEVICE_NAME 6, NAME 6, VERSION 6" in flat
-    assert "SCOPE 0" in flat and "TYPE: 'Application' 6" in flat
-    assert "PC 1: 3 rows, 2 programs, 1 at 2+ versions; PC 2: 2 rows, 2 programs, 0 at 2+ versions" in flat
-    assert "VERSION_COUNT equals the versions of that program on that PC for 5 of 5 programs" in flat
+    assert "The first 9 rows" in flat and "are from 3 PCs. Filled: DEVICE_NAME 9, NAME 9, VERSION 7" in flat
+    assert "TYPE: 'Application' 7, 'OS Update' 2" in flat and "SCOPE: 'ALL' 8, 'Specific User' 1" in flat
+    assert "PC 1: 3 rows, 2 programs, 1 at 2+ versions; PC 2: 3 rows, 3 programs, 0 at 2+ versions" in flat
+    assert "VERSION_COUNT equals the versions of that program on that PC for 8 of 8 programs" in flat
     assert "Java: 11.0, 8.1 (type Application)" in flat
-    assert "DEVICE_COUNT over 1 on 2: Aternity adds up the PCs per name and version, 6 installs in all" in flat
-    assert "Edge 120: 2 PCs" in flat and "Java: 2 versions, 3 installs" in flat
-    assert "Java: 3 rows on 2 PCs" in flat and "2 versions; 1 PCs have 2+ of them" in flat and "8.1: 2 PCs" in flat
+    assert ("DEVICE_COUNT over 1 on 3: Aternity adds up the PCs per name and version, 9 installs of 4 programs. "
+            "3 programs have only dotted-number versions (newest and oldest can be told); 4 are on 5 PCs or "
+            "fewer.") in flat
+    assert "Edge 120.0: 2 PCs" in flat
+    assert "Edge: 2 versions, 3 installs; most 120.0 (2), newest 121.0 (1), oldest 120.0 (2)" in flat
+    assert "Java: 2 versions, 3 installs; most 8.1 (2), newest 11.0 (1), oldest 8.1 (2)" in flat  # 11 > 8
+    assert "Java: 3 rows on 2 PCs" in flat and "1 PCs have 2+ of them" in flat  # the most versions, then installs
+    assert "3 PCs have software in the list" in flat and "9 installs is about 3 per PC" in flat
+    assert ("2 rows with VERSION_COUNT over 1 (0.0 s): 1 programs at 2+ versions on 1 PCs of 3; for 1 of these 1 "
+            "program-on-a-PC, the PC's rows hold that many versions. Programs on the most PCs: · Java: 1 PCs, e.g. "
+            "11.0 + 8.1") in flat
+    assert "Zoom: 1 versions, 1 installs; most 5.1 (1) ·" in flat  # one version: no newest or oldest
+    assert "SCOPE 'Specific User': 1 programs, 1 installs" in flat and "Zoom: 1 PCs" in flat
+    assert "TYPE 'OS Update': 1 updates, 2 installs" in flat and "KB5031: 2 PCs, not on 1" in flat
+
+    one = render_checks(verify_software(settings, client, pc="HOST-C"))  # named by the person asking
+    assert "HOST-C: 3 rows" in one and "Settings > Apps" in one and "Zoom 5.1 (Application, Specific User)" in one
+    assert "software: what is filled" not in one and seen[-1] == "DEVICE_NAME eq 'HOST-C'"

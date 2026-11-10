@@ -154,7 +154,7 @@ def cmd_verify(args) -> int:
         return 1 if any(c.ok is False for c in checks) else 0
     if args.software:  # only what Aternity's installed software list holds
         from .verify import verify_software
-        checks = verify_software(settings, AternityClient(settings.aternity))
+        checks = verify_software(settings, AternityClient(settings.aternity), pc=args.pc)
         print(render_checks(checks))
         return 1 if any(c.ok is False for c in checks) else 0
     if args.ai:  # only the AI services: seconds, not the minutes the Riverbed checks take
@@ -231,6 +231,7 @@ def main(argv: list[str] | None = None) -> int:
     ver.add_argument("--ai", action="store_true", help="only the AI services (ai.services in config.yaml)")
     ver.add_argument("--software", action="store_true",
                      help="only what Aternity's installed software list holds (no PC names shown)")
+    ver.add_argument("--pc", help="with --software: only this PC's list, to compare with its Settings > Apps")
     ver.set_defaults(func=cmd_verify)
 
     args = p.parse_args(argv)
