@@ -70,9 +70,10 @@ timezone: ""
 #        object_type: INTERFACE, metric_class: IFC_UTIL,
 #        metric: utilizationOut, threshold: 80}
 
-# The Care list tab: users checked every 15 min (up to 50). Read at every
-# check: no restart needed. username: exactly as in Aternity (the Username
-# box on the Investigate tab suggests names); label: optional, shown big.
+# The Care list tab: users checked every 15 min (up to 50). The list is
+# data/care_list.json, changed on the page ("Add a user", a tile's
+# "Remove"). care_list here is read once only, to make that file when it
+# is not there yet (the list was here before); it is not read after that.
 care_list: []
 # - username: <as in Aternity>
 #   label: <shown on the tile>

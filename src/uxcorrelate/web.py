@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -62,6 +62,11 @@ class InvestigateBody(BaseModel):
 class ChatBody(BaseModel):
     question: str
     history: list[dict] = []
+
+
+class CareBody(BaseModel):
+    username: str
+    label: str = ""
 
 
 class LogonBody(BaseModel):
@@ -164,8 +169,42 @@ def create_app(config_path: str | None = None) -> FastAPI:
         """One Care list user: today's issues, 8 days of them, and the latest investigation."""
         got = care.detail(username, datetime.now(timezone.utc))
         if got is None:
-            raise HTTPException(404, f"{username} is not on the Care list (care_list in config.yaml).")
+            raise HTTPException(404, f"{username} is not on the Care list.")
         return got
+
+    def care_check_now() -> None:
+        """After a change on the page: the new tile's history and issues now, not at the next read."""
+        if not today.ready:
+            return  # the reader checks the list itself once it has read Aternity
+        try:
+            care.check(aternity_client(), datetime.now(timezone.utc))
+        except Exception as exc:
+            log.warning("Care list: the check after a change on the page failed (%s)", short_error(exc))
+
+    @app.post("/api/care/users")
+    def care_add(body: CareBody, request: Request):
+        """A new tile on the Care list (the page has no login: logged with the caller's address)."""
+        try:
+            user = care.add(body.username, body.label, request.client.host if request.client else "")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        except OSError as exc:
+            raise HTTPException(500, f"The Care list could not be changed ({short_error(exc)}). Its file is "
+                                     "care_list.json in the data folder, writable by the container (uid 1000).")
+        threading.Thread(target=care_check_now, daemon=True, name="care-add").start()
+        return {"username": user.username, "label": user.label}
+
+    @app.delete("/api/care/users")
+    def care_remove(username: str, request: Request):
+        """Take a user off the Care list, with their saved issues and investigation."""
+        try:
+            gone = care.remove(username, request.client.host if request.client else "")
+        except OSError as exc:
+            raise HTTPException(500, f"The Care list could not be changed ({short_error(exc)}). Its file is "
+                                     "care_list.json in the data folder, writable by the container (uid 1000).")
+        if gone is None:
+            raise HTTPException(404, f"{username} is not on the Care list.")
+        return {"username": gone.username, "label": gone.label}
 
     @app.get("/api/software")
     def software_view(brief: bool = False):

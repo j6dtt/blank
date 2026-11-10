@@ -152,8 +152,18 @@ The usual for actions builds up over the first week from the counts saved
 in `./data` each night (`mkdir -p data && chmod a+rwx data` before the
 first start).
 
-Care list tab (second): users named under `care_list` in config.yaml (up
-to 50, read every 15 minutes, no restart), each checked every 15 minutes.
+Care list tab (second): up to 50 users, each checked every 15 minutes.
+"+ Add a user" (top right of the tab) opens a box: the username as
+Aternity writes it (names seen in Aternity are offered as you type) and
+an optional label shown big on the tile; the tile is there at once and
+fills in within seconds. Click a tile, then "Remove from the Care
+list…": after a confirm, the tile, the user's saved issues and their
+latest investigation are deleted. The list is `data/care_list.json`
+(`[{"username": …, "label": …}]`; it can also be edited by hand, seen at
+the next check). It is made once from `care_list` in config.yaml, where
+the list was before; config.yaml's list is not read after that. The page
+has no login, so anyone who can open it can change the list; each change
+is logged with the address it came from.
 An issue is an event Aternity rates Critical or Major, or more Major slow
 actions by this time of day than on any of the user's own days before.
 Either is over after an hour with no new one (slow actions also once the

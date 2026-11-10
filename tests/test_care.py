@@ -325,3 +325,99 @@ def test_the_endpoints(tmp_path):
     assert http.get("/api/care").json()["users"][0]["title"] == "Payroll lead"
     assert http.get("/api/care/user", params={"username": "MQ2208"}).json()["label"] == "Payroll lead"
     assert http.get("/api/care/user", params={"username": "nobody"}).status_code == 404
+
+
+def test_the_list_file_is_made_once_from_config_yaml_then_it_is_the_list(tmp_path, caplog):
+    cfg = [USERS[0]]
+    care = Care(today_with(0), lambda: cfg, tmp_path)
+    with caplog.at_level("INFO", logger="uxcorrelate"):
+        care.check(None, NOW)
+    file = tmp_path / "care_list.json"
+    assert json.loads(file.read_text()) == [{"username": "mq2208", "label": "Payroll lead"}]
+    assert "made with the 1 users of care_list in config.yaml" in caplog.text
+    cfg.append(USERS[1])  # config.yaml is not read again
+    care.check(None, NOW)
+    assert [u.username for u in care.users] == ["mq2208"]
+    file.write_text('[{"username": " tz9013 ", "label": "Desk"}, "ghost1", {"label": "no name"}, 7]')  # edited by hand
+    care.check(None, NOW)
+    assert [(u.username, u.label) for u in care.users] == [("tz9013", "Desk"), ("ghost1", "")]
+    file.write_text("{not json")  # broken: said, the last list is kept, and the page does not write over it
+    care.check(None, NOW)
+    assert len(care.users) == 2 and "could not be read" in care.view(NOW)["notes"][0]
+    try:
+        care.add("new1")
+        raise AssertionError("added over a broken file")
+    except OSError as exc:
+        assert "could not be read first" in str(exc) and file.read_text() == "{not json"
+
+
+def test_a_user_is_added_and_removed_on_the_page(tmp_path, caplog):
+    from uxcorrelate.names import NameList
+    names = NameList()
+    names.seen["username"]["MQ2208"] = NOW
+    care = Care(today_with(3), lambda: [], tmp_path, names)
+    care.check(client(), NOW)
+    assert care.view(NOW)["notes"] == ['No one is on the Care list: use "Add a user" above.']
+    with caplog.at_level("INFO", logger="uxcorrelate"):
+        got = care.add("  mq2208 ", " Payroll   lead ", "198.51.100.7")
+    assert (got.username, got.label) == ("MQ2208", "Payroll lead")  # as Aternity writes it
+    assert "Care list: Payroll lead (MQ2208) added on the page from 198.51.100.7; 1 users now" in caplog.text
+    assert json.loads((tmp_path / "care_list.json").read_text()) == [{"username": "MQ2208", "label": "Payroll lead"}]
+    assert care.view(NOW)["users"][0]["title"] == "Payroll lead"  # the tile is there before the next check
+    care.check(client(), NOW)  # the page asks for one at once: history read, the issue found
+    care.run_next(lambda u, s, e: {"answer": {"title": "T"}}, NOW)
+    assert care.view(NOW)["count"] == 1 and len(list((tmp_path / "care").glob("*.json"))) == 1
+
+    def refused(*a):
+        try:
+            care.add(*a)
+        except ValueError as exc:
+            return str(exc)
+    assert refused("MQ2208") == "Payroll lead (MQ2208) is already on the Care list."
+    assert refused("  ") == "Type a username, as Aternity writes it."
+    assert refused("x" * 101).startswith("Too long")
+    assert Care(today_with(0), lambda: [], tmp_path).listed()[0].username == "MQ2208"  # kept over a restart
+
+    assert care.remove("nobody") is None
+    care.pending.append("mq2208")
+    assert care.remove("mq2208", "198.51.100.7").label == "Payroll lead"
+    assert care.users == [] and json.loads((tmp_path / "care_list.json").read_text()) == []
+    assert not care.issues and not care.reports and not care.pending
+    assert not list((tmp_path / "care").glob("*.json"))  # their saved issues and investigation are deleted
+    assert "removed on the page from 198.51.100.7, with their saved issues; 0 users now" in caplog.text
+
+    for k in range(CARE_MAX):
+        care.add(f"user{k}")
+    assert refused("one-more") == f"The Care list is full ({CARE_MAX} users): remove one first."
+
+
+def test_an_investigation_of_a_user_removed_while_it_ran_is_not_kept(tmp_path):
+    care = Care(today_with(3), lambda: USERS[:1], tmp_path)
+    care.check(client(), NOW)
+
+    def investigate(u, s, e):
+        care.remove("mq2208")
+        return {"answer": {"title": "T"}}
+    care.run_next(investigate, NOW)
+    assert not care.reports and not list((tmp_path / "care").glob("*.json"))
+
+
+def test_the_add_and_remove_endpoints(tmp_path, monkeypatch):
+    monkeypatch.setenv("UXCORRELATE_DATA", str(tmp_path))
+    path = tmp_path / "config.yaml"
+    path.write_text("care_list:\n  - username: mq2208\n    label: Payroll lead\n")
+    app = web.create_app(str(path))
+    http = TestClient(app)
+    app.state.care.today.__dict__.update(today_with(3).__dict__)
+    assert http.post("/api/care/users", json={"username": "tz9013", "label": "Desk"}).json() == {
+        "username": "tz9013", "label": "Desk"}
+    titles = [u["title"] for u in http.get("/api/care").json()["users"]]
+    assert sorted(titles) == ["Desk", "Payroll lead"] and http.get("/api/care").json()["max"] == CARE_MAX
+    again = http.post("/api/care/users", json={"username": "TZ9013"})
+    assert again.status_code == 400 and again.json()["detail"] == "Desk (tz9013) is already on the Care list."
+    assert http.delete("/api/care/users", params={"username": "mq2208"}).json()["label"] == "Payroll lead"
+    assert http.delete("/api/care/users", params={"username": "mq2208"}).status_code == 404
+    assert [u["username"] for u in json.loads((tmp_path / "care_list.json").read_text())] == ["tz9013"]
+    (tmp_path / "care_list.json").write_text("{broken")
+    bad = http.post("/api/care/users", json={"username": "new1"})
+    assert bad.status_code == 500 and "could not be changed" in bad.json()["detail"]

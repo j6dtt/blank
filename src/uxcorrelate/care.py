@@ -1,7 +1,12 @@
 """The "Care list" tab (/api/care): named users checked every 15 minutes.
 
-Each user in `care_list` (config.yaml, read at every check; CARE_MAX at most)
-is checked after each read of the Today reader, from rows already read:
+The list is `<data>/care_list.json` (LIST_FILE), written by the page's "Add
+a user" and a tile's "Remove" (`add`, `remove`) and read at every check;
+CARE_MAX at most. It is made once from `care_list` in config.yaml (where the
+list was before 2026-11-10), which is not read again after that. The page
+has no login: anyone who can open it can change the list (each change is
+logged with the address it came from). Each user is checked after each read
+of the Today reader, from rows already read:
 - an issue is an event Aternity rates Critical or Major (TILE_SEVERITIES)
   with their username today, or more actions Aternity rated Major
   (TOP_STATUS) by this time of day than on any of the days before that they
@@ -51,6 +56,8 @@ INV_PAD = timedelta(minutes=30)
 QUIET = HOUR  # a slow spell is over after this long with no Major action
 QUIET_WORDS = "the hour"  # QUIET in words: "none in the hour after 09:45"
 WAIT_S = 10  # the investigation worker looks for work this often
+LIST_FILE = "care_list.json"  # in the data folder: [{"username": ..., "label": ...}]
+NAME_MAX, LABEL_MAX = 100, 60
 
 
 def _iso(t: datetime) -> str:
@@ -70,8 +77,11 @@ class Care:
     def __init__(self, today: Today, load_users, store: str | os.PathLike | None = None, names=None):
         self.today = today
         self.name_list = names  # usernames seen in Aternity's activity: the exact spelling to ask for
-        self.load_users = load_users  # -> list[CareUser] (config.yaml, read at every check)
+        self.load_users = load_users  # -> list[CareUser]: care_list in config.yaml, only to make the list file
         self.store = Path(store) / "care" if store else None
+        self.list_file = Path(store) / LIST_FILE if store else None
+        self.typed: list[CareUser] | None = None  # the list changed on the page with no data folder (tests)
+        self.checking = threading.RLock()  # one check or list change at a time (the reader and the page)
         self.users: list[CareUser] = []
         self.skipped = 0
         self.history: dict[str, dict] = {}  # user -> {"for": day read, "days": {day: [Major second of day]}, "rows"}
@@ -132,21 +142,122 @@ class Care:
             log.warning("Care list: %s", text)
         self.notes[key] = text
 
-    # -- each check -------------------------------------------------------------
-    def check(self, client, now: datetime) -> None:
-        """After each read of Aternity: each user's issues today; a new one queues an investigation."""
+    # -- the list ---------------------------------------------------------------
+    def listed(self) -> list[CareUser]:
+        """The list: care_list.json in the data folder; made from config.yaml's care_list when
+        it is not there yet (once: the page changes the file from then on)."""
+        if self.list_file is None:
+            return list(self.typed if self.typed is not None else self.load_users() or [])
+        if self.list_file.exists():
+            data = json.loads(self.list_file.read_text())
+            if not isinstance(data, list):
+                raise ValueError(f"{LIST_FILE} must be a list of users")
+            users = [CareUser(username=e) if isinstance(e, str) else CareUser(
+                username=str(e.get("username") or ""), label=str(e.get("label") or ""))
+                for e in data if isinstance(e, (str, dict))]
+            return [CareUser(u.username.strip(), u.label.strip()) for u in users if u.username.strip()]
+        users = list(self.load_users() or [])
         try:
-            users = list(self.load_users() or [])
-            self.notes.pop("settings", None)
-        except Exception as exc:  # a broken config.yaml: keep the last list
-            self.note("settings", f"care_list could not be read from config.yaml ({short_error(exc)}).")
-            users = self.users
+            self._write_list(users)
+            log.info("Care list: %s made with the %d users of care_list in config.yaml. The list is "
+                     "that file from now on (the page's Add a user and Remove change it); care_list in "
+                     "config.yaml is not read again.", self.list_file, len(users))
+        except OSError as exc:  # config.yaml's list still works; the page cannot change it
+            self.note("list", f"{self.list_file} could not be written ({short_error(exc)}), so the list is still "
+                              "care_list in config.yaml and cannot be changed on the page. The folder must be "
+                              "writable by the container (uid 1000).")
+        else:
+            self.notes.pop("list", None)
+        return users
+
+    def _write_list(self, users: list[CareUser]) -> None:
+        if self.list_file is None:
+            self.typed = list(users)
+            return
+        self.list_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.list_file.with_name("." + self.list_file.name + ".tmp")
+        tmp.write_text(json.dumps([{"username": u.username, "label": u.label} for u in users], indent=2) + "\n")
+        os.replace(tmp, self.list_file)
+
+    def _to_change(self) -> list[CareUser]:
+        try:
+            return self.listed()
+        except Exception as exc:  # a broken file is not written over
+            raise OSError(f"the list could not be read first: {short_error(exc)}") from exc
+
+    def _set_users(self, users: list[CareUser]) -> None:
         seen, unique = set(), []
         for u in users:
             if u.username.lower() not in seen:
                 seen.add(u.username.lower())
                 unique.append(u)
         self.users, self.skipped = unique[:CARE_MAX], max(len(unique) - CARE_MAX, 0)
+
+    def add(self, username: str, label: str = "", by: str = "") -> CareUser:
+        """A new tile, from the page. ValueError says why not, in words for the page."""
+        username, label = " ".join(username.split()), " ".join(label.split())
+        if not username:
+            raise ValueError("Type a username, as Aternity writes it.")
+        if len(username) > NAME_MAX or len(label) > LABEL_MAX:
+            raise ValueError(f"Too long: a username takes {NAME_MAX} characters at most, a label {LABEL_MAX}.")
+        user = CareUser(username, label)
+        user.username = self.aternity_name(user)  # as Aternity writes it, when seen in its activity
+        with self.checking:
+            users = self._to_change()
+            same = next((u for u in users if u.username.lower() == user.username.lower()), None)
+            if same:
+                raise ValueError(f"{self._who(same)} is already on the Care list.")
+            if len(users) >= CARE_MAX:
+                raise ValueError(f"The Care list is full ({CARE_MAX} users): remove one first.")
+            self._write_list(users + [user])
+            self._set_users(users + [user])
+        log.info("Care list: %s added on the page%s; %d users now", self._who(user), f" from {by}" if by else "",
+                 len(self.users))
+        return user
+
+    def remove(self, username: str, by: str = "") -> CareUser | None:
+        """Take a user off the list, with their saved issues and investigation. None: not on it."""
+        user = username.strip().lower()
+        with self.checking:
+            users = self._to_change()
+            gone = next((u for u in users if u.username.lower() == user), None)
+            if gone is None:
+                return None
+            left = [u for u in users if u.username.lower() != user]
+            self._write_list(left)
+            self._set_users(left)
+            with self.lock:
+                name = self.names.pop(user, gone.username)
+                self.issues.pop(user, None)
+                self.reports.pop(user, None)
+                self.history.pop(user, None)
+                if user in self.pending:
+                    self.pending.remove(user)
+            if self.store:
+                try:  # by the name's own ending: the file may carry Aternity's spelling of it
+                    for path in self.store.glob("*-" + _file_name(name).rsplit("-", 1)[1]):
+                        path.unlink(missing_ok=True)
+                except OSError as exc:
+                    log.warning("Care list: %s's saved issues could not be deleted (%s)", name, short_error(exc))
+        log.info("Care list: %s removed on the page%s, with their saved issues; %d users now", self._who(gone),
+                 f" from {by}" if by else "", len(self.users))
+        return gone
+
+    # -- each check -------------------------------------------------------------
+    def check(self, client, now: datetime) -> None:
+        """After each read of Aternity: each user's issues today; a new one queues an investigation."""
+        with self.checking:
+            self._check(client, now)
+
+    def _check(self, client, now: datetime) -> None:
+        try:
+            users = self.listed()
+            self.notes.pop("settings", None)
+        except Exception as exc:  # a broken file: keep the last list
+            self.note("settings", f"The Care list could not be read ({short_error(exc)}): the last list is kept. "
+                                  f"It is {self.list_file or 'care_list in config.yaml'}.")
+            users = self.users
+        self._set_users(users)
         t = self.today.day(now)
         for u in self.users:
             user = u.username.lower()
@@ -360,6 +471,8 @@ class Care:
             except Exception as exc:
                 report["error"] = short_error(exc)
                 log.warning("Care list: %s could not be investigated (%s)", self._who(u), report["error"])
+            if not any(x.username.lower() == user for x in self.users):
+                return user  # taken off the list while it ran: nothing of theirs is kept
             with self.lock:
                 self.reports[user] = report
             self.save(user)
@@ -389,15 +502,14 @@ class Care:
                        key=lambda x: (x["status"] != "unknown", x["title"].lower()))  # names not seen first
         notes = list(self.notes.values())
         if self.skipped:
-            notes.append(f"care_list has {len(self.users) + self.skipped} users: the first {CARE_MAX} are checked, "
-                         f"{self.skipped} skipped.")
+            notes.append(f"The Care list has {len(self.users) + self.skipped} users: the first {CARE_MAX} are "
+                         f"checked, {self.skipped} skipped.")
         if not self.users:
-            notes.append("No one is on the Care list: add users under care_list in config.yaml (checked at the "
-                         "next read, no restart).")
+            notes.append("No one is on the Care list: use \"Add a user\" above.")
         return {"ready": True, "as_of": _iso(self.as_of or now),
                 "as_of_local": today.local(self.as_of or now).strftime("%H:%M"), "zone": today.zone_label,
                 "date": t.isoformat(), "count": len(issue), "users": issue + other, "notes": notes,
-                "checked": len(self.users)}
+                "checked": len(self.users), "max": CARE_MAX}
 
     def tile(self, u: CareUser, now: datetime) -> dict:
         user, today = u.username.lower(), self.today
@@ -421,8 +533,8 @@ class Care:
         status = "issue" if mine else "ok"
         note = None
         if not today_all and h is not None and not h["rows"] and not actions:
-            status, note = "unknown", f"Not seen in Aternity's activity in {HISTORY_DAYS} days: check the name in " \
-                                      "care_list in config.yaml."
+            status, note = "unknown", f"Not seen in Aternity's activity in {HISTORY_DAYS} days: check the name " \
+                                      "(click the tile to remove it, then add it again as Aternity writes it)."
         days = []
         for n in range(KEEP_DAYS - 1, -1, -1):
             d = (t - timedelta(days=n)).isoformat()

@@ -331,3 +331,31 @@ def test_the_tab_answers_before_its_first_read_and_says_what_is_missing():
     assert api.get("/api/software/pcs", params={"name": "Edge"}).status_code == 503
     assert api.post("/api/software/summary").status_code == 503
     assert api.get("/api/software/pcs", params={"update": "KB1"}).status_code == 404  # not read yet: not listed
+
+
+def test_aternity_down_is_tried_again_soon_and_never_saved_as_a_day(tmp_path, monkeypatch):
+    monkeypatch.setattr("uxcorrelate.http.time.sleep", lambda s: None)  # the client's own waits between tries
+    good, s = client()
+    down = AternityClient(s.aternity, transport=httpx.MockTransport(lambda q: httpx.Response(503)))
+    reader = sw.Software("", tmp_path)
+    clients, waits = [down, good, down], []
+
+    class Stop(Exception):
+        pass
+
+    def sleep(seconds):
+        waits.append(seconds)
+        if len(waits) == 1:  # after the first try: nothing to show, nothing saved, said on the tab
+            assert reader.snap is None and not list(tmp_path.rglob("*.json")) and not reader.reading
+            assert reader.status == ("Aternity's installed software list could not be read (HTTP 503); "
+                                     "trying again in 15 minutes.")
+        if len(waits) == 3:
+            raise Stop
+
+    try:
+        sw.keep_reading(reader, lambda: clients.pop(0), lambda: s.aternity, sleep, clock=lambda: NOW)
+    except Stop:
+        pass
+    assert waits == [15 * 60, 24 * 3600, 15 * 60]  # down, read, down again a day later
+    assert len(reader.view()["flags"]) == 7 and len(list(tmp_path.rglob("*.json"))) == 1  # the good read is kept
+    assert "trying again in 15 minutes" in reader.status

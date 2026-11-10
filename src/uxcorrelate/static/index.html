@@ -183,6 +183,7 @@
   .dlgWrap[hidden] { display: none; }
   .dlgWrap { position: fixed; inset: 0; background: rgba(20, 16, 8, .45); display: grid; place-items: center; z-index: 20; padding: 16px; }
   .dlg { max-width: 640px; width: 100%; max-height: 80vh; overflow: auto; }
+  .cFields { display: grid; gap: 10px; } .cFields[hidden] { display: none; }
   .dlgBtns { display: flex; gap: 10px; justify-content: flex-end; margin-top: 12px; }
 </style>
 </head>
@@ -239,7 +240,8 @@
   </div>
   <div id="careBox" hidden>
     <section class="panel">
-      <div class="todayHead"><h2>Care list</h2><span class="muted" id="cWhen"></span></div>
+      <div class="todayHead"><h2>Care list</h2><span class="muted" id="cWhen"></span>
+        <button type="button" id="cAdd" style="margin-left:auto">+ Add a user</button></div>
       <div class="muted" id="cStatus"></div>
       <div class="tiles" id="cTiles"></div>
       <ul class="muted notes" id="cNotes"></ul>
@@ -438,6 +440,20 @@
     </section>
   </div>
 </main>
+<div class="dlgWrap" id="cDlg" hidden><form class="dlg panel" id="cForm" role="dialog" aria-modal="true" aria-labelledby="cDlgTitle"
+    style="display:block;max-width:440px" autocomplete="off">
+  <h2 id="cDlgTitle"></h2>
+  <div id="cAddFields" class="cFields">
+    <label>Username, as Aternity writes it (type part of it)
+      <input name="username" list="cNames" maxlength="100" required></label>
+    <datalist id="cNames"></datalist>
+    <label>Label, shown big on the tile (optional: a name or a role)
+      <input name="label" maxlength="60"></label>
+  </div>
+  <p id="cDlgText" style="margin:0"></p>
+  <p id="cDlgError" style="color:var(--bad);margin:8px 0 0" hidden></p>
+  <div class="dlgBtns"><button type="submit" id="cDlgOk"></button><button type="button" class="link" id="cDlgCancel">Cancel</button></div>
+</form></div>
 <div class="dlgWrap" id="dlg" hidden><div class="dlg panel" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
   <h2 id="dlgTitle"></h2><div id="dlgBody"></div>
   <div class="dlgBtns"><button type="button" id="dlgCopy">Copy</button><button type="button" class="link" id="dlgClose">Close</button></div>
@@ -710,6 +726,7 @@ async function openCare(username) {
     else if (rep && rep.error) html += `<p>The last one failed: ${esc(rep.error)}</p>`;
     else html += `<p class="muted">${esc(whyText(d) || "None yet: one runs by itself when an issue comes.")}</p>`;
     html += `<button type="button" class="link" id="cRun">Investigate again now ▸</button>`;
+    html += ` <button type="button" class="link" id="cRemove" style="color:var(--bad);float:right">Remove from the Care list…</button>`;
     const before = d.history.filter((i) => i.day !== d.days[d.days.length - 1].date);  // today's are above
     html += `<h3>The ${d.days.length - 1} days before</h3>` + (before.length
       ? `<ul>${before.map((i) => `<li>${esc(i.when_local)} ${sevTag(i.level)} ${esc(i.text)}`
@@ -725,6 +742,56 @@ for (const id of ["cTiles"]) {
   });
 }
 $("cDetailClose").addEventListener("click", () => { $("cDetail").hidden = true; });
+// Add a user / remove one: one in-page dialog; the list is care_list.json in the data folder
+let cDlgRemove = null;
+function careDialog(remove) {
+  cDlgRemove = remove || null;
+  const f = $("cForm"), full = !remove && careData && careData.checked >= careData.max;
+  $("cDlgTitle").textContent = remove ? "Remove from the Care list" : "Add a user to the Care list";
+  $("cAddFields").hidden = !!remove || full; f.username.required = !remove && !full;
+  $("cDlgText").hidden = !remove && !full;
+  $("cDlgText").textContent = full ? `The Care list is full (${careData.max} users): remove one first.` : remove
+    ? `${remove.label ? `${remove.label} (${remove.username})` : remove.username} will no longer be checked. Their tile, `
+      + "their saved issues of the last 8 days and their latest investigation are deleted." : "";
+  $("cDlgOk").textContent = remove ? "Remove" : "Add"; $("cDlgOk").hidden = full; $("cDlgOk").disabled = false;
+  $("cDlgOk").style.background = remove ? "var(--bad)" : "";
+  $("cDlgError").hidden = true; f.reset(); $("cNames").innerHTML = "";
+  $("cDlg").hidden = false;
+  (remove || full ? $("cDlgCancel") : f.username).focus();
+}
+$("cAdd").addEventListener("click", () => careDialog());
+$("cDlgCancel").addEventListener("click", () => { $("cDlg").hidden = true; });
+$("cDlg").addEventListener("click", (ev) => { if (ev.target === $("cDlg")) $("cDlg").hidden = true; });
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !$("cDlg").hidden) $("cDlg").hidden = true; });
+let cNamesTimer = null;
+$("cForm").username.addEventListener("input", (ev) => {  // usernames seen in Aternity, as on the Investigate tab
+  clearTimeout(cNamesTimer);
+  const q = ev.target.value.trim();
+  cNamesTimer = setTimeout(async () => {
+    try {
+      const r = await fetch(`api/names?kind=username&q=${encodeURIComponent(q)}`);
+      const got = await r.json();
+      const list = Array.isArray(got) ? got : got.names || got.matches || [];
+      $("cNames").innerHTML = list.map((x) => `<option value="${esc(typeof x === "string" ? x : x.name)}">`).join("");
+    } catch (e) { /* any name can still be typed */ }
+  }, 200);
+});
+$("cForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const f = $("cForm"), gone = cDlgRemove;
+  $("cDlgOk").disabled = true; $("cDlgError").hidden = true;
+  try {
+    const r = gone ? await fetch(`api/care/users?${new URLSearchParams({ username: gone.username })}`, { method: "DELETE" })
+      : await fetch("api/care/users", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: f.username.value, label: f.label.value }) });
+    const d = await r.json();
+    if (!r.ok) throw new Error(detail(d));
+    $("cDlg").hidden = true;
+    if (gone) $("cDetail").hidden = true;
+    await loadCare();
+    if (!gone) setTimeout(loadCare, 4000);  // their history of the days before is read now: the tile fills in
+  } catch (e) { $("cDlgError").textContent = e.message; $("cDlgError").hidden = false; $("cDlgOk").disabled = false; }
+});
 $("cDetailBody").addEventListener("click", (ev) => {
   if (!careUser) return;
   if (ev.target.id === "cOpen") {  // the investigation that already ran: shown, not run again
@@ -733,6 +800,8 @@ $("cDetailBody").addEventListener("click", (ev) => {
     f.start.value = toLocalInput(new Date(rep.start)); f.end.value = toLocalInput(new Date(rep.end));
     mode("inv");
     render(rep.result);
+  } else if (ev.target.id === "cRemove") {
+    careDialog({ username: careUser.username, label: careUser.label });
   } else if (ev.target.id === "cRun") {
     const first = careUser.issues.length ? new Date(careUser.issues[0].since) : new Date(Date.now() - 4 * 3600e3);
     investigateNow({ username: careUser.username, start: new Date(first - 30 * 60e3).toISOString(), end: new Date().toISOString() });

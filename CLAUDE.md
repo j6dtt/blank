@@ -249,7 +249,16 @@ unset `<REQUIRED>` base URLs.
   physical, saved nightly as `kinds`) and each health event's application.
 - `care.py`: the "Care list" tab, second (`/api/care`, `/api/care/user`;
   link `#care`, as `#today`, `#investigate`, `#startups`): users in
-  `care_list` (config.yaml, read at every check, `CARE_MAX` 50) checked
+  `<data>/care_list.json` (`LIST_FILE`, read at every check, `CARE_MAX`
+  50; user's request 2026-11-10) are changed on the page: "+ Add a user"
+  (`POST /api/care/users`, `Care.add`: Aternity's spelling via `NameList`,
+  no repeats, checked at once) and a tile's "Remove from the Care list…"
+  (`DELETE /api/care/users`, `Care.remove`: their saved issues and
+  investigation go too), one in-page dialog (`careDialog`). The file is
+  made once from `care_list` in config.yaml (the list's place before),
+  which is not read after that; a broken file keeps the last list and is
+  never written over. No login: each change is logged with the caller's
+  address. One check or change at a time (`Care.checking`). Users are checked
   after each read of the Today reader (`keep_reading(..., care=)`), from
   rows it holds (`Hour.user_devs`/`user_runs`/`dev_kind`). Issue: an event
   in `TILE_SEVERITIES` with their username today, or more Major actions by
@@ -277,7 +286,10 @@ unset `<REQUIRED>` base URLs.
   its updates (`OS_COLUMNS`, `SOFTWARE_OS_UPDATE`), and app versions on
   usage and actions over `DAYS` (`VERSION_SOURCES`, per PC for up to
   `APPS_MAX` apps with a problem on 2+ versions; `VERSION_OPTIONAL`
-  columns only when published, via $metadata). Red flags (`_flags`, one
+  columns only when published, via $metadata). When Aternity does not answer for the list itself
+  (`snap["unread"]`), nothing is saved (it would empty the day's flags),
+  the last good read stays and it is tried again every `RETRY_MIN` (15;
+  it waited a day before: stage, Nov 2026). Red flags (`_flags`, one
   line per kind, each raised version of flag 1 its own): `judge` (`RATIO`,
   `MIN_PCS`, `MIN_PROBLEM`; an app whose every listed PC failed, as
   Trellix ENS on live, is held only where it failed: no crash or hang

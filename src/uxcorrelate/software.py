@@ -36,6 +36,7 @@ from .today import zone_of
 log = logging.getLogger("uxcorrelate")
 
 READ_EVERY_H = 24  # the whole read, once a day (and at start)
+RETRY_MIN = 15     # ... and this soon again when Aternity did not answer for the list itself
 KEEP_DAYS = 90  # saved days, for "new" and each flag's days
 DAYS = 7  # application versions: the days counted
 RATIO = 2.0  # a version is raised at this times its other versions' share (decision 1)
@@ -108,6 +109,7 @@ class _Reads:
     def __init__(self, client, notes: list[str]):
         self.client, self.notes = client, notes
         self.schema: dict | None = None
+        self.error = ""  # the first read Aternity did not answer, in a few words
         try:
             from .verify import parse_odata_metadata
             text = client.http.request("GET", "/$metadata", headers={"Accept": "application/xml"}).text
@@ -126,6 +128,7 @@ class _Reads:
         try:
             got = self.client.query(entity, **kw)
         except Exception as exc:
+            self.error = self.error or short_error(exc)
             self.notes.append(f"{what} could not be read ({short_error(exc)}).")
             return None
         if len(self.client.warnings) > mark or (kw.get("top") and len(got) >= kw["top"]):
@@ -497,6 +500,8 @@ def read_snapshot(client, cfg, now: datetime, local, say=lambda s: None) -> dict
     snap = {"as_of": now.isoformat(), "date": local.day(now).isoformat(), "list": size, "programs": progs,
             "windows": _windows(q, cfg, local, now, say), "versions": _versions(q, now, say), "notes": notes,
             "days": DAYS}
+    # Aternity down: the list itself did not come. Not a day's counts (keep_reading tries again soon)
+    snap["unread"] = q.error if size is None else ""
     snap["flags"] = _flags(snap)
     return snap
 
@@ -636,13 +641,19 @@ def keep_reading(sw: Software, make_client, cfg_of, sleep, clock=lambda: datetim
             sw.off = "Aternity is not set, so there is nothing to show (aternity.base_url in config.yaml)."
             log.info("Software: %s", sw.off)
             return
-        sw.reading, started = True, clock()
+        sw.reading, started, wait = True, clock(), READ_EVERY_H * 3600
 
         def say(text: str) -> None:
             sw.status = text
 
         try:
             snap = read_snapshot(client, cfg_of(), started, sw, say)
+            if snap["unread"]:  # keep the last good read on the tab; saving this one would empty today's flags
+                sw.status = (f"Aternity's installed software list could not be read ({snap['unread']}); "
+                             f"trying again in {RETRY_MIN} minutes.")
+                log.warning("Software: %s", sw.status)
+                wait = RETRY_MIN * 60
+                continue
             sw.save(snap)
             sw.status = "Read"
             s = snap["list"] or {}
@@ -654,9 +665,9 @@ def keep_reading(sw: Software, make_client, cfg_of, sleep, clock=lambda: datetim
         except Exception as exc:  # shown on the tab; the next read tries again
             sw.status = f"The software read failed ({short_error(exc)}); trying again in {READ_EVERY_H} hours."
             log.exception("Software: read failed")
-        finally:
+        finally:  # also after `continue`: the wait is here, outside the try
             sw.reading = False
-        sleep(READ_EVERY_H * 3600)
+            sleep(wait)
 
 
 # -- reads made by a click ------------------------------------------------------------

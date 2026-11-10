@@ -76,9 +76,9 @@
 # Code fix: copy the files into src/ in the app
 # folder, then:
 #   kubectl -n uxcorrelate rollout restart deploy/uxcorrelate
-# care_list in config.yaml: seen at the next 15-min
-# check, no restart. Other config.yaml settings:
-# rollout restart (as above).
+# The Care list is changed on the page (it is
+# care_list.json on the data volume). config.yaml
+# settings: rollout restart (as above).
 # Password or AI key changed in .env: load it again,
 # then rollout restart:
 #   kubectl -n uxcorrelate create secret generic uxcorrelate-env --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
