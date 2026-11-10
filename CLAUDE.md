@@ -376,6 +376,18 @@ unset `<REQUIRED>` base URLs.
   before to after (`LOG_BACK`). For the Software tab
   (`docs/software-tab.md`, decisions taken 2026-11-10). Checks for prod are verify options, never pasted
   scripts: the user cannot paste on the prod hosts.
+- `explain.py`: "Explain this page" (docs/explain-this-page.md, agreed
+  2026-11-10; step 1 of 4 so far, no page work yet): a panel's own lines
+  plus our meaning of each term on its tab (`GLOSSARY`, `COMMON`: the one
+  place a term's meaning is written, built from the code's constants;
+  the user reviews it) are given to the AI, which words them (`SYSTEM`,
+  `messages`); `refused`: a number not in the lines, the meanings or the
+  question, or a worked-out comparison (the chats' `numbers`/`allowed`/
+  `RATIO`). `verify --ai` measures it (`verify._explains`): "explains a
+  panel" (`SAMPLES`, 2 made-up panels per tab) and "explains a long
+  page" (`long_page`, `SIZES`: the line asked about is three quarters
+  down). Steps 2-4: Today + Care list, Investigate + Slow start-ups,
+  Software.
 - `status.py`: the connection lights at the right of the top bar
   (`/api/status`, user's request 2026-11-10): Aternity, NetIM and each
   `ai.services` entry, one small read each every `CHECK_EVERY_S` (60) by

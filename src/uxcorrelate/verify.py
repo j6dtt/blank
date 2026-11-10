@@ -2025,6 +2025,7 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
                                                                                "zone": "local time"}),
               software_chat.TOOLS, AI_SW_TRIES)
         ask = lambda q: [{"role": "system", "content": SYSTEM}, {"role": "user", "content": q}]  # noqa: E731
+        _explains(client, add)
 
         # repeats the counts it is given
         if first is None:
@@ -2048,6 +2049,61 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
             "The chat would show wrong numbers in its sentence. Tell Claude these lines.",
             [f"its answer: {_cut(' '.join(text.split()), 220)}"])
     return checks
+
+
+def _explains(client, add) -> None:
+    """ "Explain this page" (explain.py, step 1): does the model put made-up panels of every tab
+    in plain English with only their numbers, and how long a page does it still read right?"""
+    import time
+
+    from . import explain
+    right, rows, times = 0, [], []
+    for tab, panel, lines, question, words in explain.SAMPLES:
+        started = time.monotonic()
+        try:
+            text = str(client.chat(explain.messages(tab, panel, lines, question)).get("content") or "")
+        except ApiError as exc:
+            rows.append(f"{explain.TABS[tab]}, \"{panel}\": the service did not answer ({exc.short()})")
+            continue
+        times.append(time.monotonic() - started)
+        why = explain.refused(text, tab, panel, lines, question)
+        if why is None and not any(w in text.lower() for w in words):
+            why = "it did not use what the panel says (none of: " + ", ".join(words) + ")"
+        if why is None:
+            right += 1
+        else:
+            rows.append(f"{explain.TABS[tab]}, \"{panel}\", \"{question}\": {why}. Its answer: "
+                        f"{_cut(' '.join(text.split()), 200)}")
+    took = f" Replies took {min(times):.1f} to {max(times):.1f} s." if times else ""
+    add("explains a panel", right == len(explain.SAMPLES),
+        f"Right for {right} of {len(explain.SAMPLES)} made-up panels (2 of each tab): plain English, only the "
+        f"panel's numbers.{took}",
+        "\"Explain\" would show our own sentence instead of this model's for such panels. Tell Claude these "
+        "lines.", rows)
+
+    best, rows = 0, []
+    for size in explain.SIZES:
+        lines = explain.long_page(size)
+        started = time.monotonic()
+        try:
+            text = str(client.chat(explain.messages("software", "A long made-up panel", lines,
+                                                    explain.LONG_QUESTION)).get("content") or "")
+        except ApiError as exc:
+            rows.append(f"{size:,} characters: the service did not answer ({exc.short()})")
+            break
+        why = explain.refused(text, "software", "A long made-up panel", lines, explain.LONG_QUESTION)
+        if why is None and explain.LONG_ANSWER not in text:
+            why = f"it did not find the line asked about ({explain.LONG_ANSWER} PCs)"
+        if why is not None:
+            rows.append(f"{size:,} characters: {why}. Its answer: {_cut(' '.join(text.split()), 160)}")
+            break
+        best = size
+        rows.append(f"{size:,} characters: right, in {time.monotonic() - started:.1f} s")
+    sizes = ", ".join(f"{s:,}" for s in explain.SIZES)
+    add("explains a long page", True if best == explain.SIZES[-1] else None if best else False,
+        f"Pages of {sizes} characters (a tile, a whole tab, a whole investigation): "
+        + (f"right up to {best:,}." if best else "not right at the smallest."),
+        "" if best else "Tell Claude these lines.", rows)
 
 
 def render_checks(checks: list[Check]) -> str:

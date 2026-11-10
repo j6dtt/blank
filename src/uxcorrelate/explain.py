@@ -1,0 +1,272 @@
+""" "Explain this page": a panel of the page put in plain English by the AI.
+
+Proposal and the user's choices: docs/explain-this-page.md (2026-11-10). The
+AI never reads Aternity and never counts: it is given the panel's own lines
+(the numbers the page shows) and our written meaning of each term on that
+tab (`GLOSSARY`), and words them. Every number in its answer must be in
+those lines, the meanings or the question (`refused`), as in the chats.
+
+Step 1 (this file so far): the meanings, the instructions, the check, and
+the made-up panels `uxcorrelate verify --ai` measures both models with
+(`SAMPLES`, `long_page`). No page work yet.
+
+`GLOSSARY` is the one place a term's meaning is written. Each is what the
+page does (from the code and its constants), not what Aternity documents:
+docs/data-meanings.md says how sure we are of Aternity's own values.
+"""
+
+from __future__ import annotations
+
+from . import after_start, care, impact, logons, normal, software, today
+from .chat import RATIO, allowed, clean, numbers
+from .cause import DISK_BACK
+from .config import TILE_SEVERITIES, TOP_STATUS
+
+SENTENCES = (2, 5)
+_SEV = " or ".join(TILE_SEVERITIES)
+_QUIET_H = int(care.QUIET.total_seconds() // 3600)
+
+COMMON = {
+    f"{TOP_STATUS} slow action": f"One action of a user in an application (open a mail, launch a program) that "
+                                 f"Aternity itself rated {TOP_STATUS}, the worst rating it gives here. The page "
+                                 "counts Aternity's rating; it sets no limit of its own.",
+    "event": "A health event Aternity recorded on a PC: an application crash or hang, a blue screen, low memory, "
+             "a failing disk. Critical, Major and Minor are Aternity's own severity.",
+    "virtual desktop": "A desktop Aternity marks as virtual: the user reaches it from another device. Users "
+                       "move between them, so one user can have several in a week.",
+    "Investigate ▸": "Runs an investigation of that user or PC on the Investigate tab, over the time around "
+                     "what was found.",
+}
+
+GLOSSARY: dict[str, dict[str, str]] = {
+    "today": {
+        "Today": f"From midnight (in the time zone shown) to the last read. Aternity is read every "
+                 f"{today.REFRESH_MIN} minutes.",
+        "tile": f"One kind of event Aternity rated {_SEV} today, with the number of PCs that had it. A click "
+                "lists the users and PCs.",
+        "usual": f"Today against the same kind of day before (working days with working days, weekends with "
+                 f"weekends), up to {today.USUAL_DAYS} days, at the same time of day. More than usual: more "
+                 f"than on any of those days. Fewer than usual: fewer than on any of them. Otherwise as usual. "
+                 f"It needs {today.MIN_USUAL} saved days; until then no usual is said.",
+        f"{TOP_STATUS} slow actions per hour": f"One bar per hour of today: the actions Aternity rated "
+                                               f"{TOP_STATUS} in that hour. The line across a bar is the "
+                                               "middle value of the same hour on the days compared with.",
+        f"Applications with the most {TOP_STATUS} slow actions": f"Per application today: its actions rated "
+                                                                 f"{TOP_STATUS} and the PCs they were on. The "
+                                                                 "top one by count is not always the worst by "
+                                                                 "share.",
+        "Other crashes and events on the most PCs today": "The kinds of event on the most PCs today, whatever "
+                                                          "their severity, "
+                                                          "each with its PCs per day over the last 7 days.",
+    },
+    "care": {
+        "Care list": f"Named users checked after every read of Aternity ({today.REFRESH_MIN} minutes), up to "
+                     f"{care.CARE_MAX}. Every user has a tile.",
+        "issue": f"Either an event Aternity rated {_SEV} with that user's name today, or more {TOP_STATUS} slow "
+                 "actions by this time of day than on any of their own days before.",
+        "their usual by now": f"The fewest and the most {TOP_STATUS} slow actions that user had by this time "
+                              f"of day on their own days before with a PC in use (same kind of day, up to "
+                              f"{care.USUAL_DAYS}; {care.MIN_USUAL} needed).",
+        "over": f"An issue ends after {_QUIET_H} hour with no new one. A slow-actions issue also ends when the "
+                "user is back within their usual. A later one is a new issue.",
+        "✓ OK": "No open issue for that user now. The tile says how many actions were measured today and how "
+                f"many were rated {TOP_STATUS}.",
+        "not found": f"The name was not seen in Aternity's activity in {care.HISTORY_DAYS} days: it may be "
+                     "misspelled.",
+        "Why": "The headline of the investigation that ran by itself when the issue came (at most one an hour "
+               "per user).",
+        "Issues per day": f"Small bars: that user's issues on each of the last {care.KEEP_DAYS} days.",
+    },
+    "investigate": {
+        "headline": "Two sentences: what the user felt (the action, how long it took, on which PC), then one "
+                    "verdict on why, or what is known. \"Likely\" and \"Possibly\" say how strong it is.",
+        "What the user felt": "The slow actions, hangs, crashes and start-ups of that user in the time asked "
+                              "for, on each PC they worked on.",
+        "What went wrong": "One row per issue found on the user's PCs, those at the slow actions first. Each "
+                           "has what is known of it, possible causes and who else has it.",
+        "counted for a slow action": "The problem was within the \"Match within\" minutes of a slow action on "
+                                     "the same PC. \"Not counted\" means it was found but at another time.",
+        "Aternity's split": "Aternity's own division of an action's time between the PC, the network and the "
+                            "server.",
+        "possible cause": "A software change on that PC before the failure, with the same name or version as "
+                          "the part that failed. It is not said when other PCs fail the same way on another "
+                          "version.",
+        "who else": "Other PCs with the same failure (same event, same failing part), out of the PCs that use "
+                    "that application.",
+        "Other users of these apps": f"Other users of the same applications who were slow at the same time, "
+                                     f"against the same hours on the {impact.DAYS_BACK} days before. It is the "
+                                     "verdict only when Aternity did not put most of the slow time on the "
+                                     "user's own PC.",
+        "usually": f"The user's own normal time for that action, from up to {normal.BASELINE_DAYS} days; the "
+                   "days found are said, as Aternity keeps about 8.",
+        "failing disk": f"Aternity recorded a failing disk or drive on the PC. It counts for the slow actions "
+                        f"on that PC from its first record, looked for up to {DISK_BACK.days} days before.",
+        "right after a start-up": f"An action up to {after_start.AFTER_START_MIN} minutes after a start-up of "
+                                  "its PC, compared with the same action later on all PCs of that kind.",
+        "What changed": "The software installed, updated or removed on each PC, from Aternity's change log.",
+        "What to do": "The steps for IT, the most important first.",
+        "checked": "What was looked at and ruled out, with counts.",
+    },
+    "startups": {
+        "start-up": "A start of Windows or a logon as Aternity measured it. Rows of one PC within an hour are "
+                    "one start-up; each column is one of Aternity's measurements.",
+        "typical": "The middle value: half the start-ups took less, half took more.",
+        "1 in 10 over": "One start-up in ten took longer than this.",
+        "usual for this PC": f"That PC's own middle value over its last {logons.BASELINE_DAYS} days; "
+                             f"{logons.MIN_HISTORY} earlier start-ups are needed. For a user on virtual "
+                             "desktops, their start-ups on all their desktops are compared with each other.",
+        "what took the time": "The part of the start-up (a start-up program, a policy, the profile) that "
+                              "Aternity marked as the most longer than normal.",
+        "main causes": "A part that was longer than normal on every PC that had it, not on one PC only.",
+    },
+    "software": {
+        "Software tab": f"What Aternity lists as installed on the PCs, read once a day, and each application's "
+                        f"versions over the last {software.DAYS} days.",
+        "red flag": "Something on the installed software worth raising to management. One line per kind, the "
+                    "most PCs first.",
+        "Crashes more / Hangs more / Slower": f"One version of an application has the problem (PCs with a crash, "
+                                              f"PCs with a hang, or actions rated {TOP_STATUS}) at at least "
+                                              f"{software.RATIO:g} times the share of its other versions, with "
+                                              f"at least {software.MIN_PCS} PCs on each side and "
+                                              f"{software.MIN_PROBLEM} PCs with the problem.",
+        "not compared": "Every PC listed for that application had the problem, so no version can be said to "
+                        "be worse than another.",
+        "Behind most PCs": "PCs on a version older than the one most PCs of that program have.",
+        "2+ versions on one PC": "The same program installed in two or more versions on one PC.",
+        "Installed for one user": "Aternity lists the install as for a specific user, not for the whole PC.",
+        "Windows update not on every PC": f"An update that more than half the PCs of a Windows version have, "
+                                          "and the PCs of that version without it. Some have a later update "
+                                          "in its place.",
+        f"On {software.FEW_PCS} PCs or fewer": f"Programs found on {software.FEW_PCS} PCs or fewer in the "
+                                               "whole company.",
+        "new": "The flag was not there on the day before.",
+        "PCs per day": f"Small bars: the flag's PCs on each saved day (kept {software.KEEP_DAYS} days).",
+    },
+}
+
+TABS = {"today": "Today", "care": "Care list", "investigate": "Investigate", "startups": "Slow start-ups",
+        "software": "Software"}
+
+SYSTEM = (f"You explain one panel of a web page to IT staff in plain English. The page shows the experience of "
+          f"the company's PC users, from Riverbed Aternity. You are given the panel's lines exactly as the page "
+          f"shows them, and what the page's terms mean. Answer the question in {SENTENCES[0]} to {SENTENCES[1]} "
+          f"short sentences of plain text (no lists, no tables, no markdown): what the panel shows, what its "
+          f"numbers mean, and one next step when the lines or meanings give one. Use the terms' meanings as "
+          f"written; do not add causes, advice or facts that are not in the lines or the meanings. Use only "
+          f"numbers that are in the lines, written exactly as given, and do not work out new ones (no sums, no "
+          f"percentages, no \"twice as many\"). If the lines and meanings do not answer the question, say so in "
+          f"one sentence.")
+NO_ANSWER = "The panel's lines and the meanings of its terms do not answer that."
+
+
+def meanings(tab: str) -> dict[str, str]:
+    """The terms of one tab, with those every tab shares."""
+    return {**COMMON, **GLOSSARY.get(tab, {})}
+
+
+def given(tab: str, panel: str, lines: list[str]) -> str:
+    """What the AI is given about a panel: its lines, then the terms' meanings."""
+    terms = "\n".join(f"- {k}: {v}" for k, v in meanings(tab).items())
+    return (f"Tab: {TABS.get(tab, tab)}\nPanel: {panel}\n\nThe panel's lines:\n" + "\n".join(lines)
+            + f"\n\nWhat the terms mean:\n{terms}")
+
+
+def messages(tab: str, panel: str, lines: list[str], question: str) -> list[dict]:
+    return [{"role": "system", "content": SYSTEM},
+            {"role": "user", "content": f"{given(tab, panel, lines)}\n\nQuestion: {question}"}]
+
+
+def refused(text: str, tab: str, panel: str, lines: list[str], question: str) -> str | None:
+    """Why an answer is not shown (None: fine): empty, a number that is not on the panel,
+    or a comparison worked out from its numbers."""
+    text = clean(text)
+    if not text:
+        return "it gave no answer"
+    extra = numbers(text) - allowed(given(tab, panel, lines), question, SYSTEM)
+    if extra:
+        return "a number that is not on the panel (" + ", ".join(f"{x:g}" for x in sorted(extra)[:3]) + ")"
+    ratio = RATIO.search(text)
+    if ratio:
+        return f"a comparison the panel does not give (\"{ratio.group(0)}\")"
+    return None
+
+
+# -- what `verify --ai` measures with (made-up names and numbers) --------------------------------
+# tab, panel, its lines, the question, and words a right answer has at least one of (any case)
+SAMPLES = (
+    ("today", "Major slow actions", [
+        "Major slow actions: 318 on 141 PCs, 152 users",
+        "By 14:00: 126 PCs. More than usual (usual by 14:00: 61 to 97 PCs, 5 working days before)",
+    ], "Explain this panel.", ("more than usual", "more than on any", "141", "126")),
+    ("today", "Applications with the most Major slow actions", [
+        "Application | Major slow actions | PCs",
+        "Sample Mail | 96 | 71", "Sample ERP | 54 | 12", "Sample Browser | 31 | 29",
+        "Note: the highest share of Major among applications with 20 runs or more: Sample ERP, 54 of 210 actions",
+    ], "Which application should I look at first, and why?", ("sample erp", "sample mail")),
+    ("care", "Tile: Front desk (ab1234)", [
+        "Major since 09:40", "Front desk", "ab1234", "VD-31 (virtual)",
+        "More Major slow actions than usual: 14 by 10:15 (their usual by now: 0 to 3, 4 working days before)",
+        "Why: Sample Mail Open took 21.4 s on VD-31 (Major). Likely: Sample Mail hung on VD-31 at 2 of them",
+        "Issues per day, last 8 days: 0 0 1 0 0 0 0 1",
+    ], "Why does this user have an issue?", ("14", "0 to 3", "usual")),
+    ("care", "Tile: Shift lead (cd5678)", [
+        "✓ OK", "Shift lead", "cd5678", "PC-204 (physical)",
+        "No issue: 212 actions today, 2 rated Major (usual by now: 0 to 4).",
+        "More Major slow actions than usual from 08:10; over: back within their usual at 09:35.",
+        "No issue in the last 8 days.",
+    ], "What does over mean on this tile?", ("usual", "09:35", "ended", "over")),
+    ("investigate", "Headline and What to do", [
+        "Sample Mail Launch took 89.2 s on PC-77 (Major). Likely: PC-77's disk is failing (Aternity recorded "
+        "Faulty HD S.M.A.R.T. Status and HD Failure)",
+        "A failing disk slows everything on its PC. Aternity recorded it failing from Nov 10, 12:45 AM and put "
+        "100% of the slow time on the PC. See What went wrong.",
+        "What to do: 1. On PC-77: back up the user's data and replace the disk (XY250-MODEL): Aternity recorded "
+        "it failing.",
+        "Other users: 2 of the 14 other Sample Mail users were slow at the same time. Aternity put 100% of this "
+        "user's slow time on their PC, so this is not taken as the cause.",
+    ], "Explain this investigation to me.", ("disk", "pc-77")),
+    ("investigate", "What went wrong: Sample Notes crashed", [
+        "Sample Notes crashed on PC-77: 1 record, not counted for a slow action",
+        "What we know: it failed in notes.dll 4.2.1. No change with that name or version was logged before it.",
+        "Who else: 37 other PCs of the 412 that use Sample Notes had the same crash in the last 7 days.",
+    ], "Is this crash the reason the user was slow?", ("not counted", "another time", "no", "not")),
+    ("startups", "Start-ups: each measurement", [
+        "412 start-ups. For each Aternity measurement: the typical time, and the time 1 in 10 start-ups are "
+        "slower than.",
+        "Machine Boot: typical 38.2 s · 1 in 10 over 96.0 s",
+        "User Logon: typical 21.7 s · 1 in 10 over 74.5 s",
+    ], "What do typical and 1 in 10 over mean here?", ("half", "middle", "one in ten", "1 in 10", "ten")),
+    ("startups", "A start-up of VD-12", [
+        "VD-12, user ef9012: User Logon 143.0 s (usual for this user's virtual desktops: 24.5 s)",
+        "What took the time: Sample Sync Agent, 96.0 s longer than normal",
+        "Main causes: none: no part was longer than normal on every PC",
+    ], "Why was this start-up slow?", ("sample sync agent", "96")),
+    ("software", "Red flag: Crashes more", [
+        "Crashes more | Sample Viewer 12.4: a crash on 61 of 240 PCs; its other versions: 9 of 310 PCs. | 61 PCs "
+        "| new",
+    ], "Explain this red flag.", ("12.4", "61")),
+    ("software", "Red flag: Windows update not on every PC", [
+        "Windows update not on every PC | 3 Windows updates are on most PCs of their Windows version but not on "
+        "every one; most: KB5550001 not on 2,037 of the 4,636 PCs on Sample Windows 11 23H2; 1,204 of those have "
+        "KB5550002. | 2,037 PCs",
+    ], "Are those 2,037 PCs unpatched?", ("later", "in its place", "kb5550002", "1,204")),
+)
+SIZES = (4_000, 12_000, 40_000)  # characters of panel lines: a tile, a whole tab, a whole investigation
+LONG_QUESTION = "How many PCs does the line about update KB5559999 give, and what does that line mean?"
+LONG_ANSWER = "1,713"
+
+
+def long_page(size: int) -> list[str]:
+    """Made-up panel lines of about `size` characters, with the one line the question is about
+    three quarters of the way down (a model that reads only the top misses it)."""
+    lines, n, total = [], 0, 0
+    while total < size:
+        n += 1
+        line = (f"Sample Program {n:04d} | version 1.{n % 9}.{n % 37} | {(n * 7) % 97 + 3} PCs | "
+                f"{(n * 3) % 11} with a crash")
+        if total < size * 3 // 4 <= total + len(line) + 1:
+            line = (f"Windows update not on every PC | KB5559999 not on {LONG_ANSWER} of the 4,902 PCs on Sample "
+                    "Windows 11 24H2")
+        lines.append(line)
+        total += len(line) + 1
+    return lines

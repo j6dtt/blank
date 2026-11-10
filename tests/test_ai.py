@@ -4,6 +4,7 @@ import json
 
 import httpx
 
+from uxcorrelate import explain
 from uxcorrelate.config import AiService, Settings, load_settings
 from uxcorrelate.verify import AI_OUTSIDE, AI_SW_TRIES, AI_TRIES, render_checks, verify_ai
 
@@ -13,7 +14,17 @@ PICKS = {q: {k: FULL.get(v, v) if isinstance(v, str) else v for k, v in want.ite
          for q, want in AI_TRIES + AI_SW_TRIES}
 
 
-def service(seen, picks=PICKS, login="bearer", models=("model-a", "model-b"), tools=True, numbers="2,885 and 412"):
+def explained(content: str, how: str, reads: int) -> str:
+    """The stand-in's answer to an "Explain" question: right, with a number of its own, or
+    right only on pages up to `reads` characters."""
+    if "A long made-up panel" in content:
+        return f"The line gives {explain.LONG_ANSWER} PCs." if len(content) <= reads else "I see many programs."
+    words = next(w for tab, panel, lines, q, w in explain.SAMPLES if f"Panel: {panel}\n" in content)
+    return f"This panel shows {words[0]}." + (" That is 37.5% of them." if how == "invents" else "")
+
+
+def service(seen, picks=PICKS, login="bearer", models=("model-a", "model-b"), tools=True, numbers="2,885 and 412",
+            explains="right", reads=10**9):
     """A stand-in OpenAI-style service: picks from `picks`, then words the counts."""
     def handler(request: httpx.Request):
         seen.append(request)
@@ -26,6 +37,9 @@ def service(seen, picks=PICKS, login="bearer", models=("model-a", "model-b"), to
         body = json.loads(request.content)
         assert set(body) <= {"model", "messages", "tools"}  # no token limit, no temperature
         last = body["messages"][-1]
+        if body["messages"][0]["content"] == explain.SYSTEM:
+            assert "tools" not in body
+            return reply(explained(last["content"], explains, reads))
         if "tools" in body and not tools:
             return httpx.Response(400, json={"error": {"message": "tools are not supported"}})
         if last["role"] == "tool":
@@ -59,7 +73,10 @@ def run(seen=None, env=None, cfg=None, **kw):
 def test_a_good_service_passes_every_check_and_the_key_is_never_printed():
     seen = []
     checks, text = run(seen)
-    assert [c.ok for c in checks.values()] == [None, True, True, True, True, True]
+    assert [c.ok for c in checks.values()] == [None, True, True, True, True, True, True, True]
+    assert "Right for 10 of 10 made-up panels" in checks["explains a panel"].message
+    assert "right up to 40,000." in checks["explains a long page"].message
+    assert len(checks["explains a long page"].rows) == 3
     assert "Right in 4 of 4 tries" in checks["picks the right question"].message
     assert "Right in 10 of 10 tries" in checks["picks the right question (Software tab)"].message
     assert "made no pick (right)" in checks["picks the right question"].message
@@ -134,3 +151,35 @@ def test_no_service_set_is_a_note_with_what_to_add_not_a_failure(tmp_path):
                     "      key_env: AI_KEY_1\n      query: {api-version: '1'}\n")
     got = load_settings(path).ai.services[0]
     assert (got.name, got.model, got.key_env, got.query) == ("one", "m", "AI_KEY_1", {"api-version": "1"})
+
+
+def test_explain_a_number_of_its_own_fails_and_a_long_page_is_measured():
+    checks, text = run(explains="invents")
+    c = checks["explains a panel"]
+    assert c.ok is False and "Right for 0 of 10" in c.message and len(c.rows) == 10
+    assert "a number that is not on the panel (37.5)" in c.rows[0] and c.rows[0].startswith("Today, \"Major slow actions\"")
+    checks, _ = run(reads=20_000)  # reads a tile and a whole tab, not a whole investigation
+    c = checks["explains a long page"]
+    assert c.ok is None and "right up to 12,000." in c.message
+    assert c.rows[-1].startswith("40,000 characters: it did not find the line asked about (1,713 PCs)")
+    checks, _ = run(reads=100)
+    assert checks["explains a long page"].ok is False and "not right at the smallest" in checks["explains a long page"].message
+
+
+def test_explain_every_tab_has_meanings_and_two_made_up_panels():
+    assert set(explain.GLOSSARY) == set(explain.TABS)
+    for tab in explain.TABS:
+        assert len([s for s in explain.SAMPLES if s[0] == tab]) == 2
+        text = explain.given(tab, "P", ["a line"])
+        assert "The panel's lines:\na line" in text and all(f"- {k}: " in text for k in explain.COMMON)
+    for size in explain.SIZES:
+        lines = explain.long_page(size)
+        total = sum(len(x) + 1 for x in lines)
+        assert size <= total < size + 200 and sum(explain.LONG_ANSWER in x for x in lines) == 1
+        at = next(i for i, x in enumerate(lines) if explain.LONG_ANSWER in x)
+        assert 0.7 < at / len(lines) < 0.8
+    ok = ("today", "Major slow actions", ["318 on 141 PCs"], "Explain this panel.")
+    assert explain.refused("There were 318 on 141 PCs today, which is 2 kinds.", *ok) is None  # 2: in the meanings
+    assert "(459)" in explain.refused("That is 459 in all.", *ok)
+    assert "twice" in explain.refused("That is twice as many as PCs.", *ok)
+    assert explain.refused("  ", *ok) == "it gave no answer"
