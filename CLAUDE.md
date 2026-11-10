@@ -270,7 +270,9 @@ unset `<REQUIRED>` base URLs.
   column with values (`usual_wrong`; GPT said "As usual" with no usual
   yet on stage), else our sentence. By application: a note names the
   highest Major share of apps with `SHARE_RUNS` runs or more (the top by
-  count is not always the worst). Every number in its sentence must be in the
+  count is not always the worst). Events by event, today: a note gathers
+  the rows' usual words, more than usual first (GPT skipped the column
+  on stage, but uses notes). Every number in its sentence must be in the
   counts given, the question or the settings (`numbers`/`allowed`), and
   no worked-out comparison (`RATIO`, "3 times worse"); otherwise our own
   sentence (`say`) is shown, with a note. The counts table is always

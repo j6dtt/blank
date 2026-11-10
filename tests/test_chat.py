@@ -136,6 +136,16 @@ def test_events_by_event_day_and_application():
     assert events(t, NOW, severity="critical")["rows"][0][0] == "System Crash"
 
 
+def test_the_events_usual_in_one_note_more_than_usual_first():
+    t = filled()
+    assert not any(n.startswith("Against") for n in events(t, NOW, "event")["notes"])  # not enough days yet
+    t.set_health([], H, today=False, days_read=(date(2026, 11, 4), date(2026, 11, 5)))  # 3 working days read
+    r = events(t, NOW, "event")
+    assert [row[4] for row in r["rows"]] == ["as usual (0 to 2)", "more than usual (0 to 0)"]
+    assert r["notes"][-1] == ("Against the days before, by this time of day: more than usual: System Crash; "
+                              "as usual: 1 of the 2.")
+
+
 def test_who_lists_users_and_pcs_with_a_run_for_each():
     t = filled()
     r = who(t, NOW, "slow", app="mail")  # "mail" fits two apps: the one with the most is listed

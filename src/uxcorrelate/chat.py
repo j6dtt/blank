@@ -415,6 +415,16 @@ def events(today: Today, now: datetime, group_by: str = "event", name: str | Non
                     f"{word[u['verdict']]} ({u['low']:,} to {u['high']:,})" if u.get("enough") else "not enough days")
         top = sorted(pcs.items(), key=lambda kv: (-len(kv[1]), kv[0]))
         rows = [[k[1], k[0], sev.get(k), len(v)] + ([verdict.get(k)] if days == 1 else []) for k, v in top[:ROWS]]
+        if days == 1:  # the rows' verdicts in one note, more than usual first (the AI reads notes best)
+            said = {w: [k[1] for k, _ in top[:ROWS] if (verdict.get(k) or "").startswith(w)]
+                    for w in ("more than usual", "fewer than usual", "as usual")}
+            if any(said.values()):
+                n = len(top[:ROWS])
+                parts = [f"{w}: {', '.join(said[w])}" for w in ("more than usual", "fewer than usual") if said[w]]
+                same = len(said["as usual"])
+                if same:
+                    parts.append(f"all {n} as usual" if same == n else f"as usual: {same} of the {n}")
+                notes.append("Against the days before, by this time of day: " + "; ".join(parts) + ".")
         cols = ["Event", "Category", "Severity", "PCs"] + (["Usual by this time"] if days == 1 else [])
         return _result("events", used, f"PCs with {what + ' ' if what else ''}events, by event", period, cols, rows,
                        notes, f"{len(top)} kinds of event")
