@@ -288,6 +288,14 @@ unset `<REQUIRED>` base URLs.
   what a "today's issues" overview could rest on: activity rows an hour,
   Aternity's own status and severity words with counts, and whether its
   incidents and alerts (`OVERVIEW_SOURCES` in `config.py`) are published.
+- `verify --software` (`verify._software`, only on its own): what
+  `INSTALLED_SOFTWARE` (`SOFTWARE_SOURCE`, `SOFTWARE_COLUMNS`) holds on the
+  tenant before any software red flag is designed: columns filled and
+  their values, `SW_PCS` PCs in full (programs at 2+ versions on one PC;
+  does `INSTALLED_SW_VERSION_COUNT` mean that?), whether name + version
+  alone comes added up per PC (`DEVICE_COUNT`), one program on every PC.
+  No PC or user names. Checks for prod are verify options, never pasted
+  scripts: the user cannot paste on the prod hosts.
 - `http.py` is the shared REST client (basic auth, retries on 429/5xx);
   `models.py` holds the dataclasses and `parse_time`.
 - `report.py` renders the text report, `cli.py` is the argparse entry point,

@@ -78,6 +78,15 @@ OVERVIEW_SOURCES = {
     "ANOMALY_DETECTION_INCIDENTS": {"time": "INCIDENT_CREATION_TIMESTAMP",
                                     "values": ("INCIDENT_STATE", "INCIDENT_TYPE", "INCIDENT_OBJECT_TYPE")},
 }
+# The software installed on each PC now (names from Riverbed's $metadata), read only
+# by `verify --software` so far: what the live tenant fills, how big it is and
+# whether it adds up PCs per name and version, before any red flag is designed.
+SOFTWARE_SOURCE = "INSTALLED_SOFTWARE"
+SOFTWARE_COLUMNS = {"device": "DEVICE_NAME", "name": "INSTALLED_SW_NAME", "version": "INSTALLED_SW_VERSION",
+                    "vendor": "INSTALLED_SW_VENDOR", "type": "INSTALLED_SW_TYPE", "scope": "INSTALLED_SW_SCOPE",
+                    "related_to": "INSTALLED_SW_RELATED_TO", "volume": "INSTALLED_SW_INSTALLATION_VOLUME",
+                    "changed": "INSTALLED_SW_LAST_CHANGE_TIMESTAMP", "count": "INSTALLED_SW_COUNT",
+                    "version_count": "INSTALLED_SW_VERSION_COUNT", "pcs": "DEVICE_COUNT"}
 # `verify` lists every published data source with a process column (which ones
 # could tell the busiest processes), and its time column
 PROCESS_COLUMN = "PROCESS_NAME"

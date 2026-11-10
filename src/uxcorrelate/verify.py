@@ -16,6 +16,7 @@ from __future__ import annotations
 import difflib
 from bisect import bisect_right
 import textwrap
+import time
 import xml.etree.ElementTree as ET
 from collections import Counter
 from dataclasses import dataclass, field
@@ -24,8 +25,9 @@ from statistics import median
 from typing import Any
 
 from .aternity import AternityClient, is_virtual, odata_quote, odata_time
-from .config import (DISK_FREE_COLUMNS, OVERVIEW_SOURCES, PROCESS_COLUMN, SOFTWARE_REMOVED, SOFTWARE_UPDATE_GAP_MIN, TIME_COLUMNS,
-                     VDI_COLUMNS, Settings)
+from .config import (DISK_FREE_COLUMNS, OVERVIEW_SOURCES, PROCESS_COLUMN, SOFTWARE_COLUMNS, SOFTWARE_REMOVED,
+                     SOFTWARE_SOURCE, SOFTWARE_UPDATE_GAP_MIN, TIME_COLUMNS,
+                     NO_VALUE, VDI_COLUMNS, Settings)
 from .after_start import AFTER_START_MIN  # "right after a start-up", as investigations
 from .correlate import slow_rule
 from .http import ApiError
@@ -1369,6 +1371,144 @@ def verify_overview(settings: Settings, client: AternityClient) -> list[Check]:
         return [Check("Aternity", "connection", False, f"Could not read $metadata: {exc.short() if isinstance(exc, ApiError) else exc}",
                       "Check aternity.base_url, aternity.username and ATERNITY_PASSWORD.")]
     return _overview(settings, client, schema)
+
+
+SW_SAMPLE = 1000  # software: the first rows, for what is filled
+SW_PCS = 3  # software: PCs read in full (names not shown)
+SW_PER_VERSION = 5000  # software: rows of name + version only
+SW_ONE_NAME = 20000  # software: rows of one program on every PC
+
+
+def verify_software(settings: Settings, client: AternityClient) -> list[Check]:
+    """Only the "software: …" checks: what INSTALLED_SOFTWARE holds on this tenant."""
+    try:
+        schema = parse_odata_metadata(client.http.request("GET", "/$metadata", headers={"Accept": "application/xml"}).text)
+    except (ApiError, ET.ParseError) as exc:
+        return [Check("Aternity", "connection", False, f"Could not read $metadata: {exc.short() if isinstance(exc, ApiError) else exc}",
+                      "Check aternity.base_url, aternity.username and ATERNITY_PASSWORD.")]
+    return _software(client, schema)
+
+
+def _software(client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
+    """What the installed software list holds: columns filled and their values, a few
+    PCs in full (several versions of one program on one PC?), whether name + version
+    alone comes added up per PC (DEVICE_COUNT), and one program on every PC. No PC
+    or user names are shown."""
+    S = SOFTWARE_SOURCE
+    if S not in schema:
+        return [Check("Aternity", "software: published", None, f"{S} is not published by this Aternity: "
+                      "nothing on installed software can be read.")]
+    c = {k: v for k, v in SOFTWARE_COLUMNS.items() if v in schema[S]}
+    missing = [v for v in SOFTWARE_COLUMNS.values() if v not in schema[S]]
+    checks = [Check("Aternity", "software: published", None, f"{S} is published with {len(c)} of the "
+                    f"{len(SOFTWARE_COLUMNS)} columns in Riverbed's list"
+                    + (f"; not published: {', '.join(missing)}." if missing else "."))]
+    if not {"device", "name", "version"} <= set(c):
+        return checks
+    D, N, V = c["device"], c["name"], c["version"]
+    filled = lambda v: v not in (None, "", *NO_VALUE)  # noqa: E731
+    number = lambda v: int(v) if str(v).isdigit() else None  # noqa: E731
+
+    def read(item: str, **kw):
+        mark, t0 = len(client.warnings), time.monotonic()
+        try:
+            rows = client.query(S, raw=True, **kw)
+        except ApiError as exc:
+            checks.append(Check("Aternity", item, None, f"error: {exc.short()}"))
+            return None, 0.0, []
+        return rows, time.monotonic() - t0, _cut_short(client, mark)
+
+    # what is filled, and the values of the small columns
+    rows, secs, cut = read("software: what is filled", select=list(c.values()), top=SW_SAMPLE)
+    if not rows:
+        if rows is not None:
+            checks.append(Check("Aternity", "software: what is filled", None, f"{S} has no rows."))
+        return checks
+    short = lambda col: col.replace("INSTALLED_SW_", "")  # noqa: E731
+    checks.append(Check("Aternity", "software: what is filled", None,
+                        f"The first {len(rows)} rows ({secs:.1f} s) are from {len({r.get(D) for r in rows})} PCs. "
+                        f"Filled: " + ", ".join(f"{short(v)} {sum(1 for r in rows if filled(r.get(v)))}"
+                                                for v in c.values()) + ". Values as sent:",
+                        rows=[f"{short(c[k])}: {_values(rows, c[k], 5)}" for k in
+                              ("type", "scope", "related_to", "volume", "version_count", "count", "pcs") if k in c]
+                        + cut))
+
+    # a few PCs in full: one program at several versions on the same PC?
+    pcs = list(dict.fromkeys(r.get(D) for r in rows if r.get(D)))[:SW_PCS]
+    sizes, multi, agree, compared, twice = [], [], 0, 0, 0
+    t0 = time.monotonic()
+    for pc in pcs:
+        one, _, _ = read("software: PCs in full", filter=f"{D} eq {odata_quote(pc)}", select=list(c.values()))
+        if one is None:
+            break
+        versions: dict = {}
+        for r in one:
+            versions.setdefault(r.get(N), []).append(r)
+        sizes.append(f"{len(one)} rows, {len(versions)} programs, "
+                     f"{sum(1 for v in versions.values() if len({r.get(V) for r in v}) > 1)} at 2+ versions")
+        for name, rs in versions.items():
+            vs = sorted({str(r.get(V)) for r in rs})
+            twice += sum(1 for r in rs if (number(r.get(c.get("count"))) or 0) > 1)
+            if "version_count" in c:
+                compared += 1
+                agree += all(number(r.get(c["version_count"])) == len(vs) for r in rs)
+            if len(vs) > 1:
+                kinds = sorted({str(r.get(c["type"])) for r in rs}) if "type" in c else []
+                multi.append(f"{name}: {', '.join(vs[:4])}{' …' if len(vs) > 4 else ''}"
+                             + (f" (type {', '.join(kinds)})" if kinds else ""))
+    if sizes:
+        checks.append(Check("Aternity", "software: PCs in full", None,
+                            f"{len(sizes)} PCs read in full ({time.monotonic() - t0:.1f} s), PC names not shown: "
+                            + "; ".join(f"PC {i + 1}: {s}" for i, s in enumerate(sizes)) + "."
+                            + (f" {short(c['version_count'])} equals the versions of that program on that PC for "
+                               f"{agree} of {compared} programs." if compared else "")
+                            + (f" Rows with {short(c['count'])} over 1: {twice}." if "count" in c else "")
+                            + (" Programs at 2+ versions on one PC:" if multi else ""),
+                            rows=multi[:8] + ([f"(+{len(multi) - 8} more)"] if len(multi) > 8 else [])))
+
+    # name + version only: added up per PC by Aternity?
+    top_name = None
+    if "pcs" in c:
+        agg, secs, cut = read("software: per version, all PCs", select=[N, V, c["pcs"]], top=SW_PER_VERSION)
+        if agg:
+            counts = [number(r.get(c["pcs"])) or 0 for r in agg]
+            added = sum(1 for n in counts if n > 1)
+            names: dict = {}
+            for r, n in zip(agg, counts):
+                x = names.setdefault(r.get(N), [set(), 0])
+                x[0].add(r.get(V))
+                x[1] += n
+            spread = sorted(names.items(), key=lambda kv: (-len(kv[1][0]), -kv[1][1]))
+            top_name = spread[0][0] if added else None
+            first = f" (the first {len(agg)})" if len(agg) >= SW_PER_VERSION else ""
+            checks.append(Check("Aternity", "software: per version, all PCs", None,
+                                f"Name and version only: {len(agg)} rows{first} ({secs:.1f} s); {short(c['pcs'])} "
+                                f"over 1 on {added}: "
+                                + ("Aternity adds up the PCs per name and version"
+                                   + ("" if first else f", {sum(counts):,} installs in all") if added
+                                   else "one row per PC, not added up") + ". Most PCs, then most versions:",
+                                rows=[f"{r.get(N)} {r.get(V)}: {n:,} PCs" for r, n in
+                                      sorted(zip(agg, counts), key=lambda x: -x[1])[:3]]
+                                + [f"{name}: {len(x[0])} versions, {x[1]:,} installs" for name, x in spread[:5]]
+                                + cut))
+
+    # one program on every PC: its versions, and PCs with more than one of them
+    if top_name is None:
+        top_name = Counter(r.get(N) for r in rows).most_common(1)[0][0]
+    one, secs, cut = read("software: one program, all PCs", filter=f"{N} eq {odata_quote(top_name)}",
+                          select=[D, N, V], top=SW_ONE_NAME)
+    if one:
+        per_pc: dict = {}
+        for r in one:
+            per_pc.setdefault(r.get(D), set()).add(r.get(V))
+        per_version = Counter(v for vs in per_pc.values() for v in vs)
+        first = f" (the first {len(one)})" if len(one) >= SW_ONE_NAME else ""
+        checks.append(Check("Aternity", "software: one program, all PCs", None,
+                            f"{top_name}: {len(one):,} rows{first} on {len(per_pc):,} PCs ({secs:.1f} s), "
+                            f"{len(per_version)} versions; {sum(1 for v in per_pc.values() if len(v) > 1):,} PCs "
+                            "have 2+ of them. PCs per version:",
+                            rows=[f"{v}: {n:,} PCs" for v, n in per_version.most_common(6)] + cut))
+    return checks
 
 
 def _overview(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:

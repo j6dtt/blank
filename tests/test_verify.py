@@ -1,4 +1,5 @@
 import json
+from collections import Counter
 
 import httpx
 
@@ -532,3 +533,56 @@ def test_overview_sources_are_riverbeds_own_names():
     schema = parse_odata_metadata((Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
     for entity, spec in OVERVIEW_SOURCES.items():
         assert {spec["time"], *spec["values"]} <= schema[entity], entity
+
+
+def test_software_names_are_riverbeds_own():
+    from pathlib import Path
+    from uxcorrelate.config import SOFTWARE_COLUMNS, SOFTWARE_SOURCE
+    schema = parse_odata_metadata((Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
+    assert set(SOFTWARE_COLUMNS.values()) <= schema[SOFTWARE_SOURCE]
+
+
+def test_verify_software_shows_what_the_installed_list_holds_with_no_pc_names():
+    """Filled columns, a few PCs in full, whether name + version comes added up, one program everywhere."""
+    from pathlib import Path
+    from uxcorrelate.verify import verify_software
+
+    def sw(pc, name, version, n=1, kind="Application"):
+        return {"DEVICE_NAME": pc, "INSTALLED_SW_NAME": name, "INSTALLED_SW_VERSION": version,
+                "INSTALLED_SW_TYPE": kind, "INSTALLED_SW_SCOPE": "N/A", "INSTALLED_SW_VERSION_COUNT": n,
+                "INSTALLED_SW_COUNT": 1, "DEVICE_COUNT": 1}
+    every = [sw("HOST-A", "Java", "8.1", 2), sw("HOST-A", "Java", "11.0", 2), sw("HOST-A", "Edge", "120"),
+             sw("HOST-B", "Java", "8.1"), sw("HOST-B", "Edge", "121"), sw("HOST-C", "Edge", "120")]
+
+    def handler(request):
+        if request.url.path.endswith("/$metadata"):
+            return httpx.Response(200, text=(Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
+        f, sel = request.url.params.get("$filter", ""), request.url.params.get("$select", "")
+        if "DEVICE_NAME eq" in f:
+            pc = f.split("'")[1]
+            return httpx.Response(200, json={"value": [r for r in every if r["DEVICE_NAME"] == pc]})
+        if "INSTALLED_SW_NAME eq" in f:
+            name = f.split("'")[1]
+            return httpx.Response(200, json={"value": [{k: r[k] for k in sel.split(",")} for r in every
+                                                       if r["INSTALLED_SW_NAME"] == name]})
+        if sel == "INSTALLED_SW_NAME,INSTALLED_SW_VERSION,DEVICE_COUNT":  # Aternity adds up the PCs
+            per = Counter((r["INSTALLED_SW_NAME"], r["INSTALLED_SW_VERSION"]) for r in every)
+            return httpx.Response(200, json={"value": [{"INSTALLED_SW_NAME": n, "INSTALLED_SW_VERSION": v,
+                                                        "DEVICE_COUNT": k} for (n, v), k in per.items()]})
+        return httpx.Response(200, json={"value": every})
+
+    settings = Settings()
+    settings.aternity.base_url = "https://aternity.test/aternity.odata/v2.0"
+    text = render_checks(verify_software(settings, AternityClient(settings.aternity,
+                                                                  transport=httpx.MockTransport(handler))))
+    flat = " ".join(text.split())
+    assert "HOST-" not in text  # no PC names
+    assert "INSTALLED_SOFTWARE is published with 12 of the 12 columns in Riverbed's list." in flat
+    assert "The first 6 rows" in flat and "are from 3 PCs. Filled: DEVICE_NAME 6, NAME 6, VERSION 6" in flat
+    assert "SCOPE 0" in flat and "TYPE: 'Application' 6" in flat
+    assert "PC 1: 3 rows, 2 programs, 1 at 2+ versions; PC 2: 2 rows, 2 programs, 0 at 2+ versions" in flat
+    assert "VERSION_COUNT equals the versions of that program on that PC for 5 of 5 programs" in flat
+    assert "Java: 11.0, 8.1 (type Application)" in flat
+    assert "DEVICE_COUNT over 1 on 2: Aternity adds up the PCs per name and version, 6 installs in all" in flat
+    assert "Edge 120: 2 PCs" in flat and "Java: 2 versions, 3 installs" in flat
+    assert "Java: 3 rows on 2 PCs" in flat and "2 versions; 1 PCs have 2+ of them" in flat and "8.1: 2 PCs" in flat
