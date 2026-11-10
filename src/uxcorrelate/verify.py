@@ -27,7 +27,7 @@ from typing import Any
 from .aternity import AternityClient, is_virtual, odata_quote, odata_time
 from .config import (DISK_FREE_COLUMNS, OS_COLUMNS, OVERVIEW_SOURCES, PROCESS_COLUMN, SOFTWARE_COLUMNS, SOFTWARE_OS_UPDATE,
                      SOFTWARE_REMOVED, SOFTWARE_SOURCE, SOFTWARE_USER_SCOPE, SOFTWARE_UPDATE_GAP_MIN, TIME_COLUMNS,
-                     NO_VALUE, TOP_STATUS, VDI_COLUMNS, VERSION_SOURCES, Settings)
+                     NO_VALUE, TOP_STATUS, VDI_COLUMNS, VERSION_OPTIONAL, VERSION_SOURCES, Settings)
 from .after_start import AFTER_START_MIN  # "right after a start-up", as investigations
 from .correlate import slow_rule
 from .http import ApiError
@@ -1591,7 +1591,8 @@ def _versions(settings: Settings, client: AternityClient, schema: dict[str, set[
     def usable(key: str, item: str) -> dict | None:
         spec = VERSION_SOURCES[key]
         entity = spec["entity"]
-        missing = [v for k, v in spec.items() if k != "entity" and v not in schema.get(entity, ())]
+        missing = [v for k, v in spec.items() if k != "entity" and k not in VERSION_OPTIONAL
+                   and v not in schema.get(entity, ())]
         if entity not in schema or missing:
             checks.append(Check("Aternity", item, None, f"{entity} is not published" if entity not in schema else
                                 f"{entity} is published without {', '.join(missing)}"))
@@ -1812,6 +1813,20 @@ AI_TRIES = (
      {"tool": "who", "what": "slow", "app": "outlook"}),
     ("Investigate the user mossley", {"tool": "investigate", "username": "mossley"}),
 )
+AI_SW_TRIES = (  # the Software tab's chat (software_chat.TOOLS)
+    ("Which programs are most out of date?", {"tool": "flags", "kind": "behind"}),
+    ("Does one Outlook version crash more than the others?", {"tool": "version_problems", "application": "outlook"}),
+    ("Compare Outlook 16.0.19725 with 16.0.20430.", {"tool": "compare", "application": "outlook"}),
+    ("Did Outlook get worse after its last update?", {"tool": "before_after", "application": "outlook"}),
+    ("Do Outlook crashes depend on the Teams Meeting Add-in version?",
+     {"tool": "program_split", "application": "outlook", "program": "teams"}),
+    ("Which PCs still run Edge 143?", {"tool": "pcs", "program": "edge", "version": "143"}),
+    ("What versions of the Teams Meeting Add-in are installed?", {"tool": "versions", "program": "teams"}),
+    ("Which PCs crashed in Outlook 16.0.20430?",
+     {"tool": "pcs", "application": "outlook", "version": "16.0.20430"}),  # problem: crash, the default
+    ("What are the red flags?", {"tool": "flags", "kind": ""}),  # all of them: no kind
+    ("Which PCs are missing KB5126652?", {"tool": "pcs_without_update", "update": "kb5126652"}),
+)
 AI_OUTSIDE = "What is the weather in Paris today?"  # not in the data: no pick is the right answer
 AI_COUNTS = {"period": "last 7 days", "partial": False,  # made-up counts, to see if they are repeated right
              "rows": [{"failure": "Sample Agent crash", "pcs": 2885}, {"failure": "Sample Viewer crash", "pcs": 412}]}
@@ -1832,8 +1847,9 @@ def _right(call, want: dict) -> bool:
     for key, value in want.items():
         if key == "tool":
             continue
-        got = str(call[1].get(key, "")).strip().lower()
-        if (value not in got) if isinstance(value, str) and key in ("app", "username") else (got != str(value)):
+        got = str(call[1].get(key) or "").strip().lower()  # null and left out are the same
+        if (value not in got) if isinstance(value, str) and value and key in (
+                "app", "username", "application", "program", "version", "update") else (got != str(value)):
             return False
     return True
 
@@ -1846,6 +1862,7 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
     import time
 
     from .ai import LOGINS, AiClient, reply_message, tool_call
+    from . import software_chat
     from .chat import SYSTEM, TOOLS
     env = os.environ if env is None else env
     if not settings.ai.services:
@@ -1935,41 +1952,53 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
         add("plain reply", True, f"Replied \"{_cut(str(message.get('content') or '').strip(), 60)}\" in "
             f"{time.monotonic() - started:.1f} s.")
 
-        # picks the right building block
-        ask = lambda q: [{"role": "system", "content": SYSTEM}, {"role": "user", "content": q}]  # noqa: E731
-        right, rows, first, times, stop = 0, [], None, [], None
-        for question, want in AI_TRIES:
-            started = time.monotonic()
+        # picks the right building block: the Today tab's chat, then the Software tab's
+        def picks(label: str, system: str, tools: list, tries: tuple) -> tuple | None:
+            """(question, reply, call) of the first right pick; None when none is right, False when
+            the service refused tool calling."""
+            ask = lambda q: [{"role": "system", "content": system}, {"role": "user", "content": q}]  # noqa: E731
+            right, rows, first, times, stop = 0, [], None, [], None
+            for question, want in tries:
+                started = time.monotonic()
+                try:
+                    reply = client.chat(ask(question), tools)
+                except ApiError as exc:
+                    stop = exc
+                    break
+                times.append(time.monotonic() - started)
+                call = tool_call(reply)
+                if _right(call, want):
+                    right += 1
+                    first = first or (question, reply, call)
+                else:
+                    rows.append(f"\"{question}\": {_picked(call)}; a right pick is {want['tool']}("
+                                f"{', '.join(f'{k}={v}' for k, v in want.items() if k != 'tool')})")
+            if stop is not None:
+                add(label, False, "The service refused a question sent with our building "
+                    f"block (tool calling): {stop.short()}.", "This model or service may not do tool calling: the "
+                    "chat cannot use it as it is. Tell Claude this line.")
+                return False
+            outside = None
             try:
-                reply = client.chat(ask(question), TOOLS)
+                outside = tool_call(client.chat(ask(AI_OUTSIDE), tools))
             except ApiError as exc:
-                stop = exc
-                break
-            times.append(time.monotonic() - started)
-            call = tool_call(reply)
-            if _right(call, want):
-                right += 1
-                first = first or (question, reply, call)
-            else:
-                rows.append(f"\"{question}\": {_picked(call)}; a right pick is {want['tool']}("
-                            f"{', '.join(f'{k}={v}' for k, v in want.items() if k != 'tool')})")
-        if stop is not None:
-            add("picks the right question", False, "The service refused a question sent with our building "
-                f"block (tool calling): {stop.short()}.", "This model or service may not do tool calling: the "
-                "chat cannot use it as it is. Tell Claude this line.")
+                rows.append(f"\"{AI_OUTSIDE}\": {exc.short()}")
+            if outside:
+                rows.append(f"\"{AI_OUTSIDE}\": {_picked(outside)}; it should make no pick")
+            add(label, right == len(tries) and not outside,
+                f"Right in {right} of {len(tries)} tries; for the 1 question outside the data it "
+                f"{'made a pick (wrong)' if outside else 'made no pick (right)'}. Replies took "
+                f"{min(times):.1f} to {max(times):.1f} s.",
+                "The chat would run the wrong counts with this model. Tell Claude these lines.", rows)
+            return first
+
+        first = picks("picks the right question", SYSTEM, TOOLS, AI_TRIES)
+        if first is False:
             continue
-        outside = None
-        try:
-            outside = tool_call(client.chat(ask(AI_OUTSIDE), TOOLS))
-        except ApiError as exc:
-            rows.append(f"\"{AI_OUTSIDE}\": {exc.short()}")
-        if outside:
-            rows.append(f"\"{AI_OUTSIDE}\": {_picked(outside)}; it should make no pick")
-        add("picks the right question", right == len(AI_TRIES) and not outside,
-            f"Right in {right} of {len(AI_TRIES)} tries; for the 1 question outside the data it "
-            f"{'made a pick (wrong)' if outside else 'made no pick (right)'}. Replies took "
-            f"{min(times):.1f} to {max(times):.1f} s.",
-            "The chat would run the wrong counts with this model. Tell Claude these lines.", rows)
+        picks("picks the right question (Software tab)", software_chat.system({"as_of_local": "today",
+                                                                               "zone": "local time"}),
+              software_chat.TOOLS, AI_SW_TRIES)
+        ask = lambda q: [{"role": "system", "content": SYSTEM}, {"role": "user", "content": q}]  # noqa: E731
 
         # repeats the counts it is given
         if first is None:

@@ -613,40 +613,47 @@ def system(today: Today, now: datetime) -> str:
 
 
 def ask(question: str, history: list, client: AiClient, today: Today, names, now: datetime) -> dict:
-    """One question: the AI picks a building block, we count, the AI words it (held to our numbers)."""
+    """One question on the Today tab (see converse)."""
+    return converse(question, history, client, system(today, now), TOOLS,
+                    lambda name, args: run_block(name, args, today, names, now), NO_COUNT)
+
+
+def converse(question: str, history: list, client: AiClient, system_text: str, tools: list, run, no_count: str) -> dict:
+    """One question: the AI picks a building block, `run(name, args)` counts (None: no such
+    block), the AI words it, held to our numbers (the Today and Software tabs' chats)."""
     started = time.monotonic()
     question = " ".join(str(question or "").split())[:500]
-    messages = [{"role": "system", "content": system(today, now)}]
+    messages = [{"role": "system", "content": system_text}]
     for h in (history or [])[-HISTORY:]:
         if isinstance(h, dict) and h.get("q") and h.get("a"):
             messages += [{"role": "user", "content": str(h["q"])[:500]},
                          {"role": "assistant", "content": str(h["a"])[:800]}]
     messages.append({"role": "user", "content": question})
     out = {"question": question, "answer": "", "result": None, "note": None, "service": client.cfg.name}
-    reply = client.chat(messages, TOOLS)
+    reply = client.chat(messages, tools)
     call = tool_call(reply)
     if call is None:
         text = clean(reply.get("content"))
-        if numbers(text) - allowed(question, system(today, now)):
-            text, out["note"] = NO_COUNT, "The AI answered with numbers but no counts behind them, so it is not shown."
-        out.update(answer=text or NO_COUNT, seconds=round(time.monotonic() - started, 1))
+        if numbers(text) - allowed(question, system_text):
+            text, out["note"] = no_count, "The AI answered with numbers but no counts behind them, so it is not shown."
+        out.update(answer=text or no_count, seconds=round(time.monotonic() - started, 1))
         return out
     name, args, call_id = call
-    result = run_block(name, args, today, names, now)
+    result = run(name, args)
     if result is None:
-        out.update(answer=NO_COUNT, note=f"The AI asked for a building block we do not have ({name}).",
+        out.update(answer=no_count, note=f"The AI asked for a building block we do not have ({name}).",
                    seconds=round(time.monotonic() - started, 1))
         return out
     given = {k: result[k] for k in ("title", "period", "columns", "rows", "total", "notes")}
     messages += [{"role": "assistant", "content": reply.get("content") or "", "tool_calls": reply["tool_calls"]},
                  {"role": "tool", "tool_call_id": call_id, "content": json.dumps(given, default=str)}]
-    final = client.chat(messages, TOOLS)
+    final = client.chat(messages, tools)
     text = clean(final.get("content"))
     if tool_call(final) or not text:
         text, out["note"] = result["say"], "The AI did not word an answer, so this is our own sentence."
     else:
         extra = numbers(text) - allowed(json.dumps(given, default=str), json.dumps(args, default=str), question,
-                                        system(today, now), small=len(result["rows"]))
+                                        system_text, small=len(result["rows"]))
         ratio = RATIO.search(text)
         usual = usual_wrong(text, given)
         if extra:

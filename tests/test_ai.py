@@ -5,10 +5,12 @@ import json
 import httpx
 
 from uxcorrelate.config import AiService, Settings, load_settings
-from uxcorrelate.verify import AI_OUTSIDE, AI_TRIES, render_checks, verify_ai
+from uxcorrelate.verify import AI_OUTSIDE, AI_SW_TRIES, AI_TRIES, render_checks, verify_ai
 
-FULL = {"outlook": "Microsoft Outlook", "mossley": "MOSSLEY"}  # what a model sends for the words asked
-PICKS = {q: {k: FULL.get(v, v) if isinstance(v, str) else v for k, v in want.items()} for q, want in AI_TRIES}
+FULL = {"outlook": "Microsoft Outlook", "mossley": "MOSSLEY", "edge": "Microsoft Edge", "kb5126652": "KB5126652",
+        "teams": "Microsoft Teams Meeting Add-in for Microsoft Office"}  # what a model sends
+PICKS = {q: {k: FULL.get(v, v) if isinstance(v, str) else v for k, v in want.items()}
+         for q, want in AI_TRIES + AI_SW_TRIES}
 
 
 def service(seen, picks=PICKS, login="bearer", models=("model-a", "model-b"), tools=True, numbers="2,885 and 412"):
@@ -57,8 +59,9 @@ def run(seen=None, env=None, cfg=None, **kw):
 def test_a_good_service_passes_every_check_and_the_key_is_never_printed():
     seen = []
     checks, text = run(seen)
-    assert [c.ok for c in checks.values()] == [None, True, True, True, True]
+    assert [c.ok for c in checks.values()] == [None, True, True, True, True, True]
     assert "Right in 4 of 4 tries" in checks["picks the right question"].message
+    assert "Right in 10 of 10 tries" in checks["picks the right question (Software tab)"].message
     assert "made no pick (right)" in checks["picks the right question"].message
     assert "2 of the 2 counts" in checks["repeats the counts"].message
     assert "k-1" not in text and "AI service:" in text and "All checks passed." in text

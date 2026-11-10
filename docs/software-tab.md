@@ -1,8 +1,10 @@
 # Software tab: proposal
 
-Status: agreed Nov 10, 2026 (decisions below); step 1 next. Numbers
-are from stage (`uxcorrelate verify --software`, Nov 10), as
-Aternity lists them. "N" marks a count not measured yet.
+Status: agreed Nov 10, 2026 (decisions below); step 1 done on stage
+(Nov 10, a29ed09); steps 2 and 3 (the tab and its chat) built on dev
+(Nov 10); next, one stage copy. Numbers are from stage
+(`uxcorrelate verify --software` and `--versions`), as Aternity
+lists them.
 
 ## How it works
 
@@ -46,9 +48,28 @@ its PCs (read now, 0.5 s) ── Investigate ▸
   (for everyone on the PC) or Specific User.
 - Application version on what users feel: `APPLICATION_VERSION`
   on app usage (crashes, hang time) and on actions (Aternity's
-  Major), daily and hourly. These names come from Riverbed's
-  $metadata. Whether the live tenant fills them, and how far back
-  they go, is not checked yet (step 1).
+  Major), from Riverbed's $metadata. On stage, last 7 days:
+  - app usage: filled on 610 of 639 rows; actions: 115 of 120;
+  - the daily tables go back to Aug 08 (usage) and Aug 09
+    (actions): about 90 days, so trends and before/after come
+    from Aternity itself from day one;
+  - asked per PC and version, Aternity adds up the days: one row
+    per PC and version (416 rows for 416 pairs, 0.3 s).
+- Health events: the failing part's version is filled on 156 of
+  165 events in 24 hours. It carries its kind, e.g.
+  "10.0.22621.5415 (Process Version)". Compare versions matches each
+  event to the version the PC ran (app usage), so this text is not
+  compared.
+- The change log, 14 days: "Updated" rows carry the version before
+  (5,018 of 5,019 PCs); "Installed" (28,154) and "Uninstalled"
+  (31,055) rows do not, and are paired as the investigation already
+  does (an "Uninstalled" and an "Installed" row minutes apart).
+  Biggest updates: Adobe Acrobat 26.002.21901 to 26.002.22031 on
+  805 PCs; Edge WebView2 one step after another on 709-727 PCs.
+- Windows: `DEVICE_INVENTORY` has 5,434 PCs (the installed list
+  5,337). `OS_NAME` is "MS Windows 11" and `OS_VERSION` "Microsoft
+  Windows 11 Enterprise 23H2", so the page shows `OS_VERSION`
+  alone.
 - Not given: a vendor's latest version, known vulnerabilities,
   known conflicting programs. The live host has no internet. None of
   these is guessed.
@@ -79,12 +100,27 @@ Shape (N = not measured yet):
 - Outlook 16.0.20430.20180: N of N PCs crashed; its other versions:
   N of N PCs. Raised: "crashes more than its other versions".
 
+On stage, last 7 days (actions without PCs; the tab counts PCs):
+- Outlook 16.0.20430.20180: 7,338 Major of 309,317 actions;
+  16.0.20326.20142: 343 of 31,600; 16.0.20228.20188: 36 of 4,014.
+- Most crashes: Trellix ENS - Threat Prevention 980 (2 versions),
+  Edge 400 (15 versions), Outlook 265 (8 versions).
+
+**When every PC listed had the problem.** Trellix ENS - Threat
+Prevention: 406 of 406 PCs on 10.7.20.14066 had a crash, and 10 of
+10 on 25.11.0.890. Every PC listed had a crash, so app usage holds
+it only on PCs where it failed: the PCs that ran it without a crash
+are not known and no share can be compared. Such an
+application gets no ratio: the tab shows its PCs with a crash per
+version and says why ("both versions crash: not new with
+25.11.0.890").
+
 On demand only, never raised by itself: an application's crashes
 split by the version of an installed program. Example: Outlook
 crashes on the PCs of each Teams Meeting Add-in version (1,599 PCs
 on 1.26.18801, 255 on 1.26.21803, 189 on 1.26.25904 …). There are
 1,545 programs, so raising every such split would raise chance
-findings. They are asked for in the chat or with a click.
+findings. They are asked for in the chat ("Ask about software").
 
 Why it matters: it ties a version to what users feel, so you can
 hold or roll back an update.
@@ -120,7 +156,8 @@ on the same PCs, not argued.
 
 Rule: per program, the PCs on a version older than the one most PCs
 have. Newest and oldest are shown too. "Newest" means the newest
-seen in the company.
+seen in the company. A PC that also has that version is not behind:
+it counts under 2+ versions on one PC (read PC by PC).
 
 On stage:
 - Microsoft Edge: 20 versions on 5,328 PCs. 1,920 on
@@ -161,10 +198,22 @@ Why it matters: outside IT's packaging and patching.
 
 Rule: a PC with 2 or more versions of the same program.
 
-On stage it is rare so far: the Teams Meeting Add-in on 2 of 2,592
-PCs, and Teams classic at 2 versions on 1 of the 3 PCs read in full.
-How: per program, installs against PCs (step 1 checks that Aternity
-counts each PC once).
+On stage: 143 programs have more installs than PCs, 2,179 more in
+all. Asked per name only, Aternity counts each PC once (checked PC by
+PC on the Teams Meeting Add-in: 2 = 2). Most:
+- Trellix Data Exchange Layer for TA: 1,176 more than its 1,174 PCs
+- DIEE (All Users): 168 more than its 193 PCs
+- Intel(R) Management Engine Components: 145 more than its 145 PCs
+- Microsoft Windows Desktop Runtime - 7.0.20 (x64): 122 more than
+  its 125 PCs
+- Content Manager Client Components x64: 77 more than its 5,293 PCs
+
+How: installs against PCs finds the programs; the daily read then
+reads each of them PC by PC (143 reads, about a minute), so the flag
+counts PCs with 2+ versions, not installs, and names the versions
+found together ("N PCs have version A and version B"). Whether two
+versions are a real conflict or two parts of one product is then
+seen, not guessed.
 
 Why it matters: conflicts, crashes, and an old copy left unpatched.
 
@@ -174,9 +223,21 @@ Rule: for each Windows version, each update and the PCs of that
 version without it. Also when Windows was last updated, per PC
 (`OS_VERSION_UPDATE_DATE`).
 
-On stage: 112 updates, 21,782 installs. For example, Security
-Update KB5126652 is on 2,622 PCs. It is counted per Windows version
-because each version gets its own updates (step 1).
+On stage: 21,781 update rows on 5,334 PCs. Per Windows version:
+- 23H2, 4,636 PCs: Update KB5027397 on 3,751 (not on 885);
+  Security Update KB5126652 on 2,599 (not on 2,037); KB5126653 on
+  2,598.
+- 25H2, 732 PCs: KB5054156 on 723 (not on 9); Security Update
+  KB5127647 on 697 (not on 35).
+- 24H2, 49 PCs: Security Update KB5124007 on 23 (not on 26).
+
+A PC without an update may have a later one in its place. So, for
+the PCs without it, the flag shows which updates they have instead
+(from the same rows), and that is read, not assumed.
+
+When Windows was last updated (`OS_VERSION_UPDATE_DATE`): over 8
+weeks ago on 4,897 of 5,418 PCs, so it is not the monthly patching;
+it is shown under Aternity's own name.
 
 Why it matters: missing security updates.
 
@@ -211,20 +272,34 @@ config.yaml could hide the reviewed ones (later).
 It works like "Ask about today": GPT picks one building block, our
 code counts, GPT words the answer in 2 to 4 sentences, and the counts
 table is shown under it. A sentence with a number not in the counts
-is replaced by ours. `verify --ai` tests the new blocks.
+is replaced by ours. `verify --ai` tests the new blocks (10 questions,
+every block at least once, and one outside the data).
 
-Building blocks:
-- `flags`: the red flags, all or one kind.
+Building blocks (as built on dev, Nov 10):
+- `flags`: the red flags, or one kind's whole list (programs behind,
+  2+ versions on one PC, Windows updates, raised versions ...).
 - `versions`: a program's versions, PCs on each, behind, newest,
   oldest.
 - `version_problems`: an application's versions with PCs that ran
-  each and PCs with a crash, a hang or Major slow actions (flag 1).
+  each and PCs with a crash, a hang or Major slow actions (flag 1),
+  and which are raised.
+- `compare`: 2 versions of an application side by side on every kind
+  of issue (read now).
+- `before_after`: the same PCs before and after an update (read now).
 - `program_split`: an application's crashes, hangs or slow actions,
-  split by the version of an installed program (on demand only).
-- `compare`: 2 versions of an application (or all of them), side by
-  side on every kind of issue; or before and after an update, on the
-  same PCs.
-- `pcs`: the PCs on a program version, each with Investigate ▸.
+  split by the version of an installed program (read now; on demand
+  only, never a red flag).
+- `pcs`: the PCs on a program version (or every version starting
+  with what was asked: "Edge 143"), or with a problem on an
+  application version; each with Investigate ▸.
+- `pcs_without_update`: the PCs without a Windows update that most
+  PCs of their Windows version have, with what each has in its place
+  (read now, as "not on N ▸" in the Windows section).
+
+Names are matched to the latest read: exactly, else the one name that
+has the words asked, else the one that ends with them ("Edge" is
+Microsoft Edge, not Edge WebView2). With several, the answer lists
+them and asks which one.
 
 Example questions:
 - "Which programs are most out of date?"
@@ -234,6 +309,7 @@ Example questions:
 - "Do Outlook crashes depend on the Teams Meeting Add-in version?"
 - "Who still has Teams classic?"
 - "Which PCs still run Edge 143?"
+- "Which PCs are missing KB5126652?"
 
 The box sits at the bottom of the Software tab, with its own blocks.
 GPT picks better from fewer choices, and "Ask about today" stays as
@@ -283,8 +359,9 @@ was not there the day before.
 program: all its PCs, cut by version, oldest on the left to newest
 on the right, light to dark green. The version most PCs have is
 outlined in brass. Versions under 1% of its PCs are merged into one
-piece, and hovering it lists them. One dark block means the program
-is in step; many pale pieces mean it is scattered.
+piece (each version its own piece, at least 3 px wide; hovering one
+gives its PCs). One dark block means the program is in step; many
+pale pieces mean it is scattered.
 
 ```
 Microsoft Edge     ░▒▒▓▓▓▓▓█████████  3,408 of 5,328 behind
@@ -336,8 +413,9 @@ Polycom RealPresence     ▉                    54
 ```
 
 **Windows (flag 5): 2 charts.**
-- When Windows was last updated: PCs per week, the last 12 weeks
-  and "older", the newest on the right.
+- When Windows was last updated: PCs per week, the last 12 weeks,
+  the newest on the right; "older" is a number beside it (on stage
+  4,897 of 5,418: as a bar it would flatten every week).
 - Each update on a Windows version: a filled bar (PCs that have it)
   inside the track of all PCs on that version.
 
@@ -379,21 +457,40 @@ How they are kept honest:
 - The colours are checked with the palette checker, colour-blind
   readers included, before the page ships.
 
-Every way to use it:
-- Tab "Software (N)", after Slow start-ups; link `#software`.
-- Red flags: click a line to open its chart under it; Close folds
-  it. "Summary for mgmt ▸" opens GPT's summary in an in-page
-  dialog, with Copy and Close.
-- Any chart: hover a bar or piece for its numbers. "Table ▾" shows
-  the exact numbers; "more ▾" shows all rows.
-- Click a program or a version strip: its versions open in place. In
-  flag 1, each version also shows its crash, hang and slow bars.
-- Click a version: its PCs, read from Aternity now. Each has
-  Investigate ▸, which runs the Investigate tab for that PC.
-- Ask about software: type a question or pick an example. The answer,
-  its chart, its counts and any Investigate ▸ buttons appear under
-  the box.
-- The "as of" time shows when the lists were read (once a day).
+Every way to use it (as built on dev):
+- Tab "Software (N)", after Slow start-ups; link `#software`. N is the
+  red flags, shown on the tab from any tab.
+- Red flags: one line per kind (each raised version its own line),
+  most PCs first, with its PCs per day and "new". Click a line (or
+  Enter): the page goes to its chart and outlines it.
+- "Summary for management ▸": an in-page dialog with the summary,
+  Copy (or, over plain HTTP, the text selected for Ctrl+C) and Close
+  (or Esc, or a click outside it).
+- Crashes, hangs and slow by version: click a bar for the PCs with that
+  problem on that version, read from Aternity now; "Compare versions ▸"
+  fills Compare with that application.
+- Compare versions: type or pick an application, Compare (its two
+  versions with the most PCs); pick other versions and Compare again.
+  "Before and after an update ▸": the PCs whose version changed once in
+  the last 14 days.
+- Windows: "not on N ▸" beside an update lists those PCs, read now
+  (the same count as the daily read): what each has in its place and
+  how many Windows updates it lists; the PCs with nothing in its place
+  first.
+- Any program name (Behind, 2+ versions, one user, a long-tail column's
+  list) opens "A program" at the bottom: its versions as bars; click a
+  version for its PCs, read now.
+- A PCs list opens under the chart that was clicked, ✕ Close folds it.
+  Each PC has Investigate ▸: the Investigate tab runs for that PC (its
+  last day with the problem, or the last 4 hours for a program).
+- Any chart: hover for its numbers; "Table ▾" for all of them; "more ▾"
+  for the rest of a list.
+- The "read" time shows when the lists were read (once a day); while a
+  new read runs, the page keeps the last one and says so.
+- "Ask a question ▾" (beside the summary) goes to "Ask about software"
+  at the bottom: type a question or click an example; each answer has
+  its counts under it, PCs with Investigate ▸; "Clear the answers"
+  empties the box (the answers are not kept when the page reloads).
 
 ## Load and storage
 
@@ -407,7 +504,7 @@ Every way to use it:
 
 ## Steps
 
-1. One more check, one copy (`verify --software` and
+1. Done (a29ed09). One more check, one copy (`verify --software` and
    `verify --versions`):
    - application version on app usage and actions: filled? how far
      back? added up per application and version? how long to read?
@@ -417,9 +514,11 @@ Every way to use it:
    - several versions on one PC, per program;
    - Windows version and last update per PC; Windows updates per
      Windows version.
-2. Build the tab: red flags, sections, charts, opening in place,
-   Compare versions, and the summary. Tests and screenshots on dev.
-3. Build "Ask about software" and its `verify --ai` tests.
+2. Built on dev (Nov 10): red flags, sections, charts, opening in
+   place, Compare versions, and the summary. Tests and screenshots
+   (desktop, phone, dark) on dev.
+3. Built on dev (Nov 10): "Ask about software" and its `verify --ai`
+   tests.
 4. Stage for a week, then live when you decide.
 
 ## Decisions (taken Nov 10, 2026: all as recommended)

@@ -98,13 +98,16 @@ OS_COLUMNS = {"name": "OS_NAME", "version": "OS_VERSION", "updated": "OS_VERSION
 # Each application's version on what users feel (names from Riverbed's $metadata), read
 # only by `verify --versions` so far: filled on the live tenant? how far back? added up
 # per version when the PC is not asked for? Aternity writes the version on each record.
+VERSION_OPTIONAL = ("virtual", "username", "activity")  # used when published, never required
 VERSION_SOURCES = {
     "usage": {"entity": "APPLICATIONS_DAILY", "time": "TIMEFRAME", "device": "DEVICE_NAME",
               "application": "APPLICATION_NAME", "version": "APPLICATION_VERSION",
-              "crashes": "APPLICATION_CRASHES_TOTAL", "hang_time": "APPLICATION_HANG_TIME_TOTAL"},
+              "crashes": "APPLICATION_CRASHES_TOTAL", "hang_time": "APPLICATION_HANG_TIME_TOTAL",
+              "virtual": "VIRTUALIZATION", "username": "USERNAME"},
     "actions": {"entity": "BUSINESS_ACTIVITIES_DAILY", "time": "TIMEFRAME", "device": "DEVICE_NAME",
                 "application": "APPLICATION_NAME", "version": "APPLICATION_VERSION",
-                "status": "SLA_STATUS", "volume": "ACTIVITY_VOLUME"},
+                "status": "SLA_STATUS", "volume": "ACTIVITY_VOLUME", "virtual": "VIRTUALIZATION",
+                "username": "USERNAME", "activity": "ACTIVITY_NAME"},
 }
 # `verify` lists every published data source with a process column (which ones
 # could tell the busiest processes), and its time column

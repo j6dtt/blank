@@ -68,7 +68,7 @@
   .atitle { font: 700 24px/1.25 var(--serif); }
   .answer #aReason { margin-top: 4px; }
   button.link { background: none; color: var(--accent); padding: 4px 0; font-weight: 600; }
-  nav { margin-left: auto; display: flex; gap: 6px; }
+  nav { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
   nav button { background: transparent; color: var(--head-muted); border: 1px solid rgba(244, 234, 210, .3); padding: 5px 12px; }
   nav button.on { background: var(--brass); color: #1b1a14; border-color: var(--brass); }
   .badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 999px; background: var(--bad); color: #fff; font-size: 11px; line-height: 18px; text-align: center; }
@@ -120,6 +120,54 @@
   .picks li { padding: 4px 10px; cursor: pointer; overflow-wrap: anywhere; }
   .picks li.on, .picks li:hover { background: var(--bg); }
   .picks li.note { color: var(--muted); font-size: 12px; cursor: default; background: none; }
+  /* Software: red flags on installed software and application versions. The warning colour is only
+     for a raised flag, always with ▲ and its words; charts use the page's own colours. */
+  .flag { display: grid; grid-template-columns: minmax(150px, auto) 1fr auto; gap: 4px 12px; align-items: center;
+          padding: 8px 0; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .flag:hover .ftext, .flag:focus-visible .ftext { color: var(--accent); }
+  .flag .kind { color: var(--warn); font-weight: 700; }
+  .newTag { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid var(--warn); border-radius: 999px;
+            font-size: 11px; color: var(--warn); font-weight: 600; }
+  .swRows { display: grid; grid-template-columns: minmax(110px, 32%) 1fr 13em; gap: 6px 10px; align-items: center; font-size: 13px; }
+  .swRows > button.link { text-align: left; padding: 0; overflow-wrap: anywhere; font-weight: 600; }
+  .swRows .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .bar { height: 10px; background: var(--accent); border-radius: 0 3px 3px 0; min-width: 2px; }
+  .bar.most { box-shadow: 0 0 0 2px var(--brass); }
+  .strip { display: flex; gap: 2px; height: 14px; }
+  .strip i { display: block; min-width: 3px; border-radius: 2px; }
+  .strip i.most { box-shadow: inset 0 0 0 2px var(--brass); }
+  .track { position: relative; display: block; flex: 1; height: 10px; background: var(--border); border-radius: 3px; }
+  .track i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); border-radius: 3px; min-width: 2px; }
+  .track i.up { background: var(--warn); }
+  .track b { position: absolute; top: -3px; bottom: -3px; border-left: 2px dashed var(--text); }
+  .mult { display: grid; gap: 4px 12px; align-items: center; font-size: 12px; margin: 6px 0; }
+  .mult .too { color: var(--muted); }
+  .cell { display: flex; align-items: center; gap: 6px; background: none; color: var(--text); padding: 2px 0;
+          font-weight: 400; font-size: 12px; width: 100%; }
+  .cell:disabled { cursor: default; opacity: 1; }
+  .cell:not(:disabled):hover .num { color: var(--accent); text-decoration: underline; }
+  .vblock { padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .vhead { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  details.tbl > summary, details.more > summary { cursor: pointer; color: var(--accent); font-size: 12px; font-weight: 600; margin-top: 6px; }
+  .flash { outline: 2px solid var(--brass); outline-offset: 4px; }
+  .chipsRow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chipsRow button { background: var(--bg); color: var(--accent); border: 1px solid var(--border); padding: 3px 9px; font-size: 12px; }
+  .swForm { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+  .swForm label { min-width: 150px; flex: 1; }
+  .swForm select { padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+  @media (max-width: 640px) {  /* a phone: each row's name and number, then its bar; wide charts scroll in place */
+    .flag { grid-template-columns: 1fr auto; }
+    .flag .kind { grid-column: 1 / -1; }
+    .swRows { grid-template-columns: 1fr auto; grid-auto-flow: dense; }
+    .swRows > :nth-child(3n+2) { grid-column: 1 / -1; }
+    .swRows > details.more { grid-column: 1 / -1; }
+  }
+  .multWrap { overflow-x: auto; }
+  .multWrap .mult { min-width: 520px; }
+  .dlgWrap[hidden] { display: none; }
+  .dlgWrap { position: fixed; inset: 0; background: rgba(20, 16, 8, .45); display: grid; place-items: center; z-index: 20; padding: 16px; }
+  .dlg { max-width: 640px; width: 100%; max-height: 80vh; overflow: auto; }
+  .dlgBtns { display: flex; gap: 10px; justify-content: flex-end; margin-top: 12px; }
 </style>
 </head>
 <body>
@@ -128,7 +176,7 @@
     <text x="15" y="21" text-anchor="middle" font-family="Georgia, serif" font-size="11" font-weight="700"
       fill="var(--brass)" style="fill:var(--brass)">J6</text></svg>
   <h1>J6 Preservation Society</h1><span>Aternity end-user experience × NetIM infrastructure</span>
-  <nav><button id="tabToday" class="on">Today</button><button id="tabCare">Care list<span class="badge" id="careCount" hidden></span></button><button id="tabInv">Investigate</button><button id="tabLog">Slow start-ups</button></nav></header>
+  <nav><button id="tabToday" class="on">Today</button><button id="tabCare">Care list<span class="badge" id="careCount" hidden></span></button><button id="tabInv">Investigate</button><button id="tabLog">Slow start-ups</button><button id="tabSoft">Software<span class="badge" id="softCount" hidden></span></button></nav></header>
 <main>
   <div id="todayBox">
     <section class="panel">
@@ -187,6 +235,85 @@
       <div class="todayHead" style="justify-content:space-between"><h2 id="cDetailTitle"></h2>
         <button type="button" class="link" id="cDetailClose">✕ Close</button></div>
       <div id="cDetailBody"></div>
+    </section>
+  </div>
+  <div id="softBox" hidden>
+    <section class="panel">
+      <div class="todayHead"><h2>Software</h2><span class="muted" id="sWhen"></span></div>
+      <div id="sStatus" class="muted" style="margin-top:6px"></div>
+      <div class="tiles" id="sTiles"></div>
+      <ul class="notes muted" id="sNotes"></ul>
+    </section>
+    <div id="sMain" hidden>
+      <section class="panel" style="margin-top:16px">
+        <div class="todayHead" style="justify-content:space-between"><h2>Red flags</h2>
+          <span><button type="button" class="link" id="sAskLink">Ask a question ▾</button> ·
+          <button type="button" class="link" id="sSummaryBtn">Summary for management ▸</button></span></div>
+        <div class="muted" style="font-size:12px">Most PCs first. Click a line for its details; the bars are its PCs per day.</div>
+        <div id="sFlags"></div>
+      </section>
+      <section class="panel" id="sVersionsBox" style="margin-top:16px">
+        <h2>Crashes, hangs and slow actions by version</h2>
+        <div class="muted" style="font-size:12px" id="sVersionsHow"></div>
+        <div id="sVersions"></div>
+      </section>
+      <section class="panel" id="sCompareBox" style="margin-top:16px">
+        <h2>Compare versions</h2>
+        <form class="swForm" id="sCompareForm">
+          <label>Application<input name="application" list="sApps" placeholder="type or pick" required></label>
+          <label>Version ●<select name="a"></select></label>
+          <label>Version ○<select name="b"></select></label>
+          <button>Compare</button>
+          <button type="button" class="link" id="sUpdateBtn">Before and after an update ▸</button>
+        </form>
+        <datalist id="sApps"></datalist>
+        <div id="sCompare"></div>
+      </section>
+      <section class="panel" id="sBehindBox" style="margin-top:16px">
+        <h2>Behind most PCs</h2>
+        <div class="muted" style="font-size:12px">Each program's PCs by version, oldest left to newest right (darker is newer).
+          Outlined: the version most of its PCs have. "Behind": PCs on an older version than that one only
+          (a PC that also has it counts under 2+ versions).</div>
+        <div id="sBehind"></div>
+      </section>
+      <div class="grid2" style="margin-top:16px">
+        <section class="panel" id="sMultiBox"><h2>2+ versions on one PC</h2><div id="sMulti"></div></section>
+        <section class="panel" id="sUserBox"><h2>Installed for one user</h2>
+          <div class="muted" style="font-size:12px">In one person's profile, not installed by IT for the PC.</div>
+          <div id="sUser"></div></section>
+      </div>
+      <section class="panel" id="sWinBox" style="margin-top:16px"><h2>Windows</h2><div id="sWin"></div></section>
+      <section class="panel" id="sTailBox" style="margin-top:16px">
+        <h2>Programs by how many PCs have them</h2>
+        <div class="muted" style="font-size:12px">Click a column for its programs.</div>
+        <div id="sTail"></div><div id="sTailList"></div>
+      </section>
+      <section class="panel" id="sProgBox" style="margin-top:16px">
+        <h2>A program</h2>
+        <form class="swForm" id="sProgForm"><label>Program<input name="prog" list="sProgs" placeholder="type or pick" required></label>
+          <button>Open</button></form>
+        <datalist id="sProgs"></datalist>
+        <div id="sProg"></div>
+      </section>
+      <section class="panel" id="sChat" style="margin-top:16px">
+        <div class="todayHead"><h2>Ask about software</h2><span class="muted" id="sChatWho"></span></div>
+        <form id="sChatForm" class="chatForm" autocomplete="off">
+          <input name="q" id="sChatQ" maxlength="500" placeholder="e.g. Which programs are most out of date?">
+          <button id="sChatGo">Ask</button>
+        </form>
+        <div class="chips" id="sChatChips"></div>
+        <div class="muted" id="sChatBusy" style="margin-top:8px"></div>
+        <div id="sChatAnswers"></div>
+        <p class="muted" style="font-size:12px;margin:10px 0 0">The AI only picks what to count and words the answer.
+          Every number comes from this app's own counts, shown under each answer (a list of PCs, two versions side
+          by side, before and after an update are read from Aternity now); a sentence with any other number is
+          replaced by ours. <button type="button" class="link" id="sChatClear" hidden>Clear the answers</button></p>
+      </section>
+    </div>
+    <section class="panel" id="sPcs" hidden style="margin-top:16px">
+      <div class="todayHead" style="justify-content:space-between"><h2 id="sPcsTitle"></h2>
+        <button type="button" class="link" id="sPcsClose">✕ Close</button></div>
+      <div class="tableWrap scroll"><table id="sPcsList"></table></div>
     </section>
   </div>
   <section class="panel" id="invForm" hidden>
@@ -294,6 +421,10 @@
     </section>
   </div>
 </main>
+<div class="dlgWrap" id="dlg" hidden><div class="dlg panel" role="dialog" aria-modal="true" aria-labelledby="dlgTitle">
+  <h2 id="dlgTitle"></h2><div id="dlgBody"></div>
+  <div class="dlgBtns"><button type="button" id="dlgCopy">Copy</button><button type="button" class="link" id="dlgClose">Close</button></div>
+</div></div>
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -313,27 +444,30 @@ async function init() {
     $("lf").start.value = toLocalInput(new Date(end - 24 * 3600e3));
     $("lf").end.value = toLocalInput(end);
     $("apps").innerHTML = info.applications.map((a) => `<option value="${esc(a)}">`).join("");
-    chatReady(info.chat);
+    todayChat.ready(info.chat); softChat.ready(info.chat);
   } catch (e) { $("error").textContent = "Could not load settings: " + e; }
 }
 
-// Three tabs; switching keeps each tab's form and last result.
-const TAB_LINK = { today: "today", care: "care", inv: "investigate", log: "startups" };
+// The tabs; switching keeps each tab's form and last result.
+const TAB_LINK = { today: "today", care: "care", inv: "investigate", log: "startups", soft: "software" };
 function mode(tab) {
-  const inv = tab === "inv", logons = tab === "log", today = tab === "today", care = tab === "care";
+  const inv = tab === "inv", logons = tab === "log", today = tab === "today", care = tab === "care", soft = tab === "soft";
   $("tabToday").classList.toggle("on", today); $("tabInv").classList.toggle("on", inv); $("tabLog").classList.toggle("on", logons);
-  $("tabCare").classList.toggle("on", care);
+  $("tabCare").classList.toggle("on", care); $("tabSoft").classList.toggle("on", soft);
   $("todayBox").hidden = !today; $("careBox").hidden = !care; $("invForm").hidden = !inv; $("logForm").hidden = !logons;
+  $("softBox").hidden = !soft;
   $("out").hidden = !inv || !$("out").dataset.has; $("lout").hidden = !logons || !$("lout").dataset.has;
   $("error").textContent = "";
   history.replaceState(null, "", "#" + TAB_LINK[tab]);
   if (today) loadToday();
   if (care) loadCare();
+  if (soft) loadSoftware();
 }
 $("tabToday").addEventListener("click", () => mode("today"));
 $("tabCare").addEventListener("click", () => mode("care"));
 $("tabInv").addEventListener("click", () => mode("inv"));
 $("tabLog").addEventListener("click", () => mode("log"));
+$("tabSoft").addEventListener("click", () => mode("soft"));
 
 // ---- Today: what Aternity rated Critical or Major today, against the same kind of day before ----
 const SEV = { Critical: "var(--bad)", Major: "var(--warn)", Minor: "var(--muted)" };
@@ -588,68 +722,79 @@ $("cDetailBody").addEventListener("click", (ev) => {
   }
 });
 
-// ---- the chat: a question → the AI picks a building block → our counts → its sentence ----
+// ---- the chats: a question → the AI picks a building block → our counts → its sentence ----
+// One for each tab (Today: ids chat…, Software: sChat…), each with its own answers.
 const CHAT_EXAMPLES = ["Which apps had the most Major slow actions today?", "Which crashes hit the most PCs this week?",
   "Are virtual desktops slower than physical PCs today?", "Who had the most slow actions in Outlook today?"];
-let chatHistory = [], chatAnswers = [];
-function chatReady(service) {
-  $("chatForm").hidden = !service; $("chatChips").hidden = !service;
-  $("chatWho").textContent = service ? `answered with ${service}` : "";
-  if (!service) $("chatBusy").textContent = "The chat needs an AI service: ai.services in config.yaml (uxcorrelate verify --ai checks it).";
-  $("chatChips").innerHTML = CHAT_EXAMPLES.map((q) => `<button type="button">${esc(q)}</button>`).join("");
-}
-$("tAskLink").addEventListener("click", () => { $("tChat").scrollIntoView({ behavior: "smooth" }); $("chatQ").focus(); });
-$("chatChips").addEventListener("click", (ev) => {
-  const b = ev.target.closest("button");
-  if (b) { $("chatQ").value = b.textContent; $("chatForm").requestSubmit(); }
-});
-$("chatForm").addEventListener("submit", async (ev) => {
-  ev.preventDefault();
-  const q = $("chatQ").value.trim();
-  if (!q || $("chatGo").disabled) return;
-  $("chatGo").disabled = true;
-  const started = Date.now();
-  const tick = () => { $("chatBusy").textContent = `Asking… ${Math.round((Date.now() - started) / 1000)} s`; };
-  tick(); const timer = setInterval(tick, 1000);
-  try {
-    const r = await fetch("api/chat", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: q, history: chatHistory.slice(-3) }) });
-    const a = await r.json();
-    if (!r.ok) throw new Error(detail(a));
-    chatHistory.push({ q: a.question, a: a.answer });
-    chatAnswers.unshift(a); chatAnswers = chatAnswers.slice(0, 10);
-    $("chatQ").value = "";
-    $("chatBusy").textContent = "";
-    renderChat();
-  } catch (e) { $("chatBusy").textContent = "No answer: " + e.message; }
-  finally { clearInterval(timer); $("chatGo").disabled = false; }
-});
-$("chatClear").addEventListener("click", () => { chatHistory = []; chatAnswers = []; renderChat(); });
+const SW_CHAT_EXAMPLES = ["Which programs are most out of date?", "Which application versions crash more than the others?",
+  "Which programs have 2 versions on one PC?", "Did Microsoft Outlook get worse after its last update?"];
 const cell = (v) => v === null || v === undefined ? "—" : typeof v === "number" ? v.toLocaleString() : esc(v);
-function renderChat() {
-  $("chatClear").hidden = !chatAnswers.length;
-  $("chatAnswers").innerHTML = chatAnswers.map((a, i) => {
-    const r = a.result;
-    let html = `<div class="answer"><div class="q">${esc(a.question)} · ${a.seconds} s</div><div class="a">${esc(a.answer)}</div>`;
-    if (a.note) html += `<div class="note">${esc(a.note)}</div>`;
-    if (r) {
-      if (r.action) html += `<div><button type="button" data-a="${i}">Investigate ▸ ${esc([r.action.username, r.action.device].filter(Boolean).join(" on "))}, ${esc(r.period)}</button></div>`;
-      else if (r.rows.length) html += `<div class="tableWrap"><table><tr>${r.runs ? "<th></th>" : ""}${r.columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>`
-        + r.rows.map((row, k) => `<tr>${r.runs ? `<td><button type="button" class="link" data-a="${i}" data-k="${k}">Investigate ▸</button></td>` : ""}`
-          + row.map((v) => `<td${typeof v === "number" ? ' class="num"' : ""}>${cell(v)}</td>`).join("") + "</tr>").join("") + "</table></div>";
-      const src = r.action ? "" : "Counted: " + esc([r.title, r.period, r.total].filter(Boolean).join(" · "));
-      const notes = r.notes.map(esc);
-      if (src || notes.length) html += `<div class="muted src">${[src, ...notes].filter(Boolean).join("<br>")}</div>`;
-    }
-    return html + "</div>";
-  }).join("");
+function makeChat(p, url, examples) {
+  const el = (k) => $(p + k);
+  let history = [], answers = [];
+  function render() {
+    el("Clear").hidden = !answers.length;
+    el("Answers").innerHTML = answers.map((a, i) => {
+      const r = a.result;
+      let html = `<div class="answer"><div class="q">${esc(a.question)} · ${a.seconds} s</div><div class="a">${esc(a.answer)}</div>`;
+      if (a.note) html += `<div class="note">${esc(a.note)}</div>`;
+      if (r) {
+        if (r.action) html += `<div><button type="button" data-a="${i}">Investigate ▸ ${esc([r.action.username, r.action.device].filter(Boolean).join(" on "))}, ${esc(r.period)}</button></div>`;
+        else if (r.rows.length) html += `<div class="tableWrap"><table><tr>${r.runs ? "<th></th>" : ""}${r.columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>`
+          + r.rows.map((row, k) => `<tr>${r.runs ? `<td><button type="button" class="link" data-a="${i}" data-k="${k}">Investigate ▸</button></td>` : ""}`
+            + row.map((v) => `<td${typeof v === "number" ? ' class="num"' : ""}>${cell(v)}</td>`).join("") + "</tr>").join("") + "</table></div>";
+        const src = r.action ? "" : "Counted: " + esc([r.title, r.period, r.total].filter(Boolean).join(" · "));
+        const notes = r.notes.map(esc);
+        if (src || notes.length) html += `<div class="muted src">${[src, ...notes].filter(Boolean).join("<br>")}</div>`;
+      }
+      return html + "</div>";
+    }).join("");
+  }
+  el("Chips").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button");
+    if (b) { el("Q").value = b.textContent; el("Form").requestSubmit(); }
+  });
+  el("Form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const q = el("Q").value.trim();
+    if (!q || el("Go").disabled) return;
+    el("Go").disabled = true;
+    const started = Date.now();
+    const tick = () => { el("Busy").textContent = `Asking… ${Math.round((Date.now() - started) / 1000)} s`; };
+    tick(); const timer = setInterval(tick, 1000);
+    try {
+      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question: q, history: history.slice(-3) }) });
+      const a = await r.json();
+      if (!r.ok) throw new Error(detail(a));
+      history.push({ q: a.question, a: a.answer });
+      answers.unshift(a); answers = answers.slice(0, 10);
+      el("Q").value = "";
+      el("Busy").textContent = "";
+      render();
+    } catch (e) { el("Busy").textContent = "No answer: " + e.message; }
+    finally { clearInterval(timer); el("Go").disabled = false; }
+  });
+  el("Clear").addEventListener("click", () => { history = []; answers = []; render(); });
+  el("Answers").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button[data-a]");
+    if (!b) return;
+    const r = answers[Number(b.dataset.a)].result;
+    investigateNow(b.dataset.k !== undefined ? r.runs[Number(b.dataset.k)] : r.action);
+  });
+  return {
+    ready(service) {
+      el("Form").hidden = !service; el("Chips").hidden = !service;
+      el("Who").textContent = service ? `answered with ${service}` : "";
+      if (!service) el("Busy").textContent = "The chat needs an AI service: ai.services in config.yaml (uxcorrelate verify --ai checks it).";
+      el("Chips").innerHTML = examples.map((q) => `<button type="button">${esc(q)}</button>`).join("");
+    },
+  };
 }
-$("chatAnswers").addEventListener("click", (ev) => {
-  const b = ev.target.closest("button[data-a]");
-  if (!b) return;
-  const r = chatAnswers[Number(b.dataset.a)].result;
-  investigateNow(b.dataset.k !== undefined ? r.runs[Number(b.dataset.k)] : r.action);
-});
+const todayChat = makeChat("chat", "api/chat", CHAT_EXAMPLES);
+const softChat = makeChat("sChat", "api/software/chat", SW_CHAT_EXAMPLES);
+$("tAskLink").addEventListener("click", () => { $("tChat").scrollIntoView({ behavior: "smooth" }); $("chatQ").focus(); });
+$("sAskLink").addEventListener("click", () => { $("sChat").scrollIntoView({ behavior: "smooth" }); $("sChatQ").focus(); });
 
 // One bar per hour of the day (24 slots), the usual as a line across each slot.
 function hoursChart(hours, status) {
@@ -1036,9 +1181,413 @@ function chart(tl, req) {
   }
   return svg + "</svg>";
 }
+// ---- Software: red flags on installed software and application versions (docs/software-tab.md) ----
+// Read by the server once a day; a click on a version reads its PCs from Aternity at once.
+let softData = null, softTimer = null, swPcsData = null, swCompareData = null;
+const swShare = (a, b) => (b ? a / b : 0);
+const swOf = (a, b, unit = "PCs") => `${n(a)} of ${n(b)} ${unit}`;
+const swShade = (j, k) => `color-mix(in srgb, var(--accent) ${k > 1 ? Math.round(30 + 70 * j / (k - 1)) : 100}%, var(--panel))`;
+function swTable(head, rows) {
+  return `<details class="tbl"><summary>Table ▾</summary><div class="tableWrap scroll"><table><tr>${head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr>`
+    + rows.map((r) => `<tr>${r.map((c, i) => `<td${i ? ' class="num"' : ""}>${esc(c)}</td>`).join("")}</tr>`).join("") + `</table></div></details>`;
+}
+function swMore(items, first, draw, what, grid = "") {
+  const head = items.slice(0, first).map(draw).join(""), rest = items.slice(first).map(draw).join("");
+  return items.length > first ? head + `<details class="more"${grid ? ' style="grid-column:1/-1"' : ""}><summary>more ▾ (${n(items.length - first)} ${what})</summary>`
+    + (grid ? `<div class="${grid}">${rest}</div>` : rest) + `</details>` : head;
+}
+// one row per item: its name (opens the program), a bar of its count, the count in words
+function swBars(items, { name, value, text, sub, open = true }) {
+  const top = Math.max(1, ...items.map(value));
+  return (x) => `${open ? `<button type="button" class="link" data-prog="${esc(name(x))}">${esc(name(x))}</button>` : `<div>${esc(name(x))}</div>`}`
+    + `<div><div class="bar" style="width:${Math.max(0.5, value(x) / top * 100)}%" title="${esc(name(x))}: ${esc(text(x))}"></div>`
+    + `${sub && sub(x) ? `<div class="sub">${esc(sub(x))}</div>` : ""}</div><span class="num">${esc(text(x))}</span>`;
+}
+
+async function loadSoftware() {
+  clearTimeout(softTimer);
+  const on = !$("softBox").hidden;
+  let v = null;
+  try {
+    const r = await fetch(on ? "api/software" : "api/software?brief=1");
+    v = await r.json();
+    if (!r.ok) throw new Error(detail(v));
+    const count = v.ready ? (on ? v.flags.length : v.flags) : 0;
+    $("softCount").hidden = !count; $("softCount").textContent = count || "";
+    if (on) { softData = v; renderSoftware(v); }
+  } catch (e) { if (on) $("sStatus").textContent = "Could not load the software red flags: " + e.message; }
+  softTimer = setTimeout(loadSoftware, (v && (!v.ready || v.reading) ? 15 : 1800) * 1000);
+}
+
+function renderSoftware(v) {
+  $("sMain").hidden = !v.ready;
+  if (!v.ready) {
+    $("sWhen").textContent = "";
+    $("sStatus").textContent = v.off || `${v.status}… The first read takes a few minutes; this page fills in by itself.`;
+    $("sTiles").innerHTML = $("sNotes").innerHTML = "";
+    return;
+  }
+  $("sWhen").textContent = `as Aternity lists them · read ${v.as_of_local} (${v.zone}), once a day`;
+  $("sStatus").textContent = v.reading ? `Reading again now: ${v.status}. The page shows the last read until then.` : "";
+  const s = v.list || {};
+  $("sTiles").innerHTML = [[s.pcs, "PCs in the list"], [s.programs, "programs"], [s.installs, "installs"],
+    [v.flags.length, "red flags"]].map(([x, w], i) => `<div class="tile"><div class="big">${x === null || x === undefined ? "—" : n(x)}</div>`
+      + `<div class="what">${i === 3 && x ? '<span class="warn">▲</span> ' : ""}${esc(w)}</div>`
+      + (i === 2 && s.user_installs ? `<div class="u">${n(s.user_installs)} of them for one user only</div>` : "") + `</div>`).join("");
+  $("sNotes").innerHTML = v.notes.map((x) => `<li>${esc(x)}</li>`).join("");
+  renderSwFlags(v); renderSwVersions(v); renderSwBehind(v); renderSwMulti(v); renderSwUser(v); renderSwWindows(v); renderSwTail(v);
+  $("sApps").innerHTML = v.applications.map((a) => `<option value="${esc(a)}">`).join("");
+  $("sProgs").innerHTML = v.programs.map((a) => `<option value="${esc(a)}">`).join("");
+}
+
+function renderSwFlags(v) {
+  $("sFlags").innerHTML = v.flags.length ? v.flags.map((f, i) => `<div class="flag" role="button" tabindex="0" data-flag="${i}">`
+    + `<span class="kind">▲ ${esc(f.label)}</span><span class="ftext">${esc(f.text)}${f.new ? '<span class="newTag">new</span>' : ""}</span>`
+    + spark(f.days.map((d, k) => ({ day: d.day, pcs: d.pcs, window: k === f.days.length - 1 })), "PCs", `${f.label}: PCs per day`) + `</div>`).join("")
+    : `<p class="muted">No red flag in the latest read.</p>`;
+}
+function swFlash(el) {
+  if (!el) return;
+  el.scrollIntoView({ behavior: "smooth", block: "start" });
+  el.classList.add("flash"); setTimeout(() => el.classList.remove("flash"), 1600);
+}
+function openSwFlag(f) {
+  if (["crash", "hang", "slow"].includes(f.kind)) {  // the application's versions, then its compare
+    const i = softData.versions.findIndex((a) => a.application === f.application);
+    const block = $(`ver${i}`);
+    if (block && block.closest("details")) block.closest("details").open = true;
+    swFlash(block);
+    return;
+  }
+  swFlash($({ behind: "sBehindBox", multi: "sMultiBox", user: "sUserBox", windows: "sWinBox", few: "sTailBox" }[f.kind]));
+}
+
+// Flag 1: per application, each version's share of PCs (or actions) with the problem; dashed: its other versions
+const SW_KINDS = [["crash", "crash", "pcs", "PCs with a crash"], ["hang", "hang", "pcs", "PCs with hang time"],
+  ["slow", "major", "actions", "actions rated Major"]];
+function renderSwVersions(v) {
+  const r = v.rules;
+  $("sVersionsHow").textContent = `Last ${v.days} days, from Aternity's own version on app usage and actions. Each bar is a version's share `
+    + `of its PCs (or actions); the dashed line is its other versions'. ▲ raised: at least ${r.ratio} times its other versions, `
+    + `with ${r.min_pcs} PCs on each side and ${r.min_problem} with the problem. Grey: too few PCs. Click a bar for its PCs.`;
+  if (!v.versions.length) {
+    $("sVersions").innerHTML = `<p class="muted">No application had a crash, hang time or Major actions on 2 versions or more in the last ${v.days} days.</p>`;
+    return;
+  }
+  $("sVersions").innerHTML = swMore(v.versions, 6, (a) => swVersionBlock(a, v.versions.indexOf(a), v), "applications");
+}
+function swVersionBlock(a, i, v) {
+  const cols = SW_KINDS.filter(([k]) => k === "slow" ? a.read.includes("actions") : a.read.includes("usage") && !a.only.length);
+  const scale = {};
+  for (const [k, nk, ofk] of cols) {
+    scale[k] = Math.max(1e-9, ...a.versions.map((x) => swShare(x[nk], x[ofk])),
+      ...a.versions.map((x) => (x.others[k] ? swShare(x.others[k][0], x.others[k][1]) : 0)));
+  }
+  const only = a.only.map((k) => `<div class="muted" style="font-size:12px">Every PC listed had ${k === "crash" ? "a crash" : "hang time"} `
+    + `(${n(a.versions.reduce((s, x) => s + x[k], 0))} PCs): app usage holds ${esc(a.application)} only where it failed, so its versions are `
+    + `not compared on crashes or hang time. ${a.versions.map((x) => `${esc(x.version)}: ${n(x[k])} PCs`).join("; ")}.</div>`).join("");
+  const rows = a.versions.slice(0, 8).map((x) => {
+    const on = Math.max(x.pcs, x.action_pcs), few = on < v.rules.min_pcs;
+    const cells = cols.map(([k, nk, ofk, words]) => {
+      const of = x[ofk], o = x.others[k], up = x.raised.includes(k);
+      if (!of) return `<div class="muted">—</div>`;
+      const title = `${a.application} ${x.version}, ${words}: ${n(x[nk])} of ${n(of)}` + (o ? `; its other versions: ${n(o[0])} of ${n(o[1])}` : "");
+      return `<button type="button" class="cell" data-app="${esc(a.application)}" data-version="${esc(x.version)}" data-problem="${k}" `
+        + `title="${esc(title)}"${x[nk] ? "" : " disabled"}><span class="track"><i class="${up ? "up" : ""}" `
+        + `style="width:${swShare(x[nk], of) / scale[k] * 100}%;${few ? "background:var(--muted)" : ""}"></i>`
+        + (o && o[1] ? `<b style="left:${swShare(o[0], o[1]) / scale[k] * 100}%"></b>` : "")
+        + `</span><span class="num">${up ? '<span class="warn">▲</span> ' : ""}${n(x[nk])} of ${n(of)}</span></button>`;
+    }).join("");
+    return `<div class="${few ? "too" : ""}">${esc(x.version)}<div class="muted" style="font-size:11px">${n(on)} PCs`
+      + `${few ? " · too few PCs" : ""}${x.virtual || x.action_virtual ? ` · ${n(Math.max(x.virtual, x.action_virtual))} virtual` : ""}</div></div>${cells}`;
+  }).join("");
+  const grid = cols.length ? `<div class="multWrap"><div class="mult" style="grid-template-columns:minmax(110px,24%) repeat(${cols.length},1fr)"><div></div>`
+    + cols.map(([, , , w]) => `<div class="muted">${esc(w)}</div>`).join("") + rows + `</div></div>` : "";
+  return `<div class="vblock" id="ver${i}"><div class="vhead"><b>${esc(a.application)}</b><span class="muted">${n(a.versions.length)} versions</span>`
+    + `<button type="button" class="link" data-compare="${esc(a.application)}">Compare versions ▸</button></div>${only}${grid}`
+    + (a.versions.length > 8 ? `<div class="muted" style="font-size:12px">The 8 versions with the most PCs; all in the table.</div>` : "")
+    + swTable(["Version", "PCs", "with a crash", "with hang time", "virtual", "actions", "Major", "PCs with Major"],
+      a.versions.map((x) => [x.version, n(x.pcs), n(x.crash), n(x.hang), n(x.virtual), n(x.actions), n(x.major), n(x.major_pcs)])) + `</div>`;
+}
+
+// Flag 2: version strips, oldest to newest, the version most PCs have outlined in brass
+function swStrip(p) {
+  const k = p.versions.length;
+  return `<div class="strip" role="img" aria-label="${esc(`${p.name}: ${k} versions, most PCs on ${p.most}`)}">`
+    + p.versions.map(([ver, c], j) => `<i class="${ver === p.most ? "most" : ""}" style="flex:${c} 1 3px;background:${swShade(j, k)}" `
+      + `title="${esc(`${ver}: ${n(c)} PCs${ver === p.most ? " (the most)" : ""}${ver === p.newest ? " (newest)" : ""}`)}"></i>`).join("") + `</div>`;
+}
+function renderSwBehind(v) {
+  if (!v.behind.length) { $("sBehind").innerHTML = `<p class="muted">No program has PCs on an older version than most of its PCs.</p>`; return; }
+  const row = (p) => `<button type="button" class="link" data-prog="${esc(p.name)}">${esc(p.name)}</button><div>${swStrip(p)}`
+    + `<div class="sub">${n(p.versions.length)} versions; most ${esc(p.most)}${p.newest !== p.most ? `, newest ${esc(p.newest)}` : " (the newest)"}</div></div>`
+    + `<span class="num">${swOf(p.behind, p.pcs)} behind</span>`;
+  $("sBehind").innerHTML = `<div class="swRows" style="margin-top:8px">${swMore(v.behind, 10, row, "programs", "swRows")}</div>`
+    + swTable(["Program", "PCs", "behind", "versions", "most", "newest", "oldest"],
+      v.behind.map((p) => [p.name, n(p.pcs), n(p.behind), n(p.versions.length), p.most, p.newest, p.oldest]));
+}
+// Flags 3 and 4: ranked bars, most PCs first
+function renderSwMulti(v) {
+  if (!v.multi.length) { $("sMulti").innerHTML = `<p class="muted">No PC has 2 versions of one program.</p>`; return; }
+  const row = swBars(v.multi, { name: (x) => x.name, value: (x) => x.pcs, text: (x) => swOf(x.pcs, x.of),
+    sub: (x) => x.combos.map(([c, k]) => `${c}: ${n(k)}`).join("; ") });
+  $("sMulti").innerHTML = `<div class="swRows">${swMore(v.multi, 10, row, "programs", "swRows")}</div>`
+    + swTable(["Program", "PCs with 2+", "of its PCs", "versions found together"], v.multi.map((x) => [x.name, n(x.pcs), n(x.of),
+      x.combos.map(([c, k]) => `${c}: ${n(k)}`).join("; ")]));
+}
+function renderSwUser(v) {
+  if (!v.user.length) { $("sUser").innerHTML = `<p class="muted">No program is installed for one user only.</p>`; return; }
+  const row = swBars(v.user, { name: (x) => x.name, value: (x) => x.pcs, text: (x) => pcs(x.pcs) });
+  $("sUser").innerHTML = `<div class="swRows">${swMore(v.user, 10, row, "programs", "swRows")}</div>`
+    + swTable(["Program", "PCs, for one user", "PCs in all"], v.user.map((x) => [x.name, n(x.pcs), n(x.of)]));
+}
+// Flag 5: Windows per PC, when it was last updated, and each update on its own Windows version's PCs
+function renderSwWindows(v) {
+  const w = v.windows;
+  if (!w) { $("sWin").innerHTML = `<p class="muted">Windows on each PC could not be read (see the notes at the top).</p>`; return; }
+  const per = swBars(w.versions, { name: (x) => x.windows, value: (x) => x.pcs, text: (x) => pcs(x.pcs), open: false });
+  // the last weeks on their own scale; "older" is a number beside them (on the live tenant it dwarfs every week)
+  const top = Math.max(1, ...w.weeks.map(([, k]) => k)), H = 70, step = 44;
+  const label = (d) => new Date(d + "T12:00:00Z").toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+  const svg = `<div style="font-size:13px;margin-bottom:4px"><b>${pcs(w.older)}</b> over ${w.weeks.length} weeks ago; the last ${w.weeks.length} weeks:</div>`
+    + `<svg viewBox="0 -14 ${w.weeks.length * step} ${H + 40}" width="100%" style="max-width:${w.weeks.length * step}px" role="img" `
+    + `aria-label="PCs by the week Windows was last updated, the last ${w.weeks.length} weeks">` + w.weeks.map(([d, k], i) => {
+      const h = k ? Math.max(2, k / top * H) : 0;
+      return `<g><title>Week of ${esc(label(d))}: ${n(k)} PCs</title><rect x="${i * step}" y="-14" width="${step}" height="${H + 40}" fill="transparent"/>`
+        + `<rect x="${i * step + 7}" y="${H - h + 2}" width="${step - 14}" height="${h}" rx="3" fill="var(--accent)"/>`
+        + (k ? `<text x="${i * step + step / 2}" y="${H - h - 2}" text-anchor="middle">${n(k)}</text>` : "")
+        + ((w.weeks.length - 1 - i) % 2 === 0 ? `<text x="${i * step + step / 2}" y="${H + 18}" text-anchor="middle">${esc(label(d))}</text>` : "") + `</g>`;
+    }).join("") + `</svg>`;
+  const gaps = w.versions.filter((x) => x.missing && x.missing.length);
+  const upd = gaps.map((x) => `<h3 style="font-size:14px;margin:14px 0 4px">${esc(x.windows)} · ${pcs(x.pcs)}</h3><div class="swRows">`
+    + swMore(x.missing, 5, (m) => `<div>${esc(m.update)}</div><div><span class="track" title="${esc(`${m.update}: on ${n(m.on)} of the ${n(x.pcs)} PCs on ${x.windows}`)}">`
+      + `<i style="width:${m.on / x.pcs * 100}%"></i></span><div class="sub">${m.instead.length ? "Of the PCs without it: "
+      + m.instead.map((y) => `${y.update} on ${n(y.on)} (on ${n(y.with)} of the PCs with it)`).join("; ") + "." : "The PCs without it have no update the others lack."}`
+      + `${m.none ? ` ${pcs(m.none)} without it list no Windows update at all.` : ""}</div></div>`
+      + `<button type="button" class="link num" data-update="${esc(m.update)}" data-win="${esc(x.windows)}" title="List these PCs (read now)">not on ${n(m.without)} ▸</button>`, "updates", "swRows")
+    + `</div>`).join("");
+  $("sWin").innerHTML = `<div class="grid2"><div><h3 style="font-size:14px;margin:0 0 6px">PCs per Windows version</h3><div class="swRows">`
+    + swMore(w.versions, 6, per, "versions", "swRows") + `</div></div><div><h3 style="font-size:14px;margin:0 0 6px">PCs by the week Windows was last updated (Monday)</h3>${svg}`
+    + `<div class="muted" style="font-size:12px">Aternity's "OS version update date", known on ${n(w.dated)} of ${pcs(w.pcs)}.</div></div></div>`
+    + (w.read_updates ? `<h3 style="font-size:14px;margin:16px 0 0">Updates most PCs of a Windows version have, not on every one</h3>`
+      + (upd || `<p class="muted">Every update most PCs of a Windows version have is on all of them (or misses fewer than ${v.rules.min_problem}).</p>`) : "")
+    + swTable(["Windows", "PCs", "update", "on", "not on", "instead"], gaps.flatMap((x) => x.missing.map((m) => [x.windows, n(x.pcs), m.update,
+      n(m.on), n(m.without), m.instead.map((y) => `${y.update} ${n(y.on)}`).join("; ")])));
+}
+// Flag 6: the long tail, programs by how many PCs have them; a column opens its programs
+function renderSwTail(v) {
+  const top = Math.max(1, ...v.tail.map((t) => t.programs)), H = 80, step = 84;
+  $("sTail").innerHTML = `<svg viewBox="0 -16 ${v.tail.length * step} ${H + 50}" width="100%" style="max-width:${v.tail.length * step}px" role="img" `
+    + `aria-label="Programs by how many PCs have them">` + v.tail.map((t, i) => {
+      const h = t.programs ? Math.max(2, t.programs / top * H) : 0;
+      return `<g data-tail="${i}" style="cursor:pointer"><title>${esc(`On ${t.label} PCs: ${n(t.programs)} programs`)}</title>`
+        + `<rect x="${i * step}" y="-16" width="${step}" height="${H + 50}" fill="transparent"/>`
+        + `<rect x="${i * step + 10}" y="${H - h + 4}" width="${step - 20}" height="${h}" rx="3" fill="var(--accent)"/>`
+        + `<text x="${i * step + step / 2}" y="${H - h}" text-anchor="middle">${n(t.programs)}</text>`
+        + `<text x="${i * step + step / 2}" y="${H + 20}" text-anchor="middle">${esc(t.label)}</text></g>`;
+    }).join("") + `</svg><div class="muted" style="font-size:12px">Programs, by the number of PCs that have them.</div>`;
+  $("sTailList").innerHTML = "";
+}
+$("sTail").addEventListener("click", (ev) => {
+  const g = ev.target.closest("[data-tail]");
+  if (!g || !softData) return;
+  const t = softData.tail[Number(g.dataset.tail)];
+  $("sTailList").innerHTML = `<div class="muted" style="font-size:12px;margin-top:8px">On ${esc(t.label)} PCs: ${n(t.programs)} programs. Click one to open it.</div>`
+    + `<div class="chipsRow">${t.names.map((x) => `<button type="button" data-prog="${esc(x)}">${esc(x)}</button>`).join("")}</div>`;
+});
+
+// A program: its versions as bars, oldest to newest; a version opens its PCs
+async function openSwProgram(name) {
+  $("sProgForm").prog.value = name;
+  $("sProg").innerHTML = `<p class="muted">Loading…</p>`;
+  swFlash($("sProgBox"));
+  try {
+    const r = await fetch(`api/software/program?${new URLSearchParams({ name })}`);
+    const p = await r.json();
+    if (!r.ok) throw new Error(detail(p));
+    const top = Math.max(1, ...p.versions.map(([, k]) => k));
+    const facts = [`${pcs(p.pcs)}, ${n(p.installs)} installs`, p.type ? `type ${p.type}` : null,
+      p.dotted ? `most ${p.most}; newest ${p.newest}; oldest ${p.oldest}; ${swOf(p.behind, p.pcs)} behind` : `most ${p.most ?? "—"} (versions not in number form: no oldest or newest)`,
+      p.user ? `installed for one user on ${pcs(p.user)}` : null,
+      p.multi && p.multi.pcs ? `2+ versions on ${pcs(p.multi.pcs)} (${p.multi.combos.map(([c, k]) => `${c}: ${n(k)}`).join("; ")})` : null].filter(Boolean);
+    $("sProg").innerHTML = `<h3 style="font-size:15px;margin:10px 0 2px">${esc(p.name)} · ${n(p.versions.length)} versions</h3>`
+      + `<div class="muted" style="font-size:12px;margin-bottom:8px">${esc(facts.join(" · "))}. ${p.dotted ? "Oldest to newest" : "Most PCs first"}; click a version for its PCs.</div>`
+      + `<div class="swRows">` + p.versions.map(([ver, k]) => `<button type="button" class="link" data-pver="${esc(ver)}">${esc(ver || "(no version)")}</button>`
+        + `<div><div class="bar${ver === p.most ? " most" : ""}" style="width:${Math.max(0.5, k / top * 100)}%" title="${esc(`${ver || "(no version)"}: ${n(k)} PCs`)}"></div></div>`
+        + `<span class="num">${pcs(k)}${ver === p.most ? " · most" : ""}${p.dotted && ver === p.newest && ver !== p.most ? " · newest" : ""}</span>`).join("") + `</div>`;
+    $("sProg").dataset.name = p.name;
+  } catch (e) { $("sProg").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+}
+$("sProgForm").addEventListener("submit", (ev) => { ev.preventDefault(); openSwProgram($("sProgForm").prog.value.trim()); });
+$("sProg").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-pver]");
+  if (b) openSwPcs({ name: $("sProg").dataset.name, version: b.dataset.pver }, b);
+});
+
+// The PCs behind a version, read from Aternity now; Investigate ▸ runs the Investigate tab for that PC
+async function openSwPcs(q, el) {
+  const box = $("sPcs");
+  (el.closest(".panel") || $("sMain")).after(box);
+  box.hidden = false;
+  $("sPcsTitle").textContent = "Reading the PCs from Aternity…";
+  $("sPcsList").innerHTML = "";
+  box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  try {
+    const r = await fetch(`api/software/pcs?${new URLSearchParams(q)}`);
+    const w = await r.json();
+    if (!r.ok) throw new Error(detail(w));
+    swPcsData = w;
+    const more = w.total > w.rows.length ? ` (the first ${n(w.rows.length)} shown)` : "";
+    $("sPcsTitle").textContent = `${w.what}: ${pcs(w.total)}${more}`;
+    const p = w.problem;
+    if (p === "update") {  // without a Windows update: what they have in its place, those with none first
+      const ins = w.instead.length ? ` ${n(w.with_instead)} of them have ${w.instead.join(" or ")} in its place; the others are listed first.` : "";
+      $("sPcsTitle").textContent = `${w.what}: ${pcs(w.total)}${more}.${ins}`;
+      $("sPcsList").innerHTML = w.rows.length ? `<tr><th></th><th>PC</th>${w.instead.length ? "<th>Has in its place</th>" : ""}<th>Windows updates listed</th></tr>`
+        + w.rows.map((x, i) => `<tr><td><button type="button" class="link" data-i="${i}">Investigate ▸</button></td><td>${esc(x.device)}</td>`
+          + `${w.instead.length ? `<td>${esc(x.instead.join(", ") || "—")}</td>` : ""}<td class="num">${n(x.updates)}</td></tr>`).join("")
+        : `<tr><td class="muted">None in the latest data.</td></tr>`;
+      return;
+    }
+    $("sPcsList").innerHTML = w.rows.length ? `<tr><th></th><th>PC</th>${p ? `<th>User</th><th>Days with it</th>${p !== "hang" ? `<th>${p === "slow" ? "Major actions" : "Crashes"}</th>` : ""}<th>Last day</th>` : ""}</tr>`
+      + w.rows.map((x, i) => `<tr><td><button type="button" class="link" data-i="${i}">Investigate ▸</button></td><td>${esc(x.device)}</td>`
+        + (p ? `<td>${esc(x.username ?? "—")}</td><td class="num">${n(x.days)}</td>${p !== "hang" ? `<td class="num">${n(x.count)}</td>` : ""}`
+          + `<td>${esc(new Date(x.last).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" }))}</td>` : "") + `</tr>`).join("")
+      : `<tr><td class="muted">None in the latest data.</td></tr>`;
+  } catch (e) { $("sPcsTitle").textContent = "Could not read the PCs: " + e.message; }
+}
+$("sPcsClose").addEventListener("click", () => { $("sPcs").hidden = true; });
+$("sPcsList").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-i]");
+  if (!b || !swPcsData) return;
+  const x = swPcsData.rows[Number(b.dataset.i)], now = Date.now();
+  // a problem's PC: its last day with it (Aternity's day); a program's PC: the last 4 hours, as the form's default
+  const start = x.last ? new Date(x.last).getTime() : now - 4 * 3600e3;
+  investigateNow({ device: x.device, username: x.username || "", start, end: Math.min(now, x.last ? start + 24 * 3600e3 : now) });
+});
+
+// Compare versions: one line per kind of issue; ● the first version, ○ the second
+function swDumbbell(lines, la, lb) {
+  if (!lines.length) return `<p class="muted">Nothing to line up.</p>`;
+  const W = 760, left = 210, right = 200, rowH = 26, top = 8;
+  const max = Math.max(1e-9, ...lines.flatMap((l) => [swShare(...l.a), swShare(...l.b)]));
+  const x = (s) => left + s / max * (W - left - right);
+  const H = top + lines.length * rowH + 22;
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:${W}px" role="img" aria-label="${esc(`${la} against ${lb}`)}">`
+    + `<line x1="${left}" x2="${left}" y1="0" y2="${H - 20}" stroke="var(--border)"/>`
+    + `<text x="${left}" y="${H - 6}">0</text><text x="${W - right}" y="${H - 6}" text-anchor="end">highest share</text>`
+    + lines.map((l, i) => {
+      const y = top + i * rowH + 10, xa = x(swShare(...l.a)), xb = x(swShare(...l.b));
+      const what = l.group === "activity" ? `· ${l.what}` : l.what;
+      return `<g><title>${esc(`${l.what}: ${la} ${n(l.a[0])} of ${n(l.a[1])} ${l.unit}; ${lb} ${n(l.b[0])} of ${n(l.b[1])} ${l.unit}`)}</title>`
+        + `<rect x="0" y="${y - 12}" width="${W}" height="${rowH}" fill="transparent"/>`
+        + `<text x="${left - 8}" y="${y + 4}" text-anchor="end">${esc(what.length > 30 ? what.slice(0, 29) + "…" : what)}</text>`
+        + `<line x1="${xa}" x2="${xb}" y1="${y}" y2="${y}" stroke="var(--muted)" stroke-width="2"/>`
+        + `<circle cx="${xa}" cy="${y}" r="5.5" fill="var(--accent)"/>`
+        + `<circle cx="${xb}" cy="${y}" r="5.5" fill="var(--panel)" stroke="var(--accent)" stroke-width="2"/>`
+        + `<text x="${W - right + 10}" y="${y + 4}">${n(l.a[0])} of ${n(l.a[1])} · ${n(l.b[0])} of ${n(l.b[1])}</text></g>`;
+    }).join("") + `</svg>`;
+}
+async function runSwCompare(application, a = "", b = "") {
+  const f = $("sCompareForm");
+  f.application.value = application;
+  $("sCompare").innerHTML = `<p class="muted">Reading ${esc(application)} from Aternity…</p>`;
+  try {
+    const r = await fetch(`api/software/compare?${new URLSearchParams({ application, a, b })}`);
+    const c = await r.json();
+    if (!r.ok) throw new Error(detail(c));
+    swCompareData = c;
+    for (const k of ["a", "b"]) {
+      f[k].innerHTML = c.versions.map((x) => `<option${x === c[k] ? " selected" : ""}>${esc(x)}</option>`).join("");
+    }
+    const notes = c.notes.map((x) => `<li>${esc(x)}</li>`).join("");
+    if (!c.a) { $("sCompare").innerHTML = `<ul class="notes muted">${notes}</ul>`; return; }
+    const kind = c.kind ? `<div class="muted" style="font-size:12px;margin-top:6px">On virtual desktops: ${esc(c.a)} ${swOf(c.kind.a[0], c.kind.a[1])}; `
+      + `${esc(c.b)} ${swOf(c.kind.b[0], c.kind.b[1])}. A version used on another kind of PC is not on the same PCs.</div>` : "";
+    $("sCompare").innerHTML = `<div class="legend"><span><b style="color:var(--accent)">●</b> ${esc(c.a)}</span><span><b style="color:var(--accent)">○</b> ${esc(c.b)}</span>`
+      + `<span>last ${c.days} days; each line: its share of the PCs (or actions) on each version, numbers on the right</span></div>`
+      + swDumbbell(c.lines, c.a, c.b) + kind + (notes ? `<ul class="notes muted">${notes}</ul>` : "")
+      + swTable(["Version", "PCs", "with a crash", "with hang time", "virtual", "actions", "Major"],
+        c.table.map((x) => [x.version, n(x.pcs), n(x.crash), n(x.hang), x.virtual === null ? "—" : n(x.virtual), n(x.actions), n(x.major)]));
+  } catch (e) { $("sCompare").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+}
+$("sCompareForm").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const f = $("sCompareForm"), app = f.application.value.trim();
+  const same = swCompareData && swCompareData.application === app;  // new application: its two with the most PCs
+  runSwCompare(app, same ? f.a.value : "", same ? f.b.value : "");
+});
+$("sUpdateBtn").addEventListener("click", async () => {
+  const app = $("sCompareForm").application.value.trim();
+  if (!app) { $("sCompare").innerHTML = `<p class="muted">Type an application first.</p>`; return; }
+  $("sCompare").innerHTML = `<p class="muted">Reading ${esc(app)}'s last 14 days from Aternity, day by day…</p>`;
+  try {
+    const r = await fetch(`api/software/update?${new URLSearchParams({ application: app })}`);
+    const u = await r.json();
+    if (!r.ok) throw new Error(detail(u));
+    const day = (d) => new Date(d + "T12:00:00Z").toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+    const pairs = u.pairs.map((p) => `<h3 style="font-size:14px;margin:12px 0 2px">${esc(p.from)} to ${esc(p.to)}: ${pcs(p.pcs)} updated, ${esc(day(p.first))}`
+      + `${p.first !== p.last ? ` to ${esc(day(p.last))}` : ""}</h3><div class="muted" style="font-size:12px">The same PCs on each side. Days they used it: `
+      + `${n(p.before[0])} before, ${n(p.after[0])} after. PCs with a crash: ${n(p.crash_pcs[0])} before, ${n(p.crash_pcs[1])} after.</div>`
+      + swDumbbell([{ what: "Days with a crash", unit: "days", a: [p.before[1], p.before[0]], b: [p.after[1], p.after[0]] },
+        { what: "Days with hang time", unit: "days", a: [p.before[2], p.before[0]], b: [p.after[2], p.after[0]] }], "before", "after")).join("");
+    $("sCompare").innerHTML = `<div class="legend"><span><b style="color:var(--accent)">●</b> before</span><span><b style="color:var(--accent)">○</b> after</span><span>each PC whose version changed once in the last ${u.days} days</span></div>`
+      + (pairs || `<p class="muted">No PC's version of ${esc(app)} changed once in the last ${u.days} days.</p>`)
+      + (u.notes.length ? `<ul class="notes muted">${u.notes.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "");
+  } catch (e) { $("sCompare").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
+});
+
+// The summary for management, in an in-page dialog with Copy and Close
+function swDialog(title, html, copy) {
+  $("dlgTitle").textContent = title; $("dlgBody").innerHTML = html;
+  $("dlgCopy").hidden = !copy; $("dlgCopy").dataset.text = copy || ""; $("dlgCopy").textContent = "Copy";
+  $("dlg").hidden = false; $("dlgClose").focus();
+}
+$("dlgClose").addEventListener("click", () => { $("dlg").hidden = true; });
+$("dlg").addEventListener("click", (ev) => { if (ev.target === $("dlg")) $("dlg").hidden = true; });
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !$("dlg").hidden) $("dlg").hidden = true; });
+$("dlgCopy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("dlgCopy").dataset.text); $("dlgCopy").textContent = "Copied ✓"; }
+  catch (e) {  // no clipboard over plain HTTP: select the text to copy by hand
+    const range = document.createRange(); range.selectNodeContents($("dlgBody").querySelector("p") || $("dlgBody"));
+    getSelection().removeAllRanges(); getSelection().addRange(range); $("dlgCopy").textContent = "Selected: press Ctrl+C";
+  }
+});
+$("sSummaryBtn").addEventListener("click", async () => {
+  const b = $("sSummaryBtn"); b.disabled = true; b.textContent = "Writing the summary…";
+  try {
+    const r = await fetch("api/software/summary", { method: "POST" });
+    const s = await r.json();
+    if (!r.ok) throw new Error(detail(s));
+    const head = `Installed software and application versions, as Aternity lists them (read ${softData ? softData.as_of_local : ""}).`;
+    swDialog("Summary for management", `<p style="font-size:15px">${esc(s.text)}</p>`
+      + `<div class="muted" style="font-size:12px">${esc(s.note || (s.ours ? "Our own sentences, from the red flags."
+        : "Written by the AI from the red flags; every number checked against them."))}</div>`, `${head}\n\n${s.text}`);
+  } catch (e) { swDialog("Summary for management", `<p class="err">${esc(e.message)}</p>`, ""); }
+  b.disabled = false; b.textContent = "Summary for management ▸";
+});
+
+// Clicks anywhere on the tab: a flag, a program, a version's bar, Compare
+$("sMain").addEventListener("click", (ev) => {
+  const f = ev.target.closest("[data-flag]");
+  if (f) return openSwFlag(softData.flags[Number(f.dataset.flag)]);
+  const p = ev.target.closest("[data-prog]");
+  if (p) return openSwProgram(p.dataset.prog);
+  const c = ev.target.closest("button[data-problem]");
+  if (c) return openSwPcs({ application: c.dataset.app, version: c.dataset.version, problem: c.dataset.problem }, c);
+  const u = ev.target.closest("button[data-update]");
+  if (u) return openSwPcs({ update: u.dataset.update, windows: u.dataset.win }, u);
+  const k = ev.target.closest("[data-compare]");
+  if (k) { runSwCompare(k.dataset.compare); swFlash($("sCompareBox")); }
+});
+$("sFlags").addEventListener("keydown", (ev) => {
+  const f = ev.target.closest("[data-flag]");
+  if (f && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); openSwFlag(softData.flags[Number(f.dataset.flag)]); }
+});
 init();
 mode(Object.keys(TAB_LINK).find((k) => "#" + TAB_LINK[k] === location.hash) || "today");
 if ($("careBox").hidden) loadCare();  // the tab's count shows from any tab
+if ($("softBox").hidden) loadSoftware();  // the red flags' count on the tab, from any tab
 </script>
 </body>
 </html>

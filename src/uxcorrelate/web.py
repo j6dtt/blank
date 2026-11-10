@@ -24,7 +24,11 @@ from .http import ApiError, short_error
 from .logons import logon_report
 from .models import utc
 from .names import KINDS, NameList
-from .today import Today, keep_reading
+from .software import (Software, before_after, compare, missing_on, pcs_with_problem, pcs_with_program,
+                       pcs_without_update)
+from .software import keep_reading as keep_reading_software
+from .software import summary as software_summary
+from .today import NO_APP, Today, keep_reading
 
 STATIC = Path(__file__).parent / "static"
 KEEP_JOBS = 20
@@ -108,6 +112,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
     today = app.state.today = Today(zone, os.environ.get("UXCORRELATE_DATA") or None)
     care = app.state.care = Care(today, lambda: load_settings(config_path).care_list,
                                  os.environ.get("UXCORRELATE_DATA") or None, names)
+    software = app.state.software = Software(zone, os.environ.get("UXCORRELATE_DATA") or None)
 
     def care_investigate(username: str, start: datetime, end: datetime) -> dict:
         """A Care list user's investigation, as the Investigate tab would run it."""
@@ -127,6 +132,11 @@ def create_app(config_path: str | None = None) -> FastAPI:
             today.started = True
             threading.Thread(target=keep_reading, args=(today, names, aternity_client, time.sleep),
                              kwargs={"care": care}, daemon=True, name="today").start()
+        if not software.started:  # once a day: the installed list and application versions
+            software.started = True
+            threading.Thread(target=keep_reading_software, args=(software, aternity_client,
+                                                                 lambda: load_settings(config_path).aternity, time.sleep),
+                             daemon=True, name="software").start()
         if not care.started:
             care.started = True
             threading.Thread(target=care.work, args=(care_investigate, time.sleep), daemon=True,
@@ -150,6 +160,119 @@ def create_app(config_path: str | None = None) -> FastAPI:
         if got is None:
             raise HTTPException(404, f"{username} is not on the Care list (care_list in config.yaml).")
         return got
+
+    @app.get("/api/software")
+    def software_view(brief: bool = False):
+        """The Software tab; brief: only how many red flags (the tab's label, from any tab)."""
+        v = software.view()
+        return {"ready": v["ready"], "flags": len(v.get("flags", []))} if brief else v
+
+    @app.get("/api/software/program")
+    def software_program(name: str):
+        got = software.program(name)
+        if got is None:
+            raise HTTPException(404, f"{name} is not in the latest installed software list.")
+        return got
+
+    def software_read(what: str, work):
+        """A read made by a click, at once: Aternity's error is said, never a blank page."""
+        client = aternity_client()
+        if client is None:
+            raise HTTPException(503, "Aternity is not set (aternity.base_url in config.yaml).")
+        started = time.monotonic()
+        try:
+            got = work(client)
+        except ApiError as exc:
+            raise HTTPException(502, f"Aternity could not be read ({exc.short()}).")
+        log.info("Software: %s read in %.1f s", what, time.monotonic() - started)
+        return got
+
+    @app.get("/api/software/pcs")
+    def software_pcs(name: str = "", version: str | None = None, application: str = "", problem: str = "",
+                     update: str = "", windows: str = ""):
+        """The PCs with a program (at a version), with a crash, hang time or a Major action on an
+        application version, or without a Windows update most PCs of their Windows version have:
+        read from Aternity now."""
+        now = datetime.now(timezone.utc)
+        if update:
+            wins, instead = missing_on(software.snap, update, windows or None)
+            if not wins:
+                raise HTTPException(404, f"{update} is not listed as missing on a Windows version in the latest read.")
+            settings = load_settings(config_path)
+            return software_read(f"the PCs without {update}",
+                                 lambda c: pcs_without_update(c, settings.aternity, update, wins, instead))
+        if application:
+            if problem not in ("crash", "hang", "slow") or not version:
+                raise HTTPException(400, "problem must be crash, hang or slow, with a version")
+            return software_read(f"the PCs with {problem} on {application} {version}",
+                                 lambda c: pcs_with_problem(c, now, application, version, problem))
+        if not name:
+            raise HTTPException(400, "name (a program) or application is needed")
+        return software_read(f"the PCs with {name} {version or ''}".strip(),
+                             lambda c: pcs_with_program(c, name, version))
+
+    @app.get("/api/software/compare")
+    def software_compare(application: str, a: str = "", b: str = ""):
+        """Two versions of an application side by side on every kind of issue."""
+        now = datetime.now(timezone.utc)
+        return software_read(f"{application} versions compared",
+                             lambda c: compare(c, load_settings(config_path).aternity, now, application,
+                                               a or None, b or None))
+
+    @app.get("/api/software/update")
+    def software_update(application: str):
+        """Before and after an update of the application, on the same PCs."""
+        now = datetime.now(timezone.utc)
+        return software_read(f"{application} before and after its updates", lambda c: before_after(c, now, application))
+
+    @app.post("/api/software/summary")
+    def software_summary_for_management():
+        """GPT's summary of the red flags, every number checked against them."""
+        from .ai import AiClient
+        v = software.view()
+        if not v["ready"]:
+            raise HTTPException(503, "The installed software is still being read: try again in a few minutes.")
+        service = chat_service(load_settings(config_path))
+        client = AiClient(service, os.environ.get(service.key_env, "") if service.key_env else "") if service else None
+        try:
+            got = software_summary(v, client)
+        except ApiError as exc:
+            log.warning("Software: the AI service %s did not answer (%s)", service.name, exc.short())
+            got = software_summary(v, None)
+            got["note"] = f"The AI service {service.name} did not answer ({exc.short()}), so these are our own sentences."
+        log.info("Software: summary for management written by %s%s", "us" if got["ours"] else service.name,
+                 f" ({got['note']})" if got["note"] else "")
+        return got
+
+    @app.post("/api/software/chat")
+    def software_chat(body: ChatBody):
+        """A question on the Software tab: the AI picks a building block, our code counts (some
+        read Aternity now, as a click on the tab does)."""
+        from .ai import AiClient
+        from .software_chat import ask as ask_software
+        settings = load_settings(config_path)
+        service = chat_service(settings)
+        if service is None:
+            raise HTTPException(503, "The chat needs an AI service: ai.services in config.yaml "
+                                     "(uxcorrelate verify --ai checks it).")
+        if not body.question.strip():
+            raise HTTPException(400, "Type a question.")
+        if software.snap is None:
+            raise HTTPException(503, "The installed software is still being read: ask again in a few minutes.")
+        client = AiClient(service, os.environ.get(service.key_env, "") if service.key_env else "")
+        known = {a for h in list(today.hours.values()) for a in h.apps if a != NO_APP}  # today's app names
+        try:
+            answer = ask_software(body.question, body.history, client, software, aternity_client, settings.aternity,
+                                  sorted(known), datetime.now(timezone.utc))
+        except ApiError as exc:
+            log.warning("Software chat: the AI service %s did not answer (%s)", service.name, exc.short())
+            raise HTTPException(502, f"The AI service {service.name} did not answer ({exc.short()}). Try again; "
+                                     "`uxcorrelate verify --ai` checks it.")
+        r = answer["result"]
+        log.info("Software chat: \"%s\" answered in %.1f s by %s%s%s", answer["question"][:80], answer["seconds"],
+                 service.name, f" with {r['block']} ({', '.join(f'{k}={v}' for k, v in r['args'].items() if v)})"
+                 if r else " with no building block", f"; {answer['note']}" if answer["note"] else "")
+        return answer
 
     @app.get("/api/today/who")
     def today_who(kind: str, name: str = "", category: str = ""):

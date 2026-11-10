@@ -195,6 +195,45 @@ the parts behind the slowest start-ups and every PC where they were longer
 than normal ("Show who"); one row per start-up with a column per type
 (click a row for what took the time and why); a table by location.
 
+Software tab (fifth, `…/#software`): red flags on installed software and
+application versions, as Aternity lists them, read once a day (and at
+start; the first read takes a few minutes). The tab's count is the red
+flags. Top to bottom:
+- **Red flags**, most PCs first, each with its PCs per day and "new" when
+  it was not there the day before: a version that crashes, hangs or is
+  slow more than its others (at least 2 times their share, 20 PCs on each
+  side, 5 with the problem), programs behind most PCs, 2+ versions on one
+  PC, a Windows update most PCs of a Windows version have but not every
+  one, programs installed for one user, programs on 5 PCs or fewer. Click
+  a line to go to its chart. **Summary for management ▸** opens a short
+  summary (GPT, every number checked; else our own sentences) with Copy.
+- **Crashes, hangs and slow actions by version**: per application, each
+  version's share of PCs (or actions) with the problem, its other
+  versions' as a dashed line. Click a bar for those PCs (read now), each
+  with Investigate ▸ for its last day with it.
+- **Compare versions**: two versions of an application on every kind of
+  issue (crash, hang time, its health events, Major actions per activity,
+  virtual desktops); **Before and after an update ▸**: the PCs whose
+  version changed once in 14 days, days with a crash or hang time before
+  and after.
+- **Behind most PCs** (version strips, oldest to newest), **2+ versions on
+  one PC**, **Installed for one user**, **Windows** (per version, the week
+  it was last updated, updates not on every PC and what those PCs have;
+  "not on N ▸" lists those PCs, read now, the ones with nothing in its
+  place first), **Programs by how many PCs have them** (click a column), **A program**
+  (its versions; click one for its PCs, read now).
+- **Ask about software** (bottom; "Ask a question ▾" beside the summary
+  jumps there): as on the Today tab, GPT picks what to count and words
+  the answer, our counts are shown under it, and a sentence with a number
+  not in them is replaced by ours. It also answers what the charts do
+  not: an application's crashes split by the version of another program
+  ("Do Outlook crashes depend on the Teams Meeting Add-in version?"; never
+  a red flag), which PCs have a version ("Which PCs still run Edge 143?")
+  or lack a Windows update ("Which PCs are missing KB…?"), each with
+  Investigate ▸.
+Each chart has "Table ▾" with its numbers. Counts and names are saved in
+`$UXCORRELATE_DATA/software/<date>.json` (no PC or user names), 90 days.
+
 ## Quick start
 
 The tool needs a live Aternity and NetIM; see "Connect to Riverbed" below.

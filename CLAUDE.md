@@ -257,7 +257,44 @@ unset `<REQUIRED>` base URLs.
   seen when already over is kept as over, not investigated. Every user has a tile:
   issue, then not seen in 8 days, then "✓ OK" (actions, Major, usual by
   now, cleared spells). Slow start-ups and alerts: step 2.
-- `chat.py`: "Ask about today", under the Today tab (`/api/chat`). The AI
+- `software.py`: the "Software" tab, fifth (`/api/software`, `#software`;
+  docs/software-tab.md, decisions of 2026-11-10). One background reader
+  (`keep_reading`, every `READ_EVERY_H`, a few minutes) reads the
+  installed list added up by Aternity (`SOFTWARE_COLUMNS`), each program
+  with more installs than PCs PC by PC (`MULTI_MAX`), Windows per PC and
+  its updates (`OS_COLUMNS`, `SOFTWARE_OS_UPDATE`), and app versions on
+  usage and actions over `DAYS` (`VERSION_SOURCES`, per PC for up to
+  `APPS_MAX` apps with a problem on 2+ versions; `VERSION_OPTIONAL`
+  columns only when published, via $metadata). Red flags (`_flags`, one
+  line per kind, each raised version of flag 1 its own): `judge` (`RATIO`,
+  `MIN_PCS`, `MIN_PROBLEM`; an app whose every listed PC failed, as
+  Trellix ENS on live, is held only where it failed: no crash or hang
+  share, `only`), behind (older than the version most PCs have, decision
+  2; PC by PC when read so), 2+ versions, one user, Windows updates on
+  more than `WIN_MOST` of a version's PCs (and what the PCs without one
+  have: a later one may be in its place), `FEW_PCS`. Saved per day in
+  `<data>/software/<date>.json` (counts and names, no PC or user),
+  `KEEP_DAYS`, for "new" and each flag's days. A click reads now:
+  `pcs_with_program`, `pcs_with_problem`, `compare` (health events matched
+  by the version the PC ran), `before_after` (PC-days on each side),
+  `pcs_without_update` (where `missing_on` the latest read lists it, same
+  names as the daily read so the total is its "not on N"; with what each
+  has in its place, those with none first).
+  `summary`: GPT for management, held to the flags' numbers (chat's
+  `numbers`/`allowed`/`RATIO`), else `our_summary`. `split_by_program`:
+  an app's problems by another program's version (chat only, never a flag).
+- `software_chat.py`: "Ask about software", at the bottom of the Software
+  tab (`/api/software/chat`), the same loop as the Today chat
+  (`chat.converse`). Blocks (`TOOLS`): flags (all, or one kind's whole
+  list), versions, version_problems (from the latest read), compare,
+  before_after, program_split, pcs, pcs_without_update (read now, as a
+  click; Aternity's error is said in the answer). Names are matched to the latest read (`pick`:
+  exact, the one that has it, the one that ends with it: "Edge" =
+  Microsoft Edge), versions by their start (`software.version_of`,
+  `starts_with`: "143" = every 143.x). A version is said to crash more
+  only when raised (`RULES` note, "Raised" column).
+- `chat.py`: "Ask about today", under the Today tab (`/api/chat`); its
+  question loop `converse` is shared with `software_chat.py`. The AI
   (`ai.chat` by name, else the first of `ai.services`; GPT on prod) picks
   one building block of `TOOLS` (slow_actions, events, who, investigate),
   our code counts from what the Today reader holds (no extra Aternity
@@ -283,7 +320,9 @@ unset `<REQUIRED>` base URLs.
   config.yaml, key from the env var named in `key_env`). OpenAI-style API
   (`verify.verify_ai`, passed on prod for both services: key, reachable,
   login header, plain reply, the right block in 4 tries + no pick outside
-  the data, counts repeated right; it tests `chat.TOOLS` and `SYSTEM`).
+  the data, counts repeated right; it tests `chat.TOOLS` and `SYSTEM`,
+  then `software_chat.TOOLS` with `AI_SW_TRIES`, 10 tries covering every
+  block, not yet on prod).
 - `verify --overview` (`verify._overview`, also at the end of a full verify):
   what a "today's issues" overview could rest on: activity rows an hour,
   Aternity's own status and severity words with counts, and whether its
@@ -314,9 +353,13 @@ unset `<REQUIRED>` base URLs.
   and `web.py` is the FastAPI app.
 - `static/index.html` is the single-page UI. It is dependency-free and draws
   its charts with inline SVG. Tabs, in order: Today, Care list,
-  Investigate, Slow start-ups (`mode()`; each with a link, `TAB_LINK`).
-  Every "Investigate ▸" (Today lists, the chat, the Care list) goes
-  through `investigateNow()`: fill the Investigate form and run it at once.
+  Investigate, Slow start-ups, Software (`mode()`; each with a link,
+  `TAB_LINK`). Dialogs are in-page (`swDialog`), never `alert()`. A CSS
+  `display` on an element with `hidden` needs its own `[hidden]` rule.
+  Every "Investigate ▸" (Today lists, the chats, the Care list, the
+  Software lists) goes through `investigateNow()`: fill the Investigate
+  form and run it at once. Both chats are one `makeChat(prefix, url,
+  examples)` (ids `chat…` on Today, `sChat…` on Software).
   Two scripts must not declare the same top-level name (the later one wins
   silently: a second `renderWho` once broke the Today list).
 - `tests/`: pytest. HTTP is mocked with `httpx.MockTransport`; the engine is
