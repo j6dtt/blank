@@ -71,6 +71,22 @@
   nav { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
   nav button { background: transparent; color: var(--head-muted); border: 1px solid rgba(244, 234, 210, .3); padding: 5px 12px; }
   nav button.on { background: var(--brass); color: #1b1a14; border-color: var(--brass); }
+  /* the connection lights, right of the tabs: one per API and AI model; down flashes red */
+  #conn { display: flex; gap: 4px; flex-wrap: wrap; }
+  #conn button { background: transparent; color: var(--head-text); border: 1px solid transparent; border-radius: 999px;
+                 padding: 3px 9px; font: 12px system-ui, sans-serif; display: flex; align-items: center; gap: 5px; }
+  #conn button:hover, #conn button:focus-visible { border-color: rgba(244, 234, 210, .4); }
+  #conn i { width: 9px; height: 9px; border-radius: 50%; background: #8a8672; flex: none; }
+  #conn .ok i { background: #5fd08a; }
+  #conn .warn i { background: #f0b445; }
+  #conn .down { background: var(--bad); color: #fff; font-weight: 700; animation: connFlash 1s steps(1, end) infinite; }
+  #conn .down i { background: #fff; }
+  @keyframes connFlash { 50% { background: transparent; color: #ff9d92; box-shadow: inset 0 0 0 1px #ff9d92; } }
+  .connList { display: grid; gap: 8px; }
+  .connList div { border-left: 4px solid var(--border); padding: 2px 0 2px 10px; color: var(--text); font-weight: 400; }
+  .connList .ok { border-color: var(--ok); } .connList .warn { border-color: var(--warn); }
+  .connList .down { border-color: var(--bad); }
+  .connList b { font-size: 14px; } .connList small { color: var(--muted); display: block; }
   .badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 999px; background: var(--bad); color: #fff; font-size: 11px; line-height: 18px; text-align: center; }
   .comp td { color: var(--muted); border-bottom: 0; padding-top: 0; font-size: 12px; }
   .scroll { max-height: 320px; overflow-y: auto; }
@@ -176,7 +192,8 @@
     <text x="15" y="21" text-anchor="middle" font-family="Georgia, serif" font-size="11" font-weight="700"
       fill="var(--brass)" style="fill:var(--brass)">J6</text></svg>
   <h1>J6 Preservation Society</h1><span>Aternity end-user experience × NetIM infrastructure</span>
-  <nav><button id="tabToday" class="on">Today</button><button id="tabCare">Care list<span class="badge" id="careCount" hidden></span></button><button id="tabInv">Investigate</button><button id="tabLog">Slow start-ups</button><button id="tabSoft">Software<span class="badge" id="softCount" hidden></span></button></nav></header>
+  <nav><button id="tabToday" class="on">Today</button><button id="tabCare">Care list<span class="badge" id="careCount" hidden></span></button><button id="tabInv">Investigate</button><button id="tabLog">Slow start-ups</button><button id="tabSoft">Software<span class="badge" id="softCount" hidden></span></button></nav>
+  <div id="conn" aria-label="Connections"></div></header>
 <main>
   <div id="todayBox">
     <section class="panel">
@@ -1584,6 +1601,41 @@ $("sFlags").addEventListener("keydown", (ev) => {
   const f = ev.target.closest("[data-flag]");
   if (f && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); openSwFlag(softData.flags[Number(f.dataset.flag)]); }
 });
+
+// The connection lights in the top bar: Aternity, NetIM and each AI model, checked by the
+// server every minute; a click on any of them opens the one panel with the details.
+const CONN_WORD = { ok: "Connected", down: "DOWN", warn: "Check it", off: "Not set", wait: "Not checked yet" };
+let connData = null, connLost = "";
+const connTime = (iso) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+function connHtml() {
+  if (connLost) return `<p>This page gets no answer from UX Correlator itself (${esc(connLost)}), so what it shows may be old.</p>`;
+  const d = connData;
+  if (!d || !d.checked) return "<p>The first check is still running: a few seconds after a start.</p>";
+  const rows = d.items.map((i) => `<div class="${i.state}"><b>${esc(i.name)}</b>: ${CONN_WORD[i.state]}`
+    + (i.state === "off" ? "" : ` since ${connTime(i.since)}`)
+    + `<small>${i.kind === "model" ? `AI model ${esc(i.model || "")}${i.chat ? ", the one both chats and the summary use" : ", not used by the chats"}. ` : ""}${esc(i.text)}</small></div>`).join("");
+  return (d.note ? `<p>${esc(d.note)}</p>` : "") + `<div class="connList">${rows}</div>`
+    + `<p class="muted" style="margin-bottom:0">Checked at ${connTime(d.checked)}, every ${d.every_s} seconds: one small read of each. `
+    + "It shows the connection and the login; <code>uxcorrelate verify --ai</code> checks the models' answers.</p>";
+}
+function renderConn() {
+  const items = connLost ? [{ name: "UX Correlator", state: "down", text: connLost }]
+    : (connData && connData.items.length ? connData.items : [{ name: "Connections", state: connData && connData.note ? "down" : "wait", text: "" }]);
+  $("conn").innerHTML = items.map((i) => `<button type="button" class="${i.state}" title="${esc(i.name)}: ${CONN_WORD[i.state]}. ${esc(i.text || "")} Click for all connections.">`
+    + `<i></i>${esc(i.name)}${i.state === "down" ? " down" : ""}</button>`).join("");
+  if (!$("dlg").hidden && $("dlgTitle").textContent === "Connections") $("dlgBody").innerHTML = connHtml();
+}
+async function loadConn() {
+  try {
+    const r = await fetch("api/status", { cache: "no-store" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    connData = await r.json(); connLost = "";
+  } catch (e) { connLost = String(e.message || e); }
+  renderConn();
+  setTimeout(loadConn, connData && !connData.checked ? 3000 : 20000);
+}
+$("conn").addEventListener("click", () => swDialog("Connections", connHtml()));
+loadConn();
 init();
 mode(Object.keys(TAB_LINK).find((k) => "#" + TAB_LINK[k] === location.hash) || "today");
 if ($("careBox").hidden) loadCare();  // the tab's count shows from any tab

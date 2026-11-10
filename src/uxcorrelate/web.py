@@ -28,6 +28,7 @@ from .software import (Software, before_after, compare, missing_on, pcs_with_pro
                        pcs_without_update)
 from .software import keep_reading as keep_reading_software
 from .software import summary as software_summary
+from .status import Status, keep_checking
 from .today import NO_APP, Today, keep_reading
 
 STATIC = Path(__file__).parent / "static"
@@ -113,6 +114,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
     care = app.state.care = Care(today, lambda: load_settings(config_path).care_list,
                                  os.environ.get("UXCORRELATE_DATA") or None, names)
     software = app.state.software = Software(zone, os.environ.get("UXCORRELATE_DATA") or None)
+    status = app.state.status = Status()  # the connection lights in the top bar
 
     def care_investigate(username: str, start: datetime, end: datetime) -> dict:
         """A Care list user's investigation, as the Investigate tab would run it."""
@@ -137,6 +139,10 @@ def create_app(config_path: str | None = None) -> FastAPI:
             threading.Thread(target=keep_reading_software, args=(software, aternity_client,
                                                                  lambda: load_settings(config_path).aternity, time.sleep),
                              daemon=True, name="software").start()
+        if not status.started:
+            status.started = True
+            threading.Thread(target=keep_checking, args=(status, lambda: load_settings(config_path), time.sleep),
+                             daemon=True, name="status").start()
         if not care.started:
             care.started = True
             threading.Thread(target=care.work, args=(care_investigate, time.sleep), daemon=True,
@@ -338,6 +344,11 @@ def create_app(config_path: str | None = None) -> FastAPI:
             "bucket_minutes": settings.bucket_minutes,
             "chat": service.name or service.model if service else None,
         }
+
+    @app.get("/api/status")
+    def connections():
+        """The top bar's lights: Aternity, NetIM and each AI service, as last checked."""
+        return status.view()
 
     def run_investigation(body: InvestigateBody) -> dict:
         try:

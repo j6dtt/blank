@@ -207,6 +207,14 @@ the parts behind the slowest start-ups and every PC where they were longer
 than normal ("Show who"); one row per start-up with a column per type
 (click a row for what took the time and why); a table by location.
 
+Connection lights (right of the tabs, on every tab): one per API and AI
+model: Aternity, NetIM and each AI service in `ai.services`. Green =
+connected, a flashing red "… down" = no answer or the login was refused,
+amber = the service answers but does not list the model set, grey = not
+set. Checked every minute with one small read each. Click any light for
+the "Connections" panel: since when, the reply time, and which model the
+chats use. Changes are written to the log ("Connection to NetIM: down.").
+
 Software tab (fifth, `…/#software`): red flags on installed software and
 application versions, as Aternity lists them, read once a day (and at
 start; the first read takes a few minutes). The tab's count is the red

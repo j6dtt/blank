@@ -1848,7 +1848,7 @@ AI_SW_TRIES = (  # the Software tab's chat (software_chat.TOOLS)
     ("What versions of the Teams Meeting Add-in are installed?", {"tool": "versions", "program": "teams"}),
     ("Which PCs crashed in Outlook 16.0.20430?",
      {"tool": "pcs", "application": "outlook", "version": "16.0.20430"}),  # problem: crash, the default
-    ("What are the red flags?", {"tool": "flags", "kind": ""}),  # all of them: no kind
+    ("What are the red flags?", {"tool": "flags", "kind": "all"}),  # all of them (left out: the same)
     ("Which PCs are missing KB5126652?", {"tool": "pcs_without_update", "update": "kb5126652"}),
 )
 AI_OUTSIDE = "What is the weather in Paris today?"  # not in the data: no pick is the right answer
@@ -1872,6 +1872,8 @@ def _right(call, want: dict) -> bool:
         if key == "tool":
             continue
         got = str(call[1].get(key) or "").strip().lower()  # null and left out are the same
+        if key == "kind" and value == "all" and not got:
+            continue  # the flags block reads no kind as all of them
         if (value not in got) if isinstance(value, str) and value and key in (
                 "app", "username", "application", "program", "version", "update") else (got != str(value)):
             return False

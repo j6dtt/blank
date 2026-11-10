@@ -57,6 +57,9 @@ def test_the_red_flags_and_each_kinds_whole_list(tmp_path):
     few = run("flags", {"kind": "few"}, r, v)
     assert few["notes"] == ["2 of the 4 programs are on 5 PCs or fewer."] and few["rows"][0] == ["1", 1]
     assert run("flags", {"kind": "nonsense"}, r, v)["title"] == "Red flags"  # an unknown kind: all of them
+    assert run("flags", {"kind": "all"}, r, v)["rows"] == got["rows"]
+    tool = next(t["function"] for t in sc.TOOLS if t["function"]["name"] == "flags")
+    assert tool["parameters"]["properties"]["kind"]["enum"][0] == "all" and tool["parameters"]["required"] == ["kind"]
 
 
 def test_a_programs_versions_and_an_applications_problems_per_version(tmp_path):

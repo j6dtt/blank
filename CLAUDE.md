@@ -297,8 +297,11 @@ unset `<REQUIRED>` base URLs.
   an app's problems by another program's version (chat only, never a flag).
 - `software_chat.py`: "Ask about software", at the bottom of the Software
   tab (`/api/software/chat`), the same loop as the Today chat
-  (`chat.converse`). Blocks (`TOOLS`): flags (all, or one kind's whole
-  list), versions, version_problems (from the latest read), compare,
+  (`chat.converse`). Blocks (`TOOLS`): flags (kind "all", first and
+  required: offered only the kinds, GPT answered "the red flags" with
+  crash alone on stage; or one kind's whole list; a question naming one
+  application goes to version_problems, said in both descriptions, as
+  Nemotron took it to the flags), versions, version_problems (from the latest read), compare,
   before_after, program_split, pcs, pcs_without_update (read now, as a
   click; Aternity's error is said in the answer). Names are matched to the latest read (`pick`:
   exact, the one that has it, the one that ends with it: "Edge" =
@@ -361,6 +364,17 @@ unset `<REQUIRED>` base URLs.
   before to after (`LOG_BACK`). For the Software tab
   (`docs/software-tab.md`, decisions taken 2026-11-10). Checks for prod are verify options, never pasted
   scripts: the user cannot paste on the prod hosts.
+- `status.py`: the connection lights at the right of the top bar
+  (`/api/status`, user's request 2026-11-10): Aternity, NetIM and each
+  `ai.services` entry, one small read each every `CHECK_EVERY_S` (60) by
+  one background thread (an activity row with $top=1; the device list
+  with limit 1; the AI service's model list with the chats' key and
+  header), `CHECK_TIMEOUT_S`, no second try. ok / down (flashes red in
+  the bar; no answer, or login refused) / warn (the model set is not in
+  the service's list) / off (not set). A click on any light opens the
+  one "Connections" dialog (since when, reply time, which model the
+  chats use). State changes are logged. No URL on the page. It proves
+  connection and login, not the model's answers (`verify --ai`).
 - `http.py` is the shared REST client (basic auth, retries on 429/5xx);
   `models.py` holds the dataclasses and `parse_time`.
 - `report.py` renders the text report, `cli.py` is the argparse entry point,

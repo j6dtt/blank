@@ -40,18 +40,27 @@ PROB = {"type": "string", "enum": ["crash", "hang", "slow"],
         "description": "Crashes, hang time, or actions Aternity rated Major (slow)."}
 
 TOOLS = [
-    _tool("flags", "The red flags of the installed software and application versions, or one kind's whole list.", {
-        "kind": {"type": "string", "enum": list(KIND),
-                 "description": "Only one kind, with its whole list: crash, hang, slow = application versions with "
+    # "all" first and required: with only the kinds offered, GPT answered "What are the red flags?"
+    # with the crash flags alone (stage, Nov 2026)
+    _tool("flags", "The red flags across all installed software and application versions, or one kind's whole list. "
+                   "Not for a question about one named application or program: use version_problems, versions, "
+                   "compare or pcs for those.", {
+        "kind": {"type": "string", "enum": ["all"] + list(KIND),
+                 "description": "all = every red flag, one line each: use it unless the question asks for one kind. "
+                                "One kind, with its whole list: crash, hang, slow = application versions with "
                                 "more crashes, hang time or Major slow actions than their other versions; windows = "
                                 "Windows updates not on every PC; multi = 2 or more versions of a program on one PC; "
                                 "behind = programs with PCs on a version older than most PCs have (out of date); "
-                                "user = installed for one user only; few = programs on few PCs."}}),
+                                "user = installed for one user only; few = programs on few PCs."}}, ("kind",)),
     _tool("versions", "One installed program's versions: the PCs on each, the version most PCs have, the newest, the "
                       "oldest, and the PCs behind.", {"program": PROG}, ("program",)),
-    _tool("version_problems", f"An application's versions with the PCs that ran each and the PCs with a crash, hang "
-                              f"time or Major slow actions, over the last {DAYS} days; with no application, the "
-                              "applications with the most.", {"application": APP}),
+    # Nemotron took "Does one Outlook version crash more than the others?" to the crash flags of
+    # every application (stage, Nov 2026): a named application's question is said to be this one
+    _tool("version_problems", f"One application's versions with the PCs that ran each and the PCs with a crash, hang "
+                              f"time or Major slow actions, over the last {DAYS} days, and which version is raised. "
+                              "Use it when the question names an application and asks whether one of its versions "
+                              "crashes, hangs or is slower than the others. With no application, the applications "
+                              "with the most.", {"application": APP}),
     _tool("compare", "Two versions of an application side by side on every kind of issue (crashes, hang time, health "
                      "events, Major slow actions, its busiest activities), read now.",
           {"application": APP, "a": VER, "b": VER}, ("application",)),
@@ -73,7 +82,8 @@ TOOLS = [
 
 SYSTEM = ("You answer questions from IT staff and management about the software installed on the company's PCs and "
           "how each application version behaves, from Aternity. Numbers come only from the tools: call exactly one "
-          "tool to answer. If no tool fits the question, say so in one sentence and call no tool. Never state a "
+          "tool to answer: the one for what the question names (one application or program, else the red flags of "
+          "all). If no tool fits the question, say so in one sentence and call no tool. Never state a "
           "number a tool did not give, and do not work out new ones (no sums, no percentages, no ratios). When the "
           "counts come back, answer as a helpful colleague would, in two to four short sentences of plain text (no "
           "lists, no tables, no markdown). Say that a version crashes, hangs or is slower more than the others only "

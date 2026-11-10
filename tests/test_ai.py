@@ -100,6 +100,20 @@ def test_wrong_picks_and_a_pick_for_an_outside_question_fail_with_what_it_picked
                in r for r in c.rows)
 
 
+def test_the_software_chats_red_flags_need_all_of_them():
+    """Stage, Nov 2026: GPT answered "What are the red flags?" with the crash flags alone."""
+    q = "What are the red flags?"
+    left_out = dict(PICKS)
+    left_out[q] = {"tool": "flags"}  # no kind: the flags block reads it as all of them
+    checks, _ = run(picks=left_out)
+    assert "Right in 10 of 10 tries" in checks["picks the right question (Software tab)"].message
+    one_kind = dict(PICKS)
+    one_kind[q] = {"tool": "flags", "kind": "crash"}
+    c = run(picks=one_kind)[0]["picks the right question (Software tab)"]
+    assert c.ok is False and "Right in 9 of 10 tries" in c.message
+    assert any("picked flags(kind=crash); a right pick is flags(kind=all)" in r for r in c.rows)
+
+
 def test_a_service_without_tool_calling_is_said():
     checks, _ = run(tools=False)
     c = checks["picks the right question"]
