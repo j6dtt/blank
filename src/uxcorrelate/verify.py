@@ -25,13 +25,14 @@ from statistics import median
 from typing import Any
 
 from .aternity import AternityClient, is_virtual, odata_quote, odata_time
-from .config import (DISK_FREE_COLUMNS, OS_COLUMNS, OVERVIEW_SOURCES, PROCESS_COLUMN, SOFTWARE_COLUMNS, SOFTWARE_OS_UPDATE,
+from .config import (DISK_FREE_COLUMNS, DISK_PARTS, OS_COLUMNS, OVERVIEW_SOURCES, PROCESS_COLUMN, SOFTWARE_COLUMNS,
+                     SOFTWARE_OS_UPDATE,
                      SOFTWARE_REMOVED, SOFTWARE_SOURCE, SOFTWARE_USER_SCOPE, SOFTWARE_UPDATE_GAP_MIN, TIME_COLUMNS,
                      NO_VALUE, TOP_STATUS, VDI_COLUMNS, VERSION_OPTIONAL, VERSION_SOURCES, Settings)
 from .after_start import AFTER_START_MIN  # "right after a start-up", as investigations
 from .correlate import slow_rule
 from .http import ApiError
-from .models import parse_time, to_float
+from .models import parse_time, part_label, to_float
 from .netim import NetimClient, _items
 
 CODE_FIX = "edit {file} in ./src/uxcorrelate, then: docker compose restart"
@@ -1774,6 +1775,29 @@ def _overview(settings: Settings, client: AternityClient, schema: dict[str, set[
                                 + _cut_short(client, mark)))
         except ApiError as exc:
             checks.append(Check("Aternity", "overview: health events", None, f"error: {exc.short()}"))
+
+    # Aternity's label on each failing part ("OUTLOOK.EXE (Process)", "<model> (Disk)"): the ones
+    # read as the PC's disk failing (DISK_PARTS), and every other, so other hardware is added from them
+    if ev in schema and h.get("component") in schema[ev]:
+        try:
+            mark = len(client.warnings)
+            rows = client.query(ev, _between(h["timestamp"], now - timedelta(days=7), now),
+                                select=[h[k] for k in ("device", "name", "component")], raw=True)
+            by: dict = {}
+            for r in rows:
+                by.setdefault(part_label(r.get(h["component"])) or "(no label)", []).append(r)
+            disk = {p.lower() for p in DISK_PARTS}
+            checks.append(Check("Aternity", "overview: failing-part labels", None,
+                                f"{len(rows)} health event rows in the last 7 days, by Aternity's label on the "
+                                f"failing part ({h['component']}). Read as a failing disk: "
+                                f"{', '.join(DISK_PARTS)}. Send this list if another label is hardware:",
+                                rows=[f"{label}: {len({r.get(h['device']) for r in rs})} PCs, events "
+                                      f"{_values(rs, h['name'], 3)}" + (" (read as a failing disk)"
+                                                                        if label.lower() in disk else "")
+                                      for label, rs in sorted(by.items(), key=lambda kv: -len(kv[1]))]
+                                + _cut_short(client, mark)))
+        except ApiError as exc:
+            checks.append(Check("Aternity", "overview: failing-part labels", None, f"error: {exc.short()}"))
 
     # Aternity's own incidents and alerts: published? what do they say?
     for entity, spec in OVERVIEW_SOURCES.items():

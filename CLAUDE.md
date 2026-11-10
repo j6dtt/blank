@@ -45,6 +45,13 @@ unset `<REQUIRED>` base URLs.
   space / inventory size), health events, app crashes/hangs, NetIM
   values and alerts) and counts the slow actions each one was within
   `bucket_minutes` of. An app's crash/hang/event counts only for that app.
+  A failing disk (`DISK_PARTS`: Aternity's "(Disk)"/"(Drive)" label on a
+  health event's failing part) is the PC's state, not a moment: its
+  records are one issue per PC (`DISK_WHAT`), counted from its first
+  record (window, or that PC's 14 days before: `_disk_state`) for the
+  PC's slow actions that Aternity's split does not put mostly on the
+  network or server (`_disk_counts`); `_disk_context` says what it
+  covers. It leads (class A) and its step is first (live, Nov 2026).
   No scores: the answer is plain counts. The data sources are the
   `AternitySource`/`NetimSource` protocols.
 - `logons.py`: slow start-ups (`WINDOWS_MACHINE_BOOTS`,
@@ -93,7 +100,10 @@ unset `<REQUIRED>` base URLs.
   behind and compared with the same hours on the days of the week before,
   working days with working days (`DAYS_BACK`; prod keeps activities about
   8 days) ("unusual" = more slow than any of those days; common point = an
-  unusual group holding more than half the slow users). Virtual desktop
+  unusual group holding more than half the slow users, a gateway or /24
+  only, never "no IP address"). It is the verdict (class B) only when
+  Aternity's split does not put most of the user's slow time on their PC
+  (`answer.on_pc`); counts, never "many". Virtual desktop
   users are one group, never a network point (their address is the
   desktop's). This NetIM grouping is what Aternity can't do. An issue's own
   "who else" comes from `cause.py`.
@@ -106,7 +116,9 @@ unset `<REQUIRED>` base URLs.
   way (out of the PCs using the app, `app_usage_everywhere`, or
   `known_pcs`; since when, `_since`, for up to `MAX_HISTORY`), software
   changes (`INSTALLED_SOFTWARE_CHANGE_LOG`, read once per PC): a change is a
-  "possible cause" only with the same name or version as the failing part,
+  "possible cause" only with the same name (`same_name`: every word of one
+  in the other; only a file ending is cut, so "Microsoft.Notes" is never
+  "Microsoft Edge") or version as the failing part,
   before it, and with no other PC failing the same way on another version
   (then it is "not new with this change"). Logged after the failure is said;
   on a virtual desktop that does not clear it (the log runs late there,
@@ -326,7 +338,9 @@ unset `<REQUIRED>` base URLs.
 - `verify --overview` (`verify._overview`, also at the end of a full verify):
   what a "today's issues" overview could rest on: activity rows an hour,
   Aternity's own status and severity words with counts, and whether its
-  incidents and alerts (`OVERVIEW_SOURCES` in `config.py`) are published.
+  incidents and alerts (`OVERVIEW_SOURCES` in `config.py`) are published,
+  and Aternity's label on each failing part over 7 days (`part_label`;
+  those in `DISK_PARTS` marked), so other hardware is added from it.
 - `verify --software` (`verify._software`, only on its own), short: what
   `INSTALLED_SOFTWARE` (`SOFTWARE_SOURCE`, `SOFTWARE_COLUMNS`) gives the
   Software tab: PCs, programs, installs and `SOFTWARE_USER_SCOPE`
@@ -392,7 +406,11 @@ unset `<REQUIRED>` base URLs.
   "unknown (Dll)" / version "0.0.0.0" is no module. App hang time
   (APPLICATION_HANG_TIME_TOTAL) has no documented unit: never print one.
 - Every timestamp is a timezone-aware UTC datetime. Use `models.parse_time`,
-  which accepts ISO strings and epoch seconds or milliseconds.
+  which accepts ISO strings and epoch seconds or milliseconds. Days and
+  times written in sentences, and day groupings, are in config.yaml's
+  `timezone` (`models.day`, `clock`, `local_date`; `set_zone` per
+  investigation), as the page's lists: a UTC day once put a 10:37 PM
+  change on the next day (live, Nov 2026).
 - Role → domain mapping lives in `ROLE_DOMAIN`. When a device is mapped twice,
   it keeps its first role (for example, an app server stays `app-server` even
   if its subnet also matches).

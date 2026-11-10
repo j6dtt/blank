@@ -21,7 +21,7 @@ from datetime import timedelta
 from statistics import median
 
 from .cause import _day, changes_between
-from .models import plural
+from .models import local_date, plural
 
 log = logging.getLogger("uxcorrelate")
 BASELINE_DAYS = 30
@@ -66,8 +66,8 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
         enough = len(hist) >= MIN_HISTORY
         # calendar days, counted as a reader would (Nov 3 to Nov 6: the last 3 days)
         # calendar days, today included when it has runs: 7 dates from Nov 2 to Nov 8 are the last 7 days
-        span = ((start.date() - min(s.timestamp for s in hist).date()).days
-                + any(s.timestamp.date() == start.date() for s in hist)) if hist else 0
+        span = ((local_date(start) - min(local_date(s.timestamp) for s in hist)).days
+                + any(local_date(s.timestamp) == local_date(start) for s in hist)) if hist else 0
         back = f"last {plural(max(span, 1), 'day')}" if hist else ""
         took, typ = _med(s.response_time for s in mine), _med(s.response_time for s in others)
         usual = _med(s.response_time for s in hist) if enough else None
@@ -82,13 +82,13 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
                     if enough else f"{'Only ' + str(len(hist)) if hist else 'No'} earlier {name} for {who} in the activity Aternity keeps: "
                     f"too few to say what is normal for {who}.")
         users = {s.username or s.device for s in others}
-        text.append(f"Other users within {window.seconds // 60} min: typical {typ} s ({len(users)} users)."
+        text.append(f"Other users within {window.seconds // 60} min: typical {typ} s ({plural(len(users), 'user')})."
                     if typ is not None else f"No other user ran {name} within {window.seconds // 60} min.")
 
         # days on which Aternity marked most runs slow, and since when
         by_day: dict = defaultdict(list)
         for s in hist:
-            by_day[s.timestamp.date()].append(s)
+            by_day[local_date(s.timestamp)].append(s)  # the user's own days (config.yaml timezone)
         days = sorted(by_day)
         bad = [d for d in days if sum(map(is_slow, by_day[d])) * 2 > len(by_day[d])]
         run = []

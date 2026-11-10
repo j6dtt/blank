@@ -145,6 +145,11 @@ VIRTUAL_VALUES = ("true", "1")
 # which program failed. The Windows files: where a failure is reported, usually
 # not its cause, so the program they ran in is looked at instead.
 NO_PROGRAM = ("bad_module_info",)
+# Aternity's own label on a health event's failing part (HEALTH_EVENT_COMPONENT ends with it,
+# as "<disk model> (Disk)" or "\\Device\\Harddisk0\\DR0 (Drive)", live Nov 2026): the PC's disk
+# is failing. That is the PC's state, not a moment (correlate._disk_state). verify --overview
+# lists every label Aternity uses, so other hardware is added from what it shows.
+DISK_PARTS = ("Disk", "Drive")
 WINDOWS_MODULES = ("kernelbase.dll", "ntdll.dll", "kernel32.dll")
 # a health event of this kind runs in the background: the user may not feel it
 BACKGROUND_EVENT = "background"

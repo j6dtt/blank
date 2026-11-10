@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 import textwrap
 
+from .models import local, parse_time
+
 WIDTH = 72  # report lines wrap here, for narrow terminals
 
 
@@ -29,7 +31,8 @@ def _bar(score: float, width: int = 20) -> str:
 
 
 def _t(iso: str | None) -> str:
-    return f"{iso[:10]} {iso[11:16]} UTC" if iso else ""
+    """A time in config.yaml's timezone, as the sentences' days (models.set_zone)."""
+    return f"{local(parse_time(iso)):%Y-%m-%d %H:%M %Z}" if iso else ""
 
 
 def _start_line(st: dict, unit: str) -> str:

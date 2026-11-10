@@ -5,26 +5,25 @@ issue, next to hangs, crashes and health events. Each issue says what is known
 about it and who else has it, in the same shape; timing is a fact, not a rank.
 Everything here is written for a help-desk reader: plain counts ("at 3 of 4
 slow actions"), no scores. Times are returned as ISO strings next to the
-text, so the UI can show them in the reader's time zone and the CLI in UTC.
+text, so the UI can show them in the reader's time zone; days and times inside
+sentences are in config.yaml's timezone (models.set_zone), the same for users there.
 """
 
 from __future__ import annotations
 
 import re
 from collections import Counter
-from datetime import datetime
 
 from .after_start import sentence as after_start_sentence
 from .cause import ISSUE_ORDER, UNKNOWN_VERSION, batch_removals, change_text
-from .models import plural
+from .models import clock, day, parse_time, plural
 
 MAX_CHANGES_SHOWN = 40  # per PC
 WHERE = {"pc": "on the PC", "network": "on the network", "server": "on the application's servers"}
 
 
 def _day(iso: str) -> str:
-    t = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-    return t.strftime("%b %d").replace(" 0", " ")
+    return day(parse_time(iso))  # config.yaml's timezone (models.set_zone)
 
 
 def _pct(v: float | None) -> str:
@@ -34,6 +33,8 @@ def _pct(v: float | None) -> str:
 def problem_text(g: dict) -> str:
     """One problem row as a sentence (without the count)."""
     obj, what, worst, limit = g["object"], g["what"], g["worst"], g["limit"]
+    if g.get("disk"):
+        return f"{obj}'s disk is failing (Aternity recorded {_join(g['event_names'])})"
     if g["source"] == "Aternity" and g["app"]:
         m = re.match(r"(.+) (crashed|not responding)$", what)
         if m and m.group(2) == "crashed":
@@ -198,7 +199,7 @@ def _issue_counts(problems: list[dict]) -> tuple[list[str], list[dict]]:
     """What the user felt, counted ("7 hangs"), and the background crashes."""
     rows = [g for g in problems if not (g.get("why") or {}).get("same_as_above")]
     total = lambda kind: sum(g["times"] for g in rows if g["issue"] == kind)  # noqa: E731
-    felt = []
+    felt = [_disk_phrase(g) for g in rows if g["issue"] == "disk"]
     if total("hang"):
         felt.append(plural(total("hang"), "hang"))
     if total("crash"):
@@ -207,6 +208,10 @@ def _issue_counts(problems: list[dict]) -> tuple[list[str], list[dict]]:
         felt.append(plural(sum(g["times"] for g in rows if g["issue"] == "system" and g["what"] == what),
                            f"{what} event"))
     return felt, [g for g in rows if g["issue"] == "background"]
+
+
+def _disk_phrase(g: dict) -> str:
+    return f"{g['object']}'s disk is failing"
 
 
 def _background_line(rows: list[dict]) -> str:
@@ -221,7 +226,7 @@ def _background_line(rows: list[dict]) -> str:
 
 # the headline's tie order for problems at the same number of slow actions: what the user
 # felt, then health events, a start-up, the network, a PC reading, a nearly full disk
-HEAD_ORDER = {"hang": 0, "crash": 0, "system": 1, "background": 1, "startup": 2, "infra": 3, "limit": 4}
+HEAD_ORDER = {"disk": -1, "hang": 0, "crash": 0, "system": 1, "background": 1, "startup": 2, "infra": 3, "limit": 4}
 
 
 def _head_rank(g: dict) -> tuple:
@@ -344,8 +349,13 @@ def _group_line(name: str, took, dev: str, fact: str) -> str:
     return f"{name} {took} s on {dev}" + (f", {fact}" if fact else "")
 
 
+def on_pc(split: dict | None) -> bool:
+    """Aternity put most of the slow actions' time on the PC (its own split, client time)."""
+    return bool(split) and split["pc"] * 2 > 1
+
+
 def _pick_headline(at_slow: list[dict], slow: list, normal: list[dict], after_start: list[dict],
-                   impact: dict | None, worst=None) -> dict:
+                   impact: dict | None, worst=None, split: dict | None = None) -> dict:
     """Which class of verdict the headline gives (docs/headline-rules.md), its subject, the
     start-up comparisons told at the top, and one line for each other slow app + activity."""
     named = [{**c, "name": _name(c["application"], c["activity"])} for c in normal if c.get("took") is not None]
@@ -365,7 +375,8 @@ def _pick_headline(at_slow: list[dict], slow: list, normal: list[dict], after_st
     elif top is not None and not (_pc_limit(top) and start):
         # a PC reading (one value) gives way to a start-up comparison over many PCs
         cls, subject = "A", None
-    elif impact and impact.get("unusual"):
+    elif impact and impact.get("unusual") and not on_pc(split):
+        # other users slow too, but not when Aternity put this user's time on their own PC
         cls, subject = "B", None
     elif cands["C"] or cands["D"]:
         cls = "C" if cands["C"] else "D"
@@ -442,13 +453,16 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
     # correlate.py leaves them out); the reason says they were near
     # problems at slow actions: most slow actions first, then by kind (HEAD_ORDER)
     at_slow = sorted((g for g in problems if g["slow_actions"]), key=_head_rank)
-    head = _pick_headline(at_slow, slow, normal or [], after_start or [], impact, worst)
+    head = _pick_headline(at_slow, slow, normal or [], after_start or [], impact, worst, split)
     found, todo = [], []
     for g in at_slow:
         why = g.get("why") or {}
         if why.get("same_as_above"):
             continue  # e.g. a hang's own health event: already explained above
         at = "at the slow action" if n == 1 else f"at {g['slow_actions']} of {n} slow actions"
+        if g.get("disk"):  # a state from its first record on, not a moment near the action
+            at = f"{plural(g['times'], 'record')}, counted for " + (
+                "the slow action" if n == 1 else f"{g['slow_actions']} of {n} slow actions")
         # a limit counts readings ("This user" in the rollup): say both; a reading counts only
         # for the action it was read with (correlate._matches)
         found.append(_item(g, f"{g['times']} of {g['readings']:,} readings, {at.replace('at ', 'with ', 1)}"
@@ -471,6 +485,8 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
     for g in elsewhere:
         if g.get("readings"):
             count = f"{g['times']} of {g['readings']:,} readings" + (", none with a slow action" if n else "")
+        elif g.get("disk"):  # its why says which slow actions it does not count for
+            count = plural(g["times"], "record") + (", not counted for a slow action" if n else "")
         else:
             # near a slow action of another app: not counted for it (correlate._other_app_near says so)
             count = f"{g['times']}x" + ((", not counted for a slow action" if g.get("near_other_app")
@@ -538,9 +554,15 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         cp = impact["common_point"]
         if cp:
             who_else += f" {cp['slow']} of the {k} slow users are behind the same network point: {cp['name']}."
-            todo.insert(0, f"Many users are slow behind {cp['name']}: check it first.")
+        if impact["unusual"] and on_pc(split):
+            # Aternity's own split says where this user's time went: not the service, not the network
+            who_else += (f" Aternity put {_pct(split['pc'])} of this user's slow time on their PC, so this is not "
+                         "taken as the cause.")
+        elif cp:
+            todo.insert(0, f"{cp['slow']} of the {k} slow {apps} users are behind {cp['name']}: check it first.")
         elif impact["unusual"]:
-            todo.insert(0, f"Many {apps} users are slow at once: check the {apps} service and its servers.")
+            todo.insert(0, f"{k} of the {users} other {apps} users were slow at the same time, more than on other "
+                           f"days: check the {apps} service and its servers.")
 
     # the headline: what the user felt, then one verdict (docs/headline-rules.md)
     top = at_slow[0] if at_slow else None
@@ -573,6 +595,18 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
             level, title, reason = "none", "No problems found", f"{marked} No hang or app crash either."
         else:
             level, title, reason = "none", "No activity found", "Aternity has no activity for this window."
+    elif cls == "A" and top.get("disk"):
+        # a failing disk: the PC's state from its first record on (correlate._disk_state)
+        level = "likely" if top["slow_actions"] * 2 > n else "possible"
+        more = len(found) - 1
+        title = (f"{_felt_all(slow, worst)}. {'Likely' if level == 'likely' else 'Possibly'}: {top['text']}"
+                 + ("" if n == 1 else f", counted for {top['slow_actions']} of the {n} slow actions")
+                 + (f"; {plural(more, 'more issue')} (see What went wrong)" if more > 0 else ""))
+        share = top.get("pc_share")
+        reason = (f"A failing disk slows everything on its PC. Aternity recorded it failing from "
+                  f"{clock(parse_time(top['disk_state']['first']))}"
+                  + (f" and put {_pct(share)} of the slow time on the PC" if share is not None else "")
+                  + ". See What went wrong." + usual_line)
     elif cls == "A":
         level = "likely" if top["slow_actions"] * 2 > n else "possible"
         more = len(found) - 1
@@ -588,7 +622,8 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         cp = impact["common_point"]
         apps = _join(impact["applications"])
         title = f"{_felt_all(slow, worst)}. " + (
-            f"Many users behind {cp['name']} were slow at the same time" if cp else
+            f"{cp['slow']} of the {impact['slow']} other {apps} users slow at the same time were behind "
+            f"{cp['name']}, more than on other days" if cp else
             f"{impact['slow']} of the {impact['users']} other {apps} users were slow at the same time, "
             "more than on other days")
         reason = f"{nothing} See Other users."
@@ -643,14 +678,22 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
                 f"Aternity does not say why: a question for whoever builds the {kind}.")
         if step not in todo:
             todo.insert(0, step)
-    if n and felt_issues + ([also] if also else []):
+    disk_off = [_disk_phrase(g) for g in problems if g.get("disk") and not g["slow_actions"]]
+    if n and disk_off:  # a state, not a moment: "not near" would be wrong
+        reason += (f" Also: {_join(disk_off)}, not counted for {'the slow action' if n == 1 else 'the slow actions'}"
+                   f" (see Other things on {pcs_label}).")
+    near_felt = [x for x in felt_issues if x not in disk_off]
+    if n and near_felt + ([also] if also else []):
         reason += (f" Also, not near {'the slow action' if n == 1 else 'the slow actions'}: "
-                   f"{_join(felt_issues + ([also] if also else []))} (see Other things on {pcs_label}).")
+                   f"{_join(near_felt + ([also] if also else []))} (see Other things on {pcs_label}).")
     if not todo and n:
         todo.append(f"Nothing measured explains it: ask {who} what they were doing at those times "
                     "(see \"What was checked\" for what is ruled out).")
 
     todo += [s for s in later if s not in todo]
+    # a failing disk's step first: back up the user's data before anything else
+    first = [s for g in problems if g.get("disk") for s in (g.get("why") or {}).get("todo", [])]
+    todo = first + [s for s in todo if s not in first]
     per_app: dict[str, int] = {}
     for s in slow:
         per_app[s.application] = per_app.get(s.application, 0) + 1
@@ -670,7 +713,8 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
                  "slow": sum(1 for s in slow if s.device == d),
                  "virtual": any(s.virtual for s in samples if s.device == d),
                  "from": sorted({s.client_device for s in samples if s.device == d and s.virtual and s.client_device})}
-                for d in sorted({s.device for s in samples}, key=lambda d: -sum(1 for s in slow if s.device == d))],
+                for d in sorted({s.device for s in samples},
+                                key=lambda d: (-sum(1 for s in slow if s.device == d), d))],
         # each PC's slowest start-up in the window (the user may have worked on several)
         "logons": _per_pc((logons or {}).get("starts") or []),
         "logon_unit": (logons or {}).get("unit"),

@@ -23,6 +23,7 @@ from collections import Counter
 from datetime import datetime, timedelta
 
 from .http import short_error
+from .models import local_date
 
 log = logging.getLogger("uxcorrelate")
 DAYS_BACK = 7  # a live Aternity keeps about 8 days of activities: earlier weeks are gone
@@ -136,7 +137,7 @@ def who_else(aternity, netim, apps: list[str], degraded: set[datetime], minutes:
     history = []
     for back in range(1, DAYS_BACK + 1):
         shift = timedelta(days=back)
-        if ((start - shift).weekday() >= 5) != (start.weekday() >= 5):
+        if (local_date(start - shift).weekday() >= 5) != (local_date(start).weekday() >= 5):
             continue
         log.info("Aternity: same hours %d day(s) earlier, for comparison", back)
         rows = aternity.app_activity(apps, start - shift, end - shift)
@@ -171,8 +172,9 @@ def who_else(aternity, netim, apps: list[str], degraded: set[datetime], minutes:
         g["includes_user"] = key == own_group
     ranked = sorted(groups.values(), key=lambda g: (-g["slow"], -g["users"]))
     top = ranked[0] if ranked else None
+    # a place only: a NetIM gateway or a subnet, never "no address" or the virtual desktops
     common = top if (top and unusual and top["unusual"] and top["slow"] * 2 > slow_total
-                     and top["kind"] != VIRTUAL_GROUP[0]) else None
+                     and top["kind"] in ("gateway", "subnet")) else None
 
     for u in users.values():
         u["worst"] = max(u["slow"], key=lambda s: s.response_time) if u["slow"] else None

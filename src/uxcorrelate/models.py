@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 @dataclass
@@ -198,6 +199,12 @@ def plain(text: str | None) -> str:
                   flags=re.IGNORECASE).strip()
 
 
+def part_label(component: str | None) -> str | None:
+    """Aternity's label on a failing part: "<disk model> (Disk)" -> "Disk"."""
+    m = re.search(r"\(([^()]+)\)\s*$", component or "")
+    return m.group(1).strip() if m else None
+
+
 def plural(n: int, word: str, many: str | None = None) -> str:
     """ "1 PC", "3 PCs", "2 crashes" (with `many`)."""
     return f"{n:,} {word if n == 1 else many or word + 's'}"
@@ -231,3 +238,37 @@ def to_float(value) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+# The days and times written in sentences ("Nov 2", "Nov 10, 01:08 AM") are in config.yaml's
+# timezone, as the Today tab's day (empty = UTC). The page shows ISO times in the reader's
+# zone: a 10:37 PM change in New York is 03:37 UTC the next day, so a UTC day in a sentence
+# disagreed with the list beside it (live, Nov 2026). Set once per investigation.
+_zone = timezone.utc
+
+
+def set_zone(name: str | None) -> None:
+    """Use config.yaml's `timezone` for days and times in sentences; unknown or empty: UTC."""
+    global _zone
+    try:
+        _zone = ZoneInfo(name) if name else timezone.utc
+    except (ZoneInfoNotFoundError, ValueError):
+        _zone = timezone.utc
+
+
+def local(dt: datetime) -> datetime:
+    return utc(dt).astimezone(_zone)
+
+
+def local_date(dt: datetime) -> date:
+    return local(dt).date()
+
+
+def day(dt: datetime) -> str:
+    """ "Nov 2", in the configured time zone."""
+    return local(dt).strftime("%b %d").replace(" 0", " ")
+
+
+def clock(dt: datetime) -> str:
+    """ "Nov 10, 01:08 AM", as the page writes times, in the configured time zone."""
+    return f"{day(dt)}, {local(dt):%I:%M %p}"

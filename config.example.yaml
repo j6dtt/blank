@@ -43,7 +43,8 @@ bucket_minutes: 5
 boot_unit: s
 
 # "Today" runs from midnight in this time zone (as in Windows / Linux:
-# Area/City, e.g. America/Chicago). Empty: UTC.
+# Area/City, e.g. America/Chicago); the days and times written in an
+# investigation's sentences are in it too. Empty: UTC.
 timezone: ""
 
 # --- Only if `uxcorrelate verify` reports a wrong name ----------------

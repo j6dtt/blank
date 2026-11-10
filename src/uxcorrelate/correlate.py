@@ -38,13 +38,13 @@ from typing import Protocol
 from .config import BACKGROUND_EVENT, NetimMetric, Settings
 from .after_start import AFTER_START_MIN, compare as compare_after_start
 from .answer import build_answer, problem_text
-from .cause import explain
+from .cause import DISK_BACK, explain, is_disk
 from .impact import who_else
 from .logons import logon_report
 from .normal import compare_actions
 from .models import (
     DeviceHealthSample, HealthEvent, EndpointInfo, MappedObject, MetricSample, NetimAlert,
-    NetimDevice, NetimInterface, UserSample, parse_time, plain,
+    NetimDevice, NetimInterface, UserSample, clock, local_date, parse_time, plain, plural, set_zone,
 )
 
 log = logging.getLogger("uxcorrelate")
@@ -362,7 +362,92 @@ def _event_problem(e: HealthEvent) -> dict:
                  e.count if e.count is not None else 1, app=e.application)
     p["names"] = {_norm(e.application), _norm(e.component)} - {""}  # to find its app usage row
     p["kinds"] = {k for k in ("crash", "hang") if k in f"{e.category} {e.name}".lower()}
+    if is_disk(e):  # the PC's disk failing: one issue per PC (_group), counted as a state (_disk_state)
+        p["disk"], p["event_name"] = True, e.name or e.category or "a health event"
     return p
+
+
+DISK_WHAT = "Disk failing"  # the issue of a PC's failing-disk records, one per PC
+
+
+def _disk_state(aternity, events: list, start) -> dict:
+    """Each PC with a failing-disk record in the window: its first record, there or in the
+    DISK_BACK days before (that PC's health events, read only then). A failing disk is the
+    PC's state, not a moment: live (Nov 2026) Outlook Launch took 89.2 s, all of it on the
+    PC by Aternity's split, 23 min after the disk's S.M.A.R.T. fault, which the 5-minute
+    rule left "not near"."""
+    out = {}
+    for d in dict.fromkeys(e.device for e in events if is_disk(e)):
+        first = min(e.timestamp for e in events if e.device == d and is_disk(e))
+        before, read = [], hasattr(aternity, "health_events")
+        if read:
+            mark = len(getattr(aternity, "warnings", []))
+            before = [e for e in aternity.health_events(d, start - DISK_BACK, start)
+                      if is_disk(e) and e.timestamp < start]
+            read = len(getattr(aternity, "warnings", [])) == mark  # a failed read says nothing of before
+        out[d] = {"first": _iso(min([first] + [e.timestamp for e in before])),
+                  "before_days": len({local_date(e.timestamp) for e in before}), "before_read": read}
+    return out
+
+
+def _mostly_pc(s: UserSample) -> bool:
+    """Aternity put most of this action's time on the PC (its client time); with no split, it may have."""
+    parts = (s.client_time, s.network_time, s.backend_time)
+    if any(v is None for v in parts) or sum(parts) <= 0:
+        return True
+    return s.client_time * 2 > sum(parts)
+
+
+def _disk_counts(p: dict, s: UserSample, disks: dict, window: timedelta) -> bool:
+    """A failing disk counts for a slow action on its PC from its first record on, when
+    Aternity did not put most of that action's time on the network or the server."""
+    return (s.device == p["object"] and s.timestamp >= parse_time(disks[p["object"]]["first"]) - window
+            and _mostly_pc(s))
+
+
+def _disk_context(g: dict, groups: list, slow: list, logons: dict, window: timedelta) -> None:
+    """What a failing disk covers on its PC: the slow actions counted for it (Aternity's
+    split), those not counted and why, the other issues there from its first record, and
+    the PC's start-ups that took longer than usual."""
+    if not g.get("disk") or not g.get("why"):
+        return
+    dev, first = g["object"], parse_time(g["disk_state"]["first"])
+    mine, counted = [s for s in slow if s.device == dev], [slow[i] for i in g["slow_idx"]]
+    text = []
+    if counted:
+        shares = [s.client_time / (s.client_time + s.network_time + s.backend_time) for s in counted
+                  if None not in (s.client_time, s.network_time, s.backend_time)
+                  and s.client_time + s.network_time + s.backend_time > 0]
+        g["pc_share"] = round(mean(shares), 3) if shares else None
+        actions = "the slow action" if len(counted) == 1 else f"the {len(counted)} slow actions"
+        text.append("A failing disk slows everything on its PC. " + (
+            f"Aternity put {g['pc_share']:.0%} of the time of {actions} from its first record on the PC."
+            if shares else f"Aternity gave no split of the time of {actions} from its first record."))
+    early = [s for s in mine if s.timestamp < first - window]
+    off = [s for s in mine if s.timestamp >= first - window and not _mostly_pc(s)]
+    if early:
+        text.append(f"Not counted for {plural(len(early), 'slow action')} before its first record.")
+    if off:
+        text.append(f"Not counted for {plural(len(off), 'slow action')}: Aternity put most of "
+                    f"{'its' if len(off) == 1 else 'their'} time on the network or the server.")
+    later = [o for o in groups if o is not g and o["object"] == dev
+             and o["issue"] in ("hang", "crash", "system", "background", "limit")
+             and any(b >= first - window for _, b in o["_all"])]
+    if later:
+        text.append(f"Also on {dev} from its first record: " + "; ".join(o["text"] for o in later[:4])
+                    + (f"; {len(later) - 4} more" if len(later) > 4 else "") + ".")
+    unit = logons.get("unit") or ""
+    u = f" {unit}" if unit else ""
+    for st in logons.get("starts", []):
+        t = parse_time(st.get("time"))
+        if st.get("device") != dev or t is None:
+            continue
+        longer = [f"{typ} {v['duration']}{u} (usual {v['usual']}{u})" for typ, v in st["values"].items()
+                  if v.get("usual") is not None and v["duration"] > v["usual"]]
+        if longer:
+            text.append(f"Start-up at {clock(t)}, {'before' if t < first - window else 'after'} its first record, "
+                        f"longer than usual: {', '.join(longer)}.")
+    g["why"]["text"] += text
 
 
 def _norm(name: str | None) -> str:
@@ -389,6 +474,7 @@ def _matches(p: dict, s: UserSample, window: timedelta) -> bool:
 def investigate(req: InvestigationRequest, aternity: AternitySource, netim: NetimSource | None,
                 settings: Settings) -> dict:
     req.validate()
+    set_zone(settings.timezone)  # days and times in sentences, as the page's lists (models.set_zone)
     minutes = settings.bucket_minutes
     window = timedelta(minutes=minutes)
     warnings: list[str] = []
@@ -440,6 +526,7 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
                     uxi.append(u.uxi)
     usage = [p for p in problems if p["app"]]  # crashes and hangs from app_usage
     problems += [_event_problem(e) for e in events]
+    disks = _disk_state(aternity, events, req.start)
     log.info("Aternity: %d device health events", len(events))
     warnings.extend(getattr(aternity, "warnings", []))
 
@@ -478,12 +565,15 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
 
     # 5. which problems happened at the slow actions
     for p in problems + list(started_up):
-        p["slow"] = {i for i, s in enumerate(slow) if _matches(p, s, window)}
+        match = (lambda s: _disk_counts(p, s, disks, window)) if p.get("disk") else (lambda s: _matches(p, s, window))
+        p["slow"] = {i for i, s in enumerate(slow) if match(s)}
     # a start-up counts only when the user was slow during it or just after it
     problems += [p for p in started_up if p["slow"]]
     groups = _group(problems, len(slow))
     for g in groups:
         g["readings"] = readings.get((g["object"], g["what"]))
+        if g.get("disk"):
+            g["disk_state"] = disks[g["object"]]
         if g["source"] == START_UP:
             g["why"] = _startup_why(g, started_up, logons)
     # a start-up with nothing longer than normal did not go wrong: it is no problem
@@ -496,6 +586,7 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
     _together(groups, window)
     changed = explain(aternity, groups, events, window, req.start, req.end)
     for g in groups:
+        _disk_context(g, groups, slow, logons, window)
         _limit_context(g, problems, slow, logons, window)
         _other_app_near(g, problems, slow, window)
         # a PC reading over its limit, taken with another action near a slow one: told so
@@ -517,7 +608,9 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
         "pc": {"measured": len(measured), "cpu": top("cpu"), "memory": top("memory"),
                "disk_queue": top("disk_queue"),
                "limits": {"cpu": th.device_cpu, "memory": th.device_memory, "disk_queue": th.disk_queue}},
-        "events": [len(events), sum(1 for p in problems if p["source"] == "Aternity event" and p["slow"])],
+        # within minutes: a failing disk counts as a state, told on its own issue
+        "events": [len(events), sum(1 for p in problems if p["source"] == "Aternity event" and not p.get("disk")
+                                    and p["slow"])],
         "crashes_hangs": [len(usage), sum(1 for p in usage if p["slow"])],
         "start_ups": [len(started_up), sum(1 for p in started_up if p["slow"])],
     }
@@ -611,6 +704,8 @@ def _issue(g: dict) -> str:
     """What kind of issue a problem row is: "hang" and "crash" (what a user feels),
     "background", "system" (other health events), "startup", "infra" or "limit"."""
     what = g["what"].lower()
+    if g.get("disk"):
+        return "disk"
     if g["source"] == START_UP:
         return "startup"
     if g["source"].startswith("NetIM"):
@@ -625,30 +720,39 @@ def _issue(g: dict) -> str:
 # warnings that mean a source was not read (or not in full): "No cause found in what could be read"
 UNREAD = (" not checked:", "could not be read", "stopped after")
 
-FELT_TOGETHER = ("hang", "crash", "system", "background")
+FELT_TOGETHER = ("disk", "hang", "crash", "system", "background")
 
 
 def _together(groups: list[dict], window: timedelta) -> None:
     """g["together"]: what else failed on the same PC within `window` of it."""
     issues = [g for g in groups if g["issue"] in FELT_TOGETHER]
     near = lambda a, b: any(abs(x - y) <= window for x, _ in a["_all"] for y, _ in b["_all"])  # noqa: E731
+    name = lambda o: (f"its disk failing ({', '.join(o['event_names'])})" if o.get("disk")  # noqa: E731
+                      else o.get("app") or o["what"])
     for g in issues:
-        g["together"] = [o.get("app") or o["what"] for o in issues
-                         if o is not g and o["object"] == g["object"] and (o["app"] is None or o["app"] != g["app"])
-                         and near(g, o)][:3]
+        # a failing disk tells what it covers itself (_disk_context)
+        g["together"] = [] if g.get("disk") else [
+            name(o) for o in issues if o is not g and o["object"] == g["object"]
+            and (o["app"] is None or o["app"] != g["app"]) and near(g, o)][:3]
 
 
 def _group(problems: list[dict], slow_total: int) -> list[dict]:
     """One row per object + measurement: how many slow actions it was at, and when."""
     grouped: dict[tuple, dict] = {}
     for p in sorted(problems, key=lambda p: p["t"]):
-        key = (p["kind"], p["source"], p["object"], p["what"])
+        what = DISK_WHAT if p.get("disk") else p["what"]  # a PC's disk records: one issue
+        key = (p["kind"], p["source"], p["object"], what)
         g = grouped.setdefault(key, {
-            "kind": p["kind"], "source": p["source"], "object": p["object"], "what": p["what"],
+            "kind": p["kind"], "source": p["source"], "object": p["object"], "what": what,
             "app": p["app"], "limit": p["limit"], "worst": None, "slow": set(), "times": 0,
             "first": p["t"], "last": p["until"], "_times": [], "_all": [], "why": None, "_total": 0.0,
             "_names": set(), "_kinds": set(),
         })
+        if p.get("disk"):
+            g["disk"] = True
+            g.setdefault("event_names", [])
+            if p["event_name"] not in g["event_names"]:
+                g["event_names"].append(p["event_name"])
         g["_names"] |= p.get("names", set())
         g["_kinds"] |= p.get("kinds", set())
         g["_total"] += p["value"] or 0

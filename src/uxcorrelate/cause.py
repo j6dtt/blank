@@ -27,8 +27,10 @@ import re
 from collections import Counter
 from datetime import timedelta
 
-from .config import NO_PROGRAM, PROCESS_ROW_SPAN_MIN, SOFTWARE_REMOVED, SOFTWARE_UPDATE_GAP_MIN, WINDOWS_MODULES
-from .models import parse_time, plain, plural
+from .config import (DISK_PARTS, NO_PROGRAM, PROCESS_ROW_SPAN_MIN, SOFTWARE_REMOVED, SOFTWARE_UPDATE_GAP_MIN,
+                     WINDOWS_MODULES)
+from .models import day as _local_day
+from .models import clock, local_date, parse_time, part_label, plain, plural
 
 log = logging.getLogger("uxcorrelate")
 CHANGES_BEFORE = timedelta(days=14)  # how far back "what changed" looks
@@ -39,9 +41,45 @@ TREND_MIN_PCS = 5  # PCs per working day: below this a trend is noise
 UNKNOWN_VERSION = "unknown version"
 EVENT = "Aternity event"  # a device health event (correlate._event_problem)
 # what is told first: what the user felt, then the rest; limits passed last
-ISSUE_ORDER = {"hang": 0, "crash": 0, "system": 1, "startup": 1, "background": 2, "limit": 3}
+# a failing disk first: it can slow or stop everything on its PC, and it has to be replaced
+ISSUE_ORDER = {"disk": -1, "hang": 0, "crash": 0, "system": 1, "startup": 1, "background": 2, "limit": 3}
+DISK_BACK = timedelta(days=14)  # a failing disk's earlier records on the PC are looked for this far back
 FAULT_OFFSET = re.compile(r"Fault Offset:\s*\S+", re.IGNORECASE)  # means nothing to a reader
 METRIC = {"CPU %": ("CPU", "cpu", "%"), "Memory %": ("memory", "memory", "%"), "Disk queue": ("disk I/O", "io", "")}
+
+
+# only a file's ending is cut from a name: "Microsoft.Notes" is not "Microsoft" with an ending.
+# Cutting at the last dot made every Microsoft update a "possible cause" of a Microsoft.Notes
+# crash (live, Nov 2026)
+FILE_ENDING = re.compile(r"\.(?:exe|dll|sys|msi|com|ocx|cpl|scr)$", re.IGNORECASE)
+
+
+def name_words(name: str | None) -> tuple[str, ...]:
+    """A program or change name as its words: "Microsoft.Notes.exe" -> ("microsoft", "notes")."""
+    return tuple(re.findall(r"[a-z0-9+#]+", FILE_ENDING.sub("", plain(name).lower())))
+
+
+def same_name(part: tuple[str, ...], change: str | None) -> bool:
+    """Every word of one name is in the other: "Microsoft.Notes" is "Microsoft Sticky Notes",
+    never "Microsoft Edge"; "OUTLOOK.EXE" is "Microsoft Outlook"."""
+    a, b = set(part), set(name_words(change))
+    return bool(a and b) and (a <= b or b <= a)
+
+
+def _parts(names) -> list[tuple[str, ...]]:
+    """The failing part's names as words, without what is no program or only reports a failure."""
+    skip = set(NO_PROGRAM) | {FILE_ENDING.sub("", m) for m in WINDOWS_MODULES}
+    return [name_words(n) for n in names if n and FILE_ENDING.sub("", plain(n).lower()) not in skip]
+
+
+def is_disk(e) -> bool:
+    """A health event whose failing part Aternity labels a disk or drive (DISK_PARTS)."""
+    label = part_label(e.component)
+    return bool(label) and label.lower() in {p.lower() for p in DISK_PARTS}
+
+
+def _unlabelled(component: str | None) -> str:
+    return re.sub(r"\s*\([^()]+\)\s*$", "", component or "")
 
 
 def _iso(dt) -> str:
@@ -49,7 +87,7 @@ def _iso(dt) -> str:
 
 
 def _day(dt) -> str:
-    return dt.strftime("%b %d").replace(" 0", " ")
+    return _local_day(dt)  # in config.yaml's timezone, as the page's lists
 
 
 def _near(t, times, window) -> bool:
@@ -90,7 +128,9 @@ def explain(aternity, groups: list[dict], events: list, window: timedelta, start
         log.info("Looking for the cause: %s", g["text"])
         why = {"failure": None, "others": None, "changes": [], "processes": [], "text": [], "todo": [], "possible": []}
         times = g["_times"] or g["_all"]  # at the slow actions, else whenever it happened
-        if g["app"] or g["source"] == EVENT:
+        if g["issue"] == "disk":
+            _disk(aternity, g, events, start, end, why)
+        elif g["app"] or g["source"] == EVENT:
             _failure(aternity, g, events, times, window, start, end, why, history)
         if g["source"] == EVENT and "memory" in g["what"].lower():
             _processes(aternity, g, times, window, why, "Memory %")
@@ -156,7 +196,7 @@ def _pcs_per_day(items, first, last) -> dict:
     """(time, PC) pairs as {day: PCs that day}, with every day from first to last."""
     days: dict = {}
     for t, device in items:
-        days.setdefault(t.date(), set()).add(device)
+        days.setdefault(local_date(t), set()).add(device)
     span = range((last - first).days + 1)
     return {(first + timedelta(days=i)).isoformat(): len(days.get(first + timedelta(days=i), ())) for i in span}
 
@@ -165,7 +205,7 @@ def _trend(per_day: dict, start) -> str | None:
     """The last 7 days against the 6 before, PCs per working day: "growing", "falling",
     "steady", or None when too few PCs to tell."""
     def mean(lo, hi):
-        days = [start.date() - timedelta(days=k) for k in range(lo, hi + 1)]
+        days = [local_date(start) - timedelta(days=k) for k in range(lo, hi + 1)]
         counts = [per_day.get(d.isoformat(), 0) for d in days if d.weekday() < 5]
         return sum(counts) / len(counts) if counts else 0
     now, before = mean(1, 7), mean(8, 13)
@@ -183,8 +223,8 @@ def _since(aternity, read, dev, where, kind, error, start) -> dict | None:
     if len(getattr(aternity, "warnings", [])) != warned:
         return None  # a partial read cannot say when it started
     first = min((e.timestamp for e in rows), default=None)
-    per_day = _pcs_per_day(((e.timestamp, e.device) for e in rows), start.date() - timedelta(days=13),
-                           start.date() - timedelta(days=1))
+    per_day = _pcs_per_day(((e.timestamp, e.device) for e in rows), local_date(start) - timedelta(days=13),
+                           local_date(start) - timedelta(days=1))
     return {"since": _iso(first) if first else None, "days": CHANGES_BEFORE.days,
             "from_start": bool(first) and first - (start - CHANGES_BEFORE) < timedelta(days=1),
             "per_day": per_day, "trend": _trend(per_day, start)}
@@ -205,7 +245,8 @@ def _usage_days_before(aternity, app, dev, hang, start) -> dict | None:
     if not days:
         return None  # no trend: about 8 days kept, not two weeks to compare
     return {"since": _iso(first), "days": days, "from_start": True, "trend": None,
-            "per_day": _pcs_per_day(((u.timestamp, u.device) for u in rows), first.date(), start.date() - timedelta(days=1))}
+            "per_day": _pcs_per_day(((u.timestamp, u.device) for u in rows), local_date(first),
+                                    local_date(start) - timedelta(days=1))}
 
 
 def _usage_others(aternity, g, start, end, why, history) -> None:
@@ -232,7 +273,8 @@ def _usage_others(aternity, g, start, end, why, history) -> None:
                          "users": None, "of": len(using), "of_what": f"PCs using {app}", "versions": {},
                          "this_version": None,
                          "window_days": _pcs_per_day(((u.timestamp, u.device) for u in rows if u.device != dev
-                                                      and (u.hang_time if hang else u.crashes)), start.date(), end.date()),
+                                                      and (u.hang_time if hang else u.crashes)), local_date(start),
+                                                     local_date(end)),
                          "history": _usage_days_before(aternity, app, dev, hang, start) if wide else None,
                          "list": sorted(pcs.values(), key=lambda p: (-p["times"], p["device"]))[:100]}
 
@@ -319,7 +361,8 @@ def _failure(aternity, g, events, times, window, start, end, why, history) -> No
                      "users": len({e.username for e in same if e.username}) or None, "of": of, "of_what": of_what,
                      "this_version": plain(where[3] if where[2] else where[1]) or UNKNOWN_VERSION,
                      "versions": dict(versions.most_common(5)),
-                     "window_days": _pcs_per_day(((e.timestamp, e.device) for e in same), start.date(), end.date()),
+                     "window_days": _pcs_per_day(((e.timestamp, e.device) for e in same), local_date(start),
+                                                 local_date(end)),
                      "history": _since(aternity, read, dev, where, kind, error, start) if wide else None,
                      "list": sorted(pcs.values(), key=lambda p: (-p["times"], p["device"]))[:100]}
     if len(pcs) < 2:  # one other PC does not make it more than this PC's problem
@@ -330,6 +373,54 @@ def _failure(aternity, g, events, times, window, start, end, why, history) -> No
     elif where[0]:
         why["todo"].append(f"{len(pcs)} other PCs fail the same way and Windows cannot name the program: "
                            "see when it started, and what was rolled out then.")
+
+
+def _disk(aternity, g, events, start, end, why) -> None:
+    """The PC's disk is failing: what Aternity recorded on it, in this window and the
+    DISK_BACK days before (correlate._disk_state), other PCs recording the same now,
+    and the step: back up the user's data and replace the disk."""
+    dev = g["object"]
+    mine = sorted((e for e in events if e.device == dev and is_disk(e)), key=lambda e: e.timestamp)
+    kinds: dict[tuple, list] = {}
+    for e in mine:
+        kinds.setdefault((e.name or e.category or "a health event", e.component), []).append(e)
+    why["text"].append(f"Aternity recorded the disk failing on {dev}: " + "; ".join(
+        f"{name} in {comp} " + (f"at {clock(es[0].timestamp)}" if len(es) == 1 else
+                                f"{len(es)} times, first at {clock(es[0].timestamp)}")
+        for (name, comp), es in kinds.items()) + ".")
+    state = g.get("disk_state") or {}
+    if state.get("before_days"):
+        why["text"].append(f"It was failing before this window too: Aternity recorded it on "
+                           f"{plural(state['before_days'], 'day')} of the {DISK_BACK.days} days before, first at "
+                           f"{clock(parse_time(state['first']))}.")
+    elif state.get("before_read"):
+        why["text"].append(f"Nothing about this disk in the {DISK_BACK.days} days before this window.")
+    # other PCs recording the same now (many at once would point at the records, not the disks)
+    names = list(dict.fromkeys(e.name for e in mine if e.name))
+    pcs: dict[str, dict] = {}
+    same = []
+    if names and hasattr(aternity, "named_health_events"):
+        same = [e for n in names for e in aternity.named_health_events(n, start, end) if e.device != dev and is_disk(e)]
+        for e in sorted(same, key=lambda e: e.timestamp):
+            p = pcs.setdefault(e.device, {"device": e.device, "username": None, "version": "", "times": 0,
+                                          "first": _iso(e.timestamp)})
+            p["username"] = e.username or p["username"]
+            p["times"] += int(e.count or 1)
+            p["last"] = _iso(e.timestamp)
+        of, of_what = _audience(aternity, None, dev, start, end)
+        why["others"] = {"app": None, "what": f"the disk failing ({', '.join(names)})", "pcs": len(pcs),
+                         "users": len({e.username for e in same if e.username}) or None, "of": of,
+                         "of_what": of_what, "this_version": UNKNOWN_VERSION, "versions": {},
+                         "window_days": _pcs_per_day(((e.timestamp, e.device) for e in same), local_date(start),
+                                                     local_date(end)),
+                         "history": None, "list": sorted(pcs.values(), key=lambda p: (-p["times"], p["device"]))[:100]}
+    model = next((_unlabelled(e.component) for e in mine if (part_label(e.component) or "").lower() == "disk"), None)
+    disk = f"the disk ({model})" if model else "the disk"
+    if len(pcs) >= 2:
+        why["todo"].append(f"On {dev}: back up the user's data. {len(pcs)} other PCs record the same in this window: "
+                           f"see Who else before replacing {disk}.")
+    else:
+        why["todo"].append(f"On {dev}: back up the user's data and replace {disk}: Aternity recorded it failing.")
 
 
 def _processes(aternity, g, times, window, why, metric) -> None:
@@ -390,10 +481,9 @@ def changes_before(aternity, device: str, when, names, part: str, event: str) ->
     # read past `when` too: a removal put back later is not a change (see _updates)
     rows = _updates(aternity.software_changes(device, when - CHANGES_BEFORE, when + CHANGES_BEFORE),
                     when - CHANGES_BEFORE, when)
-    names = {n.lower().rsplit(".", 1)[0] for n in names if n}
+    parts = _parts(names)
     for c in rows[:8]:
-        related = (bool(c["name"]) and not c.get("back")
-                   and any(n in c["name"].lower() or c["name"].lower() in n for n in names))
+        related = bool(c["name"]) and not c.get("back") and any(same_name(p, c["name"]) for p in parts)
         out["changes"].append({**_as_iso(c), "related": related})
     if not rows:
         out["text"] = (f"Nothing was installed, updated or removed on {device} in the "
@@ -405,7 +495,8 @@ def changes_before(aternity, device: str, when, names, part: str, event: str) ->
         + (f" (+{len(rows) - 3} more)" if len(rows) > 3 else "") + ".")
     rel = next((c for c in out["changes"] if c["related"]), None)
     if rel:
-        out["todo"] = f"Check the {rel['name']} change of {rel['time'][:10]} on {device}: it came before the {event}."
+        out["todo"] = (f"Check the {rel['name']} change of {_day(parse_time(rel['time']))} on {device}: it came "
+                       f"before the {event}.")
     return out
 
 
@@ -531,12 +622,11 @@ def _pc_changes(aternity, device: str, start, end) -> list[dict]:
                     start - CHANGES_BEFORE, end)
 
 
-def _matches(c: dict, names: set[str], versions: set[str]) -> str | None:
-    """How a change matches the failing part: its name, or the version it brought."""
+def _matches(c: dict, parts: list[tuple[str, ...]], versions: set[str]) -> str | None:
+    """How a change matches the failing part: its name (same_name), or the version it brought."""
     if c.get("back") or not c["name"]:
         return None
-    name = c["name"].lower()
-    if any(n in name or name in n for n in names):
+    if any(same_name(p, c["name"]) for p in parts):
         return "name"
     return "version" if c["version"] in versions and c["change"] not in SOFTWARE_REMOVED else None
 
@@ -554,8 +644,7 @@ def _changes(rows: list[dict], g, first, why, virtual=False) -> None:
     issue, and with no other PC failing the same way on another version, it is a possible
     cause; otherwise what rules it out, or leaves it open, is said."""
     f = why["failure"] or {}
-    names = {n.lower().rsplit(".", 1)[0] for n in map(plain, (g["app"], f.get("component"), f.get("sub_component"))) if n}
-    names -= set(NO_PROGRAM) | {m.rsplit(".", 1)[0] for m in WINDOWS_MODULES}
+    names = _parts((g["app"], f.get("component"), f.get("sub_component")))
     versions = {plain(f.get(k)) for k in ("component_version", "sub_component_version")} - {""}
     batch = batch_removals(rows)  # told once in What changed, never one by one
     for c in rows:
@@ -580,7 +669,7 @@ def _changes(rows: list[dict], g, first, why, virtual=False) -> None:
         elif before:
             why["possible"].append(f"{change_text(c)} (same {match} as the failing part, before it).")
             if not any("Check the" in t for t in why["todo"]):
-                why["todo"].append(f"Check the {c['name']} change of {_iso(c['time'])[:10]} on {g['object']}: "
+                why["todo"].append(f"Check the {c['name']} change of {_day(c['time'])} on {g['object']}: "
                                    "it came before the first failure.")
         else:
             why["text"].append(f"{change_text(c)}: same {match} as the failing part, but Aternity logged it after "

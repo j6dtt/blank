@@ -57,6 +57,13 @@ Other users of these apps:
 5. **Matching.** A problem counts for a slow action recorded up to
    `bucket_minutes` (5) before or after it. A crash, hang or health event
    of one application counts only for that application's slow actions.
+   A failing disk is the PC's state, not a moment: when Aternity labels a
+   health event's failing part "(Disk)" or "(Drive)", the PC's disk counts
+   from its first record (in the window, or in the 14 days before on that
+   PC) for every slow action there whose time Aternity put mostly on the
+   PC. Its records are one issue, it leads ("Likely: VD-41's disk is
+   failing (Aternity recorded HD Failure)") and its step comes first: back
+   up the user's data and replace the disk.
    The answer names the problem at the most slow actions: "likely" when
    that is more than half of them, "possibly" when fewer. No scores.
    With nothing at the slow actions it names the slowest one: "Microsoft
@@ -77,8 +84,10 @@ Other users of these apps:
      it, their versions and the error (`DEVICE_HEALTH_RAW`);
    - who else: other PCs that fail the same way, out of how many, on which
      versions, and since when (see `docs/who-else-is-affected.md`);
-   - a possible cause: a change on the PC with the same name or the same
-     version as the failing part, before it. Every other change is listed
+   - a possible cause: a change on the PC with the same name (every word
+     of one name in the other: "Microsoft.Notes" is "Microsoft Sticky
+     Notes", never "Microsoft Edge") or the same version as the failing
+     part, before it. Every other change is listed
      once per PC under "What changed on these PCs", with its time
      (`INSTALLED_SOFTWARE_CHANGE_LOG`, 14 days before the window to its end);
    - for CPU, memory or disk problems, the busiest processes at those
@@ -103,6 +112,9 @@ Other users of these apps:
    working days of the week before (a live Aternity keeps about 8 days of
    activities, so earlier weeks are gone). A virtual desktop's address is the
    desktop's, so those users are one group, never a network point.
+   It is the answer only when Aternity did not put most of this user's slow
+   time on their own PC; it gives counts ("2 of the 14 other users"), not
+   "many".
 9. **Start-ups.** The user's boots and logons (`WINDOWS_MACHINE_BOOTS`):
    Aternity's measurements of one PC within an hour form one start-up,
    shown next to that PC's own last 30 days, with what took the time

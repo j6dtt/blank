@@ -503,10 +503,12 @@ def test_verify_overview_shows_aternitys_own_status_severity_and_incidents():
                 {"SLA_STATUS": "Normal", "DEVICE_NAME": "PC1"}, {"SLA_STATUS": "Normal", "DEVICE_NAME": "PC2"},
                 {"SLA_STATUS": "Major", "DEVICE_NAME": "PC2"}]})
         if path.endswith("/DEVICE_HEALTH_RAW"):
-            ev = lambda d, sev, name: {"DEVICE_NAME": d, "HEALTH_EVENT_SEVERITY": sev,  # noqa: E731
-                                       "HEALTH_EVENT_CATEGORY": "Application", "HEALTH_EVENT_NAME": name}
+            ev = lambda d, sev, name, part="OUTLOOK.EXE (Process)": {  # noqa: E731
+                "DEVICE_NAME": d, "HEALTH_EVENT_SEVERITY": sev, "HEALTH_EVENT_CATEGORY": "Application",
+                "HEALTH_EVENT_NAME": name, "HEALTH_EVENT_COMPONENT": part}
             return httpx.Response(200, json={"value": [ev("PC1", "High", "App Crash"), ev("PC2", "High", "App Crash"),
-                                                       ev("PC2", "Low", "App Hang")]})
+                                                       ev("PC2", "Low", "App Hang"),
+                                                       ev("PC3", "Low", "HD Failure", "\\Device\\Harddisk0\\DR0 (Drive)")]})
         if path.endswith("/INCIDENTS"):
             return httpx.Response(200, json={"value": [
                 {"INCIDENT_CREATION_TIMESTAMP": "2026-11-08T09:00:00Z", "INCIDENT_STATE": "Open",
@@ -525,6 +527,10 @@ def test_verify_overview_shows_aternitys_own_status_severity_and_incidents():
     assert "INCIDENT_STATE: 'Open' 1" in text
     assert "SERVICE_DESK_ALERTS_RAW Published. 0 rows in the last 7 days: nothing to show from it." in flat
     assert "ANOMALY_DETECTION_INCIDENTS Not published by this Aternity" in flat
+    # Aternity's label on each failing part: the disk ones are read as a failing disk
+    assert "by Aternity's label on the failing part (HEALTH_EVENT_COMPONENT). Read as a failing disk: Disk, Drive." in flat
+    assert "Process: 2 PCs, events 'App Crash' 2, 'App Hang' 1" in flat
+    assert "Drive: 1 PCs, events 'HD Failure' 1 (read as a failing disk)" in flat
 
 
 def test_overview_sources_are_riverbeds_own_names():

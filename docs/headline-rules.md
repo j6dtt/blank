@@ -29,8 +29,8 @@ The headline counts what the user hit:
 
 | Class | When | Verdict (example) | Word |
 |---|---|---|---|
-| A | A problem within `bucket_minutes` of slow actions | "Likely: Microsoft Outlook crashed on VD-41 at 3 of them; 2 more issues (see What went wrong)" | Likely if at over half the slow actions, else Possibly |
-| B | Many other users of the same apps slow at once, more than on other days | "Many users behind <point> were slow at the same time" | none |
+| A | A problem within `bucket_minutes` of slow actions, or a failing disk on their PC (below) | "Likely: Microsoft Outlook crashed on VD-41 at 3 of them; 2 more issues (see What went wrong)", "Likely: VD-41's disk is failing (Aternity recorded Faulty HD S.M.A.R.T. Status and HD Failure)" | Likely if at over half the slow actions, else Possibly |
+| B | Other users of the same apps slow at once, more than on other days, and Aternity did not put most of this user's slow time on their PC | "2 of the 14 other Microsoft Outlook users were slow at the same time, more than on other days" | none |
 | C | It became slow after changes on the PC | "Microsoft Outlook Preview Mail on VD-41: slow 2 of 6 times from Nov 6 (4.4 s, usually 0.2 s); normal on each of the 3 days before. 3 changes logged there on Nov 5: possibly one of them" | Possibly |
 | D | It became slow and no change to check was logged | "… No change to check was logged there before it (on a virtual desktop the log can run late)" | none |
 | E | Right after a start-up, and slower then on every PC of its kind | "Microsoft Teams Launch took 43.8 s on VD-14 (Minor), 3 min after a start-up. On virtual desktops 93% are slow then, 62% later" | none |
@@ -40,7 +40,23 @@ The headline counts what the user hit:
 
 Details:
 
-- **A, tie order:** most slow actions first. On a tie: a crash or hang,
+- **A, a failing disk:** a health event whose failing part Aternity
+  labels "(Disk)" or "(Drive)" (`DISK_PARTS`) is the PC's state, not a
+  moment. From its first record (in the window, or in the 14 days before
+  on that PC) it counts for every slow action on that PC, except one whose
+  time Aternity put mostly on the network or the server. The PC's disk
+  records are one issue; it says what it covers (other issues there from
+  its first record, a start-up longer than usual) and its step comes
+  first: back up the user's data and replace the disk. Live, Nov 2026:
+  Outlook Launch took 89.2 s, all of it on the PC by Aternity's split,
+  23 min after the disk's S.M.A.R.T. fault; the 5-minute rule left the
+  fault "not near" and the headline went to 2 of 14 other users.
+- **B needs Aternity's split:** when Aternity put most of the user's slow
+  time on their PC, other users being slow is said under Other users, but
+  is not the verdict and gets no "check the servers" step. Counts are
+  given, never "many". The common point is a place only: a NetIM gateway or
+  a /24, never "no IP address".
+- **A, tie order:** most slow actions first. On a tie: a failing disk, a crash or hang,
   then a health event (blue screen, low memory, background crash), a
   start-up part, the network (NetIM), a PC reading (CPU, memory, disk
   queue, round trip), and last a nearly full disk.
@@ -81,8 +97,8 @@ Details:
 ## Weak assumptions, written down (not changed until a case shows them)
 
 - **A rests on time alone:** a problem within `bucket_minutes` of slow
-  actions. A crash that hits hundreds of other PCs counts as strongly
-  as one only this PC has.
+  actions (a failing disk: from its first record on). A crash that hits
+  hundreds of other PCs counts as strongly as one only this PC has.
 - **A PC reading counts only for its own action:** depends on what an
   activity row's CPU is (admin question 11).
 - **F ("not new") is a majority per day:** with about 8 days kept,

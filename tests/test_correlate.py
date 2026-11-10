@@ -163,7 +163,7 @@ def test_answer_is_plain_language():
     a = run_demo()[0]["answer"]
     assert "At the same time, 20 of the 50 other people using CRM Portal also had a slow action (40%)." in a["who_else"]
     assert "are behind the same network point: den-br-rtr01 Gi0/0 (LAN)" in a["who_else"]
-    assert a["todo"][0].startswith("Many users are slow behind den-br-rtr01")
+    assert a["todo"][0].startswith("20 of the 20 slow CRM Portal users are behind den-br-rtr01")
     assert a["found"][0]["count"] == "at 23 of 23 slow actions"
     assert a["time_went"]["network"] > 0.8 and a["felt"]["slow_actions"] == 23
     # the problems at other times are listed with their own why, not just counted
@@ -229,7 +229,7 @@ def test_a_hang_is_traced_to_its_module_the_change_before_it_and_other_pcs():
     a = result["answer"]
     # the why is said once, under the finding; the headline only counts
     assert a["reason"] == "It happened within 5 min of the slow action." and a["found"][0]["why"] == why["text"]
-    assert any(t.startswith("Check the Scanner change of 2026-10-27") for t in a["todo"])
+    assert any(t.startswith("Check the Scanner change of Oct 27") for t in a["todo"])
     assert len([f for f in a["found"] if f["why"]]) == 1  # the hang and its health event: one finding
     # who else is said once, on the issue, in one shape
     assert a["found"][0]["who"].startswith("3 other PCs (3 users), all on 2.1. This PC has 2.1.")
@@ -495,7 +495,7 @@ def test_a_crash_at_another_time_still_gets_its_why():
     hang = next(f for f in a["elsewhere"] if f["count"] and "not near a slow action" in f["count"])
     assert hang["why"][0] == "ERP failed in scanner.dll 2.1 (inside erp.exe 5.0): Not responding."
     assert hang["who"].startswith("3 other PCs (3 users)")
-    assert any(t.startswith("Check the Scanner change of 2026-10-27") for t in a["todo"])
+    assert any(t.startswith("Check the Scanner change of Oct 27") for t in a["todo"])
     assert not any(f["text"].endswith("not near a slow action.") for f in a["found"] + a["elsewhere"])
 
 

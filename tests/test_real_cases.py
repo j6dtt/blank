@@ -7,7 +7,8 @@ from datetime import datetime, timedelta, timezone
 
 from uxcorrelate.config import Settings
 from uxcorrelate.correlate import InvestigationRequest, investigate
-from uxcorrelate.models import AppUsageSample, BootSample, DeviceHealthSample, EndpointInfo, ProcessSample, SoftwareChange, UserSample
+from uxcorrelate.models import (AppUsageSample, BootSample, DeviceHealthSample, EndpointInfo, HealthEvent, ProcessSample,
+                                SoftwareChange, UserSample)
 
 OUTLOOK = "Microsoft Outlook"
 
@@ -474,13 +475,245 @@ def test_the_network_line_names_every_pc():
     assert aad["count"] == "1x, not counted for a slow action"
 
 
+class FailingDisk:
+    """Nov 10 (live), names made up, New York time: a physical PC starts up at 00:06 (User
+    Logon 180.7 s, usually 43.9 s); at 00:25 Aternity records the disk's S.M.A.R.T. fault
+    and Microsoft.Notes hangs and crashes; at 00:48 Outlook Launch takes 89.2 s (Major),
+    all of it on the PC by Aternity's split, usually 19.6 s; HD Failure at 01:08; disk queue
+    32.57 at 01:35 with a normal action. 2 of 14 other Outlook users are slow then (Minor),
+    at most 2 of 16 on other days. The change log has Edge and WebView2 updates, Adobe
+    and Java. The page made "2 of 14 other users" the headline, sent IT to Outlook's servers,
+    and named every Edge update a possible cause of the Notes crash."""
+    START = datetime(2026, 11, 10, 5, 0, tzinfo=timezone.utc)  # 00:00 in New York
+    END = START + timedelta(hours=2, minutes=10)
+    BOOT = START + timedelta(minutes=6)
+    SMART = START + timedelta(minutes=25)
+    LAUNCH = START + timedelta(minutes=48)
+    HD = START + timedelta(hours=1, minutes=8)
+    DISK = "XY250-MODEL (Disk)"
+    BEFORE: list = []  # disk records in the 14 days before the window
+
+    def _actions(self):
+        mk = lambda t, what, rt, cpu, dq, status=None: UserSample(  # noqa: E731
+            t, "user7", "PC-77", OUTLOOK, activity=what, response_time=rt, client_time=rt, network_time=0.0,
+            backend_time=0.0, status=status, cpu=cpu, memory=24.2, disk_queue=dq, virtual=False)
+        return [mk(self.LAUNCH, "Launch", 89.2, 10.5, 1.1, "Major"),
+                mk(self.START + timedelta(hours=1, minutes=20), "Open Mail", 1.0, 20.0, 0.5),
+                mk(self.START + timedelta(hours=1, minutes=35), "Send Mail", 2.0, 20.0, 32.57)]
+
+    def user_activity(self, *a, **k):
+        return self._actions()
+
+    def device_health(self, *a, **k):
+        return [DeviceHealthSample(s.timestamp, s.device, cpu=s.cpu, memory=s.memory, disk_queue=s.disk_queue)
+                for s in self._actions()]
+
+    def endpoint_info(self, device):
+        return EndpointInfo(device=device, ip_address="10.9.0.77", location="HQ")
+
+    def _events(self):
+        notes = dict(application="Microsoft.Notes", username="user7", name="Application Crash (After Hang)",
+                     component="Microsoft.Notes.exe (Process)", component_version="6.0.2.0", count=1)
+        return [HealthEvent(self.SMART, "PC-77", name="Faulty HD S.M.A.R.T. Status", component=self.DISK,
+                            details="Index: 0"),
+                HealthEvent(self.SMART, "PC-77", **notes),
+                HealthEvent(self.HD, "PC-77", name="HD Failure", component="\\Device\\Harddisk0\\DR0 (Drive)")] + self.BEFORE
+
+    def health_events(self, device, start, end):
+        return [e for e in self._events() if e.device == device and start <= e.timestamp <= end]
+
+    def named_health_events(self, name, start, end):
+        return [e for e in self._events() if e.name == name and start <= e.timestamp <= end]
+
+    def app_health_events(self, application, start, end):
+        return [e for e in self._events() if e.application == application and start <= e.timestamp <= end]
+
+    def known_pcs(self):
+        return 5456
+
+    def app_usage(self, device, start, end, application=None):
+        return [AppUsageSample(self.SMART, "PC-77", "Microsoft.Notes", crashes=1)]
+
+    def app_usage_everywhere(self, application, start, end):
+        return [AppUsageSample(self.SMART, f"PC-{i}", application) for i in range(30)]
+
+    def boots(self, start, end, username=None, **k):
+        types = (("Machine Boot", 382.5, 335.6), ("User Logon", 180.7, 43.9), ("Total Boot Duration", 579.1, 482.7))
+        rows = [BootSample(self.BOOT, "PC-77", "user7", type=t, duration=now) for t, now, _ in types]
+        rows += [BootSample(self.BOOT - timedelta(days=d), "PC-77", "user7", type=t, duration=usual)
+                 for d in range(1, 6) for t, _, usual in types]
+        return [b for b in rows if start <= b.timestamp <= end]
+
+    def boot_components(self, *a, **k):
+        return []
+
+    def activity_history(self, application, activity, start, end, username=None, device=None):
+        rows = [UserSample(datetime(2026, 11, d, 14, 0, tzinfo=timezone.utc), "user7", "PC-77", OUTLOOK, "Launch",
+                           response_time=rt, status="Major" if rt > 40 else None, virtual=False)
+                for d, rt in ((4, 19.6), (5, 18.0), (6, 45.0), (8, 21.0), (9, 19.0))]
+        rows.append(UserSample(self.LAUNCH - timedelta(minutes=1), "o1", "PC-1", OUTLOOK, "Launch",
+                               response_time=43.9, virtual=False))
+        rows = [r for r in rows if r.activity == activity and (username is None or r.username == username)]
+        return [r for r in rows if start <= r.timestamp <= end]
+
+    def app_activity(self, applications, start, end):
+        today = start.date() == self.LAUNCH.date()
+        users, slow = (14, 2) if today else (16, 2)
+        return [UserSample(start + timedelta(minutes=1), f"u{i}", f"PC-{100 + i}", OUTLOOK, activity="Launch",
+                           response_time=40.0 if i < slow else 3.0, status="Minor" if i < slow else None,
+                           virtual=False) for i in range(users)]
+
+    def software_changes(self, device, start, end):
+        t = lambda d, h, m: datetime(2026, 10 if d > 20 else 11, d, h, m, tzinfo=timezone.utc)  # noqa: E731
+        edge, wv = "Microsoft Edge", "Microsoft Edge WebView2 Runtime"
+        rows = []
+        for when, old, new in ((t(3, 3, 35), "156.0.4314.56", "156.0.4314.58"),
+                               (t(2, 12, 48), "156.0.4314.50", "156.0.4314.56"),
+                               (t(30, 2, 2), "156.0.4314.42", "156.0.4314.50"),
+                               (t(29, 15, 59), "155.0.4283.62", "156.0.4314.42")):
+            rows += [SoftwareChange(when, device, edge, "Uninstalled", old),
+                     SoftwareChange(when + timedelta(minutes=1), device, edge, "Installed", new),
+                     SoftwareChange(when + timedelta(minutes=2), device, wv, "Updated", new, old)]
+        rows += [SoftwareChange(t(30, 1, 52), device, "Adobe Acrobat (64-bit)", "Updated", "26.002.22031",
+                                "26.002.21901"),
+                 SoftwareChange(t(29, 16, 50), device, "Java 8 Update 503", "Uninstalled", "8.0.5030.1"),
+                 SoftwareChange(t(29, 16, 52), device, "Java 8 Update 511", "Installed", "8.0.5110.32")]
+        return [c for c in rows if start <= c.timestamp <= end]
+
+
+def failing_disk(case=FailingDisk):
+    settings = Settings()
+    settings.thresholds.slow_status = ["Minor", "Major"]
+    settings.timezone = "America/New_York"
+    return investigate(InvestigationRequest(start=case.START, end=case.END, username="user7"), case(), None,
+                       settings)
+
+
+def test_a_failing_disk_leads_and_no_microsoft_update_is_blamed_for_notes():
+    result = failing_disk()
+    a = result["answer"]
+    # the disk is the PC's state from its first record on: it counts for the launch 23 min later
+    assert a["title"] == ("Microsoft Outlook Launch took 89.2 s on PC-77 (Major). Likely: PC-77's disk is failing "
+                          "(Aternity recorded Faulty HD S.M.A.R.T. Status and HD Failure)")
+    assert a["level"] == "likely"
+    assert a["reason"].startswith("A failing disk slows everything on its PC. Aternity recorded it failing from "
+                                  "Nov 10, 12:25 AM and put 100% of the slow time on the PC. See What went wrong.")
+    disk = a["found"][0]
+    assert disk["count"] == "2 records, counted for the slow action" and disk["what"] == "Disk failing"
+    assert disk["why"][:2] == [
+        "Aternity recorded the disk failing on PC-77: Faulty HD S.M.A.R.T. Status in XY250-MODEL (Disk) at Nov 10, "
+        "12:25 AM; HD Failure in \\Device\\Harddisk0\\DR0 (Drive) at Nov 10, 01:08 AM.",
+        "Nothing about this disk in the 14 days before this window."]
+    assert ("A failing disk slows everything on its PC. Aternity put 100% of the time of the slow action from its "
+            "first record on the PC.") in disk["why"]
+    assert any(w.startswith("Also on PC-77 from its first record: Application Crash (After Hang) (Microsoft.Notes.exe)"
+                            " on PC-77; PC-77's disk could not keep up (queue 32.57, limit 2.0)") for w in disk["why"])
+    assert ("Start-up at Nov 10, 12:06 AM, before its first record, longer than usual: Machine Boot 382.5 s (usual "
+            "335.6 s), User Logon 180.7 s (usual 43.9 s), Total Boot Duration 579.1 s (usual 482.7 s).") in disk["why"]
+    assert disk["who"] == "Only this PC in this window, of 5,456 PCs in Aternity's inventory."
+    assert a["todo"][0] == "On PC-77: back up the user's data and replace the disk (XY250-MODEL): Aternity recorded it failing."
+    # 2 of 14 other users slow is said, but Aternity put this user's time on their PC: no servers step
+    assert "so this is not taken as the cause" in a["who_else"]
+    assert not any("service and its servers" in t or "Many" in t for t in a["todo"])
+    # "Microsoft.Notes" is not "Microsoft": no Edge or WebView2 update is a possible cause
+    notes = next(x for x in a["elsewhere"] if "Microsoft.Notes" in x["text"])
+    assert notes["possible"] == [] and not any("Edge" in t for t in a["todo"])
+    assert "Within minutes of it on this PC: its disk failing (Faulty HD S.M.A.R.T. Status, HD Failure)." in notes["why"]
+    # a disk is never "the process that failed"; the disk's records are one issue, not three
+    assert not any("the process that failed" in t for t in a["todo"])
+    assert [x["issue"] for x in a["rollup"]] == ["Disk failing"]
+    assert not any("S.M.A.R.T" in x["text"] for x in a["elsewhere"])
+    # days in sentences are New York days: the 22:37 change of Nov 2 is not "Nov 3"
+    assert any("Other users within 5 min: typical 43.9 s (1 user)." == t for t in a["normal"][0])
+
+
+class FailingDiskBefore(FailingDisk):
+    """The same PC, with the disk already recorded failing on Nov 3."""
+    BEFORE = [HealthEvent(datetime(2026, 11, 3, 14, 0, tzinfo=timezone.utc), "PC-77", name="Faulty HD S.M.A.R.T. Status",
+                          component=FailingDisk.DISK)]
+
+
+def test_a_disk_failing_before_the_window_covers_all_of_it():
+    disk = failing_disk(FailingDiskBefore)["answer"]["found"][0]
+    assert ("It was failing before this window too: Aternity recorded it on 1 day of the 14 days before, first at "
+            "Nov 3, 09:00 AM.") in disk["why"]
+    assert any(w.startswith("Start-up at Nov 10, 12:06 AM, after its first record") for w in disk["why"])
+
+
+class FailingDiskServerSide(FailingDisk):
+    """The same, but Aternity put the launch's time on the server: the disk is not counted for it."""
+    def _actions(self):
+        rows = super()._actions()
+        rows[0].client_time, rows[0].backend_time = 9.2, 80.0
+        return rows
+
+
+def test_a_failing_disk_is_not_counted_where_aternity_puts_the_time_elsewhere():
+    a = failing_disk(FailingDiskServerSide)["answer"]
+    assert "disk is failing" not in a["title"] and a["found"] == []
+    assert "Also: PC-77's disk is failing, not counted for the slow action (see Other things on PC-77)." in a["reason"]
+    disk = a["elsewhere"][0]
+    assert disk["count"] == "2 records, not counted for a slow action"
+    assert ("Not counted for 1 slow action: Aternity put most of its time on the network or the server."
+            in disk["why"])
+    assert a["todo"][0].startswith("On PC-77: back up the user's data")
+
+
+class NoDiskRecords(FailingDisk):
+    """The same page without the disk's records: 2 of 14 other users slow is still not the
+    headline, as Aternity put all of this user's time on their PC."""
+    def _events(self):
+        return [e for e in super()._events() if e.application]
+
+
+def test_other_users_slow_are_not_the_headline_when_the_time_was_on_the_pc():
+    a = failing_disk(NoDiskRecords)["answer"]
+    assert a["title"] == ("Microsoft Outlook Launch took 89.2 s on PC-77 (Major), slow 1 of 1 times from Nov 10, "
+                          "usually 19.6 s: occasional. No cause found")
+    assert "Aternity measured most of the slow time on the PC (100%)." in a["reason"]
+    assert not any("servers" in t for t in a["todo"])
+
+
+class FailingDiskNoSlow(FailingDisk):
+    """The same PC with no slow action: the disk still leads the title."""
+    def _actions(self):
+        rows = super()._actions()
+        rows[0].status, rows[0].response_time, rows[0].client_time = None, 9.0, 9.0
+        return rows
+
+
+def test_a_failing_disk_leads_the_title_with_no_slow_action():
+    a = failing_disk(FailingDiskNoSlow)["answer"]
+    assert a["title"] == "PC-77's disk is failing and 1 hang, no slow actions" and a["level"] == "issues"
+    assert a["found"][0]["count"] == "2 records" and a["todo"][0].startswith("On PC-77: back up the user's data")
+
+
+def test_names_match_by_whole_words_and_days_are_new_york_days():
+    from uxcorrelate.cause import change_text, name_words, same_name
+    from uxcorrelate.models import set_zone
+    notes = name_words("Microsoft.Notes")
+    assert notes == ("microsoft", "notes") and name_words("Microsoft.Notes.exe (Process)") == notes
+    assert not same_name(notes, "Microsoft Edge WebView2 Runtime") and same_name(notes, "Microsoft Sticky Notes")
+    assert same_name(name_words("OUTLOOK.EXE"), "Microsoft Outlook") and not same_name(name_words("msedge.exe"),
+                                                                                       "Microsoft Edge")
+    change = {"time": datetime(2026, 11, 3, 3, 37, tzinfo=timezone.utc), "name": "Microsoft Edge", "change": "Updated",
+              "version_before": "1", "version": "2"}
+    try:
+        set_zone("America/New_York")
+        assert change_text(change) == "Nov 2 Microsoft Edge Updated 1 → 2"  # 10:37 PM in New York
+    finally:
+        set_zone("")
+    assert change_text(change) == "Nov 3 Microsoft Edge Updated 1 → 2"
+
+
 def test_every_real_case_tells_each_slow_action_at_the_top():
     """Every case seen on prod: the headline says what was slow and how slow, every slow app
     and activity is named at the top (headline or reason), and no PC is called "these PCs"."""
     settings = Settings()
     settings.thresholds.slow_status = ["Minor", "Major"]
     for c, user in ((OutlookAfterLogon, "user1"), (LaunchAsUsual, "user1"), (TeamsAfterLogonBusyPC, "user2"),
-                    (TeamsAndOutlookBusyPC, "user2"), (SameMinuteReading, "user2"), (OutlookPreviewNew, "user2")):
+                    (TeamsAndOutlookBusyPC, "user2"), (SameMinuteReading, "user2"), (OutlookPreviewNew, "user2"),
+                    (FailingDisk, "user7")):
         result = investigate(InvestigationRequest(start=c.START, end=c.END, username=user), c(), None, settings)
         a, top = result["answer"], result["answer"]["title"] + " " + result["answer"]["reason"]
         assert re.search(r"\d+\.\d s", a["title"]), (c.__name__, a["title"])
