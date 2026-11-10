@@ -2,9 +2,10 @@
 
 The AI never reads Aternity and never counts. It picks one building block (a
 "tool") and its settings; our code counts from what the Today reader already
-holds (no extra load on Aternity); the AI words the answer in a sentence or
-two. Every number in its sentence must be one of the counts it was given (or
-in the question): otherwise our own sentence is shown, and says so. The
+holds (no extra load on Aternity); the AI words the answer in two to four
+short sentences: usual or not (only as the counts say), what stands out by
+name, one next step. Every number in its sentence must be one of the counts
+it was given (or in the question): otherwise our own sentence is shown, and says so. The
 counts are always shown under the sentence.
 
 Building blocks (TOOLS):
@@ -22,6 +23,7 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections import Counter
 from datetime import date, datetime, timedelta
 
 from .ai import AiClient, tool_call
@@ -32,6 +34,7 @@ ROWS = 10  # rows given to the AI and shown, most first (hours: all of today's)
 HISTORY = 3  # earlier questions and answers sent with a new one
 DEFAULT_HOURS = 4  # investigate: how far back when the user had no slow action today
 SAY_ROWS = 3  # rows in our own sentence
+SHARE_RUNS = 20  # fewer runs: an application's Major share means little (as after_start.MIN_RUNS)
 
 
 def _tool(name: str, description: str, props: dict, required: tuple = ()) -> dict:
@@ -71,14 +74,61 @@ TOOLS = [
 SYSTEM = ("You answer questions from IT staff about the experience of the company's PC users, from Aternity. "
           "Numbers come only from the tools: call exactly one tool to answer. If no tool fits the question, say "
           "so in one sentence and call no tool. Never state a number a tool did not give, and do not work out new "
-          "ones (no sums, no percentages). When the counts come back, answer in one or two plain sentences: no "
-          "lists, no tables, no markdown.")
+          "ones (no sums, no percentages). When the counts come back, answer as a helpful colleague on the service "
+          "desk would, in two to four short sentences of plain text (no lists, no tables, no markdown). First, "
+          "whether it is more, fewer or as usual, only when a note or row says exactly that (More than usual, "
+          "Fewer than usual, As usual); if none does, say nothing about usual. Never call a count high, low, good "
+          "or bad yourself. Then what stands out, by name: the application, activity, hour, event, user or PC at "
+          "the top, and the highest share when a note names it. End with one next step that fits: a follow-up "
+          "question to ask here (for example who had them, per hour, which activities), Investigate by a user's "
+          "name, or the Care list for the users watched there. Use only the few numbers that matter, written "
+          "exactly as given.")
 NO_COUNT = ("I can only give numbers from the counts: slow actions, crashes and events, who had them today, or an "
             "investigation of one user or PC.")
 NUM = re.compile(r"\d[\d,]*(?:\.\d+)?")
 # a comparison worked out from the counts ("3 times worse", "twice as many"): a new number in words
 RATIO = re.compile(r"\b(?:\d[\d.,]*|two|three|four|five|six|ten)\s*(?:x|times)\s+(?:more|less|fewer|worse|better|"
                    r"higher|lower|slower|faster|as|the)\b|\b(?:twice|double|triple|half as|half the)\b", re.I)
+
+# how the sentence compares with usual: "more Major slow actions than usual", "as usual", "unusual" (normal is
+# left out: Aternity's own status word)
+MORE = ("more", "higher", "busier", "worse", "slower", "above")
+FEWER = ("fewer", "less", "lower", "quieter", "better", "faster", "below")
+USUAL = re.compile(r"\b(?P<w>" + "|".join(MORE + FEWER) + r")\b(?:[\s,]+[\w.-]+){0,5}?[\s,]+(?:than|the)\s+"
+                   r"usual\b|\b(?P<ab>above|below)\s+usual\b|\b(?P<as>as\s+usual|not\s+unusual)\b"
+                   r"|\bunusual(?:ly)?\b", re.I)
+# "too early to say whether it is unusual", "no usual yet": not a verdict (the AI's sentence only)
+HEDGE = re.compile(r"\b(?:whether|if|not|no|cannot|can't|too early)\b[^.!?;:]*$", re.I)
+
+
+def _usual(text: str, hedged: bool = False) -> list[tuple[str, str]]:
+    """Each comparison with usual in a text: (its words, more / fewer / as / either);
+    `hedged`: leave out one said with "whether", "not", "no" ... before it."""
+    out = []
+    for m in USUAL.finditer(text or ""):
+        if hedged and HEDGE.search(text[max(0, m.start() - 60):m.start()]):
+            continue
+        w = (m.group("w") or m.group("ab") or "").lower()
+        out.append((m.group(0), "more" if w in MORE else "fewer" if w in FEWER else "as" if m.group("as")
+                    else "either"))
+    return out
+
+
+def usual_wrong(text: str, given: dict) -> str | None:
+    """The AI's words about usual that the counts do not give (None: fine).
+
+    Fine: any reading of a Usual column of numbers (per hour), else what a note
+    or row says (more / fewer / as usual); "unusual" needs a more or fewer."""
+    said = _usual(text, hedged=True)
+    cols = [i for i, c in enumerate(given.get("columns") or []) if str(c).lower().startswith("usual")]
+    if not said or any(len(r) > i and isinstance(r[i], (int, float)) for r in given.get("rows") or []
+                       for i in cols):
+        return None
+    have = {k for _, k in _usual(json.dumps(given, default=str))}
+    for words, k in said:
+        if not (k in have or (k == "either" and have & {"more", "fewer"})):
+            return words
+    return None
 
 
 def chat_service(settings: Settings) -> AiService | None:
@@ -138,7 +188,7 @@ def _usual_note(view: dict) -> list[str]:
     if not s.get("by"):
         return []
     if not u.get("enough"):
-        return [f"Usual: {u.get('days', 0)} of the {MIN_USUAL} {view['kind']} needed are saved so far."]
+        return [f"No usual yet: {u.get('days', 0)} of the {MIN_USUAL} {view['kind']} needed are saved so far."]
     word = {"more": "More than usual", "fewer": "Fewer than usual", "usual": "As usual"}[u["verdict"]]
     return [f"{word}: {s['by_pcs']:,} PCs with a {TOP_STATUS} action by {s['by']}; the {u['days']} {view['kind']} "
             f"before had {u['low']:,} to {u['high']:,}."]
@@ -173,6 +223,16 @@ def slow_actions(today: Today, now: datetime, group_by: str = "app", app: str | 
     if group_by in ("hour", "activity") and days > 1:
         notes.append(f"Per {group_by} is for today only (earlier days keep counts per application and hour).")
         period = _period(today, t, 1)
+    if not app:  # how today compares, as on the Today tab, whatever the grouping
+        notes += _usual_note(today.view(now))
+        if group_by not in ("app", "activity"):  # those rows name the applications already
+            lead = Counter()
+            for h in hours:
+                lead.update({a: c[TOP_STATUS] for a, c in h.apps.items() if c[TOP_STATUS]})
+            top3 = sorted(lead.items(), key=lambda kv: (-kv[1], kv[0]))[:SAY_ROWS]
+            if top3:
+                notes.append(f"Most {TOP_STATUS} slow actions today: "
+                             + ", ".join(f"{a} {_say(n)}" for a, n in top3) + ".")
 
     if group_by == "app":
         acts: dict[str, list] = {}
@@ -191,12 +251,14 @@ def slow_actions(today: Today, now: datetime, group_by: str = "app", app: str | 
             notes.append("Earlier days keep only each day's 50 applications with the most Major actions.")
         top = sorted(((a, x) for a, x in acts.items() if x[0] and (not app or a in keep)),
                      key=lambda kv: (-kv[1][0], kv[0]))
+        most = max((kv for kv in top if kv[1][1] >= SHARE_RUNS), key=lambda kv: kv[1][0] / kv[1][1], default=None)
+        if most and top and most[0] != top[0][0]:
+            notes.append(f"Highest {TOP_STATUS} share, of the applications with {SHARE_RUNS} runs or more: {most[0]}, "
+                         f"{most[1][0]:,} of {most[1][1]:,} runs ({_share(most[1][0], most[1][1])}%).")
         cols = ["Application", f"{TOP_STATUS} slow actions", "Runs", f"{TOP_STATUS} share %"]
         rows = [[a, x[0], x[1], _share(x[0], x[1])] + ([len(x[2])] if days == 1 else []) for a, x in top[:ROWS]]
         if days == 1:
             cols.append(f"PCs with {TOP_STATUS}")
-        if not app and days == 1:
-            notes += _usual_note(today.view(now))
         return _result("slow_actions", used, f"{TOP_STATUS} slow actions by application", period, cols, rows,
                        notes, f"{sum(x[0] for _, x in top):,} {TOP_STATUS} slow actions in {len(top)} applications")
 
@@ -576,6 +638,7 @@ def ask(question: str, history: list, client: AiClient, today: Today, names, now
         extra = numbers(text) - allowed(json.dumps(given, default=str), json.dumps(args, default=str), question,
                                         system(today, now), small=len(result["rows"]))
         ratio = RATIO.search(text)
+        usual = usual_wrong(text, given)
         if extra:
             shown = ", ".join(f"{x:g}" for x in sorted(extra)[:3])
             text, out["note"] = result["say"], (f"The AI's sentence had a number that is not in the counts "
@@ -583,5 +646,8 @@ def ask(question: str, history: list, client: AiClient, today: Today, names, now
         elif ratio:
             text, out["note"] = result["say"], (f"The AI's sentence worked out a comparison the counts do not give "
                                                 f"(\"{ratio.group(0)}\"), so this is our own sentence.")
+        elif usual:
+            text, out["note"] = result["say"], (f"The AI's sentence said \"{usual}\", but the counts do not say "
+                                                "so, so this is our own sentence.")
     out.update(answer=text, result=result, seconds=round(time.monotonic() - started, 1))
     return out

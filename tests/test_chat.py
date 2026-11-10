@@ -87,6 +87,32 @@ def test_slow_actions_per_hour_activity_and_day():
                             ["Sat Nov 07", None, None, None], ["Fri Nov 06", 7, 5, 40]]
 
 
+def test_every_block_for_all_apps_says_how_today_compares_and_which_apps_lead():
+    t = filled()  # one working day saved: not enough for a usual yet
+    for group_by in ("app", "hour", "activity", "day", "pc_kind"):
+        notes = slow_actions(t, NOW, group_by)["notes"]
+        assert any(n.startswith("No usual yet: 1 of the 3 working days needed") for n in notes), group_by
+    day = slow_actions(t, NOW, "day")["notes"]
+    assert "Most Major slow actions today: ERP 2, Mail 2, Mail Viewer 1." in day  # gives the AI names to tell
+    assert not any(n.startswith("Most") for n in slow_actions(t, NOW, "app")["notes"])  # the rows name them
+    assert not any("usual" in n.lower() for n in slow_actions(t, NOW, "day", app="ERP")["notes"])  # all apps only
+    for d in (date(2026, 11, 4), date(2026, 11, 5)):  # three working days saved: the tile's verdict
+        t.saved[d] = dict(t.saved[date(2026, 11, 6)])
+    day = slow_actions(t, NOW, "day")["notes"]
+    assert day[0] == "More than usual: 3 PCs with a Major action by 14:00; the 3 working days before had 0 to 0."
+
+
+def test_the_highest_share_is_named_only_with_enough_runs():
+    t = filled()
+    assert not any("Highest" in n for n in slow_actions(t, NOW, "app")["notes"])  # 3 runs at most: too few
+    ten = t.midnight(date(2026, 11, 9)) + 10 * HOUR
+    t.add_hour(ten, [act(ten, f"PC{i}", "Major" if i < 10 else "Normal", "Big") for i in range(200)]
+               + [act(ten, f"PC{i}", "Major" if i < 5 else "Normal", "Small") for i in range(20)], F, NOW)
+    r = slow_actions(t, NOW, "app")
+    assert r["rows"][0][:4] == ["Big", 10, 200, 5]  # the most by count; Mail's 67% is of 3 runs only
+    assert "Highest Major share, of the applications with 20 runs or more: Small, 5 of 20 runs (25%)." in r["notes"]
+
+
 def test_virtual_desktops_against_physical_pcs():
     r = slow_actions(filled(), NOW, "pc_kind")
     assert r["rows"] == [["Virtual desktops", 3, 3, 100, 2, 2], ["Physical PCs", 4, 2, 50, 2, 2]]
@@ -190,6 +216,29 @@ def test_a_comparison_worked_out_by_the_ai_is_replaced_by_ours():
     fine = ai_service({q: ("slow_actions", {"group_by": "pc_kind"})},
                       lambda g: "All 3 runs on virtual desktops were Major, against 2 of 4 on physical PCs.", [])
     assert ask(q, [], fine, filled(), None, NOW)["note"] is None
+
+
+def test_words_about_usual_must_be_what_the_counts_say():
+    q = "How are slow actions today?"
+    pick = {q: ("slow_actions", {"group_by": "app"})}
+
+    def said(t, words, picks=pick):
+        return ask(q, [], ai_service(picks, lambda g: words, []), t, None, NOW)
+    t = filled()  # no usual yet (seen on stage: the AI said "As usual" all the same)
+    a = said(t, "As usual so far, ERP had 2.")
+    assert a["answer"].startswith("Major slow actions by application") and '"As usual"' in a["note"]
+    assert said(t, "There is no usual yet; ERP had 2, the most.")["note"] is None
+    assert said(t, "It is too early to say whether this is unusual; ERP had 2.")["note"] is None
+    assert '"not unusual"' in said(t, "ERP had 2, which is not unusual.")["note"]  # = as usual
+    for d in (date(2026, 11, 4), date(2026, 11, 5)):  # three working days saved: the tile says More than usual
+        t.saved[d] = dict(t.saved[date(2026, 11, 6)])
+    assert said(t, "More Major slow actions than usual; ERP had 2.")["note"] is None
+    for words in ("Fewer than usual so far; ERP had 2.", "As usual, ERP had 2."):
+        assert "do not say so" in said(t, words)["note"]
+    crashes = {q: ("events", {"group_by": "event"})}  # its Usual column holds words: "not enough days" here
+    assert '"More crashes than usual"' in said(t, "More crashes than usual on 2 PCs.", crashes)["note"]
+    hours = {q: ("slow_actions", {"group_by": "hour"})}  # a Usual column with values: each hour read as it is
+    assert said(t, "09:00 was below usual with 4 against 7.", hours)["note"] is None  # though the day is More
 
 
 def test_no_building_block_no_numbers():

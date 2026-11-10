@@ -261,7 +261,16 @@ unset `<REQUIRED>` base URLs.
   (`ai.chat` by name, else the first of `ai.services`; GPT on prod) picks
   one building block of `TOOLS` (slow_actions, events, who, investigate),
   our code counts from what the Today reader holds (no extra Aternity
-  load), the AI words it. Every number in its sentence must be in the
+  load), the AI words it in 2-4 sentences (`SYSTEM`): usual or not, only
+  as the counts say; what stands out, by name; one next step. Every
+  slow_actions block for all apps carries the Today tile's usual and,
+  when its rows name no app, the top 3 apps (else the answer is dry:
+  seen on stage). Words about usual ("as usual", "more … than usual",
+  "unusual") must match a note or row's own verdict, or read a Usual
+  column with values (`usual_wrong`; GPT said "As usual" with no usual
+  yet on stage), else our sentence. By application: a note names the
+  highest Major share of apps with `SHARE_RUNS` runs or more (the top by
+  count is not always the worst). Every number in its sentence must be in the
   counts given, the question or the settings (`numbers`/`allowed`), and
   no worked-out comparison (`RATIO`, "3 times worse"); otherwise our own
   sentence (`say`) is shown, with a note. The counts table is always
