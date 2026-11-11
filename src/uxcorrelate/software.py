@@ -111,6 +111,7 @@ class _Reads:
         self.schema: dict | None = None
         self.error = ""  # the first read Aternity did not answer, in a few words
         self.usage: dict[str, int] = {}  # every application in app usage -> its crashes (the name search)
+        self.crash_names: dict[str, int] = {}  # application (else program file) of crash events -> PCs
         try:
             from .verify import parse_odata_metadata
             text = client.http.request("GET", "/$metadata", headers={"Accept": "application/xml"}).text
@@ -388,7 +389,11 @@ def _judged(a: str, vs: dict, read) -> dict:
              "actions": int(round(x["actions"])), "major": int(round(x["major"])),
              "major_pcs": len(x["major_pcs"])} for v, x in vs.items()]
     rows.sort(key=lambda r: (-max(r["pcs"], r["action_pcs"]), order(r["version"])))
-    app = {"application": a, "read": sorted(read), "versions": rows}
+    union = lambda k: len(set().union(*(x[k] for x in vs.values()))) if vs else 0  # noqa: E731
+    # the application's PCs across its versions, each PC once (for "which crashed the most")
+    app = {"application": a, "read": sorted(read), "versions": rows,
+           "totals": {"pcs": union("pcs"), "crash": union("crash"), "hang": union("hang"),
+                      "action_pcs": union("apcs"), "slow": union("major_pcs")}}
     judge(app)
     return app
 
@@ -436,6 +441,7 @@ def _crashes(q: _Reads, now: datetime, say) -> list[dict] | None:
             if f.get(k) and q.has(entity, f[k])]
     ts = f["timestamp"]
     per: dict[tuple, dict] = {}
+    by_name: dict[str, set] = {}
     for n in range(DAYS, 0, -1):  # a day at a time, as the Today reader
         say(f"Reading crash events: day {DAYS - n + 1} of {DAYS}")
         start, end = now - timedelta(days=n), now - timedelta(days=n - 1)
@@ -453,6 +459,9 @@ def _crashes(q: _Reads, now: datetime, say) -> list[dict] | None:
             x["pcs"].add(dev)
             x["events"] += 1
             x["kinds"].add(str(name))
+            if key[0] or key[1]:
+                by_name.setdefault(key[0] or key[1], set()).add(dev)
+    q.crash_names = {k: len(v) for k, v in by_name.items()}  # each name's PCs, each PC once
     return [{"application": a, "part": p, "version": v, "pcs": len(x["pcs"]), "events": x["events"],
              "kinds": sorted(x["kinds"])} for (a, p, v), x in sorted(
                  per.items(), key=lambda kv: (-len(kv[1]["pcs"]), str(kv[0])))]
@@ -606,6 +615,7 @@ def read_snapshot(client, cfg, now: datetime, local, say=lambda s: None) -> dict
             "days": DAYS}
     snap["crashes"] = _crashes(q, now, say)
     snap["usage"] = q.usage  # application -> crashes in app usage, every application
+    snap["crash_names"] = q.crash_names
     # Aternity down: the list itself did not come. Not a day's counts (keep_reading tries again soon)
     snap["unread"] = q.error if size is None else ""
     snap["flags"] = _flags(snap)
@@ -729,6 +739,7 @@ def _versions_view(apps: dict) -> list[dict]:
         vs = [dict(v, raised=sorted(k for (ver, k) in raised if ver == v["version"]),
                    others=a["others"].get(v["version"], {})) for v in a["versions"]]
         out.append({"application": a["application"], "read": a["read"], "only": a["only"], "versions": vs,
+                    "totals": a.get("totals"),
                     "raised": len(a["raised"]), "problem": sum(v["crash"] + v["hang"] + v["major_pcs"] for v in vs)})
     out.sort(key=lambda a: (-a["raised"], -a["problem"], a["application"].lower()))
     return out

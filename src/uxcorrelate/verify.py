@@ -1853,6 +1853,9 @@ AI_SW_TRIES = (  # the Software tab's chat (software_chat.TOOLS)
      {"tool": "pcs", "application": "outlook", "version": "16.0.20430"}),  # problem: crash, the default
     ("What are the red flags?", {"tool": "flags", "kind": "all"}),  # all of them (left out: the same)
     ("Which PCs are missing KB5126652?", {"tool": "pcs_without_update", "update": "kb5126652"}),
+    # stage, Nov 2026: answered from the crash red flags, which leave out what is not compared
+    ("Which software crashed the most?", {"tool": "most"}),
+    ("Which Teams version crashed the most?", {"tool": "version_problems", "application": "teams"}),
 )
 AI_OUTSIDE = "What is the weather in Paris today?"  # not in the data: no pick is the right answer
 AI_COUNTS = {"period": "last 7 days", "partial": False,  # made-up counts, to see if they are repeated right

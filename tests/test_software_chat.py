@@ -243,3 +243,28 @@ def test_an_application_not_in_app_usage_is_answered_from_its_crash_events(tmp_p
     assert out["title"] == "Outlook by version" and out["rows"][0][:3] == ["16.1", 40, 12]
     lost = run("version_problems", {"application": "Microsoft Edgy"}, r, v, c, s)  # nothing named like it: said
     assert lost["rows"] == [] and 'with "edgy" in its name' in lost["notes"][0]
+
+
+def test_which_crashed_the_most_is_a_plain_ranking_not_the_red_flags(tmp_path):
+    """Stage, Nov 2026: "which software crashed the most?" was answered from the crash red flags
+    (Outlook, 200 PCs); Trellix ENS, on 415 PCs, is not compared, so it was left out."""
+    data = tables()
+    day1 = data["DEVICE_HEALTH_RAW"][0]["TIMEFRAME"]
+    data["DEVICE_HEALTH_RAW"] += [{"DEVICE_NAME": f"PC-{i:02d}", "APPLICATION_NAME": None,
+                                   "HEALTH_EVENT_NAME": "Application Crash", "HEALTH_EVENT_COMPONENT": "viewer.exe",
+                                   "HEALTH_EVENT_COMPONENT_VERSION": "3.1", "TIMEFRAME": day1} for i in range(1, 21)]
+    r, v, c, s = reader(tmp_path, data)
+    got = run("most", {}, r, v)
+    assert got["title"] == "Applications with the most PCs with a crash" and got["total"] == "3 applications"
+    assert got["rows"] == [["Trellix ENS", 35, 35, "10.7 (30)"],  # every PC listed crashed: never a red flag
+                           ["viewer.exe", 20, None, "3.1 (20)"],  # only in the crash events, with no application
+                           ["Outlook", 14, 60, "16.1 (12)"]]  # each PC once
+    assert any(n.startswith("Trellix ENS: every PC Aternity lists had a crash") for n in got["notes"])
+    assert got["say"].startswith("Most PCs with a crash, last 7 days: Trellix ENS: 35 PCs; viewer.exe: 20 PCs")
+    flagged = run("flags", {"kind": "crash"}, r, v)  # the red flags: Outlook 16.1 only
+    assert [x[0] for x in flagged["rows"]] == ["Outlook"]
+    slow = run("most", {"problem": "slow"}, r, v)
+    assert slow["rows"] == [["Outlook", 25, 60, "16.2 (20)"]] and slow["columns"][1] == "PCs with a Major action"
+    assert run("most", {"problem": "hang"}, r, v)["rows"] == []
+    tool = next(t["function"] for t in sc.TOOLS if t["function"]["name"] == "most")
+    assert "crashed" in tool["description"] and "Not for which application crashed the most" in sc.TOOLS[0]["function"]["description"]

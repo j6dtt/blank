@@ -78,7 +78,7 @@ def test_a_good_service_passes_every_check_and_the_key_is_never_printed():
     assert "right up to 40,000." in checks["explains a long page"].message
     assert len(checks["explains a long page"].rows) == 3
     assert "Right in 6 of 6 tries" in checks["picks the right question"].message
-    assert "Right in 10 of 10 tries" in checks["picks the right question (Software tab)"].message
+    assert "Right in 12 of 12 tries" in checks["picks the right question (Software tab)"].message
     assert "made no pick (right)" in checks["picks the right question"].message
     assert "2 of the 2 counts" in checks["repeats the counts"].message
     assert "k-1" not in text and "AI service:" in text and "All checks passed." in text
@@ -123,11 +123,11 @@ def test_the_software_chats_red_flags_need_all_of_them():
     left_out = dict(PICKS)
     left_out[q] = {"tool": "flags"}  # no kind: the flags block reads it as all of them
     checks, _ = run(picks=left_out)
-    assert "Right in 10 of 10 tries" in checks["picks the right question (Software tab)"].message
+    assert "Right in 12 of 12 tries" in checks["picks the right question (Software tab)"].message
     one_kind = dict(PICKS)
     one_kind[q] = {"tool": "flags", "kind": "crash"}
     c = run(picks=one_kind)[0]["picks the right question (Software tab)"]
-    assert c.ok is False and "Right in 9 of 10 tries" in c.message
+    assert c.ok is False and "Right in 11 of 12 tries" in c.message
     assert any("picked flags(kind=crash); a right pick is flags(kind=all)" in r for r in c.rows)
 
 

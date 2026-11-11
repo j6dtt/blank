@@ -46,7 +46,7 @@ TOOLS = [
     # with the crash flags alone (stage, Nov 2026)
     _tool("flags", "The red flags across all installed software and application versions, or one kind's whole list. "
                    "Not for a question about one named application or program: use version_problems, versions, "
-                   "compare or pcs for those.", {
+                   "compare or pcs for those. Not for which application crashed the most: use most.", {
         "kind": {"type": "string", "enum": ["all"] + list(KIND),
                  "description": "all = every red flag, one line each: use it unless the question asks for one kind. "
                                 "One kind, with its whole list: crash, hang, slow = application versions with "
@@ -54,6 +54,12 @@ TOOLS = [
                                 "Windows updates not on every PC; multi = 2 or more versions of a program on one PC; "
                                 "behind = programs with PCs on a version older than most PCs have (out of date); "
                                 "user = installed for one user only; few = programs on few PCs."}}, ("kind",)),
+    # GPT answered "which software crashed the most?" from the crash red flags (Outlook, 200 PCs),
+    # which leave out an application that is not compared: Trellix ENS, 415 PCs (stage, Nov 2026)
+    _tool("most", "Which applications have the most PCs with a crash, hang time or Major slow actions in the last "
+                  f"{DAYS} days: a plain ranking of every application, raised or not. Use it for \"which software, "
+                  "application or program crashed (hung, was slow) the most\". Not the red flags: those compare an "
+                  "application's own versions.", {"problem": PROB}),
     _tool("versions", "One installed program's versions: the PCs on each, the version most PCs have, the newest, the "
                       "oldest, and the PCs behind.", {"program": PROG}, ("program",)),
     # Nemotron took "Does one Outlook version crash more than the others?" to the crash flags of
@@ -313,6 +319,58 @@ def version_problems(sw: Software, view: dict, args: dict, application: str | No
         return _result("version_problems", args, f"{name}: no crash recorded", _live(), ["Application"], [], notes,
                        say=" ".join(notes[:2]))
     return _by_version(args, a, _live(), [f"Read now: {name} is {daily}."] + a["notes"])
+
+
+def most(sw: Software, view: dict, args: dict, problem: str = "crash") -> dict:
+    """Every application by its PCs with the problem, most first: a plain count, each PC once."""
+    problem = problem if problem in PROBLEM else "crash"
+    snap, rows, only = sw.snap or {}, [], []
+    for a in view.get("versions", []):
+        t = a.get("totals") or {"pcs": sum(v["pcs"] for v in a["versions"]),  # a read from before totals
+                                "crash": sum(v["crash"] for v in a["versions"]),
+                                "hang": sum(v["hang"] for v in a["versions"]),
+                                "action_pcs": sum(v["action_pcs"] for v in a["versions"]),
+                                "slow": sum(v["major_pcs"] for v in a["versions"])}
+        if not t[problem] or ("actions" if problem == "slow" else "usage") not in a["read"]:
+            continue
+        key = "major_pcs" if problem == "slow" else problem
+        top = max(a["versions"], key=lambda v: v[key])
+        rows.append([a["application"], t[problem], t["action_pcs" if problem == "slow" else "pcs"],
+                     f"{top['version']} ({top[key]:,})"])
+        if problem in a["only"]:
+            only.append(a["application"])
+    if problem == "crash":  # and what only Aternity's crash events hold (one version, a program file)
+        have = {r[0] for r in rows}
+        best: dict[str, dict] = {}
+        for e in snap.get("crashes") or []:
+            name = e["application"] or e["part"]
+            if name and (name not in best or e["pcs"] > best[name]["pcs"]):
+                best[name] = e
+        for name, pcs in (snap.get("crash_names") or {}).items():
+            if name not in have and pcs:
+                e = best.get(name)
+                rows.append([name, pcs, None, f"{e['version'] or '(no version)'} ({e['pcs']:,})" if e else None])
+    rows.sort(key=lambda r: (-r[1], str(r[0]).lower()))
+    what = PROBLEM[problem]
+    notes = [f"A plain count, each PC once, most first: every application with {what} in the last {DAYS} days, "
+             "raised or not. A red flag is another question (one version against the application's other versions)."]
+    if only:
+        notes.append(f"{', '.join(only[:5])}{' …' if len(only) > 5 else ''}: every PC Aternity lists had {what} "
+                     "(app usage holds these only where they failed), so \"PCs that ran it\" is not all its PCs.")
+    if problem == "crash":
+        notes.append("\"PCs that ran it\" is empty where the count is from Aternity's crash events alone (an "
+                     "application on one version, or a program file with no application name).")
+        if snap.get("crashes") is None:
+            notes.append("The crash events were not read with the latest read: only applications with 2 versions "
+                         "or more are listed.")
+    if len(rows) > ROWS:
+        notes.append(f"The {ROWS} with the most PCs are shown, of {len(rows)}.")
+    say = (f"Most PCs with {what}, last {DAYS} days: " + "; ".join(f"{r[0]}: {_n(r[1], 'PC')}" for r in rows[:3])
+           + ".") if rows else f"No application had {what} in the last {DAYS} days, by the latest read."
+    return _result("most", args, f"Applications with the most PCs with {what}",
+                   f"the last {DAYS} days, as of the latest read ({view.get('as_of_local')})",
+                   ["Application or program file", f"PCs with {what}", "PCs that ran it", "Version with the most (PCs)"],
+                   rows[:ROWS], notes, total=_n(len(rows), "application"), say=say)
 
 
 def _crashes_like(args: dict, sw: Software, view: dict, client, now: datetime, asked, name: str) -> dict | None:
@@ -592,6 +650,8 @@ def run_block(name: str, args: dict, sw: Software, view: dict, client_of, cfg, k
             return flags(sw, view, args, **take("kind"))
         if name == "versions":
             return versions(sw, view, args, **take("program"))
+        if name == "most":
+            return most(sw, view, args, **take("problem"))
         if name == "version_problems":
             try:
                 return version_problems(sw, view, args, **take("application"), client_of=client_of, known=known, now=now)

@@ -338,6 +338,12 @@ unset `<REQUIRED>` base URLs.
   its crash events by the failing part's version
   (`software.crashes_by_version`: counts, no shares, never raised); the
   chat's known names include the health events' applications (web.py).
+  most (`most`): every application by its PCs with a crash, hang time
+  or Major actions, each PC once (`totals` from `_judged`; for a crash
+  also what only the crash events hold, `snap["crash_names"]`), a plain
+  ranking, raised or not: "which software crashed the most?" had been
+  answered from the crash red flags (Outlook, 200 PCs), which leave out
+  what is not compared (Trellix ENS, 415 PCs: stage, Nov 2026).
   Name search, one rule (`software.words`, `named_like`; the user, Nov
   2026, after three fixes that each looked for an exact name Aternity
   never uses: "DO NOT FIX 'EDGE' SPECIFICALLY"): the telling words of
@@ -393,7 +399,7 @@ unset `<REQUIRED>` base URLs.
   (`verify.verify_ai`, passed on prod for both services: key, reachable,
   login header, plain reply, the right block in 6 tries + no pick outside
   the data, counts repeated right; it tests `chat.TOOLS` and `SYSTEM`,
-  then `software_chat.TOOLS` with `AI_SW_TRIES`, 10 tries covering every
+  then `software_chat.TOOLS` with `AI_SW_TRIES`, 12 tries covering every
   block, not yet on prod).
 - `verify --overview` (`verify._overview`, also at the end of a full verify):
   what a "today's issues" overview could rest on: activity rows an hour,
