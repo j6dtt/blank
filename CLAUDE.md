@@ -320,6 +320,16 @@ unset `<REQUIRED>` base URLs.
   Microsoft Edge), versions by their start (`software.version_of`,
   `starts_with`: "143" = every 143.x). A version is said to crash more
   only when raised (`RULES` note, "Raised" column).
+  version_problems for an application the daily read left out (1 version,
+  under `MIN_PROBLEM`, beyond `APPS_MAX`) reads it now (`software.app_now`,
+  same rows and rules as the daily read: `_app_rows`, `_judged`), asking
+  Aternity for the name as typed when several names have it: "Which
+  version of Microsoft Edge crashed the most?" was answered "several
+  applications have Microsoft Edge" (Edge Update, Edge WebView2) on
+  stage. A note names the version with the most PCs with a crash.
+  compare, before_after, program_split and pcs do the same through
+  `_app` (the name as typed when several have it; `_like` names them
+  when Aternity has nothing).
 - `chat.py`: "Ask about today", under the Today tab (`/api/chat`); its
   question loop `converse` is shared with `software_chat.py`. The AI
   (`ai.chat` by name, else the first of `ai.services`; GPT on prod) picks
@@ -341,12 +351,22 @@ unset `<REQUIRED>` base URLs.
   no worked-out comparison (`RATIO`, "3 times worse"); otherwise our own
   sentence (`say`) is shown, with a note. The counts table is always
   shown. investigate only resolves names (`NameList`, exact or the one
-  match) and a window: its button runs the Investigate tab. Hangs per
+  match) and a window: its button runs the Investigate tab. events and
+  who (what=event) take `app` (only events Aternity recorded with that
+  application; no usual then, it is known for all applications only):
+  without it "how many Outlook crashed today" counted every
+  application's crashes and its who list led to users whose Outlook had
+  not crashed (stage, Nov 2026). One rule for an application's name in
+  every block (`_match`): the exact name, else every name that has it,
+  said in a note. who (what=event) lists every kind the name matches,
+  with an Event column; per day says which kinds it added up. Notes
+  `AFTER_HANG` (an investigation lists that event under hangs) and
+  `EVENTS_ONLY` (hang time from app usage is not an event). Hangs per
   app and software changes are not blocks yet (to measure with verify).
 - `ai.py`: client for the self-hosted AI services (`ai.services` in
   config.yaml, key from the env var named in `key_env`). OpenAI-style API
   (`verify.verify_ai`, passed on prod for both services: key, reachable,
-  login header, plain reply, the right block in 4 tries + no pick outside
+  login header, plain reply, the right block in 6 tries + no pick outside
   the data, counts repeated right; it tests `chat.TOOLS` and `SYSTEM`,
   then `software_chat.TOOLS` with `AI_SW_TRIES`, 10 tries covering every
   block, not yet on prod).
@@ -377,7 +397,7 @@ unset `<REQUIRED>` base URLs.
   (`docs/software-tab.md`, decisions taken 2026-11-10). Checks for prod are verify options, never pasted
   scripts: the user cannot paste on the prod hosts.
 - `explain.py`: "Explain this page" (docs/explain-this-page.md, agreed
-  2026-11-10; steps 1-2 of 4 so far): a panel's own lines
+  2026-11-10; all 4 steps built): a panel's own lines
   plus our meaning of each term on its tab (`GLOSSARY`, `COMMON`: the one
   place a term's meaning is written, built from the code's constants;
   the user reviews it) are given to the AI, which words them (`SYSTEM`,
@@ -394,8 +414,12 @@ unset `<REQUIRED>` base URLs.
   answer becomes `our_words` (the meanings of the terms asked about,
   then the panel's). "Explain ▸" (`button.explain`, `data-tab`) at the
   bottom right of a panel, one dialog (`explainNow`), with a question
-  box; "Ask about this page" under the Care list. Nothing saved.
-  Steps 3-4: Investigate + Slow start-ups, Software.
+  box; "Ask about this page" (`form.askPage`, `data-tab`/`data-scope`)
+  under the Care list, the start-ups and an investigation (the whole tab
+  as shown). Nothing saved. Steps 3-4 (2026-11-11): the link is added by
+  script to every panel of Software, Investigate and Slow start-ups; a
+  button's text is sent only when it is a name shown as a link (an
+  issue, a program). Software keeps "Ask about software" for counts.
 - `status.py`: the connection lights at the right of the top bar
   (`/api/status`, user's request 2026-11-10): Aternity, NetIM and each
   `ai.services` entry, one small read each every `CHECK_EVERY_S` (60) by

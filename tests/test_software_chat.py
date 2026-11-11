@@ -74,7 +74,7 @@ def test_a_programs_versions_and_an_applications_problems_per_version(tmp_path):
     assert p["say"].startswith("Outlook, last 7 days: 16.1: a crash on 12 of 40 PCs")
     t = run("version_problems", {"application": "Trellix ENS"}, r, v)
     assert "no share is compared" in t["notes"][1] and all(row[6] == "" for row in t["rows"])
-    assert "not among the applications read per version" in run("version_problems", {"application": "Word"}, r, v)["say"]
+    assert "Word is not among the 2 applications read every day" in run("version_problems", {"application": "Word"}, r, v)["say"]
     every = run("version_problems", {}, r, v)
     assert [row[0] for row in every["rows"]] == ["Outlook", "Trellix ENS"] and every["rows"][0][5] == 2
 
@@ -152,3 +152,47 @@ def test_the_endpoint(monkeypatch, tmp_path):
     empty = tmp_path / "empty.yaml"
     empty.write_text("{}\n")
     assert TestClient(web.create_app(str(empty))).post("/api/software/chat", json={"question": q}).status_code == 503
+
+
+def test_an_application_the_daily_read_left_out_is_read_now_by_its_exact_name(tmp_path):
+    """Stage, Nov 2026: "Which version of Microsoft Edge crashed the most?" was answered "several
+    applications have Microsoft Edge: ask with the full name" (Microsoft Edge Update, Microsoft Edge
+    WebView2): the browser itself was not among the applications read every day."""
+    data = tables()
+
+    def use(app, i, version, crashes):
+        return {"DEVICE_NAME": f"PC-{i:02d}", "APPLICATION_NAME": app, "APPLICATION_VERSION": version,
+                "TIMEFRAME": data["APPLICATIONS_DAILY"][0]["TIMEFRAME"], "APPLICATION_CRASHES_TOTAL": crashes,
+                "APPLICATION_HANG_TIME_TOTAL": 0}
+    for app in ("Microsoft Edge Update", "Microsoft Edge WebView2"):
+        data["APPLICATIONS_DAILY"] += [use(app, i, "1.0" if i <= 5 else "2.0", 1) for i in range(1, 11)]
+    data["APPLICATIONS_DAILY"] += [use("Microsoft Edge", i, "156.0" if i <= 30 else "152.0", 1 if i in (2, 31, 32) else 0)
+                                   for i in range(1, 41)]  # 3 crashes: under the 5 the daily read needs
+    r, v, c, s = reader(tmp_path, data)
+    assert "Microsoft Edge" not in v["applications"] and "Microsoft Edge Update" in v["applications"]
+    for known in (["Microsoft Edge"], []):  # in today's activity or not: Aternity is asked for the exact name
+        got = run("version_problems", {"application": "Microsoft Edge"}, r, v, c, s, known)
+        assert got["title"] == "Microsoft Edge by version" and "read from Aternity now" in got["period"]
+        assert got["rows"] == [["156.0", 30, 1, 0, 0, 0, ""], ["152.0", 10, 2, 0, 0, 0, ""]]  # no action of it is measured
+        assert got["notes"][0].startswith("Read now: Microsoft Edge is not among the 4 applications read every day")
+        assert "The most PCs with a crash: version 152.0, 2 of the 10 PCs that ran it" in got["notes"][-1]
+    word = run("version_problems", {"application": "word"}, r, v, c, s, ["Word"])
+    assert word["rows"] == [["16.1", 29, 29, 0, 0, 0, ""]]
+    several = run("version_problems", {"application": "edge"}, r, v, c, s)  # no application is named "edge"
+    assert several["rows"] == [["Microsoft Edge Update"], ["Microsoft Edge WebView2"]]
+    assert several["notes"][0].startswith('No application is named exactly "edge"; several have it in their name')
+    none = run("version_problems", {"application": "Java"}, r, v, c, s)
+    assert none["title"] == "Java: nothing per version" and none["rows"] == []
+    assert 'no use of an application named exactly "Java"' in none["notes"][0]
+    assert "The installed list has a program of that name" in none["notes"][-1]
+    # the other read-now blocks ask for the exact name too, and name the ones like it when there is nothing
+    cmp = run("compare", {"application": "Microsoft Edge"}, r, v, c, s)
+    assert cmp["title"] == "Microsoft Edge: 156.0 against 152.0" and cmp["rows"][0] == ["PCs with a crash", 1, 30, 2, 10]
+    lost = run("compare", {"application": "edge"}, r, v, c, s)
+    assert lost["title"] == "edge: nothing to compare"
+    assert 'No application is named exactly "edge"' in lost["notes"][-1] and "Microsoft Edge Update" in lost["notes"][-1]
+    assert "Microsoft Edge WebView2" in run("before_after", {"application": "edge"}, r, v, c, s)["notes"][-1]
+    assert run("pcs", {"application": "Microsoft Edge", "version": "152.0", "problem": "crash"}, r, v, c, s)["total"] == "2 PCs"
+    out = run("version_problems", {"application": "Outlook"}, r, v, c, s)  # one of the daily ones: not read again
+    assert out["rows"][0][:3] == ["16.1", 40, 12] and "read from Aternity now" not in out["period"]
+    assert "The most PCs with a crash: version 16.1, 12 of the 40" in " ".join(out["notes"])

@@ -429,14 +429,16 @@ class Today:
                 "none": none, "hours": per_hour, "applications": app_rows, "events": events,
                 "health_days": len(before), "notes": notes, "refresh_minutes": REFRESH_MIN}
 
-    def who(self, now: datetime, kind: str, name: str = "", category: str = "") -> dict:
+    def who(self, now: datetime, kind: str, name: str = "", category: str = "", kinds: set | None = None,
+            apps: set | None = None) -> dict:
         """The users and PCs behind a tile or a row (kind: "slow", "app" or "event"), with
         the time span to investigate. Most first, WHO at most."""
         t = self.day(now)
         with self.lock:
             if kind == "event":
-                rows = [(x[0], x[1], x[4]) for x in self.health
-                        if self.day(x[0]) == t and x[2] == (category, name)]
+                want = kinds or {(category, name)}  # the chat: several kinds, some applications only
+                rows = [(x[0], x[1], x[4], x[2][1]) for x in self.health
+                        if self.day(x[0]) == t and x[2] in want and (apps is None or x[5] in apps)]
             else:
                 rows = [r for h in self.hours.values() if h.day == t for r in h.top_rows
                         if kind == "slow" or r[3] == name]
@@ -452,14 +454,19 @@ class Today:
                    "first": self.local(first).strftime("%H:%M"), "last": self.local(last).strftime("%H:%M"),
                    "start": (first - pad).isoformat().replace("+00:00", "Z"),
                    "end": min(last + pad, now).replace(microsecond=0).isoformat().replace("+00:00", "Z")}
-            if kind != "event":
+            if kind == "event":
+                row["events"] = sorted({r[3] for r in rs})
+            else:
                 worst = max(rs, key=lambda r: r[5] if r[5] is not None else -1)
                 row.update(application=worst[3], activity=worst[4], seconds=worst[5])
             out.append(row)
         out.sort(key=lambda r: (-r["count"], -(r.get("seconds") or 0), r["last"]))
-        what = (f"{name} ({category})" if kind == "event" else
+        named = sorted(k[1] for k in kinds) if kinds else []
+        event = (f"{name} ({category})" if not named else named[0] if len(named) == 1 else
+                 f"{len(named)} kinds of event") + (f", of {', '.join(sorted(apps)[:3])}" if apps else "")
+        what = (event if kind == "event" else
                 f"{TOP_STATUS} slow actions" + (f" in {name}" if kind == "app" else ""))
-        return {"kind": kind, "what": what, "application": name if kind == "app" and name != NO_APP else None,
+        return {"kind": kind, "what": what, "kinds": named, "application": name if kind == "app" and name != NO_APP else None,
                 "total": len(out), "pcs": len({r["device"] for r in out}),
                 "users": len({r["username"] for r in out if r["username"]}), "rows": out[:WHO],
                 "zone": self.zone_label}

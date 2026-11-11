@@ -1836,6 +1836,9 @@ AI_TRIES = (
     ("Which users had the most slow actions in Microsoft Outlook today?",
      {"tool": "who", "what": "slow", "app": "outlook"}),
     ("Investigate the user mossley", {"tool": "investigate", "username": "mossley"}),
+    # stage, Nov 2026: an application named with a crash needs app (the count was every application's)
+    ("How many PCs had a Microsoft Outlook crash today?", {"tool": "events", "app": "outlook"}),
+    ("Who had a Microsoft Outlook crash today?", {"tool": "who", "what": "event", "app": "outlook"}),
 )
 AI_SW_TRIES = (  # the Software tab's chat (software_chat.TOOLS)
     ("Which programs are most out of date?", {"tool": "flags", "kind": "behind"}),

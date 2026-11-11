@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from uxcorrelate import ai, web
 from uxcorrelate.ai import AiClient
-from uxcorrelate.chat import NO_COUNT, ask, chat_service, events, investigate, run_block, slow_actions, who
+from uxcorrelate.chat import AFTER_HANG, EVENTS_ONLY, NO_COUNT, TOOLS, ask, chat_service, events, investigate, run_block, slow_actions, who
 from uxcorrelate.config import AiService, Settings
 from uxcorrelate.names import NameList
 from uxcorrelate.today import HOUR, Today
@@ -70,17 +70,19 @@ def test_slow_actions_by_application_today_and_with_the_nights_saved_counts():
     three = slow_actions(filled(), NOW, "app", days=4)  # Fri saved; Sat, Sun not
     assert three["rows"][0] == ["Mail", 8, 53, 15] and three["rows"][1] == ["ERP", 3, 23, 13]
     assert "2 of the 3 days before have no saved counts" in three["notes"][0]
-    mail = slow_actions(filled(), NOW, "app", app="mail")  # any case, part of the name: both Mail apps
+    mail = slow_actions(filled(), NOW, "app", app="mai")  # part of the name, any case: both Mail apps, said
     assert [r[0] for r in mail["rows"]] == ["Mail", "Mail Viewer"] and "matches 2 applications" in mail["notes"][0]
+    exact = slow_actions(filled(), NOW, "app", app="mail")  # the exact name wins: not Mail Viewer too
+    assert [r[0] for r in exact["rows"]] == ["Mail"] and not any("matches" in n for n in exact["notes"])
 
 
 def test_slow_actions_per_hour_activity_and_day():
     t = filled()
     hours = slow_actions(t, NOW, "hour")
     assert hours["rows"] == [["09:00", 4, None], ["14:00", 1, None]]
-    acts = slow_actions(t, NOW, "activity", app="Mail", days=3)
+    acts = slow_actions(t, NOW, "activity", app="Mai", days=3)
     assert acts["rows"] == [["Mail Launch", 1, 1, 40.0], ["Mail Open", 1, 1, 12.0],  # most first, then by name
-                            ["Mail Viewer Open", 1, 1, 5.0]]  # "Mail" fits Mail Viewer too
+                            ["Mail Viewer Open", 1, 1, 5.0]]  # "Mai" fits Mail Viewer too
     assert "for today only" in acts["notes"][-1] and acts["period"].startswith("today")
     days = slow_actions(t, NOW, "day", days=4)
     assert days["rows"] == [["Mon Nov 09 (so far)", 5, 4, 4], ["Sun Nov 08", None, None, None],
@@ -134,6 +136,40 @@ def test_events_by_event_day_and_application():
     assert apps["rows"][0] == ["Mail", 3, "Application Crash"] and ["ERP", 1, "Application Crash"] in apps["rows"]
     assert ["(no application)", 1, "System Crash"] in apps["rows"] and any("no application" in n for n in apps["notes"])
     assert events(t, NOW, severity="critical")["rows"][0][0] == "System Crash"
+
+
+def test_events_and_who_of_one_application_only():
+    """Stage, Nov 2026: "how many Outlook crashed today" counted every application's crashes, and the
+    who list led to a user whose Outlook had not crashed: neither block could take an application."""
+    t = filled()
+    r = events(t, NOW, name="crash", app="erp")
+    assert r["title"] == 'PCs with "crash" events of ERP, by event' and r["columns"] == ["Event", "Category", "Severity", "PCs"]
+    assert r["rows"] == [["Application Crash", "Application", "Major", 1]]  # PC3 only, not Mail's VD-1; no usual
+    assert EVENTS_ONLY in r["notes"] and AFTER_HANG not in r["notes"]
+    days = events(t, NOW, "day", app="mail", days=4)
+    assert days["rows"][0] == ["Mon Nov 09 (so far)", 1] and days["rows"][-1] == ["Fri Nov 06", 2]
+    none = events(t, NOW, app="outlook")
+    assert none["rows"] == [] and 'No application named like "outlook"' in none["notes"][0]
+    w = who(t, NOW, "event", app="ERP", name="application crash")
+    assert [x[1] for x in w["rows"]] == ["PC3"]
+    assert EVENTS_ONLY in w["notes"] and w["title"] == "Users and PCs: Application Crash, of ERP"
+    assert [x[1] for x in who(t, NOW, "event", name="application crash")["rows"]] == ["VD-1", "PC3"]
+    assert who(t, NOW, "event", app="outlook", name="crash")["rows"] == []
+    # two kinds with "crash" in their name: both listed, each row saying which; per day they are told
+    t.set_health([ev(NOW - HOUR, "VD-1", "Application Crash", "Major", "Mail"),
+                  ev(NOW - HOUR, "PC7", "Application Crash (After Hang)", "Major", "Mail Viewer"),
+                  ev(NOW - HOUR, "PC3", "Application Crash", "Major", "ERP")], H, today=True)
+    both = who(t, NOW, "event", name="application crash")
+    assert both["columns"] == ["User", "PC", "Times", "Event", "When"] and AFTER_HANG in both["notes"]
+    assert sorted(x[3] for x in both["rows"]) == ["Application Crash", "Application Crash", "Application Crash (After Hang)"]
+    assert "matches 2 kinds of event, all listed" in both["notes"][0]
+    assert [x[1] for x in who(t, NOW, "event", name="crash", app="mail")["rows"]] == ["VD-1"]  # not Mail Viewer's PC7
+    assert sorted(x[1] for x in who(t, NOW, "event", name="crash", app="mai")["rows"]) == ["PC7", "VD-1"]
+    per_day = events(t, NOW, "day", name="application crash")
+    assert per_day["rows"][0][1] == 3 and "matches 2 kinds of event, counted together" in per_day["notes"][0]
+    assert events(t, NOW, name="crash", app="mail")["rows"] == [["Application Crash", "Application", "Major", 1]]
+    tool = next(x["function"] for x in TOOLS if x["function"]["name"] == "events")
+    assert "app" in tool["parameters"]["properties"]
 
 
 def test_the_events_usual_in_one_note_more_than_usual_first():

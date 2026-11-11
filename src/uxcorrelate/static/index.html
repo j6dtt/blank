@@ -267,8 +267,8 @@
     </section>
     <section class="panel noExplain" style="margin-top:16px">
       <h2>Ask about this page</h2>
-      <form id="cAskForm" class="chatForm" autocomplete="off">
-        <input id="cAskQ" maxlength="500" placeholder="e.g. What does &quot;their usual by now&quot; mean?">
+      <form class="chatForm askPage" data-tab="care" data-scope="careBox" data-name="Care list" autocomplete="off">
+        <input maxlength="500" placeholder="e.g. What does &quot;their usual by now&quot; mean?">
         <button>Ask</button>
       </form>
       <p class="muted" style="font-size:12px;margin:10px 0 0">The AI is given the Care list as shown above and our written
@@ -333,7 +333,7 @@
         <datalist id="sProgs"></datalist>
         <div id="sProg"></div>
       </section>
-      <section class="panel" id="sChat" style="margin-top:16px">
+      <section class="panel noExplain" id="sChat" style="margin-top:16px">
         <div class="todayHead"><h2>Ask about software</h2><span class="muted" id="sChatWho"></span></div>
         <form id="sChatForm" class="chatForm" autocomplete="off">
           <input name="q" id="sChatQ" maxlength="500" placeholder="e.g. Which programs are most out of date?">
@@ -391,6 +391,15 @@
     <section class="panel" id="lLocPanel" style="margin-top:16px">
       <h2>By location</h2>
       <div class="tableWrap scroll"><table id="lLoc"></table></div>
+    </section>
+    <section class="panel noExplain" style="margin-top:16px">
+      <h2>Ask about this page</h2>
+      <form class="chatForm askPage" data-tab="startups" data-scope="lout" data-name="Slow start-ups" autocomplete="off">
+        <input maxlength="500" placeholder="e.g. What took the time on the slowest start-ups?">
+        <button>Ask</button>
+      </form>
+      <p class="muted" style="font-size:12px;margin:10px 0 0">The AI is given the start-ups as shown above and our written
+        meaning of each term, and puts them in plain English. It reads nothing else; nothing is saved.</p>
     </section>
   </div>
   <div id="out" hidden>
@@ -450,6 +459,15 @@
       <div class="tableWrap"><table id="problems"></table></div>
       <button type="button" class="link" id="otherBtn"></button>
       <div class="tableWrap" id="otherBox" hidden><table id="others"></table></div>
+    </section>
+    <section class="panel noExplain" style="margin-top:16px">
+      <h2>Ask about this investigation</h2>
+      <form class="chatForm askPage" data-tab="investigate" data-scope="out" data-name="Investigation" autocomplete="off">
+        <input maxlength="500" placeholder="e.g. What is the first thing IT should do, and why?">
+        <button>Ask</button>
+      </form>
+      <p class="muted" style="font-size:12px;margin:10px 0 0">The AI is given the whole investigation as shown above and our
+        written meaning of each term, and puts them in plain English. It reads nothing else; nothing is saved.</p>
     </section>
     <button type="button" class="link" id="detBtn" style="margin-top:12px">Details for IT ▸</button>
     <section class="panel" id="details" hidden style="margin-top:12px">
@@ -1673,7 +1691,9 @@ function shown(root) {
     if (node.nodeType !== 1) return;
     const tag = node.tagName.toUpperCase();
     if (node.hidden || node.classList.contains("noExplain") || node.classList.contains("more")
-        || /^(BUTTON|INPUT|SELECT|TEXTAREA|SCRIPT|STYLE)$/.test(tag) || getComputedStyle(node).display === "none") return;
+        || /^(INPUT|SELECT|TEXTAREA|SCRIPT|STYLE)$/.test(tag) || getComputedStyle(node).display === "none") return;
+    // a button is left out unless it is a name shown as a link (an issue, a program): not "Show who ▸", "✕ Close"
+    if (tag === "BUTTON" && !(node.classList.contains("link") && !/[▸▾…]\s*$|^\s*[✕+]/.test(node.textContent))) return;
     if (tag === "SVG") {  // a chart: what each of its bars says when pointed at
       const tips = [...node.querySelectorAll("title")].map((t) => t.textContent.trim()).filter(Boolean);
       if (tips.length) cur += ` [${node.getAttribute("aria-label") || "chart"}: ${tips.join("; ")}] `;
@@ -1721,8 +1741,9 @@ async function explainNow(tab, panel, lines, question) {
 document.addEventListener("click", (ev) => {
   const b = ev.target.closest("button.explain");
   if (!b) return;
-  const panel = b.closest(".panel"), title = panel.querySelector("h2");
-  explainNow(b.dataset.tab, title ? title.textContent.trim() : "", shown(panel));
+  const panel = b.closest(".panel"), title = panel.querySelector("h2, .atitle");
+  const name = panel.id === "aCard" ? "The answer (headline)" : title ? title.textContent.trim() : "This panel";
+  explainNow(b.dataset.tab, name, shown(panel));
 });
 $("dlgBody").addEventListener("submit", (ev) => {
   if (ev.target.id !== "exForm") return;
@@ -1730,13 +1751,18 @@ $("dlgBody").addEventListener("submit", (ev) => {
   const q = $("exQ").value.trim();
   if (q && explaining) explainNow(explaining.tab, explaining.panel, explaining.lines, q);
 });
-$("cAskForm").addEventListener("submit", (ev) => {
+document.querySelectorAll("form.askPage").forEach((f) => f.addEventListener("submit", (ev) => {  // a whole tab as shown
   ev.preventDefault();
-  const q = $("cAskQ").value.trim();
+  const box = f.querySelector("input"), q = box.value.trim();
   if (!q) return;
-  $("cAskQ").value = "";
-  explainNow("care", "Care list", shown($("careBox")), q);
-});
+  box.value = "";
+  explainNow(f.dataset.tab, f.dataset.name, shown($(f.dataset.scope)), q);
+}));
+// Software, Investigate and Slow start-ups: the same link at the bottom right of every panel that shows data
+for (const [box, tab] of [["softBox", "software"], ["out", "investigate"], ["lout", "startups"]]) {
+  $(box).querySelectorAll("section.panel:not(.noExplain)").forEach((p) => p.insertAdjacentHTML("beforeend",
+    `<div class="exRow noExplain"><button type="button" class="link explain" data-tab="${tab}">Explain ▸</button></div>`));
+}
 $("sSummaryBtn").addEventListener("click", async () => {
   const b = $("sSummaryBtn"); b.disabled = true; b.textContent = "Writing the summary…";
   try {

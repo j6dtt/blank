@@ -107,9 +107,21 @@ GLOSSARY: dict[str, dict[str, str]] = {
                         f"on that PC from its first record, looked for up to {DISK_BACK.days} days before.",
         "right after a start-up": f"An action up to {after_start.AFTER_START_MIN} minutes after a start-up of "
                                   "its PC, compared with the same action later on all PCs of that kind.",
-        "What changed": "The software installed, updated or removed on each PC, from Aternity's change log.",
+        "What changed": "The software installed, updated or removed on each PC, from Aternity's change log, "
+                        "from 14 days before the time asked for to its end. An issue names a change only when "
+                        "it matches the part that failed.",
         "What to do": "The steps for IT, the most important first.",
         "checked": "What was looked at and ruled out, with counts.",
+        "Other things on": "Problems found on the user's PCs that were not counted for a slow action, so they "
+                           "are not part of the answer at the top. Each says why.",
+        "Widespread": "How far an issue reaches on other PCs. It does not say that it is, or is not, the cause "
+                      "here.",
+        "Compared with normal": "Each slow action next to the user's own usual time for it, and whether "
+                                "Aternity marked most of its runs slow on some days, and since when.",
+        "Timeline": "Every action of the user and every problem found, in time order. A faded mark was not "
+                    "near a slow action.",
+        "Problems found": "The full list of problems found, one row each, with the slow actions each was "
+                          "counted for.",
     },
     "startups": {
         "start-up": "A start of Windows or a logon as Aternity measured it. Rows of one PC within an hour are "
@@ -122,6 +134,7 @@ GLOSSARY: dict[str, dict[str, str]] = {
         "what took the time": "The part of the start-up (a start-up program, a policy, the profile) that "
                               "Aternity marked as the most longer than normal.",
         "main causes": "A part that was longer than normal on every PC that had it, not on one PC only.",
+        "By location": "The same start-ups grouped by the location Aternity gives each PC.",
     },
     "software": {
         "Software tab": f"What Aternity lists as installed on the PCs, read once a day, and each application's "
@@ -144,6 +157,16 @@ GLOSSARY: dict[str, dict[str, str]] = {
         f"On {software.FEW_PCS} PCs or fewer": f"Programs found on {software.FEW_PCS} PCs or fewer in the "
                                                "whole company.",
         "new": "The flag was not there on the day before.",
+        "Compare versions": "Two versions of one application side by side, read from Aternity when asked: the "
+                            f"PCs with a crash, with hang time, with each kind of health event, and the actions "
+                            f"rated {TOP_STATUS}, each out of that version's PCs or actions. Side by side, not "
+                            "judged: only a red flag says a version is worse.",
+        "Before and after an update": f"The same PCs before and after their version of an application changed "
+                                      f"once in the last {software.UPDATE_DAYS} days: their days with a crash "
+                                      "or hang time on each side.",
+        "Programs by how many PCs have them": "How many programs are on 1 PC, on a few, on many. A click lists "
+                                              "the programs of a column.",
+        "A program": "One installed program: the PCs on each of its versions, and the PCs behind.",
         "PCs per day": f"Small bars: the flag's PCs on each saved day (kept {software.KEEP_DAYS} days).",
     },
 }
@@ -160,6 +183,8 @@ SYSTEM = (f"You explain one panel of a web page to IT staff in plain English. Th
           f"numbers that are in the lines, written exactly as given, and do not work out new ones (no sums, no "
           f"percentages, no \"twice as many\"). If the lines and meanings do not answer the question, say so in "
           f"one sentence.")
+# our own "2 times the share" said as "twice" is not a comparison of the model's (Nemotron, stage)
+SAME = {"twice": ("2 times", "two times"), "double": ("2 times", "two times")}
 NO_ANSWER = "The panel's lines and the meanings of its terms do not answer that."
 
 
@@ -191,7 +216,8 @@ def refused(text: str, tab: str, panel: str, lines: list[str], question: str) ->
         return "a number that is not on the panel (" + ", ".join(f"{x:g}" for x in sorted(extra)[:3]) + ")"
     have = plain(given(tab, panel, lines) + " " + question)
     for ratio in RATIO.finditer(text):  # "half the start-ups took less" is our own meaning of typical
-        if plain(ratio.group(0)) not in have:
+        said = plain(ratio.group(0))
+        if said not in have and not any(x in have for x in SAME.get(said, ())):
             return f"a comparison the panel does not give (\"{ratio.group(0)}\")"
     return None
 

@@ -77,3 +77,10 @@ answer, who wrote it (the AI, or our meanings and why), and a box for a
 question about that panel. The Care list also has "Ask about this page"
 at its bottom (the whole tab as shown). Today keeps "Ask about today".
 With no AI service set, the answer is our own written meanings.
+
+## Steps 3 and 4 (Investigate, Slow start-ups, Software), 2026-11-11
+
+The same "Explain ▸" is on every panel of these tabs (added by the page's
+script). An investigation and the start-ups each have an "Ask about this
+…" box for the whole tab as shown (a whole investigation fits: measured).
+Software keeps "Ask about software" for counts; its panels have the link.

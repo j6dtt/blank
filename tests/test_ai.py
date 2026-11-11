@@ -77,7 +77,7 @@ def test_a_good_service_passes_every_check_and_the_key_is_never_printed():
     assert "Right for 10 of 10 made-up panels" in checks["explains a panel"].message
     assert "right up to 40,000." in checks["explains a long page"].message
     assert len(checks["explains a long page"].rows) == 3
-    assert "Right in 4 of 4 tries" in checks["picks the right question"].message
+    assert "Right in 6 of 6 tries" in checks["picks the right question"].message
     assert "Right in 10 of 10 tries" in checks["picks the right question (Software tab)"].message
     assert "made no pick (right)" in checks["picks the right question"].message
     assert "2 of the 2 counts" in checks["repeats the counts"].message
@@ -112,7 +112,7 @@ def test_wrong_picks_and_a_pick_for_an_outside_question_fail_with_what_it_picked
     picks[AI_OUTSIDE] = {"tool": "events"}
     checks, _ = run(picks=picks)
     c = checks["picks the right question"]
-    assert c.ok is False and "Right in 3 of 4 tries" in c.message and "made a pick (wrong)" in c.message
+    assert c.ok is False and "Right in 5 of 6 tries" in c.message and "made a pick (wrong)" in c.message
     assert any(first in r and "picked events(group_by=day, days=7); a right pick is events(group_by=event, days=7)"
                in r for r in c.rows)
 
@@ -191,6 +191,9 @@ def test_explain_our_own_words_and_a_no_break_space_are_not_held_against_a_model
     assert explain.refused("Typical is the middle value: half the start-ups took less.", tab, panel, lines, q) is None
     assert explain.refused("1 in 10 over: 90% of start-ups took less than that.", tab, panel, lines, q) is None
     assert "Half the" in explain.refused("Half the PCs are slow.", "today", "P", ["318 on 141 PCs"], "Explain.")
+    flag = next(x for x in explain.SAMPLES if x[1] == "Red flag: Crashes more")
+    assert explain.refused("A version is raised when it crashes at twice the share of the others.", *flag[:4]) is None
+    assert "twice" in explain.refused("That is twice their usual.", "care", "P", ["14 by 10:15"], "Why?")
     assert explain.says("Look at Sample\u00a0ERP first.", ("sample erp",)) and explain.odd("Sample\u00a0ERP") == "U+00A0"
     assert not explain.says("Look at the mail first.", ("sample erp",)) and explain.odd("plain") == ""
 

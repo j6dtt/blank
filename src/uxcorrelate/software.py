@@ -332,49 +332,73 @@ def _versions(q: _Reads, now: datetime, say) -> dict:
         if len(cands) > APPS_MAX:
             q.notes.append(f"{len(cands)} applications have {problem} on 2 versions or more; the {APPS_MAX} with "
                            "the most were compared.")
-        virt = s.get("virtual") if q.has(E, s.get("virtual")) else None
         for i, a in enumerate(cands[:APPS_MAX]):
             say(f"Reading application versions on {problem}: {i} of {min(len(cands), APPS_MAX)} applications")
-            sel = [s["device"], V] + cols[2:] + ([virt] if virt else [])
-            rows = q.rows(E, f"{a}, per PC and version", select=sel, top=LIST_ROWS * 2,
-                          filter=f"{_span(s, start, now)} and {A} eq {odata_quote(a)}")
-            if rows is None:
-                continue
-            read.setdefault(a, set()).add(key)
-            vs = apps.setdefault(a, {})
-            for r in rows:
-                v, d = r.get(V), r.get(s["device"])
-                if v is None or d is None:
-                    continue
-                x = vs.setdefault(str(v), _blank())
-                if key == "usage":
-                    x["pcs"].add(d)
-                    if (to_float(r.get(s["crashes"])) or 0) > 0:
-                        x["crash"].add(d)
-                    if (to_float(r.get(s["hang_time"])) or 0) > 0:
-                        x["hang"].add(d)
-                    if virt and is_virtual(r.get(virt)):
-                        x["virtual"].add(d)
-                else:
-                    n = to_float(r.get(s["volume"]))
-                    n = 1.0 if n is None else n
-                    x["apcs"].add(d)
-                    x["actions"] += n
-                    if r.get(s["status"]) == TOP_STATUS:
-                        x["major"] += n
-                        x["major_pcs"].add(d)
-                    if virt and is_virtual(r.get(virt)):
-                        x["avirtual"].add(d)
-    out = {}
-    for a, vs in apps.items():
-        rows = [{"version": v, "pcs": len(x["pcs"]), "crash": len(x["crash"]), "hang": len(x["hang"]),
-                 "virtual": len(x["virtual"]), "action_pcs": len(x["apcs"]), "action_virtual": len(x["avirtual"]),
-                 "actions": int(round(x["actions"])), "major": int(round(x["major"])),
-                 "major_pcs": len(x["major_pcs"])} for v, x in vs.items()]
-        rows.sort(key=lambda r: (-max(r["pcs"], r["action_pcs"]), order(r["version"])))
-        out[a] = {"application": a, "read": sorted(read.get(a, ())), "versions": rows}
-        judge(out[a])
-    return out
+            if _app_rows(q, key, a, start, now, apps.setdefault(a, {})):
+                read.setdefault(a, set()).add(key)
+    return {a: _judged(a, vs, read.get(a, ())) for a, vs in apps.items() if a in read}
+
+
+def _app_rows(q: _Reads, key: str, a: str, start: datetime, now: datetime, vs: dict) -> bool:
+    """One application's rows of one source (VERSION_SOURCES), per PC and version, added to
+    `vs`; False when they could not be read."""
+    s = VERSION_SOURCES[key]
+    E, V = s["entity"], s["version"]
+    if (q.schema is not None and E not in q.schema) or not q.has(E, V):
+        return False
+    virt = s.get("virtual") if q.has(E, s.get("virtual")) else None
+    sel = [s["device"], V] + ([s["crashes"], s["hang_time"]] if key == "usage" else [s["status"], s["volume"]]) \
+        + ([virt] if virt else [])
+    rows = q.rows(E, f"{a}, per PC and version", select=sel, top=LIST_ROWS * 2,
+                  filter=f"{_span(s, start, now)} and {s['application']} eq {odata_quote(a)}")
+    if rows is None:
+        return False
+    for r in rows:
+        v, d = r.get(V), r.get(s["device"])
+        if v is None or d is None:
+            continue
+        x = vs.setdefault(str(v), _blank())
+        if key == "usage":
+            x["pcs"].add(d)
+            if (to_float(r.get(s["crashes"])) or 0) > 0:
+                x["crash"].add(d)
+            if (to_float(r.get(s["hang_time"])) or 0) > 0:
+                x["hang"].add(d)
+            if virt and is_virtual(r.get(virt)):
+                x["virtual"].add(d)
+        else:
+            n = to_float(r.get(s["volume"]))
+            n = 1.0 if n is None else n
+            x["apcs"].add(d)
+            x["actions"] += n
+            if r.get(s["status"]) == TOP_STATUS:
+                x["major"] += n
+                x["major_pcs"].add(d)
+            if virt and is_virtual(r.get(virt)):
+                x["avirtual"].add(d)
+    return True
+
+
+def _judged(a: str, vs: dict, read) -> dict:
+    rows = [{"version": v, "pcs": len(x["pcs"]), "crash": len(x["crash"]), "hang": len(x["hang"]),
+             "virtual": len(x["virtual"]), "action_pcs": len(x["apcs"]), "action_virtual": len(x["avirtual"]),
+             "actions": int(round(x["actions"])), "major": int(round(x["major"])),
+             "major_pcs": len(x["major_pcs"])} for v, x in vs.items()]
+    rows.sort(key=lambda r: (-max(r["pcs"], r["action_pcs"]), order(r["version"])))
+    app = {"application": a, "read": sorted(read), "versions": rows}
+    judge(app)
+    return app
+
+
+def app_now(client, now: datetime, application: str) -> dict:
+    """One application per version, read now, in the daily read's shape (judged by the same
+    rules): for one the daily read left out (1 version, too few problems, or beyond APPS_MAX)."""
+    notes: list[str] = []
+    q = _Reads(client, notes)
+    vs: dict = {}
+    read = [key for key in ("usage", "actions") if _app_rows(q, key, application, now - timedelta(days=DAYS), now, vs)]
+    app = _judged(application, vs, read)
+    return dict(_versions_view({application: app})[0], notes=notes, error=q.error if not read else "")
 
 
 def judge(app: dict) -> None:

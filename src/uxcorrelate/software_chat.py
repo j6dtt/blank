@@ -21,12 +21,12 @@ has the words asked, else the one that ends with them ("Edge": Microsoft Edge).
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from .chat import ROWS, _n, _result, _tool, converse
 from .config import SOFTWARE_OS_UPDATE, TOP_STATUS
 from .http import ApiError
-from .software import (DAYS, FEW_PCS, KIND, MIN_PCS, MIN_PROBLEM, RATIO, UPDATE_DAYS, Software, before_after,
+from .software import (DAYS, FEW_PCS, KIND, MIN_PCS, MIN_PROBLEM, RATIO, UPDATE_DAYS, Software, app_now, before_after,
                        compare, missing_on, order, pcs_with_problem, pcs_with_program, pcs_without_update,
                        program_view, shown, split_by_program, starts_with, version_of)
 
@@ -139,7 +139,8 @@ def _not_one(block: str, args: dict, what: str, asked, names: list[str], period:
                        say=f"No {what} named like \"{asked}\" in the latest read; ask with its full name.")
     rows = [[n] for n in names[:ROWS]]
     return _result(block, args, f"{len(names):,} {what}s named like \"{asked}\"", period, [what.capitalize()], rows,
-                   [f"Several {what}s have \"{asked}\": ask again with the full name."],
+                   [f"No {what} is named exactly \"{asked}\"; several have it in their name: ask again with one "
+                    "of these names."],
                    say=f"Several {what}s have \"{asked}\" ({'; '.join(names[:3])}): which one?")
 
 
@@ -254,7 +255,8 @@ def versions(sw: Software, view: dict, args: dict, program: str | None = None) -
                    total=_n(p["pcs"], "PC"), say=say)
 
 
-def version_problems(sw: Software, view: dict, args: dict, application: str | None = None) -> dict:
+def version_problems(sw: Software, view: dict, args: dict, application: str | None = None, client_of=None,
+                     known=(), now: datetime | None = None) -> dict:
     apps = {a["application"]: a for a in view.get("versions", [])}
     period = f"the last {DAYS} days, as of the latest read ({view.get('as_of_local')})"
     if not application:
@@ -269,42 +271,80 @@ def version_problems(sw: Software, view: dict, args: dict, application: str | No
                         f"PCs with a {TOP_STATUS} action", "Versions raised"], rows,
                        [RULES, "Read per version: the applications with 2 versions or more and a crash, hang time or "
                                f"{MIN_PROBLEM} {TOP_STATUS} actions."], total=_n(len(apps), "application"), say=say)
-    name, names = pick(application, apps)
-    if name is None:
-        if not names:
-            return _result("version_problems", args, f"{application}: not read per version", period, ["Application"],
-                           [], [f"{application} is not among the applications read per version (2 versions or more "
-                                f"and a crash, hang time or {MIN_PROBLEM} {TOP_STATUS} actions): ask to compare its "
-                                "versions, read now."],
-                           say=f"{application} is not among the applications read per version; ask to compare its "
-                               "versions instead.")
+    name, near = pick(application, apps)
+    if name is not None:
+        return _by_version(args, apps[name], period, [])
+    # not one of the applications read every day: the application as Aternity names it, read now
+    # (stage, Nov 2026: "Microsoft Edge" was answered with "several applications have Microsoft
+    # Edge: ask with the full name", naming Microsoft Edge Update and Microsoft Edge WebView2)
+    daily = (f"not among the {len(apps)} applications read every day (2 versions or more and a crash, hang time "
+             f"or {MIN_PROBLEM} {TOP_STATUS} actions in {DAYS} days)")
+    name, names = pick(application, list(apps) + list(known or ()))
+    several = name is None and bool(names)  # then Aternity is asked for the name exactly as typed
+    name = name or " ".join(str(application).split())
+    client = client_of() if client_of else None
+    if client is None:
+        if several:
+            return _not_one("version_problems", args, "application", application, names, period)
+        return _result("version_problems", args, f"{name}: not read per version", period, ["Application"], [],
+                       [f"{name} is {daily}."], say=f"{name} is {daily}.")
+    a = app_now(client, now or datetime.now(timezone.utc), name)
+    if not a["versions"] and several and not a["error"]:
         return _not_one("version_problems", args, "application", application, names, period)
-    a = apps[name]
+    if not a["versions"]:
+        why = (f"Aternity could not be read ({a['error']}): ask again in a minute." if a["error"] else
+               f"Aternity recorded no use of an application named exactly \"{name}\" in the last {DAYS} days.")
+        notes = [why] + a["notes"]
+        if near and not a["error"]:
+            notes.append("Applications with a name like it: " + ", ".join(near[:5]) + ".")
+        if not a["error"] and pick(name, view.get("programs", []))[0]:
+            notes.append("The installed list has a program of that name: ask how many versions of it are "
+                         "installed. Aternity may name the running application differently.")
+        return _result("version_problems", args, f"{name}: nothing per version", _live(), ["Application"],
+                       [[n] for n in near[:ROWS]] if not a["error"] else [], notes, say=" ".join(notes[:2]))
+    return _by_version(args, a, _live(), [f"Read now: {name} is {daily}."] + a["notes"])
+
+
+def _by_version(args: dict, a: dict, period: str, first: list[str]) -> dict:
+    name = a["application"]
     usage, acts = "usage" in a["read"], "actions" in a["read"]
     rows = [[v["version"], v["pcs"] if usage else None, v["crash"] if usage else None, v["hang"] if usage else None,
              v["actions"] if acts else None, v["major"] if acts else None, ", ".join(KIND[k] for k in v["raised"])]
             for v in sorted(a["versions"], key=lambda v: (-max(v["pcs"], v["action_pcs"]), order(v["version"])))[:ROWS]]
-    notes = [RULES]
+    notes = first + [RULES]
     if a["only"]:
         notes.append(f"Every PC listed for {name} had a crash or hang time: app usage holds it only where it failed, "
                      "so no share is compared and no version is raised for either.")
     raised = [f"{r[0]} ({r[6]})" for r in rows if r[6]]
+    most = max(rows, key=lambda r: r[2] or 0) if usage else None
     say = (f"{name}, last {DAYS} days: " + "; ".join(
         f"{r[0]}: a crash on {r[2]:,} of {r[1]:,} PCs" if usage else f"{r[0]}: {r[5]:,} of {r[4]:,} actions rated "
         f"{TOP_STATUS}" for r in rows[:3]) + (f"; raised: {', '.join(raised)}." if raised else "; none raised."))
+    if most and most[2]:
+        notes.append(f"The most PCs with a crash: version {most[0]}, {most[2]:,} of the {most[1]:,} PCs that ran it "
+                     "(by count; a version on more PCs has more crashes by that alone).")
+    elif usage:
+        notes.append(f"No PC had a crash of {name} on any version in the last {DAYS} days.")
     return _result("version_problems", args, f"{name} by version", period,
                    ["Version", "PCs that ran it", "with a crash", "with hang time", "Actions", f"rated {TOP_STATUS}",
                     "Raised"], rows, notes, total=_n(len(a["versions"]), "version"), say=say)
 
 
-# -- read from Aternity now --------------------------------------------------------------
 def _app(view: dict, known, asked) -> tuple[str | None, list[str]]:
-    """An application as Aternity names it: matched to those in the latest read and today's;
-    a name no one has is kept as asked (Aternity may still know it)."""
+    """An application as Aternity names it: matched to those in the latest read and today's.
+    A name no one has, or that several have in theirs, is kept as asked: Aternity is asked for
+    it exactly, and the names like it are told when it has nothing (`_like`). "Microsoft Edge"
+    once ended at "several applications have it: ask with the full name" (stage, Nov 2026)."""
     name, names = pick(asked, list(view.get("applications", [])) + list(known or ()))
-    if name is None and not names and asked:
-        return " ".join(str(asked).split()), []
+    if name is None and asked:
+        return " ".join(str(asked).split()), names
     return name, names
+
+
+def _like(name: str, names: list[str]) -> list[str]:
+    """For a read that found nothing under a name kept as asked: the names like it."""
+    return [f"No application is named exactly \"{name}\" in the latest read or today's activity; names like it: "
+            f"{', '.join(names[:5])}{' …' if len(names) > 5 else ''}. Ask again with one of them."] if names else []
 
 
 def compare_block(client, cfg, now: datetime, view: dict, known, args: dict, application=None, a=None, b=None):
@@ -313,8 +353,9 @@ def compare_block(client, cfg, now: datetime, view: dict, known, args: dict, app
         return _not_one("compare", args, "application", application, names, _live())
     c = compare(client, cfg, now, name, a, b)
     if c["a"] is None:
-        return _result("compare", args, f"{name}: nothing to compare", _live(), ["What"], [], c["notes"],
-                       say=" ".join(c["notes"]) or f"{name}: nothing to compare.")
+        notes = c["notes"] + (_like(name, names) if not c["versions"] else [])
+        return _result("compare", args, f"{name}: nothing to compare", _live(), ["What"], [], notes,
+                       say=" ".join(notes) or f"{name}: nothing to compare.")
     A, B = c["a"], c["b"]
     rows = [[f"{x['what']}: actions rated {TOP_STATUS}" if x["group"] == "activity" else x["what"],
              x["a"][0], x["a"][1], x["b"][0], x["b"][1]] for x in c["lines"]]
@@ -352,6 +393,7 @@ def before_after_block(client, now: datetime, view: dict, known, args: dict, app
                f"{p['after'][0]:,}.")
     else:
         say = f"No PC changed its version of {name} once in the last {UPDATE_DAYS} days."
+        notes += _like(name, names)
     return _result("before_after", args, f"{name}: before and after an update", _live(UPDATE_DAYS),
                    ["From", "To", "PCs", "PC-days before", "with a crash", "with hang time", "PC-days after",
                     "with a crash", "with hang time"], rows, notes, total=_n(sum(r[2] for r in rows), "PC"), say=say)
@@ -380,6 +422,8 @@ def program_split(client, now: datetime, sw: Software, view: dict, known, args: 
     say = (f"{name} on the PCs of each {prog} version, last {DAYS} days: " + "; ".join(
         f"{x[0]}: {x[3] if slow else x[2]:,} {unit}, of {x[2] if slow else x[1]:,} {'actions' if slow else 'PCs'}"
         for x in rows[:3]) + ".") if rows else f"No PC ran {name} in the last {DAYS} days."
+    if not r["pcs"]:
+        notes = _like(name, names) + notes
     return _result("program_split", args, f"{name}: {PROBLEM[r['problem']]} by {prog} version", _live(), cols, rows,
                    notes, total=f"{_n(r['pcs'], 'PC')} ran {name}", say=say)
 
@@ -398,7 +442,7 @@ def pcs(client, now: datetime, sw: Software, view: dict, known, args: dict, prog
         if not ver:
             rows = [[v] for v in sorted(vs, key=order)[:ROWS]]
             return _result("pcs", args, f"{name}: which version?", _live(), ["Version"], rows,
-                           ["Name the version: the list holds one version's PCs."],
+                           ["Name the version: the list holds one version's PCs."] + _like(name, names),
                            say=f"Which version of {name}? " + (f"Its versions: {', '.join(r[0] for r in rows[:5])}."
                                                                if rows else "Name it in full."))
         got = pcs_with_problem(client, now, name, ver, problem)
@@ -487,7 +531,11 @@ def run_block(name: str, args: dict, sw: Software, view: dict, client_of, cfg, k
         if name == "versions":
             return versions(sw, view, args, **take("program"))
         if name == "version_problems":
-            return version_problems(sw, view, args, **take("application"))
+            try:
+                return version_problems(sw, view, args, **take("application"), client_of=client_of, known=known, now=now)
+            except ApiError as exc:
+                return _result(name, args, "Aternity could not be read", "now", [], [], [exc.short()],
+                               say=f"Aternity could not be read ({exc.short()}): ask again in a minute.")
         if name not in ("compare", "before_after", "program_split", "pcs", "pcs_without_update"):
             return None
         client = client_of()
