@@ -8,17 +8,18 @@ English").
 ## How it works
 
 Every tab gets the same question box, and every panel that shows data
-gets an "Explain ▸" link. The page tells the server which tab and panel.
-The server takes the same numbers that panel shows, plus our own written
-meaning of each term, and the AI puts them in plain English. The AI never
-reads Aternity and never counts, as with the two chats.
+gets an "Explain ▸" link. The page sends the server the tab and the panel
+exactly as shown (its text, tables row by row, each chart's bar labels:
+`shown()` in the page; step 2, so no number is formatted twice). The
+server adds our own written meaning of each term, and the AI puts them in
+plain English. The AI never reads Aternity and never counts, as with the
+two chats.
 
 ```
 click "Explain ▸" or type a question
-        │  tab + panel + what is open
+        │  tab + the panel as shown
         ▼
-server: the panel's own numbers
-        (the same ones the page shows)
+server: the panel's own lines
       + our meaning of each term
         │
         ▼
@@ -27,7 +28,8 @@ AI words it in plain English
         ▼
 check: every number is on the page
    ├─ yes → the AI's answer
-   └─ no  → our own written sentence
+   └─ no  → our own written meanings
+            of the panel's terms
 ```
 
 Two kinds of answer:
@@ -60,3 +62,18 @@ It does not read Aternity, does not guess at causes, and saves nothing.
 ## Not on forms, the connection lights or dialogs
 
 They have no numbers to explain.
+
+## Measured on stage (2026-11-10)
+
+Both models read a made-up page of 40,000 characters right (GPT in about
+2 s, Nemotron in 3 to 9 s), so a whole investigation can be explained at
+once (`explain.LINES_MAX`). GPT: 10 of 10 made-up panels; Nemotron 9 of
+10 (a "twice" of its own: refused, as meant).
+
+## Step 2 (Today, Care list)
+
+"Explain ▸" at the bottom right of each panel opens one dialog: the
+answer, who wrote it (the AI, or our meanings and why), and a box for a
+question about that panel. The Care list also has "Ask about this page"
+at its bottom (the whole tab as shown). Today keeps "Ask about today".
+With no AI service set, the answer is our own written meanings.

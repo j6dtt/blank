@@ -64,6 +64,13 @@ class ChatBody(BaseModel):
     history: list[dict] = []
 
 
+class ExplainBody(BaseModel):
+    tab: str
+    panel: str = ""
+    lines: list[str] = []
+    question: str = ""
+
+
 class CareBody(BaseModel):
     username: str
     label: str = ""
@@ -350,6 +357,24 @@ def create_app(config_path: str | None = None) -> FastAPI:
                  service.name, f" with {r['block']} ({', '.join(f'{k}={v}' for k, v in r['args'].items() if v)})"
                  if r else " with no building block", f"; {answer['note']}" if answer["note"] else "")
         return answer
+
+    @app.post("/api/explain")
+    def explain_panel(body: ExplainBody):
+        """ "Explain ▸" on a panel: the AI words the panel's own lines (sent by the page, as
+        shown) with our meaning of each term. Nothing is read from Aternity, nothing is saved."""
+        from . import explain
+        from .ai import AiClient
+        if body.tab not in explain.TABS:
+            raise HTTPException(400, "tab must be one of " + ", ".join(explain.TABS))
+        if not any(x.strip() for x in body.lines):
+            raise HTTPException(400, "Nothing is shown on this panel yet.")
+        service = chat_service(load_settings(config_path))
+        client = AiClient(service, os.environ.get(service.key_env, "") if service.key_env else "") if service else None
+        a = explain.explain(client, body.tab, body.panel, body.lines, body.question, service.name if service else "")
+        log.info("Explain: \"%s\" on %s, \"%s\": %s in %.1f s%s", a["question"][:80], explain.TABS[body.tab],
+                 a["panel"][:60], "our own meanings" if a["ours"] else f"answered by {a['service']}", a["seconds"],
+                 f"; {a['note']}" if a["note"] else "")
+        return a
 
     @app.get("/api/names")
     def name_matches(kind: str, q: str = ""):

@@ -377,7 +377,7 @@ unset `<REQUIRED>` base URLs.
   (`docs/software-tab.md`, decisions taken 2026-11-10). Checks for prod are verify options, never pasted
   scripts: the user cannot paste on the prod hosts.
 - `explain.py`: "Explain this page" (docs/explain-this-page.md, agreed
-  2026-11-10; step 1 of 4 so far, no page work yet): a panel's own lines
+  2026-11-10; steps 1-2 of 4 so far): a panel's own lines
   plus our meaning of each term on its tab (`GLOSSARY`, `COMMON`: the one
   place a term's meaning is written, built from the code's constants;
   the user reviews it) are given to the AI, which words them (`SYSTEM`,
@@ -386,8 +386,16 @@ unset `<REQUIRED>` base URLs.
   `RATIO`). `verify --ai` measures it (`verify._explains`): "explains a
   panel" (`SAMPLES`, 2 made-up panels per tab) and "explains a long
   page" (`long_page`, `SIZES`: the line asked about is three quarters
-  down). Steps 2-4: Today + Care list, Investigate + Slow start-ups,
-  Software.
+  down; both models right at 40,000 characters on stage: `LINES_MAX`).
+  Step 2 (Today, Care list): `/api/explain` (`explain.explain`) gets the
+  panel as the page shows it (`shown()` in index.html: text, a table row
+  or a tile as one line, a chart's bar titles; `noExplain` and buttons
+  left out), so nothing is formatted twice; a refused or missing AI
+  answer becomes `our_words` (the meanings of the terms asked about,
+  then the panel's). "Explain ▸" (`button.explain`, `data-tab`) at the
+  bottom right of a panel, one dialog (`explainNow`), with a question
+  box; "Ask about this page" under the Care list. Nothing saved.
+  Steps 3-4: Investigate + Slow start-ups, Software.
 - `status.py`: the connection lights at the right of the top bar
   (`/api/status`, user's request 2026-11-10): Aternity, NetIM and each
   `ai.services` entry, one small read each every `CHECK_EVERY_S` (60) by

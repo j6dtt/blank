@@ -180,6 +180,9 @@
   }
   .multWrap { overflow-x: auto; }
   .multWrap .mult { min-width: 520px; }
+  .exRow { text-align: right; margin-top: 4px; }
+  .exRow button.link { font-size: 12px; padding: 0; }
+  #exAnswer { font-size: 15px; white-space: pre-line; }
   .dlgWrap[hidden] { display: none; }
   .dlgWrap { position: fixed; inset: 0; background: rgba(20, 16, 8, .45); display: grid; place-items: center; z-index: 20; padding: 16px; }
   .dlg { max-width: 640px; width: 100%; max-height: 80vh; overflow: auto; }
@@ -203,13 +206,16 @@
       <div class="muted" id="tStatus"></div>
       <div class="tiles" id="tTiles"></div>
       <ul class="muted notes" id="tNotes"></ul>
+      <div class="exRow noExplain"><button type="button" class="link explain" data-tab="today">Explain ▸</button></div>
     </section>
     <div class="grid2" id="tCharts" style="margin-top:16px">
       <section class="panel"><h2 id="tHoursTitle">Major slow actions per hour</h2><div id="tHours"></div>
-        <div class="legend" id="tHoursLegend"></div></section>
+        <div class="legend" id="tHoursLegend"></div>
+        <div class="exRow noExplain"><button type="button" class="link explain" data-tab="today">Explain ▸</button></div></section>
       <section class="panel"><h2 id="tAppsTitle">Applications with the most Major slow actions</h2>
         <div class="tableWrap"><table id="tApps"></table></div>
-        <p class="muted" style="font-size:12px;margin:6px 0 0">Click a row for its users and PCs.</p></section>
+        <p class="muted" style="font-size:12px;margin:6px 0 0">Click a row for its users and PCs.</p>
+        <div class="exRow noExplain"><button type="button" class="link explain" data-tab="today">Explain ▸</button></div></section>
     </div>
     <section class="panel" id="tWho" hidden style="margin-top:16px">
       <div class="todayHead"><h2 id="tWhoTitle"></h2><button type="button" class="link" id="tWhoClose">✕ Close</button></div>
@@ -217,14 +223,16 @@
       <p class="muted" style="font-size:12px;margin:6px 0 0">Investigate ▸ opens the Investigate tab and runs it at once for that
         user and PC, from 30 min before their first one to 30 min after the last (an hour around an event).
         Times are <span id="tWhoZone"></span>.</p>
+      <div class="exRow noExplain"><button type="button" class="link explain" data-tab="today">Explain ▸</button></div>
     </section>
     <section class="panel" id="tEventsBox" style="margin-top:16px">
       <h2>Other crashes and events on the most PCs today</h2>
       <div class="tableWrap"><table id="tEvents"></table></div>
       <p class="muted" style="font-size:12px;margin:6px 0 0">Severity is Aternity's own. Bars: PCs per day over the
         7 days before; green is today so far. Hover a bar for its day. Click a row for its users and PCs.</p>
+      <div class="exRow noExplain"><button type="button" class="link explain" data-tab="today">Explain ▸</button></div>
     </section>
-    <section class="panel" id="tChat" style="margin-top:16px">
+    <section class="panel noExplain" id="tChat" style="margin-top:16px">
       <div class="todayHead"><h2>Ask about today</h2><span class="muted" id="chatWho"></span></div>
       <form id="chatForm" class="chatForm" autocomplete="off">
         <input name="q" id="chatQ" maxlength="500" placeholder="e.g. Which apps had the most Major slow actions today?">
@@ -249,11 +257,22 @@
         Major slow actions by this time of day than on any of their own days before. It is over after an hour with no new
         one (slow actions also when they are back within their usual). A new issue runs an investigation by itself (one an hour per user). Click
         a tile for more.</p>
+      <div class="exRow noExplain"><button type="button" class="link explain" data-tab="care">Explain ▸</button></div>
     </section>
     <section class="panel" id="cDetail" hidden style="margin-top:16px">
       <div class="todayHead" style="justify-content:space-between"><h2 id="cDetailTitle"></h2>
         <button type="button" class="link" id="cDetailClose">✕ Close</button></div>
       <div id="cDetailBody"></div>
+      <div class="exRow noExplain"><button type="button" class="link explain" data-tab="care">Explain ▸</button></div>
+    </section>
+    <section class="panel noExplain" style="margin-top:16px">
+      <h2>Ask about this page</h2>
+      <form id="cAskForm" class="chatForm" autocomplete="off">
+        <input id="cAskQ" maxlength="500" placeholder="e.g. What does &quot;their usual by now&quot; mean?">
+        <button>Ask</button>
+      </form>
+      <p class="muted" style="font-size:12px;margin:10px 0 0">The AI is given the Care list as shown above and our written
+        meaning of each term, and puts them in plain English. It reads nothing else; nothing is saved.</p>
     </section>
   </div>
   <div id="softBox" hidden>
@@ -520,7 +539,7 @@ function usualText(u, kind, by, value) {
 }
 function eventSpark(e, date) {
   const days = e.days.filter((d) => d.pcs !== null).map((d) => ({ day: d.date, pcs: d.pcs }));
-  return spark(days.concat([{ day: date, pcs: e.pcs, window: true }]));
+  return spark(days.concat([{ day: date, pcs: e.pcs, window: true }]), "PCs", "PCs per day");
 }
 
 async function loadToday() {
@@ -1638,6 +1657,85 @@ $("dlgCopy").addEventListener("click", async () => {
     const range = document.createRange(); range.selectNodeContents($("dlgBody").querySelector("p") || $("dlgBody"));
     getSelection().removeAllRanges(); getSelection().addRange(range); $("dlgCopy").textContent = "Selected: press Ctrl+C";
   }
+});
+// ---- Explain ▸: a panel as shown (its text, tables row by row, each chart's bar labels) put in plain
+// English by the AI with our meaning of each term (/api/explain). One dialog; a question can follow. ----
+function shown(root) {
+  const lines = []; let cur = "", row = 0;  // row: inside a table row, which is one line whatever its cells hold
+  const flush = () => {
+    const t = cur.replace(/\s+/g, " ").replace(/ ([,.;:)])/g, "$1").replace(/^( ?\|)+/, "").replace(/( \|)+ ?$/, "").trim();
+    if (t) lines.push(t);
+    cur = "";
+  };
+  const BLOCK = /^(DIV|P|LI|UL|OL|H[1-6]|SECTION|TABLE|TBODY|TR|FORM|BR|DETAILS|SUMMARY)$/;
+  const walk = (node) => {
+    if (node.nodeType === 3) { cur += node.textContent; return; }
+    if (node.nodeType !== 1) return;
+    const tag = node.tagName.toUpperCase();
+    if (node.hidden || node.classList.contains("noExplain") || node.classList.contains("more")
+        || /^(BUTTON|INPUT|SELECT|TEXTAREA|SCRIPT|STYLE)$/.test(tag) || getComputedStyle(node).display === "none") return;
+    if (tag === "SVG") {  // a chart: what each of its bars says when pointed at
+      const tips = [...node.querySelectorAll("title")].map((t) => t.textContent.trim()).filter(Boolean);
+      if (tips.length) cur += ` [${node.getAttribute("aria-label") || "chart"}: ${tips.join("; ")}] `;
+      return;
+    }
+    const block = BLOCK.test(tag) && (!row || tag === "TR");
+    if (block) flush();
+    const from = lines.length;
+    if (tag === "TR") row += 1;
+    node.childNodes.forEach(walk);
+    if (tag === "TR") row -= 1;
+    cur += tag === "TD" || tag === "TH" ? " | " : " ";
+    if (block) flush();
+    if (node.classList.contains("tile")) lines.splice(from, lines.length - from, lines.slice(from).join(" · "));  // a tile: one line
+  };
+  walk(root);
+  return lines;
+}
+let explaining = null;  // { tab, panel, lines }: what the open dialog is about
+async function explainNow(tab, panel, lines, question) {
+  explaining = { tab, panel, lines };
+  const form = `<form id="exForm" class="chatForm" autocomplete="off"><input id="exQ" maxlength="500" `
+    + `placeholder="Ask about this panel, e.g. What does usual mean here?"><button id="exGo">Ask</button></form>`
+    + `<p class="muted" style="font-size:12px;margin:10px 0 0">The AI is given this panel as shown and our written meaning `
+    + `of each term. It reads nothing else; nothing is saved.</p>`;
+  const started = Date.now();
+  const busy = () => `<p class="muted" id="exBusy">Asking… ${Math.round((Date.now() - started) / 1000)} s</p>`;
+  swDialog(`Explain: ${panel}`, busy(), "");
+  const timer = setInterval(() => { const b = $("exBusy"); if (b) b.textContent = `Asking… ${Math.round((Date.now() - started) / 1000)} s`; }, 1000);
+  try {
+    const r = await fetch("api/explain", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tab, panel, lines, question: question || "" }) });
+    const a = await r.json();
+    if (!r.ok) throw new Error(detail(a));
+    if (explaining.lines !== lines || $("dlg").hidden) return;  // another panel was asked about, or it was closed
+    const notes = [a.note || (a.ours ? "" : `Written by the AI (${a.service}) from this panel; every number checked against it.`),
+      a.cut ? "The panel is long: only its first part was given to the AI." : ""].filter(Boolean);
+    swDialog(`Explain: ${panel}`, `<div class="muted" style="font-size:12px">${esc(a.question)} · ${a.seconds} s</div>`
+      + `<p id="exAnswer">${esc(a.answer)}</p>` + notes.map((x) => `<div class="muted" style="font-size:12px">${esc(x)}</div>`).join("") + form,
+      a.answer);
+    $("exQ").focus();
+  } catch (e) { if (!$("dlg").hidden) swDialog(`Explain: ${panel}`, `<p class="err">No answer: ${esc(e.message)}</p>` + form, ""); }
+  finally { clearInterval(timer); }
+}
+document.addEventListener("click", (ev) => {
+  const b = ev.target.closest("button.explain");
+  if (!b) return;
+  const panel = b.closest(".panel"), title = panel.querySelector("h2");
+  explainNow(b.dataset.tab, title ? title.textContent.trim() : "", shown(panel));
+});
+$("dlgBody").addEventListener("submit", (ev) => {
+  if (ev.target.id !== "exForm") return;
+  ev.preventDefault();
+  const q = $("exQ").value.trim();
+  if (q && explaining) explainNow(explaining.tab, explaining.panel, explaining.lines, q);
+});
+$("cAskForm").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const q = $("cAskQ").value.trim();
+  if (!q) return;
+  $("cAskQ").value = "";
+  explainNow("care", "Care list", shown($("careBox")), q);
 });
 $("sSummaryBtn").addEventListener("click", async () => {
   const b = $("sSummaryBtn"); b.disabled = true; b.textContent = "Writing the summary…";

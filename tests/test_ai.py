@@ -193,3 +193,50 @@ def test_explain_our_own_words_and_a_no_break_space_are_not_held_against_a_model
     assert "Half the" in explain.refused("Half the PCs are slow.", "today", "P", ["318 on 141 PCs"], "Explain.")
     assert explain.says("Look at Sample\u00a0ERP first.", ("sample erp",)) and explain.odd("Sample\u00a0ERP") == "U+00A0"
     assert not explain.says("Look at the mail first.", ("sample erp",)) and explain.odd("plain") == ""
+
+
+def test_explain_the_pages_answer_is_the_ais_when_its_numbers_are_the_panels_else_our_meanings(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from test_chat import ai_service
+
+    from uxcorrelate import ai, web
+    lines = ["Major slow actions: 318 on 141 PCs", "As usual by 14:00; the 5 working days before had 120 to 160"]
+    said = {"text": "The panel shows 318 Major slow actions on 141 PCs, which is as usual."}
+    seen = []
+
+    class Stand:
+        def chat(self, messages, tools=None):
+            seen.append(messages)
+            if said["text"] is None:
+                raise web.ApiError("no", status=503)
+            return {"content": said["text"]}
+    a = explain.explain(Stand(), "today", "Today's issues", lines, "", "gpt")
+    assert a["answer"] == said["text"] and not a["ours"] and a["note"] is None and a["service"] == "gpt"
+    assert a["question"] == explain.QUESTION and "Major slow actions: 318 on 141 PCs" in seen[0][1]["content"]
+    said["text"] = "That is 459 in all."
+    a = explain.explain(Stand(), "today", "Today's issues", lines, "What does usual mean?", "gpt")
+    assert a["ours"] and "(459)" in a["note"] and a["answer"].startswith("usual: Today against the same kind of day before")
+    assert "\nMajor slow action: One action of a user" in a["answer"]  # what was asked about comes first
+    said["text"] = None
+    a = explain.explain(Stand(), "today", "P", lines, "", "gpt")
+    assert a["ours"] and "did not answer" in a["note"] and a["answer"]
+    a = explain.explain(None, "care", "Care list", ["✓ OK"], "")
+    assert a["ours"] and "No AI service is set" in a["note"] and "\n✓ OK: No open issue" in a["answer"]
+    assert explain.our_words("care", "P", ["nothing known here"]) == explain.NO_ANSWER
+    assert explain.our_words("care", "P", ["an overview to prevent it"]) == explain.NO_ANSWER  # whole words
+    kept, cut = explain.trim(["a" * 30_000, "b" * 9_000, "c" * 2_000, " "])
+    assert cut and len(kept) == 2 and explain.trim(["x", "", " y  z "]) == (["x", "y z"], False)
+
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("ai:\n  services:\n    - name: gpt\n      base_url: https://ai.test/v1\n      model: m\n")
+    said["text"] = "It shows 318 Major slow actions on 141 PCs."
+    monkeypatch.setattr(ai, "AiClient", lambda *a, **k: ai_service({}, None, []) and Stand())
+    http = TestClient(web.create_app(str(cfg)))
+    got = http.post("/api/explain", json={"tab": "today", "panel": "Today's issues", "lines": lines}).json()
+    assert got["answer"] == said["text"] and got["service"] == "gpt" and not got["cut"]
+    assert http.post("/api/explain", json={"tab": "nothing", "lines": lines}).status_code == 400
+    assert http.post("/api/explain", json={"tab": "today", "lines": [" "]}).status_code == 400
+    empty = tmp_path / "empty.yaml"
+    empty.write_text("{}\n")
+    got = TestClient(web.create_app(str(empty))).post("/api/explain", json={"tab": "today", "lines": lines}).json()
+    assert got["ours"] and "No AI service is set" in got["note"]

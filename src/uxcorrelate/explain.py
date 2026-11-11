@@ -6,9 +6,10 @@ AI never reads Aternity and never counts: it is given the panel's own lines
 tab (`GLOSSARY`), and words them. Every number in its answer must be in
 those lines, the meanings or the question (`refused`), as in the chats.
 
-Step 1 (this file so far): the meanings, the instructions, the check, and
-the made-up panels `uxcorrelate verify --ai` measures both models with
-(`SAMPLES`, `long_page`). No page work yet.
+Step 1: the meanings, the instructions, the check, and the made-up panels
+`uxcorrelate verify --ai` measures both models with (`SAMPLES`,
+`long_page`). Step 2: `explain`, the answer for `/api/explain` (Today and
+the Care list so far); the page sends the panel as it shows it.
 
 `GLOSSARY` is the one place a term's meaning is written. Each is what the
 page does (from the code and its constants), not what Aternity documents:
@@ -17,6 +18,7 @@ docs/data-meanings.md says how sure we are of Aternity's own values.
 
 from __future__ import annotations
 
+import re
 import unicodedata
 
 from . import after_start, care, impact, logons, normal, software, today
@@ -210,6 +212,66 @@ def odd(text: str) -> str:
     found = sorted({f"U+{ord(c):04X}" for c in str(text or "")
                     if ord(c) > 127 and unicodedata.category(c) in ("Zs", "Cf", "Zl", "Zp")})
     return ", ".join(found)
+
+
+# -- an answer for the page (`/api/explain`) -------------------------------------------------------
+QUESTION = "What does this panel show, and what do its numbers mean?"
+QUESTION_MAX, PANEL_MAX, OUR_TERMS = 500, 200, 6
+LINES_MAX = 40_000  # both models read a made-up page of this size right (stage, Nov 2026)
+
+
+def trim(lines: list[str], limit: int = LINES_MAX) -> tuple[list[str], bool]:
+    """The panel's lines, cut at `limit` characters; whether any were left out."""
+    out, total = [], 0
+    for x in lines:
+        x = " ".join(str(x).split())
+        if not x:
+            continue
+        total += len(x) + 1
+        if total > limit:
+            return out, True
+        out.append(x)
+    return out, False
+
+
+def our_words(tab: str, panel: str, lines: list[str], question: str = "") -> str:
+    """Our own answer, when the AI's cannot be shown: the written meaning of each term the
+    panel (or the question) has, one per line."""
+    def has(term: str, text: str) -> bool:  # a whole word, or its plural: not "event" in "prevent"
+        return re.search(r"(?<!\w)" + re.escape(plain(term)) + r"s?(?!\w)", text) is not None
+    asked, have = plain(question), plain(" ".join([panel, *lines]))
+    all_terms = meanings(tab)
+    first = [k for k in all_terms if has(k, asked)]  # what was asked about, then what the panel has
+    terms = [(k, all_terms[k]) for k in first + [k for k in all_terms if k not in first and has(k, have)]][:OUR_TERMS]
+    if not terms:
+        return NO_ANSWER
+    return "\n".join(f"{k}: {v}" for k, v in terms)
+
+
+def explain(client, tab: str, panel: str, lines: list[str], question: str = "", service: str = "") -> dict:
+    """What /api/explain returns: the AI's wording of a panel, held to its numbers, else our
+    own written meanings. `client` None: no AI service is set."""
+    import time
+
+    from .http import ApiError
+    question = " ".join((question or "").split())[:QUESTION_MAX] or QUESTION
+    panel = " ".join((panel or "").split())[:PANEL_MAX]
+    lines, cut = trim(lines)
+    started, text, note = time.monotonic(), "", None
+    if client is None:
+        note = "No AI service is set (ai.services in config.yaml): these are our own written meanings."
+    else:
+        try:
+            text = clean(client.chat(messages(tab, panel, lines, question)).get("content"))
+            why = refused(text, tab, panel, lines, question)
+            if why:
+                text, note = "", f"The AI's answer had {why}: these are our own written meanings instead."
+        except ApiError as exc:
+            note = (f"The AI service {service or 'set'} did not answer ({exc.short()}): these are our own "
+                    "written meanings.")
+    return {"question": question, "panel": panel, "answer": text or our_words(tab, panel, lines, question),
+            "ours": not text, "note": note, "cut": cut, "seconds": round(time.monotonic() - started, 1),
+            "service": service if text else ""}
 
 
 # -- what `verify --ai` measures with (made-up names and numbers) --------------------------------
