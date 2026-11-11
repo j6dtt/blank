@@ -49,16 +49,32 @@ def test_the_verdict_is_by_fixed_rules():
     assert A.verdict(s) == A.UNKNOWN  # no usual known yet for anything
     s["slow"]["usual"] = "as usual"
     assert A.verdict(s) == A.NORMAL
-    s["events"][1]["usual"] = "more than usual"  # a Major event
+    # stage, Nov 2026: Low Disk Space on 2 PCs against a usual 0 to 1 made the whole day "Worse than
+    # usual", and the counts shown did not have it: under 5 PCs it is listed, not the verdict
+    s["events"][1]["usual"] = "more than usual"  # a Major event, on 2 PCs
+    assert A.verdict(s) == A.NORMAL
+    assert A.facts(s, None, None)["why"] == ["nothing rated Critical or Major is more than usual on 5 PCs or more "
+                                             "(Application Crash: 2 PCs more than usual)"]
+    s["events"][1]["pcs"] = 12
     assert A.verdict(s) == A.WORSE
-    s["events"][0]["usual"] = "more than usual"  # a Critical one
+    assert A.facts(s, None, None)["why"] == ["Application Crash (Major) is on 12 PCs, more than usual"]
+    assert "Verdict: Worse than usual. Because: Application Crash (Major) is on 12 PCs, more than usual." in A.given(
+        A.facts(s, None, None), "12:00")
+    s["events"][0].update(usual="more than usual", pcs=6)  # a Critical one
     assert A.verdict(s) == A.ATTENTION
+    # what the verdict rests on is always among the lines, however many kinds there are
+    many = snap_of(filled())
+    many["events"] += [dict(many["events"][1], name=f"Event {i}", usual="as usual") for i in range(4)]
+    many["events"].append(dict(many["events"][1], name="Low Disk Space", pcs=9, usual="more than usual"))
+    lines = A.today_lines(many)
+    assert "Low Disk Space (Major): 9 PCs, more than usual." in lines
+    assert "3 other kinds of event rated Critical or Major, none more than usual." in lines
     calm = snap_of(filled())
     calm["down"] = ["gpt"]  # an AI service down is not the users' experience
     assert A.verdict(calm) == A.UNKNOWN and A.first(calm).startswith("System Crash on 1 PC (Critical)")
     calm["down"] = ["Aternity"]
     assert A.verdict(calm) == A.ATTENTION and A.first(calm).startswith("the connection to Aternity, which is down")
-    assert A.first(s).startswith("System Crash on 1 PC (Critical, more than usual): on the Today tab")
+    assert A.first(s).startswith("System Crash on 6 PCs (Critical, more than usual): on the Today tab")
     none = snap_of(filled())
     none["events"] = []
     assert A.first(none).startswith("nothing needs action now")

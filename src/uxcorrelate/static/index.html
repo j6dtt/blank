@@ -899,12 +899,12 @@ const asTag = (v) => `<span class="sev" style="background:${AS_COLOR[v] || "var(
 // our own text for a period, in the answers' shape, when the AI's is not shown
 function asOurs(p) {
   const fresh = p.new.length ? p.new : p.since ? [`Nothing new since ${p.since}.`] : [];
-  return [`${p.verdict}.`, ...fresh.concat(p.today.slice(1, 4)).slice(0, 5).map((x) => `- ${x}`), `Next: look first at ${p.first}.`].join("\n");
+  return [`${p.verdict}${(p.why || []).length ? `: ${p.why.join("; ")}` : ""}.`, ...fresh.concat(p.today.slice(1, 4)).slice(0, 5).map((x) => `- ${x}`), `Next: look first at ${p.first}.`].join("\n");
 }
 const asText = (p) => p.text || asOurs(p);
 function asFacts(p) {
   const list = (title, xs) => xs.length ? `<div><b>${esc(title)}</b><ul>${xs.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : "";
-  return list(p.since ? `New since ${p.since}` : "New", p.new.length ? p.new : p.since ? ["Nothing new."] : [])
+  return list(`Why "${p.verdict}"`, p.why || []) + list(p.since ? `New since ${p.since}` : "New", p.new.length ? p.new : p.since ? ["Nothing new."] : [])
     + list("The day so far", p.today) + list("Still open from earlier", p.open) + list("Look first at", [p.first]);
 }
 let asData = null;

@@ -22,6 +22,7 @@ import re
 import unicodedata
 
 from . import after_start, care, impact, logons, normal, software, today
+from .assess import VERDICT_PCS
 from .chat import RATIO, allowed, clean, numbers
 from .cause import DISK_BACK
 from .config import TILE_SEVERITIES, TOP_STATUS
@@ -49,10 +50,11 @@ GLOSSARY: dict[str, dict[str, str]] = {
         "Assessment": "A short reading of the day for executives, written every 3 hours in working hours: what "
                       "is new since the one before, the day so far, and what to look at first. Our code counts "
                       "the facts (counts and names of events and applications, no user or PC), the AI words "
-                      "them, and every number is checked against them. The verdict is by fixed rules: \"Needs "
-                      "attention\" (a connection to Aternity or NetIM down, or a Critical event on more PCs than "
-                      "usual), \"Worse than usual\" (a Critical or Major count more than usual), \"A normal day so "
-                      "far\", or \"No usual to compare with yet\".",
+                      "them, and every number is checked against them. The verdict is by fixed rules, and says why: \"Needs "
+                      "attention\" (a connection to Aternity or NetIM down, or a Critical event more than usual on "
+                      f"{VERDICT_PCS} PCs or more), \"Worse than usual\" (a Major count more than usual on "
+                      f"{VERDICT_PCS} PCs or more), \"A normal day so far\", or \"No usual to compare with yet\". A "
+                      "count more than usual on fewer PCs is listed but does not make the verdict.",
         "Active": "Users and PCs with at least one action Aternity measured in an application, whatever its "
                   "rating, each counted once: today so far, and since the start of the last full hour. PCs are "
                   "split by Aternity's own virtual or physical mark. A PC that is on with nobody working in a "

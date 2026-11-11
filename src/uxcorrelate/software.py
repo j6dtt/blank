@@ -695,7 +695,10 @@ class Software:
         if snap is None:
             return out
         before = [d for d in sorted(self.saved) if d < snap["date"]]
-        prev = self.saved.get(before[-1]) if before else None
+        # "new" is against the latest day before that has any flag: a day saved empty while Aternity
+        # was down (stage, Nov 10) made all 21 flags of the next day "new"
+        full = [d for d in before if self.saved[d]]
+        prev = self.saved.get(full[-1]) if full else None
         days = [d for d in sorted(self.saved) if d <= snap["date"]][-KEEP_DAYS:]
         flags = []
         for f in snap["flags"]:

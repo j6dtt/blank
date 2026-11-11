@@ -30,6 +30,7 @@ from .models import plural
 HOURS = (9, 12, 15, 18)  # local time: an assessment at each; the first read after it writes it
 KEEP_DAYS = 8
 TOP = 3  # events, applications named in one assessment
+VERDICT_PCS = 5  # fewer PCs than this do not make the day's verdict (as software.MIN_PROBLEM)
 SOURCES = ("Aternity", "NetIM")  # a connection down that an executive must know of
 ATTENTION, WORSE, NORMAL, UNKNOWN = ("Needs attention", "Worse than usual", "A normal day so far",
                                      "No usual to compare with yet")
@@ -38,7 +39,7 @@ log = logging.getLogger("uxcorrelate")
 SYSTEM = ("You write a short assessment for executives of how the company's PC users are doing today, from "
           "Riverbed Aternity. You are given the verdict and the facts as lines: what is new since the last "
           "assessment, the day so far, what is still open, and what to look at first. Write it " + SHAPE + ". "
-          "The first sentence gives the verdict as it is given, in plain words. The points say what is new and "
+          "The first sentence gives the verdict as it is given and why, in plain words. The points say what is new and "
           "what matters in the day so far, by name, most serious first; leave out what does not matter to an "
           "executive. The last line is the given \"look first at\". Use only numbers that are in the lines, written "
           "exactly as given, and do not work out new ones (no sums, no percentages, no \"twice as many\"). Say "
@@ -81,20 +82,33 @@ def snapshot(today_view: dict, care_view: dict | None, status_view: dict | None,
     }
 
 
-def verdict(snap: dict) -> str:
-    """One of four, by fixed rules: a connection down or a Critical event on more PCs than
-    usual needs attention; any Critical or Major count more than usual is worse than usual;
-    with no usual known for anything, that is said; else a normal day."""
-    counts = snap["events"] + [dict(snap["slow"], severity=TOP_STATUS)]
+def _judged(snap: dict) -> tuple[str, list[str]]:
+    """The verdict and why, by fixed rules. A count rated Critical or Major that is more than
+    usual on `VERDICT_PCS` PCs or more makes the day worse than usual (Critical: needs
+    attention), as does a connection to Aternity or NetIM being down. Fewer PCs than that are
+    listed, but 2 PCs against a usual 0 to 1 are not the company's day (stage, Nov 2026)."""
+    counts = [dict(e, what=e["name"]) for e in snap["events"]] + [
+        dict(snap["slow"], severity=TOP_STATUS, what=f"{TOP_STATUS} slow actions")]
     top = [c for c in counts if c.get("severity") in SEVERITY_ORDER[:2]]
-    more = [c for c in top if c["usual"] == "more than usual"]
-    if any(n in SOURCES for n in snap["down"]) or any(c["severity"] == "Critical" for c in more):
-        return ATTENTION
+    more = [c for c in top if c["usual"] == "more than usual" and c["pcs"] >= VERDICT_PCS]
+    why = [f"{c['what']} ({c['severity']}) is on {plural(c['pcs'], 'PC')}, more than usual" for c in more]
+    down = [n for n in snap["down"] if n in SOURCES]
+    if down:
+        return ATTENTION, [f"the connection to {' and '.join(down)} is down"] + why
+    if any(c["severity"] == "Critical" for c in more):
+        return ATTENTION, why
     if more:
-        return WORSE
+        return WORSE, why
     if not any(c["usual"] for c in top):
-        return UNKNOWN
-    return NORMAL
+        return UNKNOWN, ["the days before are not saved yet for any count rated Critical or Major"]
+    small = [c for c in top if c["usual"] == "more than usual"]
+    return NORMAL, [f"nothing rated Critical or Major is more than usual on {VERDICT_PCS} PCs or more"
+                    + (f" ({', '.join(c['what'] + ': ' + plural(c['pcs'], 'PC') for c in small)} more than usual)"
+                       if small else "")]
+
+
+def verdict(snap: dict) -> str:
+    return _judged(snap)[0]
 
 
 def first(snap: dict) -> str:
@@ -128,8 +142,13 @@ def today_lines(snap: dict) -> list[str]:
            f"{a['physical']:,} physical PCs).",
            f"{TOP_STATUS} slow actions: {s['actions']:,} on {plural(s['pcs'], 'PC')}"
            + (f", {s['usual']}" if s["usual"] else ", no usual to compare with yet") + "."]
-    top = [e for e in snap["events"] if e.get("severity") in SEVERITY_ORDER[:2]][:TOP]
+    rated = [e for e in snap["events"] if e.get("severity") in SEVERITY_ORDER[:2]]
+    # the most serious, and every one that is more than usual: what the verdict rests on is always shown
+    top = rated[:TOP] + [e for e in rated[TOP:] if e["usual"] == "more than usual"]
     out += [f"{_event_line(e)}." for e in top] or ["No crash or event rated Critical or Major."]
+    if len(rated) > len(top):
+        out.append(f"{plural(len(rated) - len(top), 'other kind')} of event rated Critical or Major, none more "
+                   "than usual.")
     apps = sorted(snap["apps"].items(), key=lambda kv: (-kv[1], kv[0]))[:TOP]
     if apps:
         out.append(f"Applications with the most {TOP_STATUS} slow actions: "
@@ -190,7 +209,8 @@ def open_lines(snap: dict, before: dict | None) -> list[str]:
 
 def facts(snap: dict, before: dict | None, since: str | None) -> dict:
     new = new_lines(snap, before)
-    return {"verdict": verdict(snap), "since": since,
+    said, why = _judged(snap)
+    return {"verdict": said, "why": why, "since": since,
             "new": new if before is not None else [],
             "nothing_new": before is not None and not new,
             "today": today_lines(snap), "open": open_lines(snap, before), "first": first(snap)}
@@ -201,7 +221,8 @@ def given(f: dict, label: str) -> str:
     head = (f"What is new since {f['since']}:" if f["since"] else "The first assessment of the day (nothing to "
             "compare with yet).")
     new = f["new"] or (["Nothing new."] if f["since"] else [])
-    return "\n".join([f"Assessment at {label}.", f"Verdict: {f['verdict']}.", head, *new, "The day so far:",
+    because = f" Because: {'; '.join(f['why'])}." if f.get("why") else ""
+    return "\n".join([f"Assessment at {label}.", f"Verdict: {f['verdict']}.{because}", head, *new, "The day so far:",
                       *f["today"], *(["Still open from earlier:"] + f["open"] if f["open"] else []),
                       f"Look first at: {f['first']}."])
 
@@ -354,7 +375,7 @@ class Assessments:
         if lines is None:
             return
         rec = self.days.setdefault(y.isoformat(), {"date": y.isoformat(), "periods": [], "summary": None})
-        f = {"verdict": "The day in short", "since": None, "new": [], "nothing_new": False, "today": lines,
+        f = {"verdict": "The day in short", "why": [], "since": None, "new": [], "nothing_new": False, "today": lines,
              "open": [], "first": "today's first assessment, for what carries over"}
         client, service = client_of()
         text, note = word(client, f, f"the end of {y:%A %b %d}", service)
@@ -379,7 +400,8 @@ class Assessments:
 
 
 # -- what `verify --ai` measures with (made-up names and numbers) --------------------------------
-SAMPLE = {"verdict": WORSE, "since": "09:00", "nothing_new": False,
+SAMPLE = {"verdict": WORSE, "why": ["Sample Viewer crash (Major) is on 41 PCs, more than usual"], "since": "09:00",
+          "nothing_new": False,
           "new": ["Sample Viewer crash (Major): 41 PCs, more than usual; it was 12 at the last assessment.",
                   "Major slow actions added since the last assessment, by application: Sample ERP (212), "
                   "Sample Mail (96)."],
