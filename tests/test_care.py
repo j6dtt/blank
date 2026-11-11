@@ -409,15 +409,30 @@ def test_the_add_and_remove_endpoints(tmp_path, monkeypatch):
     app = web.create_app(str(path))
     http = TestClient(app)
     app.state.care.today.__dict__.update(today_with(3).__dict__)
-    assert http.post("/api/care/users", json={"username": "tz9013", "label": "Desk"}).json() == {
+    # every change needs the PIN: today's date, YYYYMMDD, in the page's time zone (the user's choice)
+    pin = app.state.care.pin(datetime.now(timezone.utc))
+    assert len(pin) == 8 and pin == f"{datetime.now(timezone.utc):%Y%m%d}"
+    for wrong in ({}, {"pin": "20200101"}, {"pin": ""}):
+        no = http.post("/api/care/users", json={"username": "tz9013", "label": "Desk", **wrong})
+        assert no.status_code == 403 and no.json()["detail"] == "Wrong PIN: the Care list was not changed."
+    assert http.delete("/api/care/users", params={"username": "mq2208"}).status_code == 403
+    assert http.put("/api/care/users", json={"username": "mq2208", "label": "X"}).status_code == 403
+    listed = tmp_path / "care_list.json"
+    assert not listed.exists() or "tz9013" not in listed.read_text()  # nothing changed
+    assert http.post("/api/care/users", json={"username": "tz9013", "label": "Desk", "pin": pin}).json() == {
         "username": "tz9013", "label": "Desk"}
+    # a new label: the list file has it, the user's saved issues stay
+    assert http.put("/api/care/users", json={"username": "TZ9013", "label": "Front desk", "pin": pin}).json() == {
+        "username": "tz9013", "label": "Front desk"}
+    assert http.put("/api/care/users", json={"username": "nobody", "label": "X", "pin": pin}).status_code == 404
+    assert http.put("/api/care/users", json={"username": "tz9013", "label": "Desk", "pin": pin}).status_code == 200
     titles = [u["title"] for u in http.get("/api/care").json()["users"]]
     assert sorted(titles) == ["Desk", "Payroll lead"] and http.get("/api/care").json()["max"] == CARE_MAX
-    again = http.post("/api/care/users", json={"username": "TZ9013"})
+    again = http.post("/api/care/users", json={"username": "TZ9013", "pin": pin})
     assert again.status_code == 400 and again.json()["detail"] == "Desk (tz9013) is already on the Care list."
-    assert http.delete("/api/care/users", params={"username": "mq2208"}).json()["label"] == "Payroll lead"
-    assert http.delete("/api/care/users", params={"username": "mq2208"}).status_code == 404
+    assert http.delete("/api/care/users", params={"username": "mq2208", "pin": pin}).json()["label"] == "Payroll lead"
+    assert http.delete("/api/care/users", params={"username": "mq2208", "pin": pin}).status_code == 404
     assert [u["username"] for u in json.loads((tmp_path / "care_list.json").read_text())] == ["tz9013"]
     (tmp_path / "care_list.json").write_text("{broken")
-    bad = http.post("/api/care/users", json={"username": "new1"})
+    bad = http.post("/api/care/users", json={"username": "new1", "pin": pin})
     assert bad.status_code == 500 and "could not be changed" in bad.json()["detail"]

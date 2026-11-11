@@ -1839,6 +1839,9 @@ AI_TRIES = (
     # stage, Nov 2026: an application named with a crash needs app (the count was every application's)
     ("How many PCs had a Microsoft Outlook crash today?", {"tool": "events", "app": "outlook"}),
     ("Who had a Microsoft Outlook crash today?", {"tool": "who", "what": "event", "app": "outlook"}),
+    ("How many users and PCs are active right now?", {"tool": "active"}),
+    # stage, Nov 2026: a list for the week got today's one PC, then counts per day
+    ("List the PCs with a System Crash this week", {"tool": "who", "what": "event", "days": 7}),
 )
 AI_SW_TRIES = (  # the Software tab's chat (software_chat.TOOLS)
     ("Which programs are most out of date?", {"tool": "flags", "kind": "behind"}),

@@ -179,6 +179,8 @@ investigation ▸" shows it on the Investigate tab without running it again;
 before. The tab's
 red count is the users with an issue now; `…/#care` opens the tab.
 Issues are kept 8 days in `./data/care` (with usernames).
+Every change of the list (add, "Change label…", remove) asks for a PIN; your
+administrator has it. A wrong PIN changes nothing and is logged.
 
 Investigate tab, top to bottom:
 

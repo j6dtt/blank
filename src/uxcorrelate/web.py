@@ -74,6 +74,7 @@ class ExplainBody(BaseModel):
 class CareBody(BaseModel):
     username: str
     label: str = ""
+    pin: str = ""
 
 
 class LogonBody(BaseModel):
@@ -188,9 +189,16 @@ def create_app(config_path: str | None = None) -> FastAPI:
         except Exception as exc:
             log.warning("Care list: the check after a change on the page failed (%s)", short_error(exc))
 
+    def care_pin(pin: str, request: Request, what: str) -> None:
+        """Every change of the Care list needs its PIN (care.pin); a wrong one is logged."""
+        if (pin or "").strip() != care.pin(datetime.now(timezone.utc)):
+            log.warning("Care list: a wrong PIN to %s, from %s", what, request.client.host if request.client else "?")
+            raise HTTPException(403, "Wrong PIN: the Care list was not changed.")
+
     @app.post("/api/care/users")
     def care_add(body: CareBody, request: Request):
-        """A new tile on the Care list (the page has no login: logged with the caller's address)."""
+        """A new tile on the Care list (the page has no login: a PIN, and logged with the caller's address)."""
+        care_pin(body.pin, request, f"add {body.username.strip()[:40]}")
         try:
             user = care.add(body.username, body.label, request.client.host if request.client else "")
         except ValueError as exc:
@@ -201,9 +209,25 @@ def create_app(config_path: str | None = None) -> FastAPI:
         threading.Thread(target=care_check_now, daemon=True, name="care-add").start()
         return {"username": user.username, "label": user.label}
 
+    @app.put("/api/care/users")
+    def care_relabel(body: CareBody, request: Request):
+        """A new label for a user on the Care list."""
+        care_pin(body.pin, request, f"change the label of {body.username.strip()[:40]}")
+        try:
+            user = care.relabel(body.username, body.label, request.client.host if request.client else "")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        except OSError as exc:
+            raise HTTPException(500, f"The Care list could not be changed ({short_error(exc)}). Its file is "
+                                     "care_list.json in the data folder, writable by the container (uid 1000).")
+        if user is None:
+            raise HTTPException(404, f"{body.username} is not on the Care list.")
+        return {"username": user.username, "label": user.label}
+
     @app.delete("/api/care/users")
-    def care_remove(username: str, request: Request):
+    def care_remove(username: str, request: Request, pin: str = ""):
         """Take a user off the Care list, with their saved issues and investigation."""
+        care_pin(pin, request, f"remove {username.strip()[:40]}")
         try:
             gone = care.remove(username, request.client.host if request.client else "")
         except OSError as exc:

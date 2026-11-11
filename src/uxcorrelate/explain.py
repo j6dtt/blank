@@ -46,6 +46,11 @@ GLOSSARY: dict[str, dict[str, str]] = {
     "today": {
         "Today": f"From midnight (in the time zone shown) to the last read. Aternity is read every "
                  f"{today.REFRESH_MIN} minutes.",
+        "Active": "Users and PCs with at least one action Aternity measured in an application, whatever its "
+                  "rating, each counted once: today so far, and since the start of the last full hour. PCs are "
+                  "split by Aternity's own virtual or physical mark. A PC that is on with nobody working in a "
+                  "measured application is not counted; a user who moved between desktops is one user and "
+                  "several PCs.",
         "tile": f"One kind of event Aternity rated {_SEV} today, with the number of PCs that had it. A click "
                 "lists the users and PCs.",
         "usual": f"Today against the same kind of day before (working days with working days, weekends with "
@@ -176,9 +181,11 @@ TABS = {"today": "Today", "care": "Care list", "investigate": "Investigate", "st
 
 SYSTEM = (f"You explain one panel of a web page to IT staff in plain English. The page shows the experience of "
           f"the company's PC users, from Riverbed Aternity. You are given the panel's lines exactly as the page "
-          f"shows them, and what the page's terms mean. Answer the question in {SENTENCES[0]} to {SENTENCES[1]} "
-          f"short sentences of plain text (no lists, no tables, no markdown): what the panel shows, what its "
-          f"numbers mean, and one next step when the lines or meanings give one. Use the terms' meanings as "
+          f"shows them, and what the page's terms mean. Answer the question as plain text with no markdown and no "
+          f"table, in this shape: first one short sentence that answers it (for \"explain\": what the panel "
+          f"shows); then {SENTENCES[0]} to {SENTENCES[1] - 1} lines that each start with \"- \" and say what one "
+          f"number or term on the panel means, or what stands out, by name; then, only when the lines or the "
+          f"meanings give one, a last line that starts with \"Next: \" with one next step. Use the terms' meanings as "
           f"written; do not add causes, advice or facts that are not in the lines or the meanings. Use only "
           f"numbers that are in the lines, written exactly as given, and do not work out new ones (no sums, no "
           f"percentages, no \"twice as many\"). If the lines and meanings do not answer the question, say so in "
@@ -266,18 +273,33 @@ def trim(lines: list[str], limit: int = LINES_MAX) -> tuple[list[str], bool]:
     return out, False
 
 
-def our_words(tab: str, panel: str, lines: list[str], question: str = "") -> str:
-    """Our own answer, when the AI's cannot be shown: the written meaning of each term the
-    panel (or the question) has, one per line."""
+def terms_on(tab: str, panel: str, lines: list[str], question: str = "") -> list[tuple[str, str]]:
+    """The terms the question or the panel has, each with our written meaning: those asked
+    about first. Shown under every answer ("What the terms mean") and as our own answer."""
     def has(term: str, text: str) -> bool:  # a whole word, or its plural: not "event" in "prevent"
         return re.search(r"(?<!\w)" + re.escape(plain(term)) + r"s?(?!\w)", text) is not None
     asked, have = plain(question), plain(" ".join([panel, *lines]))
     all_terms = meanings(tab)
-    first = [k for k in all_terms if has(k, asked)]  # what was asked about, then what the panel has
-    terms = [(k, all_terms[k]) for k in first + [k for k in all_terms if k not in first and has(k, have)]][:OUR_TERMS]
+    first = [k for k in all_terms if has(k, asked)]
+    return [(k, all_terms[k]) for k in first + [k for k in all_terms if k not in first and has(k, have)]][:OUR_TERMS]
+
+
+def our_words(tab: str, panel: str, lines: list[str], question: str = "") -> str:
+    """Our own answer, when the AI's cannot be shown: the written meaning of each term the
+    panel (or the question) has, one per line."""
+    terms = terms_on(tab, panel, lines, question)
     if not terms:
         return NO_ANSWER
     return "\n".join(f"{k}: {v}" for k, v in terms)
+
+
+ASK = ("What stands out here?", "What should I look at first, and why?")  # questions offered under an answer
+
+
+def suggestions(terms: list[tuple[str, str]], question: str) -> list[str]:
+    """Follow-up questions to offer: two general ones and what the first terms mean."""
+    out = list(ASK) + [f"What does \"{k}\" mean here?" for k, _ in terms[:2]]
+    return [q for q in out if plain(q) != plain(question)]
 
 
 def explain(client, tab: str, panel: str, lines: list[str], question: str = "", service: str = "") -> dict:
@@ -301,9 +323,12 @@ def explain(client, tab: str, panel: str, lines: list[str], question: str = "", 
         except ApiError as exc:
             note = (f"The AI service {service or 'set'} did not answer ({exc.short()}): these are our own "
                     "written meanings.")
+    terms = terms_on(tab, panel, lines, question)
     return {"question": question, "panel": panel, "answer": text or our_words(tab, panel, lines, question),
             "ours": not text, "note": note, "cut": cut, "seconds": round(time.monotonic() - started, 1),
-            "service": service if text else ""}
+            "service": service if text else "",
+            # always with the answer: our written meaning of each term on the panel, and what to ask next
+            "terms": [{"term": k, "meaning": v} for k, v in terms], "ask": suggestions(terms, question)}
 
 
 # -- what `verify --ai` measures with (made-up names and numbers) --------------------------------

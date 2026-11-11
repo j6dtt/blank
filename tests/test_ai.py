@@ -77,7 +77,7 @@ def test_a_good_service_passes_every_check_and_the_key_is_never_printed():
     assert "Right for 10 of 10 made-up panels" in checks["explains a panel"].message
     assert "right up to 40,000." in checks["explains a long page"].message
     assert len(checks["explains a long page"].rows) == 3
-    assert "Right in 6 of 6 tries" in checks["picks the right question"].message
+    assert "Right in 8 of 8 tries" in checks["picks the right question"].message
     assert "Right in 12 of 12 tries" in checks["picks the right question (Software tab)"].message
     assert "made no pick (right)" in checks["picks the right question"].message
     assert "2 of the 2 counts" in checks["repeats the counts"].message
@@ -112,7 +112,7 @@ def test_wrong_picks_and_a_pick_for_an_outside_question_fail_with_what_it_picked
     picks[AI_OUTSIDE] = {"tool": "events"}
     checks, _ = run(picks=picks)
     c = checks["picks the right question"]
-    assert c.ok is False and "Right in 5 of 6 tries" in c.message and "made a pick (wrong)" in c.message
+    assert c.ok is False and "Right in 7 of 8 tries" in c.message and "made a pick (wrong)" in c.message
     assert any(first in r and "picked events(group_by=day, days=7); a right pick is events(group_by=event, days=7)"
                in r for r in c.rows)
 

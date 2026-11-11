@@ -215,6 +215,29 @@ class Care:
                  len(self.users))
         return user
 
+    def pin(self, now: datetime) -> str:
+        """The PIN a change on the page needs: today's date, YYYYMMDD, in the page's time zone
+        (the user's choice, Nov 2026). The page has no login: this keeps a slip of the hand
+        out, not someone who knows the rule."""
+        return self.today.local(now).strftime("%Y%m%d")
+
+    def relabel(self, username: str, label: str, by: str = "") -> CareUser | None:
+        """A new label for a user on the list (their issues and investigation stay). None: not on it."""
+        user, label = username.strip().lower(), " ".join(label.split())
+        if len(label) > LABEL_MAX:
+            raise ValueError(f"Too long: a label takes {LABEL_MAX} characters at most.")
+        with self.checking:
+            users = self._to_change()
+            mine = next((u for u in users if u.username.lower() == user), None)
+            if mine is None:
+                return None
+            before, mine.label = mine.label, label
+            self._write_list(users)
+            self._set_users(users)
+        log.info("Care list: %s: label changed on the page from \"%s\" to \"%s\"%s", mine.username, before, label,
+                 f" from {by}" if by else "")
+        return mine
+
     def remove(self, username: str, by: str = "") -> CareUser | None:
         """Take a user off the list, with their saved issues and investigation. None: not on it."""
         user = username.strip().lower()

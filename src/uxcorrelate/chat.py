@@ -28,7 +28,7 @@ from datetime import date, datetime, timedelta
 
 from .ai import AiClient, tool_call
 from .config import TOP_STATUS, AiService, Settings
-from .today import HEALTH_DAYS, KEEP_FILES_DAYS, MIN_USUAL, NO_APP, USUAL_DAYS, Today, kind_of
+from .today import EVENT_PAD, HEALTH_DAYS, KEEP_FILES_DAYS, MIN_USUAL, NO_APP, USUAL_DAYS, Today, kind_of
 
 ROWS = 10  # rows given to the AI and shown, most first (hours: all of today's)
 HISTORY = 3  # earlier questions and answers sent with a new one
@@ -62,20 +62,33 @@ TOOLS = [
         "name": {"type": "string", "description": "Only events whose name has this, e.g. Application Crash."},
         "severity": {"type": "string", "enum": ["Critical", "Major", "Minor"]},
         "app": APP, "days": _days(HEALTH_DAYS + 1)}),
-    _tool("who", "List today's users and PCs with the most Major slow actions, or with an event.", {
+    _tool("who", "List the users and PCs with the most Major slow actions today, or the PCs with an event, today "
+                 "or over several days. Use it whenever the question asks to list, name or show which PCs or users.", {
         "what": {"type": "string", "enum": ["slow", "event"]}, "app": APP,
-        "name": {"type": "string", "description": "For what=event: the event's name, e.g. Application Crash."}},
+        "name": {"type": "string", "description": "For what=event: the event's name, e.g. Application Crash."},
+        "days": {"type": "integer", "description": f"For what=event: how many days, today included: 1 = today "
+                                                   f"only, 7 = this week (at most {HEALTH_DAYS + 1})."}},
         ("what",)),
+    _tool("active", "How many users and PCs are active (had at least one action Aternity measured): today so far and "
+                    "in the last hour, with the PCs split into virtual desktops and physical PCs. Use it for how many "
+                    "users, people, PCs or desktops are active, online, working or in use.", {}),
     _tool("investigate", "Investigate one user or PC: why they were slow, or what went wrong.", {
         "username": {"type": "string"}, "device": {"type": "string", "description": "The PC's name."},
         "app": APP, "hours": {"type": "integer", "description": "How many hours back from now."}}),
 ]
 
+# How an answer is laid out (the user, Nov 2026: "responses in better format than just running
+# sentences"): one line that answers, short points, one next step. The page draws it (answerHtml).
+SHAPE = ("as plain text with no markdown and no table, in this shape: first one short sentence that answers the "
+         "question; then two to four lines that each start with \"- \" and give one thing that stands out, by "
+         "name, with its number; then one last line that starts with \"Next: \" and gives one next step")
+LINES_MAX, TEXT_MAX = 7, 1200
+
 SYSTEM = ("You answer questions from IT staff about the experience of the company's PC users, from Aternity. "
           "Numbers come only from the tools: call exactly one tool to answer. If no tool fits the question, say "
           "so in one sentence and call no tool. Never state a number a tool did not give, and do not work out new "
           "ones (no sums, no percentages). When the counts come back, answer as a helpful colleague on the service "
-          "desk would, in two to four short sentences of plain text (no lists, no tables, no markdown). First, "
+          f"desk would, {SHAPE}. First, "
           "whether it is more, fewer or as usual, only when a note or row says exactly that (More than usual, "
           "Fewer than usual, As usual); if none does, say nothing about usual. Never call a count high, low, good "
           "or bad yourself. Then what stands out, by name: the application, activity, hour, event, user or PC at "
@@ -171,9 +184,29 @@ EVENTS_ONLY = ("Counted: events Aternity recorded. An investigation also shows a
 
 
 def _event_notes(kinds, asked: bool) -> list[str]:
-    """What a crash or event count does not say (the user's finding on stage, Nov 2026)."""
+    """What a crash or event count does not say (the user's finding on stage, Nov 2026). The
+    hang-time line only with an application's events: it says nothing of a System Crash."""
     out = [AFTER_HANG] if any("after hang" in (k[1] or "").lower() for k in kinds) else []
-    return out + ([EVENTS_ONLY] if asked else [])
+    of_app = any("applic" in f"{k[0]} {k[1]}".lower() or "hang" in (k[1] or "").lower() for k in kinds)
+    return out + ([EVENTS_ONLY] if asked and of_app else [])
+
+
+def _kinds_named(kinds, name) -> tuple[set, list[str]]:
+    """The kinds of event a name means: those with it in their name; when none has, those that
+    share a telling word with it ("hard drive failure" -> HD Failure), with a note saying so."""
+    kinds = set(kinds)
+    if not (name or "").strip():
+        return kinds, []
+    got = {k for k in kinds if _has(k[1], name)}
+    if got:
+        return got, []
+    from .software import words
+    ws = [w for w in words(name) if len(w) >= 3]
+    near = {k for k in kinds if any(w in (k[1] or "").lower() for w in ws)}
+    if not near:
+        return set(), []
+    return near, [f"No event is named like \"{name}\": shown are those that share a word with it "
+                  f"({', '.join(sorted(k[1] for k in near)[:6])}{' …' if len(near) > 6 else ''})."]
 
 
 def _share(part: int, whole: int) -> int | None:
@@ -407,8 +440,10 @@ def events(today: Today, now: datetime, group_by: str = "event", name: str | Non
     used = {"group_by": group_by, "name": name, "severity": severity, "app": app, "days": days}
     app = (app or "").strip() or None
 
+    wanted, loose = _kinds_named({x[2] for x in health} | {k for kinds in hd.values() for k in kinds}, name)
+
     def keep(k) -> bool:
-        return _has(k[1], name) and (not severity or (sev.get(k) or "").lower() == severity.strip().lower())
+        return k in wanted and (not severity or (sev.get(k) or "").lower() == severity.strip().lower())
 
     per_day: dict[date, dict] = {t: {}}
     per_app: dict[date, dict] = {t: {}}
@@ -444,7 +479,9 @@ def events(today: Today, now: datetime, group_by: str = "event", name: str | Non
             notes.append(f"No application is named exactly \"{app}\"; {len(matched)} have it in their name, "
                          f"counted together: {', '.join(matched[:5])}{' …' if len(matched) > 5 else ''}.")
     counted = sorted({k for kinds in per_day.values() for k in kinds})
-    notes += _event_notes(counted, bool(app or name))
+    notes += loose + _event_notes(counted, bool(app or name))
+    if group_by != "app" and counted:
+        notes.append("Counts only: to see which PCs, ask to list the PCs with it.")
     period = _period(today, t, days)
 
     if group_by == "event":
@@ -505,14 +542,110 @@ def events(today: Today, now: datetime, group_by: str = "event", name: str | Non
                    ["Application", "PCs", "Events"], rows, notes, f"{len(top)} applications")
 
 
-def who(today: Today, now: datetime, what: str = "slow", app: str | None = None, name: str | None = None) -> dict:
+def active(today: Today, now: datetime) -> dict:
+    """Active users and PCs, as the strip at the top of the Today tab."""
+    a = today.view(now).get("active")
+    if not a:
+        return _result("active", {}, "Active users and PCs", "", [], [], ["Today is still being read."])
+    t, r = a["today"], a["recent"]
+    rows = [[label, x["users"], x["pcs"], x["virtual"], x["physical"]]
+            for label, x in (("Today so far", t), (f"Since {r['since']}", r))]
+    notes = ["Active: at least one action Aternity measured in an application, whatever its rating. A PC that is "
+             "on with nobody working in a measured application is not counted.",
+             f"Users today: {t['users_virtual']:,} on a virtual desktop, {t['users_physical']:,} on a physical PC"
+             + (f", {t['users_both']:,} of them on both" if t["users_both"] else "")
+             + ". Virtual or physical is Aternity's own mark; a user who moved between desktops is one user and "
+             "several PCs."]
+    if t["not_known"]:
+        notes.append(f"{t['not_known']:,} PCs today have no virtual or physical mark from Aternity.")
+    say = (f"Active today so far: {_n(t['users'], 'user')} on {_n(t['pcs'], 'PC')} ({t['virtual']:,} virtual, "
+           f"{t['physical']:,} physical). Since {r['since']}: {_n(r['users'], 'user')} on {_n(r['pcs'], 'PC')}.")
+    return _result("active", {}, "Active users and PCs", _period(today, today.day(now), 1),
+                   ["When", "Users", "PCs", "Virtual desktops", "Physical PCs"], rows, notes, say=say)
+
+
+WHO_ROWS = 30  # PCs in a list over several days
+
+
+def _who_days(today: Today, now: datetime, used: dict, name, app, days: int) -> dict:
+    """The PCs with an event over several days (the user, Nov 2026: "List PCs with System crash
+    this week" got today's one PC, then per-day counts). The days before keep the PC, not the user."""
     t = today.day(now)
-    used = {"what": what, "app": app, "name": name}
+    first = t - timedelta(days=days - 1)
+    with today.lock:
+        rows = [x for x in today.health if today.day(x[0]) == t]
+        hd = {d: v for d, v in today.health_days.items() if first <= d < t}
+        ha = {d: v for d, v in today.health_apps.items() if first <= d < t}
+        read = {d for d in today.health_read if first <= d < t}
+    wanted, notes = _kinds_named({x[2] for x in rows} | {k for kinds in hd.values() for k in kinds}, name)
+    apps = _match({x[5] for x in rows if x[2] in wanted} | {k[1] for kinds in ha.values() for k in kinds
+                                                           if k[0] in wanted}, app) if app else None
+    pcs: dict[str, dict] = {}
+
+    def add(dev, d, when, kind, user=None):
+        p = pcs.setdefault(dev, {"days": set(), "last": when, "kinds": set(), "user": None})
+        p["days"].add(d)
+        p["kinds"].add(kind[1])
+        p["last"] = max(p["last"], when)
+        p["user"] = user or p["user"]
+    for x in rows:
+        if x[2] in wanted and (apps is None or x[5] in apps):
+            add(x[1], t, x[0], x[2], x[4])
+    for d, kinds in hd.items():
+        for k, devs in kinds.items():
+            if k not in wanted:
+                continue
+            ok = None if apps is None else set().union(*(ha.get(d, {}).get((k, a), set()) for a in apps))
+            for dev, secs in devs.items():
+                if ok is None or dev in ok:
+                    add(dev, d, today.midnight(d) + timedelta(seconds=secs), k)
+    period = _period(today, t, days)
+    what = _join_names(sorted({k[1] for k in wanted})) if wanted else f"\"{name or 'any'}\""
+    of = f" of {', '.join(apps[:3])}" if apps else ""
+    missing = days - 1 - len(read)
+    if missing > 0:
+        notes.append(f"{missing} of the {days - 1} days before were not read yet (read once a day).")
+    if not pcs:
+        return _result("who", used, f"PCs with {what}{of}", period, [], [],
+                       notes + [f"No PC had an event named like \"{name or 'any'}\"{of} in this period."])
+    several = len({k for p in pcs.values() for k in p["kinds"]}) > 1
+    order = sorted(pcs.items(), key=lambda kv: (-len(kv[1]["days"]), -kv[1]["last"].timestamp(), kv[0]))
+    out, runs = [], []
+    for dev, p in order[:WHO_ROWS]:
+        out.append([p["user"] or "—", dev, len(p["days"])] + ([", ".join(sorted(p["kinds"]))] if several else [])
+                   + [f"{today.local(p['last']):%a %b %d %H:%M}"])
+        runs.append({"username": p["user"], "device": dev, "application": None,
+                     "start": (p["last"] - EVENT_PAD).isoformat().replace("+00:00", "Z"),
+                     "end": min(p["last"] + EVENT_PAD, now).replace(microsecond=0).isoformat().replace("+00:00", "Z")})
+    notes.append("The user is known for today's events only: the days before keep the PC. Investigate ▸ runs for "
+                 "the hour around the PC's last one.")
+    if len(order) > WHO_ROWS:
+        notes.append(f"The {WHO_ROWS} PCs with the most days are shown, of {len(order):,}.")
+    notes += _event_notes(sorted(wanted), bool(app or name))
+    return _result("who", used, f"PCs with {what}{of}", period,
+                   ["User", "PC", "Days with it"] + (["Event"] if several else []) + ["Last"], out, notes,
+                   _n(len(order), "PC"), runs=runs, label=(0, 1), value=2)
+
+
+def _join_names(names: list[str]) -> str:
+    return names[0] if len(names) == 1 else f"{len(names)} kinds of event ({', '.join(names[:3])}{' …' if len(names) > 3 else ''})"
+
+
+def who(today: Today, now: datetime, what: str = "slow", app: str | None = None, name: str | None = None,
+        days=1) -> dict:
+    t = today.day(now)
+    days = _clamp(days, 1, HEALTH_DAYS + 1, 1)
+    used = {"what": what, "app": app, "name": name, "days": days}
     period = _period(today, t, 1)
     notes = []
+    if what == "event" and days > 1:
+        return _who_days(today, now, used, name, app, days)
     if what == "event":
         with today.lock:
-            mine = [x for x in today.health if today.day(x[0]) == t and _has(x[2][1], name)]
+            every = {x[2] for x in today.health if today.day(x[0]) == t}
+            wanted, loose = _kinds_named(every, name)
+            notes += loose
+            mine = [x for x in today.health if today.day(x[0]) == t and x[2] in wanted]
         apps = _match({x[5] for x in mine}, app) if app else None
         kinds = sorted({x[2] for x in mine if apps is None or x[5] in apps})
         of = f" of applications named like \"{app}\"" if app else ""
@@ -638,7 +771,9 @@ def run_block(name: str, args: dict, today: Today, names, now: datetime) -> dict
             return events(today, now, **{k: args[k] for k in ("group_by", "name", "severity", "days", "app")
                                          if k in args})
         if name == "who":
-            return who(today, now, **{k: args[k] for k in ("what", "app", "name") if k in args})
+            return who(today, now, **{k: args[k] for k in ("what", "app", "name", "days") if k in args})
+        if name == "active":
+            return active(today, now)
         if name == "investigate":
             return investigate(today, names, now, **{k: args[k] for k in ("username", "device", "app", "hours")
                                                      if k in args})
@@ -665,8 +800,17 @@ def allowed(*texts: str, small: int = 0) -> set[float]:
 
 
 def clean(text) -> str:
-    text = re.sub(r"[*_`#]{1,3}", "", str(text or ""))
-    return " ".join(text.split())[:800]
+    # markdown marks; an underscore inside a name stays (GPT's "bad_module_info" became
+    # "badmoduleinfo" on stage): only one at the edge of a word is emphasis
+    # Lines are kept (SHAPE): a bullet of any kind ("*", "•", "1.") becomes "- ".
+    out = []
+    for line in str(text or "").splitlines():
+        line = re.sub(r"^\s*(?:[-*•–]|\d{1,2}[.)])\s+", "- ", line)
+        line = re.sub(r"[*`#]{1,3}|(?<![A-Za-z0-9])_{1,3}|_{1,3}(?![A-Za-z0-9])", "", line)
+        line = " ".join(line.split())
+        if line and line != "-":
+            out.append(line)
+    return "\n".join(out[:LINES_MAX])[:TEXT_MAX]
 
 
 def system(today: Today, now: datetime) -> str:

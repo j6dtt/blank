@@ -23,8 +23,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from .chat import ROWS, _n, _result, _tool, converse
-from .config import SOFTWARE_OS_UPDATE, TOP_STATUS
+from .chat import ROWS, SHAPE, _n, _result, _tool, converse
+from .config import NO_PROGRAM, SOFTWARE_OS_UPDATE, TOP_STATUS
 from .http import ApiError
 from .software import (DAYS, FEW_PCS, KIND, MIN_PCS, MIN_PROBLEM, RATIO, UPDATE_DAYS, Software, app_now, before_after,
                        crashes_by_version, named_like, words,
@@ -93,8 +93,8 @@ SYSTEM = ("You answer questions from IT staff and management about the software 
           "tool to answer: the one for what the question names (one application or program, else the red flags of "
           "all). If no tool fits the question, say so in one sentence and call no tool. Never state a "
           "number a tool did not give, and do not work out new ones (no sums, no percentages, no ratios). When the "
-          "counts come back, answer as a helpful colleague would, in two to four short sentences of plain text (no "
-          "lists, no tables, no markdown). Say that a version crashes, hangs or is slower more than the others only "
+          "counts come back, answer as a helpful colleague would, " + SHAPE + ". Say that a version crashes, hangs or "
+          "is slower more than the others only "
           "when a row or note says it is raised (a red flag); otherwise give the counts side by side without judging "
           "them. Never call a count high, low, good or bad yourself. Name what stands out: the program, version, "
           "Windows update or PC at the top. End with one next step that fits: a follow-up question to ask here (for "
@@ -324,7 +324,7 @@ def version_problems(sw: Software, view: dict, args: dict, application: str | No
 def most(sw: Software, view: dict, args: dict, problem: str = "crash") -> dict:
     """Every application by its PCs with the problem, most first: a plain count, each PC once."""
     problem = problem if problem in PROBLEM else "crash"
-    snap, rows, only = sw.snap or {}, [], []
+    snap, rows, only, unnamed = sw.snap or {}, [], [], 0
     for a in view.get("versions", []):
         t = a.get("totals") or {"pcs": sum(v["pcs"] for v in a["versions"]),  # a read from before totals
                                 "crash": sum(v["crash"] for v in a["versions"]),
@@ -347,7 +347,9 @@ def most(sw: Software, view: dict, args: dict, problem: str = "crash") -> dict:
             if name and (name not in best or e["pcs"] > best[name]["pcs"]):
                 best[name] = e
         for name, pcs in (snap.get("crash_names") or {}).items():
-            if name not in have and pcs:
+            if name.lower() in NO_PROGRAM:  # not a program: Windows could not tell which one failed
+                unnamed += pcs
+            elif name not in have and pcs:
                 e = best.get(name)
                 rows.append([name, pcs, None, f"{e['version'] or '(no version)'} ({e['pcs']:,})" if e else None])
     rows.sort(key=lambda r: (-r[1], str(r[0]).lower()))
@@ -360,6 +362,9 @@ def most(sw: Software, view: dict, args: dict, problem: str = "crash") -> dict:
     if problem == "crash":
         notes.append("\"PCs that ran it\" is empty where the count is from Aternity's crash events alone (an "
                      "application on one version, or a program file with no application name).")
+        if unnamed:
+            notes.append(f"Not listed, as it is not a program: {_n(unnamed, 'PC')} had a crash where Windows could "
+                         f"not tell which program failed (Aternity names it {NO_PROGRAM[0]}).")
         if snap.get("crashes") is None:
             notes.append("The crash events were not read with the latest read: only applications with 2 versions "
                          "or more are listed.")
@@ -397,7 +402,7 @@ def _crashes_like(args: dict, sw: Software, view: dict, client, now: datetime, a
     kinds: set = set()
     for e in events:
         who = [x for x in (e["application"], e["part"]) if x and named_like(x, asked)]
-        if not who or e["application"] in in_usage:
+        if not who or e["application"] in in_usage or (e["part"] or "").lower() in NO_PROGRAM:
             continue
         label = e["application"] if e["application"] and e["part"] in (None, e["application"]) else \
             f"{e['application']} ({e['part']})" if e["application"] else e["part"]

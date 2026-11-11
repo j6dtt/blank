@@ -427,7 +427,31 @@ class Today:
                 "as_of_local": self.local(self.as_of or now).strftime("%H:%M"),
                 "zone": self.zone_label, "date": t.isoformat(), "kind": kind, "slow": slow, "tiles": tiles,
                 "none": none, "hours": per_hour, "applications": app_rows, "events": events,
-                "health_days": len(before), "notes": notes, "refresh_minutes": REFRESH_MIN}
+                "health_days": len(before), "notes": notes, "refresh_minutes": REFRESH_MIN,
+                # active: today so far, and the last full hour with this one so far
+                "active": {"today": self.active(hours),
+                           "recent": dict(self.active([h for h in hours if h.start >= cut - HOUR]),
+                                          since=self.local(cut - HOUR).strftime("%H:%M"))}}
+
+    @staticmethod
+    def active(hours: list) -> dict:
+        """Users and PCs with at least one action Aternity measured in these hours (any rating),
+        each once; PCs by Aternity's own virtual / physical mark, users by the PCs they used."""
+        kind: dict = {}
+        users: dict = {}
+        devs: set = set()
+        for h in hours:
+            devs |= h.devs
+            kind.update(h.dev_kind)
+            for u, ds in h.user_devs.items():
+                users.setdefault(u, set()).update(ds)
+        of = lambda k: sum(1 for d in devs if kind.get(d, "not known") == k)  # noqa: E731
+        on = {u: {kind.get(d, "not known") for d in ds} for u, ds in users.items()}
+        return {"users": len(users), "pcs": len(devs), "virtual": of("virtual"), "physical": of("physical"),
+                "not_known": of("not known"),
+                "users_virtual": sum(1 for k in on.values() if "virtual" in k),
+                "users_physical": sum(1 for k in on.values() if "physical" in k),
+                "users_both": sum(1 for k in on.values() if {"virtual", "physical"} <= k)}
 
     def who(self, now: datetime, kind: str, name: str = "", category: str = "", kinds: set | None = None,
             apps: set | None = None) -> dict:

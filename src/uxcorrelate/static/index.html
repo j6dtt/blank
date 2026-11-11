@@ -180,13 +180,20 @@
   }
   .multWrap { overflow-x: auto; }
   .multWrap .mult { min-width: 520px; }
+  .activeRow { display: flex; gap: 8px 28px; flex-wrap: wrap; margin: 8px 0 2px; font-size: 14px; }
+  .activeRow b { font-size: 16px; }
   .exRow { text-align: right; margin-top: 4px; }
   .exRow button.link { font-size: 12px; padding: 0; }
-  #exAnswer { font-size: 15px; white-space: pre-line; }
+  #exAnswer { font-size: 15px; margin: 10px 0; }
+  .ans .lead { font-weight: 600; }
+  .ans ul { margin: 6px 0; padding-left: 20px; } .ans li { margin: 2px 0; }
+  .ans .next { margin-top: 6px; padding: 6px 10px; border-left: 3px solid var(--accent); background: rgba(0, 0, 0, .03); }
+  .exTerms { margin: 10px 0 0; font-size: 13px; } .exTerms summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+  .exTerms dt { font-weight: 600; margin-top: 6px; } .exTerms dd { margin: 0; }
   .dlgWrap[hidden] { display: none; }
   .dlgWrap { position: fixed; inset: 0; background: rgba(20, 16, 8, .45); display: grid; place-items: center; z-index: 20; padding: 16px; }
   .dlg { max-width: 640px; width: 100%; max-height: 80vh; overflow: auto; }
-  .cFields { display: grid; gap: 10px; } .cFields[hidden] { display: none; }
+  .cFields { display: grid; gap: 10px; } .cFields[hidden] { display: none; } #cUserField[hidden] { display: none; }
   .dlgBtns { display: flex; gap: 10px; justify-content: flex-end; margin-top: 12px; }
 </style>
 </head>
@@ -204,6 +211,7 @@
       <div class="todayHead"><h2>Today's issues</h2><span class="muted" id="tWhen"></span>
         <button type="button" class="link" id="tAskLink">Ask a question ▾</button></div>
       <div class="muted" id="tStatus"></div>
+      <div class="activeRow" id="tActive"></div>
       <div class="tiles" id="tTiles"></div>
       <ul class="muted notes" id="tNotes"></ul>
       <div class="exRow noExplain"><button type="button" class="link explain" data-tab="today">Explain ▸</button></div>
@@ -481,13 +489,17 @@
     style="display:block;max-width:440px" autocomplete="off">
   <h2 id="cDlgTitle"></h2>
   <div id="cAddFields" class="cFields">
-    <label>Username, as Aternity writes it (type part of it)
+    <label id="cUserField">Username, as Aternity writes it (type part of it)
       <input name="username" list="cNames" maxlength="100" required></label>
     <datalist id="cNames"></datalist>
     <label>Label, shown big on the tile (optional: a name or a role)
       <input name="label" maxlength="60"></label>
   </div>
   <p id="cDlgText" style="margin:0"></p>
+  <div class="cFields" id="cPinField" style="margin-top:10px">
+    <label>PIN, needed for every change of the Care list
+      <input name="pin" type="password" inputmode="numeric" maxlength="8" autocomplete="off" required></label>
+  </div>
   <p id="cDlgError" style="color:var(--bad);margin:8px 0 0" hidden></p>
   <div class="dlgBtns"><button type="submit" id="cDlgOk"></button><button type="button" class="link" id="cDlgCancel">Cancel</button></div>
 </form></div>
@@ -597,9 +609,14 @@ function renderToday(t) {
       + `<div class="u">${usualText(e.usual, t.kind)}</div>${eventSpark(e, t.date)}<div class="more">Show who ▸</div></div>`))
     .concat([`<div class="tile${s.pcs ? ` click" role="button" tabindex="0" data-kind="slow` : ""}">${sevTag(s.status)}<div class="big">${pcs(s.pcs)}</div>`
       + `<div class="what">${esc(s.status)} slow actions</div>`
-      + `<div class="u">${n(s.actions)} actions, ${n(s.users)} users; ${n(s.active_pcs)} PCs active today.</div>`
+      + `<div class="u">${n(s.actions)} actions, ${n(s.users)} users.</div>`
       + `<div class="u">${s.by ? usualText(s.usual, t.kind, s.by, s.by_pcs) : "Compared after the first hour of the day."}</div>`
       + `${s.pcs ? `<div class="more">Show who ▸</div>` : ""}</div>`]);
+  // active users and PCs (at least one measured action): today, and the last full hour with this one
+  const act = (label, a) => `<span>${label}: <b>${n(a.users)}</b> ${a.users === 1 ? "user" : "users"} · <b>${n(a.pcs)}</b> ${a.pcs === 1 ? "PC" : "PCs"} `
+    + `<span class="muted">(${n(a.virtual)} virtual, ${n(a.physical)} physical${a.not_known ? `, ${n(a.not_known)} not marked` : ""})</span></span>`;
+  $("tActive").innerHTML = t.active ? act("Active today", t.active.today) + act(`Since ${esc(t.active.recent.since)}`, t.active.recent)
+    + `<span class="muted" style="font-size:12px">Active: at least one action Aternity measured.</span>` : "";
   $("tTiles").innerHTML = tiles.join("");
   $("tNotes").innerHTML = t.notes.map((x) => `<li>${esc(x)}</li>`).join("");
 
@@ -763,7 +780,8 @@ async function openCare(username) {
     else if (rep && rep.error) html += `<p>The last one failed: ${esc(rep.error)}</p>`;
     else html += `<p class="muted">${esc(whyText(d) || "None yet: one runs by itself when an issue comes.")}</p>`;
     html += `<button type="button" class="link" id="cRun">Investigate again now ▸</button>`;
-    html += ` <button type="button" class="link" id="cRemove" style="color:var(--bad);float:right">Remove from the Care list…</button>`;
+    html += ` <button type="button" class="link" id="cRemove" style="color:var(--bad);float:right">Remove from the Care list…</button>`
+      + ` <button type="button" class="link" id="cEdit" style="float:right;margin-right:16px">Change label…</button>`;
     const before = d.history.filter((i) => i.day !== d.days[d.days.length - 1].date);  // today's are above
     html += `<h3>The ${d.days.length - 1} days before</h3>` + (before.length
       ? `<ul>${before.map((i) => `<li>${esc(i.when_local)} ${sevTag(i.level)} ${esc(i.text)}`
@@ -781,21 +799,29 @@ for (const id of ["cTiles"]) {
 $("cDetailClose").addEventListener("click", () => { $("cDetail").hidden = true; });
 // Add a user / remove one: one in-page dialog; the list is care_list.json in the data folder
 let cDlgRemove = null;
-function careDialog(remove) {
-  cDlgRemove = remove || null;
-  const f = $("cForm"), full = !remove && careData && careData.checked >= careData.max;
-  $("cDlgTitle").textContent = remove ? "Remove from the Care list" : "Add a user to the Care list";
-  $("cAddFields").hidden = !!remove || full; f.username.required = !remove && !full;
+// One dialog for the three changes: add (no user), change a label (edit), remove. Each needs the PIN.
+function careDialog(user, edit) {
+  const remove = user && !edit ? user : null;
+  cDlgRemove = remove; cDlgEdit = user && edit ? user : null;
+  const f = $("cForm"), full = !user && careData && careData.checked >= careData.max;
+  const who = user ? (user.label ? `${user.label} (${user.username})` : user.username) : "";
+  $("cDlgTitle").textContent = remove ? "Remove from the Care list" : cDlgEdit ? `Change the label of ${user.username}`
+    : "Add a user to the Care list";
+  $("cAddFields").hidden = !!remove || full; $("cUserField").hidden = !!cDlgEdit;
+  f.username.required = !user && !full;
   $("cDlgText").hidden = !remove && !full;
   $("cDlgText").textContent = full ? `The Care list is full (${careData.max} users): remove one first.` : remove
-    ? `${remove.label ? `${remove.label} (${remove.username})` : remove.username} will no longer be checked. Their tile, `
-      + "their saved issues of the last 8 days and their latest investigation are deleted." : "";
-  $("cDlgOk").textContent = remove ? "Remove" : "Add"; $("cDlgOk").hidden = full; $("cDlgOk").disabled = false;
+    ? `${who} will no longer be checked. Their tile, their saved issues of the last 8 days and their latest `
+      + "investigation are deleted." : "";
+  $("cPinField").hidden = full; f.pin.required = !full;
+  $("cDlgOk").textContent = remove ? "Remove" : cDlgEdit ? "Save" : "Add"; $("cDlgOk").hidden = full; $("cDlgOk").disabled = false;
   $("cDlgOk").style.background = remove ? "var(--bad)" : "";
   $("cDlgError").hidden = true; f.reset(); $("cNames").innerHTML = "";
+  if (cDlgEdit) f.label.value = user.label || "";
   $("cDlg").hidden = false;
-  (remove || full ? $("cDlgCancel") : f.username).focus();
+  (full ? $("cDlgCancel") : remove ? f.pin : cDlgEdit ? f.label : f.username).focus();
 }
+let cDlgEdit = null;
 $("cAdd").addEventListener("click", () => careDialog());
 $("cDlgCancel").addEventListener("click", () => { $("cDlg").hidden = true; });
 $("cDlg").addEventListener("click", (ev) => { if (ev.target === $("cDlg")) $("cDlg").hidden = true; });
@@ -818,15 +844,17 @@ $("cForm").addEventListener("submit", async (ev) => {
   const f = $("cForm"), gone = cDlgRemove;
   $("cDlgOk").disabled = true; $("cDlgError").hidden = true;
   try {
-    const r = gone ? await fetch(`api/care/users?${new URLSearchParams({ username: gone.username })}`, { method: "DELETE" })
-      : await fetch("api/care/users", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: f.username.value, label: f.label.value }) });
+    const pin = f.pin.value.trim(), edit = cDlgEdit;
+    const r = gone ? await fetch(`api/care/users?${new URLSearchParams({ username: gone.username, pin })}`, { method: "DELETE" })
+      : await fetch("api/care/users", { method: edit ? "PUT" : "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: edit ? edit.username : f.username.value, label: f.label.value, pin }) });
     const d = await r.json();
     if (!r.ok) throw new Error(detail(d));
     $("cDlg").hidden = true;
     if (gone) $("cDetail").hidden = true;
     await loadCare();
-    if (!gone) setTimeout(loadCare, 4000);  // their history of the days before is read now: the tile fills in
+    if (edit) openCare(edit.username);  // the open detail shows the new label
+    if (!gone && !edit) setTimeout(loadCare, 4000);  // their history of the days before is read now: the tile fills in
   } catch (e) { $("cDlgError").textContent = e.message; $("cDlgError").hidden = false; $("cDlgOk").disabled = false; }
 });
 $("cDetailBody").addEventListener("click", (ev) => {
@@ -837,6 +865,8 @@ $("cDetailBody").addEventListener("click", (ev) => {
     f.start.value = toLocalInput(new Date(rep.start)); f.end.value = toLocalInput(new Date(rep.end));
     mode("inv");
     render(rep.result);
+  } else if (ev.target.id === "cEdit") {
+    careDialog(careUser, true);
   } else if (ev.target.id === "cRemove") {
     careDialog({ username: careUser.username, label: careUser.label });
   } else if (ev.target.id === "cRun") {
@@ -852,6 +882,21 @@ const CHAT_EXAMPLES = ["Which apps had the most Major slow actions today?", "Whi
 const SW_CHAT_EXAMPLES = ["Which programs are most out of date?", "Which application versions crash more than the others?",
   "Which programs have 2 versions on one PC?", "Did Microsoft Outlook get worse after its last update?"];
 const cell = (v) => v === null || v === undefined ? "—" : typeof v === "number" ? v.toLocaleString() : esc(v);
+// An AI answer as it is laid out (chat.SHAPE): the first line, "- " points as a list, "Next: " set apart.
+// One sentence (our own, or an older answer) is just the first line.
+function answerHtml(text) {
+  const lines = String(text ?? "").split("\n").map((x) => x.trim()).filter(Boolean);
+  let html = "", pts = [];
+  const flush = () => { if (pts.length) { html += `<ul>${pts.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`; pts = []; } };
+  lines.forEach((x, i) => {
+    if (x.startsWith("- ")) { pts.push(x.slice(2)); return; }
+    flush();
+    html += /^next:/i.test(x) ? `<div class="next"><b>Next:</b> ${esc(x.replace(/^next:\s*/i, ""))}</div>`
+      : `<div${i === 0 ? ' class="lead"' : ""}>${esc(x)}</div>`;
+  });
+  flush();
+  return `<div class="ans">${html}</div>`;
+}
 function makeChat(p, url, examples) {
   const el = (k) => $(p + k);
   let history = [], answers = [];
@@ -859,7 +904,7 @@ function makeChat(p, url, examples) {
     el("Clear").hidden = !answers.length;
     el("Answers").innerHTML = answers.map((a, i) => {
       const r = a.result;
-      let html = `<div class="answer"><div class="q">${esc(a.question)} · ${a.seconds} s</div><div class="a">${esc(a.answer)}</div>`;
+      let html = `<div class="answer"><div class="q">${esc(a.question)} · ${a.seconds} s</div><div class="a">${answerHtml(a.answer)}</div>`;
       if (a.note) html += `<div class="note">${esc(a.note)}</div>`;
       if (r) {
         if (r.action) html += `<div><button type="button" data-a="${i}">Investigate ▸ ${esc([r.action.username, r.action.device].filter(Boolean).join(" on "))}, ${esc(r.period)}</button></div>`;
@@ -1672,7 +1717,7 @@ document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !$("dl
 $("dlgCopy").addEventListener("click", async () => {
   try { await navigator.clipboard.writeText($("dlgCopy").dataset.text); $("dlgCopy").textContent = "Copied ✓"; }
   catch (e) {  // no clipboard over plain HTTP: select the text to copy by hand
-    const range = document.createRange(); range.selectNodeContents($("dlgBody").querySelector("p") || $("dlgBody"));
+    const range = document.createRange(); range.selectNodeContents($("dlgBody").querySelector("#exAnswer, p") || $("dlgBody"));
     getSelection().removeAllRanges(); getSelection().addRange(range); $("dlgCopy").textContent = "Selected: press Ctrl+C";
   }
 });
@@ -1731,8 +1776,13 @@ async function explainNow(tab, panel, lines, question) {
     if (explaining.lines !== lines || $("dlg").hidden) return;  // another panel was asked about, or it was closed
     const notes = [a.note || (a.ours ? "" : `Written by the AI (${a.service}) from this panel; every number checked against it.`),
       a.cut ? "The panel is long: only its first part was given to the AI." : ""].filter(Boolean);
+    // our written meaning of each term on the panel: always there; open when it is the whole answer
+    const terms = (a.terms || []).length ? `<details class="exTerms"${a.ours ? " open" : ""}><summary>What the terms mean</summary><dl>`
+      + a.terms.map((t) => `<dt>${esc(t.term)}</dt><dd>${esc(t.meaning)}</dd>`).join("") + "</dl></details>" : "";
+    const chips = (a.ask || []).length ? `<div class="chips" id="exChips">${a.ask.map((q) => `<button type="button">${esc(q)}</button>`).join("")}</div>` : "";
     swDialog(`Explain: ${panel}`, `<div class="muted" style="font-size:12px">${esc(a.question)} · ${a.seconds} s</div>`
-      + `<p id="exAnswer">${esc(a.answer)}</p>` + notes.map((x) => `<div class="muted" style="font-size:12px">${esc(x)}</div>`).join("") + form,
+      + (a.ours ? (terms ? "" : `<p id="exAnswer">${esc(a.answer)}</p>`) : `<div id="exAnswer">${answerHtml(a.answer)}</div>`)
+      + notes.map((x) => `<div class="muted" style="font-size:12px">${esc(x)}</div>`).join("") + terms + form + chips,
       a.answer);
     $("exQ").focus();
   } catch (e) { if (!$("dlg").hidden) swDialog(`Explain: ${panel}`, `<p class="err">No answer: ${esc(e.message)}</p>` + form, ""); }
@@ -1744,6 +1794,10 @@ document.addEventListener("click", (ev) => {
   const panel = b.closest(".panel"), title = panel.querySelector("h2, .atitle");
   const name = panel.id === "aCard" ? "The answer (headline)" : title ? title.textContent.trim() : "This panel";
   explainNow(b.dataset.tab, name, shown(panel));
+});
+$("dlgBody").addEventListener("click", (ev) => {  // a suggested question: asked about the same panel
+  const b = ev.target.closest("#exChips button");
+  if (b && explaining) explainNow(explaining.tab, explaining.panel, explaining.lines, b.textContent);
 });
 $("dlgBody").addEventListener("submit", (ev) => {
   if (ev.target.id !== "exForm") return;

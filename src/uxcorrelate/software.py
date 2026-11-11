@@ -26,7 +26,7 @@ from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from .aternity import is_virtual, odata_quote, odata_time
+from .aternity import _bare, is_virtual, odata_quote, odata_time
 from .config import (OS_COLUMNS, SOFTWARE_COLUMNS, SOFTWARE_OS_UPDATE, SOFTWARE_SOURCE, SOFTWARE_USER_SCOPE,
                      TOP_STATUS, VERSION_SOURCES)
 from .http import short_error
@@ -453,8 +453,10 @@ def _crashes(q: _Reads, now: datetime, say) -> list[dict] | None:
             name, dev = r.get(f["name"]), r.get(f["device"])
             if not dev or "crash" not in str(name or "").lower():
                 continue
-            key = (r.get(f.get("application", "")) or None, r.get(f.get("component", "")) or None,
-                   r.get(f.get("component_version", "")) or None)
+            # without Aternity's labels ("x.exe (Process)", "1.2 (Process Version)"); 0.0.0.0 is no version
+            version = _bare(r.get(f.get("component_version", "")))
+            key = (r.get(f.get("application", "")) or None, _bare(r.get(f.get("component", ""))) or None,
+                   None if version in ("", "0.0.0.0") else version)
             x = per.setdefault(key, {"pcs": set(), "events": 0, "kinds": set()})
             x["pcs"].add(dev)
             x["events"] += 1

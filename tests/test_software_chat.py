@@ -253,8 +253,20 @@ def test_which_crashed_the_most_is_a_plain_ranking_not_the_red_flags(tmp_path):
     data["DEVICE_HEALTH_RAW"] += [{"DEVICE_NAME": f"PC-{i:02d}", "APPLICATION_NAME": None,
                                    "HEALTH_EVENT_NAME": "Application Crash", "HEALTH_EVENT_COMPONENT": "viewer.exe",
                                    "HEALTH_EVENT_COMPONENT_VERSION": "3.1", "TIMEFRAME": day1} for i in range(1, 21)]
+    # as Aternity writes them on stage: labels on the part and its version, and Windows' own
+    # "could not tell which program" name on the most PCs of all
+    data["DEVICE_HEALTH_RAW"] += [{"DEVICE_NAME": f"PC-{i:02d}", "APPLICATION_NAME": None,
+                                   "HEALTH_EVENT_NAME": "Application Crash",
+                                   "HEALTH_EVENT_COMPONENT": "bad_module_info (Process)",
+                                   "HEALTH_EVENT_COMPONENT_VERSION": "0.0.0.0 (Process Version)", "TIMEFRAME": day1}
+                                  for i in range(1, 51)]
+    for row in data["DEVICE_HEALTH_RAW"]:
+        if row.get("HEALTH_EVENT_COMPONENT") == "viewer.exe":
+            row.update(HEALTH_EVENT_COMPONENT="viewer.exe (Process)", HEALTH_EVENT_COMPONENT_VERSION="3.1 (Process Version)")
     r, v, c, s = reader(tmp_path, data)
     got = run("most", {}, r, v)
+    assert any(n.startswith("Not listed, as it is not a program: 50 PCs had a crash where Windows could not tell")
+               for n in got["notes"])
     assert got["title"] == "Applications with the most PCs with a crash" and got["total"] == "3 applications"
     assert got["rows"] == [["Trellix ENS", 35, 35, "10.7 (30)"],  # every PC listed crashed: never a red flag
                            ["viewer.exe", 20, None, "3.1 (20)"],  # only in the crash events, with no application

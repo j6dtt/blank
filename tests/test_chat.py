@@ -138,6 +138,60 @@ def test_events_by_event_day_and_application():
     assert events(t, NOW, severity="critical")["rows"][0][0] == "System Crash"
 
 
+def test_active_users_and_pcs_today_and_since_the_last_full_hour():
+    """The user's request, Nov 2026: how many users and PCs are active, virtual and physical."""
+    from uxcorrelate.chat import active
+    t = filled()
+    a = t.view(NOW)["active"]  # VD-1, VD-2 (virtual), PC3, PC4 (physical) at 09:00; PC4 again at 14:00
+    assert a["today"] == {"users": 4, "pcs": 4, "virtual": 2, "physical": 2, "not_known": 0, "users_virtual": 2,
+                          "users_physical": 2, "users_both": 0}
+    assert a["recent"]["since"] == "13:00" and (a["recent"]["users"], a["recent"]["pcs"]) == (1, 1)
+    r = active(t, NOW)
+    assert r["rows"] == [["Today so far", 4, 4, 2, 2], ["Since 13:00", 1, 1, 0, 1]]
+    assert r["say"] == ("Active today so far: 4 users on 4 PCs (2 virtual, 2 physical). Since 13:00: 1 user on 1 PC.")
+    assert run_block("active", {}, t, None, NOW)["title"] == "Active users and PCs"
+    # a user on a virtual desktop and a physical PC is one user on both kinds
+    t.add_hour(t.midnight(date(2026, 11, 9)) + 10 * HOUR, [dict(act(NOW - 4 * HOUR, "PC3", "Normal", "ERP", False), USERNAME="u-VD-1")], F, NOW)
+    assert t.view(NOW)["active"]["today"]["users_both"] == 1 and t.view(NOW)["active"]["today"]["users"] == 4
+
+
+def test_a_list_of_pcs_with_an_event_over_the_week_and_a_name_matched_by_a_shared_word():
+    """Stage, Nov 2026: "List PCs name with System crash this week" gave today's one PC, "List all
+    System Crash this week" gave counts per day, and "hard drive failure" found no event (HD Failure)."""
+    t = filled()  # today: Application Crash on VD-1 (twice) and PC3, System Crash on PC4; Friday: PC8, PC9
+    w = who(t, NOW, "event", name="application crash", days=4)
+    assert w["title"] == "PCs with Application Crash" and w["total"] == "4 PCs"
+    assert w["columns"] == ["User", "PC", "Days with it", "Last"]
+    assert [x[:3] for x in w["rows"]] == [["u-VD-1", "VD-1", 1], ["u-PC3", "PC3", 1], ["—", "PC8", 1], ["—", "PC9", 1]]
+    assert w["rows"][2][3].startswith("Fri Nov 06") and w["runs"][2]["device"] == "PC8" and w["runs"][2]["username"] is None
+    assert any("2 of the 3 days before were not read" in n for n in w["notes"])
+    assert any("user is known for today's events only" in n for n in w["notes"])
+    assert [x[1] for x in who(t, NOW, "event", name="crash", app="erp", days=4)["rows"]] == ["PC3"]
+    assert run_block("who", {"what": "event", "name": "System Crash", "days": 7}, t, None, NOW)["rows"][0][1] == "PC4"
+    assert who(t, NOW, "event", name="nothing like it", days=7)["rows"] == []
+    # a name no event has: those that share a word with it, said
+    t.set_health([ev(NOW - HOUR, "PC5", "HD Failure", "Critical", cat="Hardware")], H, today=True)
+    hd = events(t, NOW, name="hard drive failure", days=7)
+    assert hd["rows"] == [["HD Failure", "Hardware", "Critical", 1]]
+    assert any(n.startswith('No event is named like "hard drive failure": shown are those that share a word')
+               for n in hd["notes"])
+    assert EVENTS_ONLY not in hd["notes"]  # hang time says nothing of a disk
+    assert hd["notes"][-1] == "Counts only: to see which PCs, ask to list the PCs with it."
+    assert who(t, NOW, "event", name="hard drive failure")["rows"][0][1] == "PC5"
+    assert "days" in next(x["function"] for x in TOOLS if x["function"]["name"] == "who")["parameters"]["properties"]
+
+
+def test_markdown_marks_go_but_an_underscore_inside_a_name_stays():
+    from uxcorrelate.chat import clean
+    assert clean("**bad_module_info** stands out, _really_ at `2,148` PCs") == "bad_module_info stands out, really at 2,148 PCs"
+    assert clean("# Title\n__bold__ and my_app_name.exe") == "Title\nbold and my_app_name.exe"
+    # the answer's shape is kept: one line, points (any bullet becomes "- "), a Next line
+    shaped = clean("Mail has the most.\n\n* **Mail**: 2 of 3\n1. ERP: 2 of 3\n• Viewer: 1\nNext: ask who had them.")
+    assert shaped == "Mail has the most.\n- Mail: 2 of 3\n- ERP: 2 of 3\n- Viewer: 1\nNext: ask who had them."
+    from uxcorrelate.chat import SHAPE, SYSTEM
+    assert SHAPE in SYSTEM and "start with \"- \"" in SHAPE and "Next: " in SHAPE
+
+
 def test_events_and_who_of_one_application_only():
     """Stage, Nov 2026: "how many Outlook crashed today" counted every application's crashes, and the
     who list led to a user whose Outlook had not crashed: neither block could take an application."""

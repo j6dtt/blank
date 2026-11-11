@@ -253,6 +253,22 @@ unset `<REQUIRED>` base URLs.
   user + PC (`SLOW_PAD` / `EVENT_PAD` around their first and last). The
   reader also keeps each action's PC kind (`VIRTUALIZATION`: virtual /
   physical, saved nightly as `kinds`) and each health event's application.
+- Active users and PCs (the user's request, 2026-11-11): `Today.active`
+  (at least one measured action, any rating, each once; PCs by
+  Aternity's virtual / physical mark, users by the PCs they used), in
+  `/api/today` as `active.today` and `active.recent` (the last full hour
+  with this one so far, `since`), a strip above the Today tiles
+  (`#tActive`), the chat's `active` block, the Explain meaning "Active".
+  PCs that only report to Aternity (`TIME_LAST_REPORTING`) are not
+  counted: not checked on prod yet.
+- How an AI answer is laid out (`chat.SHAPE`, in the three SYSTEM texts;
+  the user: "better format than just running sentences"): one line that
+  answers, 2-4 lines starting "- ", a last line "Next: …". `clean` keeps
+  the lines (any bullet becomes "- ", `LINES_MAX`); the page draws them
+  (`answerHtml`, class `ans`); our own sentence is the first line alone.
+  Explain also returns `terms` (`terms_on`: our meaning of each term on
+  the panel, under every answer as "What the terms mean", open when it
+  is the whole answer) and `ask` (`suggestions`: chips in the dialog).
 - `care.py`: the "Care list" tab, second (`/api/care`, `/api/care/user`;
   link `#care`, as `#today`, `#investigate`, `#startups`): users in
   `<data>/care_list.json` (`LIST_FILE`, read at every check, `CARE_MAX`
@@ -264,7 +280,11 @@ unset `<REQUIRED>` base URLs.
   made once from `care_list` in config.yaml (the list's place before),
   which is not read after that; a broken file keeps the last list and is
   never written over. No login: each change is logged with the caller's
-  address. One check or change at a time (`Care.checking`). Users are checked
+  address, and needs a PIN (`Care.pin`: today's date YYYYMMDD in the
+  page's time zone, the user's choice 2026-11-11; `care_pin` in web.py,
+  403 and a log line when wrong; it keeps a slip out, not someone who
+  knows the rule). "Change label…" (`PUT /api/care/users`,
+  `Care.relabel`) in the same dialog (`careDialog(user, edit)`). One check or change at a time (`Care.checking`). Users are checked
   after each read of the Today reader (`keep_reading(..., care=)`), from
   rows it holds (`Hour.user_devs`/`user_runs`/`dev_kind`). Issue: an event
   in `TILE_SEVERITIES` with their username today, or more Major actions by
@@ -392,7 +412,14 @@ unset `<REQUIRED>` base URLs.
   said in a note. who (what=event) lists every kind the name matches,
   with an Event column; per day says which kinds it added up. Notes
   `AFTER_HANG` (an investigation lists that event under hangs) and
-  `EVENTS_ONLY` (hang time from app usage is not an event). Hangs per
+  `EVENTS_ONLY` (hang time from app usage is not an event; only with
+  an application's events). who (what=event) takes `days` (`_who_days`:
+  the PCs over up to `HEALTH_DAYS`+1 days from `health_days`, which
+  keeps the PC, not the user; `WHO_ROWS`): "List PCs with System crash
+  this week" had given today's one PC, then counts per day (stage, Nov
+  2026). An event name no kind has is matched by a shared telling word
+  (`_kinds_named`: "hard drive failure" -> HD Failure), said in a
+  note. Hangs per
   app and software changes are not blocks yet (to measure with verify).
 - `ai.py`: client for the self-hosted AI services (`ai.services` in
   config.yaml, key from the env var named in `key_env`). OpenAI-style API
