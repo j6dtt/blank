@@ -152,6 +152,15 @@ The usual for actions builds up over the first week from the counts saved
 in `./data` each night (`mkdir -p data && chmod a+rwx data` before the
 first start).
 
+Assessment (top of the Today tab): a short reading of the day for
+executives, written at 09:00, 12:00, 15:00 and 18:00: a verdict, what is
+new since the one before, the day so far, and what to look at first.
+Counts and names of events and applications only, never a user or a PC.
+The AI words it and every number is checked against the counts ("The
+counts behind it" shows them); earlier ones of the day and yesterday's
+summary are one click away; Copy puts it on the clipboard. Kept 8 days in
+`./data/assess`.
+
 Care list tab (second): up to 50 users, each checked every 15 minutes.
 "+ Add a user" (top right of the tab) opens a box: the username as
 Aternity writes it (names seen in Aternity are offered as you type) and

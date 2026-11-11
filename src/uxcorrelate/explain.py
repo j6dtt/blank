@@ -46,6 +46,13 @@ GLOSSARY: dict[str, dict[str, str]] = {
     "today": {
         "Today": f"From midnight (in the time zone shown) to the last read. Aternity is read every "
                  f"{today.REFRESH_MIN} minutes.",
+        "Assessment": "A short reading of the day for executives, written every 3 hours in working hours: what "
+                      "is new since the one before, the day so far, and what to look at first. Our code counts "
+                      "the facts (counts and names of events and applications, no user or PC), the AI words "
+                      "them, and every number is checked against them. The verdict is by fixed rules: \"Needs "
+                      "attention\" (a connection to Aternity or NetIM down, or a Critical event on more PCs than "
+                      "usual), \"Worse than usual\" (a Critical or Major count more than usual), \"A normal day so "
+                      "far\", or \"No usual to compare with yet\".",
         "Active": "Users and PCs with at least one action Aternity measured in an application, whatever its "
                   "rating, each counted once: today so far, and since the start of the last full hour. PCs are "
                   "split by Aternity's own virtual or physical mark. A PC that is on with nobody working in a "

@@ -269,6 +269,23 @@ unset `<REQUIRED>` base URLs.
   Explain also returns `terms` (`terms_on`: our meaning of each term on
   the panel, under every answer as "What the terms mean", open when it
   is the whole answer) and `ask` (`suggestions`: chips in the dialog).
+- `assess.py`: the assessment for executives, first panel of the Today
+  tab (`/api/assess`, `#asBox`; the user's request and "all recommended",
+  2026-11-11). Every 3 hours in working hours (`HOURS` 9, 12, 15, 18
+  local; the first read after an hour writes it, `Assessments.tick`,
+  called by the Today reader's `after=`; after a restart the latest hour
+  passed is written with the time it is). Our code counts the facts as
+  lines (`snapshot`: counts and names of events and applications, never
+  a user or PC; `today_lines`, `new_lines` against the snapshot saved
+  with the one before, `open_lines`), the verdict and what to look at
+  first are by fixed rules (`verdict`, `first`: an AI service down is
+  said, never first), the AI words them in `chat.SHAPE` (`word`), held
+  to the lines' numbers (`refused`), else the lines are shown. Written
+  once and saved in `<data>/assess/<date>.json`, `KEEP_DAYS`. The day
+  before gets one summary (`_yesterday`, from `Today.saved` and
+  `health_days`, when they are there), shown as "Yesterday": written
+  once, so evening and morning never differ. `verify --ai`: "writes the
+  assessment" (`SAMPLE`).
 - `care.py`: the "Care list" tab, second (`/api/care`, `/api/care/user`;
   link `#care`, as `#today`, `#investigate`, `#startups`): users in
   `<data>/care_list.json` (`LIST_FILE`, read at every check, `CARE_MAX`

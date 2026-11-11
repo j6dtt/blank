@@ -2035,6 +2035,7 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
               software_chat.TOOLS, AI_SW_TRIES)
         ask = lambda q: [{"role": "system", "content": SYSTEM}, {"role": "user", "content": q}]  # noqa: E731
         _explains(client, add)
+        _assesses(client, add)
 
         # repeats the counts it is given
         if first is None:
@@ -2117,6 +2118,27 @@ def _explains(client, add) -> None:
         + (f"right up to {best:,}." if best and not (wrong and best == explain.SIZES[-1])
            else f"right at {best:,}, not at every smaller size." if best else "right at none."),
         "" if best and not wrong else "Tell Claude these lines.", rows)
+
+
+def _assesses(client, add) -> None:
+    """The assessment for executives (assess.py): does the model word made-up facts in the shape
+    asked for, with only their numbers, and say what is new?"""
+    import time
+
+    from . import assess
+    started = time.monotonic()
+    text, note = assess.word(client, assess.SAMPLE, "12:00", "this service")
+    took = time.monotonic() - started
+    points = sum(1 for line in (text or "").splitlines() if line.startswith("- "))
+    if text is None:
+        add("writes the assessment", False, f"Not shown: {note}",
+            "The Today tab would show the facts as counted instead of this model's text. Tell Claude this line.")
+    elif points < 2 or not all(w in text.lower() for w in assess.SAMPLE_WORDS):
+        add("writes the assessment", None, f"Its text is usable but {'has no points' if points < 2 else 'leaves out what is new'}"
+            f" ({points} points, in {took:.1f} s).", "", [f"its text: {_cut(' / '.join(text.splitlines()), 300)}"])
+    else:
+        add("writes the assessment", True, f"A verdict line, {points} points and a next step from made-up facts, only "
+            f"their numbers, in {took:.1f} s.", "", [f"its text: {_cut(' / '.join(text.splitlines()), 300)}"])
 
 
 def render_checks(checks: list[Check]) -> str:

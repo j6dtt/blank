@@ -83,6 +83,11 @@ SHAPE = ("as plain text with no markdown and no table, in this shape: first one 
          "question; then two to four lines that each start with \"- \" and give one thing that stands out, by "
          "name, with its number; then one last line that starts with \"Next: \" and gives one next step")
 LINES_MAX, TEXT_MAX = 7, 1200
+# GPT repeated the first 4 of 45 PCs as its points, which read as the whole list (stage, Nov 2026)
+LIST_HINT = ("The page shows every row of this list as a table right under your answer, each row with an "
+             "Investigate button. Do not repeat rows as points. First sentence: how many there are in all (the "
+             "total) and what they have. Points: only what a note says about the whole list (for example how many "
+             "had it on more than one day, how many are shown). Next: say to click Investigate on a row.")
 
 SYSTEM = ("You answer questions from IT staff about the experience of the company's PC users, from Aternity. "
           "Numbers come only from the tools: call exactly one tool to answer. If no tool fits the question, say "
@@ -617,10 +622,13 @@ def _who_days(today: Today, now: datetime, used: dict, name, app, days: int) -> 
         runs.append({"username": p["user"], "device": dev, "application": None,
                      "start": (p["last"] - EVENT_PAD).isoformat().replace("+00:00", "Z"),
                      "end": min(p["last"] + EVENT_PAD, now).replace(microsecond=0).isoformat().replace("+00:00", "Z")})
+    by_days = Counter(len(p["days"]) for p in pcs.values())
+    notes.insert(0, "By the number of days it happened on: " + "; ".join(
+        f"{_n(d, 'day')}: {_n(k, 'PC')}" for d, k in sorted(by_days.items(), reverse=True)) + ".")
+    if len(order) > WHO_ROWS:
+        notes.insert(1, f"The table shows the {WHO_ROWS} PCs with the most days, of {len(order):,} in all.")
     notes.append("The user is known for today's events only: the days before keep the PC. Investigate ▸ runs for "
                  "the hour around the PC's last one.")
-    if len(order) > WHO_ROWS:
-        notes.append(f"The {WHO_ROWS} PCs with the most days are shown, of {len(order):,}.")
     notes += _event_notes(sorted(wanted), bool(app or name))
     return _result("who", used, f"PCs with {what}{of}", period,
                    ["User", "PC", "Days with it"] + (["Event"] if several else []) + ["Last"], out, notes,
@@ -850,6 +858,8 @@ def converse(question: str, history: list, client: AiClient, system_text: str, t
                    seconds=round(time.monotonic() - started, 1))
         return out
     given = {k: result[k] for k in ("title", "period", "columns", "rows", "total", "notes")}
+    if result.get("runs"):  # a list of users or PCs: the table under the answer is the list
+        given["how_to_answer"] = LIST_HINT
     messages += [{"role": "assistant", "content": reply.get("content") or "", "tool_calls": reply["tool_calls"]},
                  {"role": "tool", "tool_call_id": call_id, "content": json.dumps(given, default=str)}]
     final = client.chat(messages, tools)

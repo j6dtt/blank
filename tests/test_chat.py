@@ -165,6 +165,7 @@ def test_a_list_of_pcs_with_an_event_over_the_week_and_a_name_matched_by_a_share
     assert [x[:3] for x in w["rows"]] == [["u-VD-1", "VD-1", 1], ["u-PC3", "PC3", 1], ["—", "PC8", 1], ["—", "PC9", 1]]
     assert w["rows"][2][3].startswith("Fri Nov 06") and w["runs"][2]["device"] == "PC8" and w["runs"][2]["username"] is None
     assert any("2 of the 3 days before were not read" in n for n in w["notes"])
+    assert w["notes"][0] == "By the number of days it happened on: 1 day: 4 PCs."
     assert any("user is known for today's events only" in n for n in w["notes"])
     assert [x[1] for x in who(t, NOW, "event", name="crash", app="erp", days=4)["rows"]] == ["PC3"]
     assert run_block("who", {"what": "event", "name": "System Crash", "days": 7}, t, None, NOW)["rows"][0][1] == "PC4"
@@ -284,6 +285,23 @@ def ai_service(picks: dict, words, seen: list):
 
 
 Q = "Which apps had the most Major slow actions today?"
+
+
+def test_a_list_is_not_repeated_as_points():
+    """Stage, Nov 2026: for 45 PCs GPT gave the first 4 as its points, which read as the whole list."""
+    from uxcorrelate.chat import LIST_HINT
+    q, got = "List the PCs with an Application Crash this week", {}
+    client = ai_service({q: ("who", {"what": "event", "name": "Application Crash", "days": 4})},
+                        lambda g: got.update(g) or "4 PCs had an Application Crash.\n- 1 day: 4 PCs.\nNext: click "
+                                                    "Investigate on a row.", [])
+    a = ask(q, [], client, filled(), None, NOW)
+    assert got["how_to_answer"] == LIST_HINT and "Do not repeat rows as points" in LIST_HINT
+    assert a["answer"].startswith("4 PCs had an Application Crash.\n- 1 day: 4 PCs.") and a["note"] is None
+    assert len(a["result"]["rows"]) == 4 and len(a["result"]["runs"]) == 4
+    counts = {}
+    ask(Q, [], ai_service({Q: ("slow_actions", {"group_by": "app"})}, lambda g: counts.update(g) or "ERP 2.", []),
+        filled(), None, NOW)
+    assert "how_to_answer" not in counts  # counts are worded as before
 
 
 def test_the_ais_sentence_is_kept_when_its_numbers_are_ours():

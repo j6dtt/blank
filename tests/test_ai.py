@@ -4,7 +4,7 @@ import json
 
 import httpx
 
-from uxcorrelate import explain
+from uxcorrelate import assess, explain
 from uxcorrelate.config import AiService, Settings, load_settings
 from uxcorrelate.verify import AI_OUTSIDE, AI_SW_TRIES, AI_TRIES, render_checks, verify_ai
 
@@ -37,6 +37,11 @@ def service(seen, picks=PICKS, login="bearer", models=("model-a", "model-b"), to
         body = json.loads(request.content)
         assert set(body) <= {"model", "messages", "tools"}  # no token limit, no temperature
         last = body["messages"][-1]
+        if body["messages"][0]["content"] == assess.SYSTEM:
+            assert "tools" not in body
+            return reply("Worse than usual.\n- Sample Viewer crash is on 41 PCs, more than usual.\n- Sample ERP added "
+                         "212 Major slow actions.\nNext: look first at Sample Viewer crash on 41 PCs."
+                         if explains != "invents" else "About 5,000 PCs are affected.")
         if body["messages"][0]["content"] == explain.SYSTEM:
             assert "tools" not in body
             return reply(explained(last["content"], explains, reads))
@@ -73,7 +78,8 @@ def run(seen=None, env=None, cfg=None, **kw):
 def test_a_good_service_passes_every_check_and_the_key_is_never_printed():
     seen = []
     checks, text = run(seen)
-    assert [c.ok for c in checks.values()] == [None, True, True, True, True, True, True, True]
+    assert [c.ok for c in checks.values()] == [None, True, True, True, True, True, True, True, True]
+    assert "A verdict line, 2 points and a next step" in checks["writes the assessment"].message
     assert "Right for 10 of 10 made-up panels" in checks["explains a panel"].message
     assert "right up to 40,000." in checks["explains a long page"].message
     assert len(checks["explains a long page"].rows) == 3
@@ -155,6 +161,7 @@ def test_no_service_set_is_a_note_with_what_to_add_not_a_failure(tmp_path):
 
 def test_explain_a_number_of_its_own_fails_and_a_long_page_is_measured():
     checks, text = run(explains="invents")
+    assert checks["writes the assessment"].ok is False and "(5000)" in checks["writes the assessment"].message
     c = checks["explains a panel"]
     assert c.ok is False and "Right for 0 of 10" in c.message and len(c.rows) == 10
     assert "a number that is not on the panel (37.5)" in c.rows[0] and c.rows[0].startswith("Today, \"Major slow actions\"")

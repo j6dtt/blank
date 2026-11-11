@@ -16,6 +16,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+from .assess import Assessments
 from .care import Care
 from .chat import ask, chat_service
 from .config import load_settings
@@ -128,6 +129,15 @@ def create_app(config_path: str | None = None) -> FastAPI:
                                  os.environ.get("UXCORRELATE_DATA") or None, names)
     software = app.state.software = Software(zone, os.environ.get("UXCORRELATE_DATA") or None)
     status = app.state.status = Status()  # the connection lights in the top bar
+    assess = app.state.assess = Assessments(today, care, status, software, os.environ.get("UXCORRELATE_DATA") or None)
+
+    def assess_ai():
+        """The AI service that words an assessment (the chats' one), and its name; (None, "") when none is set."""
+        from .ai import AiClient
+        service = chat_service(load_settings(config_path))
+        if service is None:
+            return None, ""
+        return AiClient(service, os.environ.get(service.key_env, "") if service.key_env else ""), service.name
 
     def care_investigate(username: str, start: datetime, end: datetime) -> dict:
         """A Care list user's investigation, as the Investigate tab would run it."""
@@ -146,7 +156,8 @@ def create_app(config_path: str | None = None) -> FastAPI:
         if not today.started:
             today.started = True
             threading.Thread(target=keep_reading, args=(today, names, aternity_client, time.sleep),
-                             kwargs={"care": care}, daemon=True, name="today").start()
+                             kwargs={"care": care, "after": lambda now: assess.tick(now, assess_ai)},
+                             daemon=True, name="today").start()
         if not software.started:  # once a day: the installed list and application versions
             software.started = True
             threading.Thread(target=keep_reading_software, args=(software, aternity_client,
@@ -384,6 +395,11 @@ def create_app(config_path: str | None = None) -> FastAPI:
                  service.name, f" with {r['block']} ({', '.join(f'{k}={v}' for k, v in r['args'].items() if v)})"
                  if r else " with no building block", f"; {answer['note']}" if answer["note"] else "")
         return answer
+
+    @app.get("/api/assess")
+    def assessment():
+        """The assessments for executives: today's, latest first, and yesterday's summary."""
+        return assess.view(datetime.now(timezone.utc))
 
     @app.post("/api/explain")
     def explain_panel(body: ExplainBody):

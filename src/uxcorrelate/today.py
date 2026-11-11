@@ -553,9 +553,10 @@ def _read_health(today: Today, client, now: datetime) -> None:
 
 
 def keep_reading(today: Today, names, make_client, sleep, clock=lambda: datetime.now(timezone.utc),
-                 care=None) -> None:
+                 care=None, after=None) -> None:
     """Runs in a background thread: the last 24 hours first, then every REFRESH_MIN.
-    After each read, the Care list's users are checked against what was read."""
+    After each read, the Care list's users are checked against what was read, then
+    `after(now)` runs (the assessment, written when a period is due)."""
     try:
         client = make_client()
     except Exception as exc:  # a broken config.yaml: investigations say so themselves
@@ -580,6 +581,8 @@ def keep_reading(today: Today, names, make_client, sleep, clock=lambda: datetime
              len(starts), len(names.seen["username"]) if names else 0, len(names.seen["device"]) if names else 0)
     if care is not None:
         care.check(client, clock())
+    if after is not None:
+        after(clock())
     while True:
         sleep(REFRESH_MIN * 60)
         try:
@@ -594,3 +597,5 @@ def keep_reading(today: Today, names, make_client, sleep, clock=lambda: datetime
         today.as_of = now
         if care is not None:
             care.check(client, clock())
+        if after is not None:
+            after(clock())

@@ -180,6 +180,9 @@
   }
   .multWrap { overflow-x: auto; }
   .multWrap .mult { min-width: 520px; }
+  #asBody { font-size: 15px; margin-top: 8px; } #asBody details { margin-top: 8px; font-size: 13px; }
+  #asBody summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+  #asBody details ul { margin: 4px 0; padding-left: 20px; } #asBody .old { margin: 8px 0; padding-left: 10px; border-left: 2px solid var(--border); }
   .activeRow { display: flex; gap: 8px 28px; flex-wrap: wrap; margin: 8px 0 2px; font-size: 14px; }
   .activeRow b { font-size: 16px; }
   .exRow { text-align: right; margin-top: 4px; }
@@ -207,6 +210,12 @@
   <div id="conn" aria-label="Connections"></div></header>
 <main>
   <div id="todayBox">
+    <section class="panel" id="asBox" hidden style="margin-bottom:16px">
+      <div class="todayHead"><h2>Assessment</h2><span id="asVerdict"></span><span class="muted" id="asWhen"></span>
+        <button type="button" class="link" id="asCopy" style="margin-left:auto">Copy</button></div>
+      <div id="asBody"></div>
+      <div class="exRow noExplain"><button type="button" class="link explain" data-tab="today">Explain ▸</button></div>
+    </section>
     <section class="panel">
       <div class="todayHead"><h2>Today's issues</h2><span class="muted" id="tWhen"></span>
         <button type="button" class="link" id="tAskLink">Ask a question ▾</button></div>
@@ -594,6 +603,7 @@ async function loadToday() {
     return;
   }
   renderToday(t);
+  loadAssess();
   todayTimer = setTimeout(() => { if (!$("todayBox").hidden) loadToday(); }, 5 * 60e3);
 }
 
@@ -882,6 +892,61 @@ const CHAT_EXAMPLES = ["Which apps had the most Major slow actions today?", "Whi
 const SW_CHAT_EXAMPLES = ["Which programs are most out of date?", "Which application versions crash more than the others?",
   "Which programs have 2 versions on one PC?", "Did Microsoft Outlook get worse after its last update?"];
 const cell = (v) => v === null || v === undefined ? "—" : typeof v === "number" ? v.toLocaleString() : esc(v);
+// ---- The assessment for executives (assess.py): the latest of today, what it rests on, the earlier
+// ones, yesterday's summary. Written by the server every 3 hours; the page only shows it. ----
+const AS_COLOR = { "Needs attention": "var(--bad)", "Worse than usual": "var(--warn)", "A normal day so far": "var(--ok)" };
+const asTag = (v) => `<span class="sev" style="background:${AS_COLOR[v] || "var(--muted)"}">${esc(v)}</span>`;
+// our own text for a period, in the answers' shape, when the AI's is not shown
+function asOurs(p) {
+  const fresh = p.new.length ? p.new : p.since ? [`Nothing new since ${p.since}.`] : [];
+  return [`${p.verdict}.`, ...fresh.concat(p.today.slice(1, 4)).slice(0, 5).map((x) => `- ${x}`), `Next: look first at ${p.first}.`].join("\n");
+}
+const asText = (p) => p.text || asOurs(p);
+function asFacts(p) {
+  const list = (title, xs) => xs.length ? `<div><b>${esc(title)}</b><ul>${xs.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : "";
+  return list(p.since ? `New since ${p.since}` : "New", p.new.length ? p.new : p.since ? ["Nothing new."] : [])
+    + list("The day so far", p.today) + list("Still open from earlier", p.open) + list("Look first at", [p.first]);
+}
+let asData = null;
+function renderAssess(a) {
+  asData = a;
+  const p = a.periods[0], y = a.yesterday;
+  $("asBox").hidden = false; $("asCopy").hidden = !p && !y;
+  $("asVerdict").innerHTML = p ? asTag(p.verdict) : "";
+  $("asWhen").textContent = p ? `as of ${p.label} ${a.zone}` + (p.since ? ` · new since ${p.since}` : " · the first of today")
+    + (a.next ? ` · next at ${a.next}` : "") : `The first of today is written at ${String(a.hours[0]).padStart(2, "0")}:00, then every 3 hours `
+    + `(${a.hours.map((h) => `${String(h).padStart(2, "0")}:00`).join(", ")}).`;
+  let html = "";
+  if (p) {
+    html += answerHtml(asText(p))
+      + `<div class="muted" style="font-size:12px;margin-top:6px">${esc(p.note || `Written by the AI (${p.service}) from the counts below; every number checked against them.`)}</div>`
+      + `<details><summary>The counts behind it</summary>${asFacts(p)}</details>`;
+    const old = a.periods.slice(1);
+    if (old.length) html += `<details><summary>Earlier today (${old.length})</summary>` + old.map((q) =>
+      `<div class="old"><div>${asTag(q.verdict)} <span class="muted">as of ${esc(q.label)}</span></div>${answerHtml(asText(q))}</div>`).join("") + "</details>";
+  }
+  if (y) html += `<details${p ? "" : " open"}><summary>Yesterday (${esc(y.label)})</summary><div class="old">`
+    + (y.text ? answerHtml(y.text) : `<ul>${y.lines.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`) + "</div></details>";
+  if (a.note) html += `<div class="muted" style="font-size:12px">${esc(a.note)}</div>`;
+  $("asBody").innerHTML = html;
+}
+async function loadAssess() {
+  try {
+    const r = await fetch("api/assess");
+    const a = await r.json();
+    if (r.ok) renderAssess(a);
+  } catch (e) { /* the Today tab stays as it is */ }
+}
+$("asCopy").addEventListener("click", async () => {
+  if (!asData) return;
+  const p = asData.periods[0], y = asData.yesterday;
+  const text = p ? `Assessment, ${asData.date} as of ${p.label} ${asData.zone}: ${p.verdict}\n\n${asText(p)}`
+    : `Yesterday (${y.label})\n\n${y.text || y.lines.join("\n")}`;
+  try { await navigator.clipboard.writeText(text); $("asCopy").textContent = "Copied ✓"; }
+  catch (e) { swDialog("Assessment", `<p style="white-space:pre-line">${esc(text)}</p>`, text); }  // no clipboard over plain HTTP
+  setTimeout(() => { $("asCopy").textContent = "Copy"; }, 3000);
+});
+
 // An AI answer as it is laid out (chat.SHAPE): the first line, "- " points as a list, "Next: " set apart.
 // One sentence (our own, or an older answer) is just the first line.
 function answerHtml(text) {
