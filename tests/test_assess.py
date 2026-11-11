@@ -25,7 +25,7 @@ class Ai:
 
 
 def snap_of(t, now=NOW, **kw):
-    return A.snapshot(t.view(now), kw.get("care"), kw.get("status"), kw.get("software"))
+    return A.snapshot(t.view(now), kw.get("care"), kw.get("status"), kw.get("boots"))
 
 
 def test_the_facts_are_counts_and_names_of_events_and_applications_only():
@@ -170,3 +170,57 @@ def test_the_endpoint(tmp_path, monkeypatch):
     app = web.create_app(str(cfg))
     got = TestClient(app).get("/api/assess").json()
     assert got["periods"] == [] and got["hours"] == [9, 12, 15, 18] and got["yesterday"] is None
+
+
+def test_start_ups_are_in_the_facts_and_software_is_not():
+    """The user's change, Nov 2026: Software out of the assessment, start-up and logon times in."""
+    from uxcorrelate.models import BootSample
+    t = filled()
+    day0 = t.midnight(date(2026, 11, 9))
+    rows = [BootSample(day0 + HOUR * 8 + timedelta(minutes=k), f"PC{k}", type="User Logon", duration=40.0 + k) for k in range(7)]
+    rows += [BootSample(day0 + HOUR * 9, "PC1", type="User Logon", duration=90.0),  # one alone in its hour: no point
+             BootSample(day0 + HOUR * 8, "PC2", type="Machine Boot", duration=70.0)]
+    b = A.boots_of(rows, t.local)
+    assert b["User Logon"] == {"n": 8, "typical": 43.5, "hours": {"8": 43.0}} and b["Machine Boot"]["n"] == 1
+    a = A.Assessments(t)
+    a.days["2026-11-09"] = {"date": "2026-11-09", "periods": [], "summary": None, "boots": b}
+    for d, typical in (("2026-11-06", 41.0), ("2026-11-05", 44.0), ("2026-11-04", 39.5)):
+        a.days[d] = {"date": d, "periods": [], "summary": None,
+                     "boots": {"User Logon": {"n": 30, "typical": typical, "hours": {"8": typical + 1}}}}
+    v = a.boots_view(NOW)
+    assert list(v["types"]) == ["User Logon"]  # Machine Boot: under 5 today, left out
+    assert v["types"]["User Logon"] == {"n": 8, "typical": 43.5, "usual": {"low": 39.5, "high": 44.0, "days": 3}}
+    lines = A.today_lines(snap_of(t, boots=v))
+    assert lines[-1] == "User Logon: 8 start-ups today, typically 43.5 s (the 3 days before: 39.5 to 44 s)."
+    assert not any("Software" in x for x in lines)
+    del a.days["2026-11-04"]
+    assert A.boot_lines(a.boots_view(NOW)) == ["User Logon: 8 start-ups today, typically 43.5 s (no usual to compare with yet)."]
+    # the chart: today's hours with 5 or more, the days before as a range only with 3 of them
+    logon = next(c for c in a.charts(NOW) if c["key"] == "logon")
+    assert logon["title"] == "Typical User Logon time, per hour" and logon["now"] == {"h": 8, "v": 43.0, "lo": None, "hi": None}
+    kpi = a.view(NOW)["kpis"][-1]
+    assert kpi["label"] == "Typical User Logon" and kpi["big"] == "43.5 s" and kpi["usual"] is None
+
+
+def test_the_charts_are_today_up_to_the_hour_against_the_days_before():
+    t = filled()
+    day0 = t.midnight(date(2026, 11, 9))
+    t.add_hour(day0 + 10 * HOUR, [act(day0 + 10 * HOUR, f"PC{k}", "Major" if k < 3 else "Normal") for k in range(60)], F, NOW)
+    for back, share in ((3, 2), (4, 4), (5, 6)):  # Fri, Thu, Wed
+        d = date(2026, 11, 9) - timedelta(days=back)
+        t.saved[d] = {"complete": True, "top_pcs_by_hour": [0] * 24,
+                      "hours": {"10": {"Major": share, "Normal": 100 - share}, "9": {"Major": 1, "Normal": 9}}}
+        t.health_days[d] = {("Application", "Application Crash"): {f"PC{k}": 3600.0 * 9 for k in range(back)},
+                            ("System", "Low Memory"): {"PC99": 100.0}}
+    a = A.Assessments(t)
+    share, crash = a.charts(NOW)[:2]
+    ten = share["points"][10]
+    assert ten == {"h": 10, "v": 5.0, "lo": 2.0, "hi": 6.0}  # 3 of 60; the days before 2% to 6%
+    assert share["points"][9]["v"] is None and share["points"][9]["lo"] is None  # under 50 measured actions: no share
+    assert share["points"][15]["v"] is None and share["now"]["h"] == 10  # nothing after the current hour (14:30)
+    # PCs with a crash so far: VD-1 and PC3 (Application Crash) and PC4 (System Crash) at 09:00; each PC once
+    assert [p["v"] for p in crash["points"][8:11]] == [0, 3, 3] and crash["points"][9]["lo"] == 3 and crash["points"][9]["hi"] == 5
+    assert crash["now"] == {"h": 14, "v": 3, "lo": 3, "hi": 5}
+    k = a.view(NOW)["kpis"]
+    assert [x["label"] for x in k] == ["Active since 13:00", "Major slow actions today", "PCs with a crash today"]
+    assert k[2]["big"] == "3" and k[2]["usual"] == "as usual" and k[2]["sub"] == "the days before by now: 3 to 5"

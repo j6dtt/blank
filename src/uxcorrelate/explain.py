@@ -22,7 +22,7 @@ import re
 import unicodedata
 
 from . import after_start, care, impact, logons, normal, software, today
-from .assess import VERDICT_PCS
+from .assess import MIN_ACTIONS, MIN_STARTS, VERDICT_PCS
 from .chat import RATIO, allowed, clean, numbers
 from .cause import DISK_BACK
 from .config import TILE_SEVERITIES, TOP_STATUS
@@ -55,6 +55,14 @@ GLOSSARY: dict[str, dict[str, str]] = {
                       f"{VERDICT_PCS} PCs or more), \"Worse than usual\" (a Major count more than usual on "
                       f"{VERDICT_PCS} PCs or more), \"A normal day so far\", or \"No usual to compare with yet\". A "
                       "count more than usual on fewer PCs is listed but does not make the verdict.",
+        "Share of actions rated Major": f"Per hour of today: the actions Aternity rated {TOP_STATUS} out of all the "
+                                        "actions it measured in that hour. The grey band is the lowest to the "
+                                        "highest share of the same hour on the working days before. An hour with "
+                                        f"fewer than {MIN_ACTIONS} measured actions has no point.",
+        "PCs with a crash, so far today": "The PCs that have had a crash event today by the end of each hour, each "
+                                          "PC once. The grey band is the same count on the days before.",
+        "Typical": "The middle value: half took less, half took more. For a start-up or logon, per hour of today "
+                   f"(an hour with fewer than {MIN_STARTS} has no point) and for the day so far.",
         "Active": "Users and PCs with at least one action Aternity measured in an application, whatever its "
                   "rating, each counted once: today so far, and since the start of the last full hour. PCs are "
                   "split by Aternity's own virtual or physical mark. A PC that is on with nobody working in a "

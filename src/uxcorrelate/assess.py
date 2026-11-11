@@ -26,10 +26,14 @@ from .chat import RATIO, SHAPE, allowed, clean, numbers
 from .config import SEVERITY_ORDER, TOP_STATUS
 from .http import ApiError, short_error
 from .models import plural
+from .today import MIN_USUAL, USUAL_DAYS, kind_of
 
 HOURS = (9, 12, 15, 18)  # local time: an assessment at each; the first read after it writes it
 KEEP_DAYS = 8
 TOP = 3  # events, applications named in one assessment
+MIN_ACTIONS = 50  # an hour with fewer measured actions has no share (one slow action would move it a lot)
+MIN_STARTS = 5  # an hour, or a type, with fewer start-ups has no typical time
+BOOTS_EVERY = timedelta(minutes=55)  # today's start-ups are read again after this (the charts are "up to the hour")
 VERDICT_PCS = 5  # fewer PCs than this do not make the day's verdict (as software.MIN_PROBLEM)
 SOURCES = ("Aternity", "NetIM")  # a connection down that an executive must know of
 ATTENTION, WORSE, NORMAL, UNKNOWN = ("Needs attention", "Worse than usual", "A normal day so far",
@@ -61,7 +65,7 @@ def _rank(e: dict) -> tuple:
             -e["pcs"])
 
 
-def snapshot(today_view: dict, care_view: dict | None, status_view: dict | None, software_view: dict | None) -> dict:
+def snapshot(today_view: dict, care_view: dict | None, status_view: dict | None, boots: dict | None = None) -> dict:
     """What an assessment rests on, as counts and names of events and applications: no user,
     no PC. Saved with it, so the next one can say what is new."""
     s = today_view["slow"]
@@ -76,9 +80,8 @@ def snapshot(today_view: dict, care_view: dict | None, status_view: dict | None,
         "care": {"listed": len(users), "with_issue": sum(1 for u in users if u.get("status") == "issue"),
                  "issues": sum(len(u.get("issues", [])) + len(u.get("cleared", [])) for u in users)},
         "down": sorted(i["name"] for i in (status_view or {}).get("items", []) if i.get("state") == "down"),
-        "flags": {"all": len((software_view or {}).get("flags", [])),
-                  "new": sum(1 for f in (software_view or {}).get("flags", []) if f.get("new"))}
-        if (software_view or {}).get("ready") else None,
+        # start-ups today, per Aternity type: how many, the typical time, the days before (boots_of)
+        "boots": boots,
     }
 
 
@@ -157,9 +160,20 @@ def today_lines(snap: dict) -> list[str]:
     if c["listed"]:
         out.append(f"Care list: {c['with_issue']:,} of the {plural(c['listed'], 'user')} watched "
                    f"{'has' if c['with_issue'] == 1 else 'have'} an open issue.")
-    if snap["flags"]:
-        out.append(f"Software: {plural(snap['flags']['all'], 'red flag')}"
-                   + (f", {snap['flags']['new']:,} new today" if snap["flags"]["new"] else ", none new today") + ".")
+    out += boot_lines(snap.get("boots"))
+    return out
+
+
+def boot_lines(boots: dict | None) -> list[str]:
+    """Start-up and logon times today, each of Aternity's types against the days before."""
+    if not boots or not boots.get("types"):
+        return []
+    unit, out = boots.get("unit", "s"), []
+    for name, x in list(boots["types"].items())[:TOP]:
+        u = x.get("usual")
+        out.append(f"{name}: {plural(x['n'], 'start-up')} today, typically {x['typical']:g} {unit}"
+                   + (f" (the {plural(u['days'], 'day')} before: {u['low']:g} to {u['high']:g} {unit})" if u
+                      else " (no usual to compare with yet)") + ".")
     return out
 
 
@@ -193,8 +207,6 @@ def new_lines(snap: dict, before: dict | None) -> list[str]:
     for n in before["down"]:
         if n not in snap["down"]:
             out.append(f"The connection to {n} is back.")
-    if snap["flags"] and before.get("flags") and snap["flags"]["all"] > before["flags"]["all"]:
-        out.append(f"Software: {plural(snap['flags']['all'], 'red flag')}; it was {before['flags']['all']:,}.")
     return out
 
 
@@ -257,6 +269,23 @@ def word(client, f: dict, label: str, service: str = "") -> tuple[str | None, st
     return text, None
 
 
+def boots_of(rows: list, local) -> dict:
+    """Start-ups of a day (or of today so far) per Aternity type: how many, the typical time
+    (the middle value), and the typical time of each local hour with `MIN_STARTS` or more.
+    Names and numbers only: no PC, no user."""
+    from statistics import median
+    per: dict[str, dict] = {}
+    for r in rows:
+        if r.type is None or r.duration is None:
+            continue
+        x = per.setdefault(r.type, {"all": [], "hours": {}})
+        x["all"].append(r.duration)
+        x["hours"].setdefault(local(r.timestamp).hour, []).append(r.duration)
+    return {name: {"n": len(x["all"]), "typical": round(median(x["all"]), 1),
+                   "hours": {str(h): round(median(v), 1) for h, v in sorted(x["hours"].items()) if len(v) >= MIN_STARTS}}
+            for name, x in per.items()}
+
+
 def summary_lines(day: date, saved: dict | None, events: dict, sev: dict, periods: list[dict]) -> list[str] | None:
     """A finished day in lines, from its saved counts (None: not saved yet)."""
     if not saved:
@@ -282,8 +311,11 @@ class Assessments:
     """The saved assessments and the one written when a period is due (`tick`, called by the
     Today reader after each read)."""
 
-    def __init__(self, today, care=None, status=None, software=None, store: str | os.PathLike | None = None):
-        self.today, self.care, self.status, self.software = today, care, status, software
+    def __init__(self, today, care=None, status=None, store: str | os.PathLike | None = None, aternity_of=None,
+                 unit_of=lambda: "s"):
+        self.today, self.care, self.status = today, care, status
+        self.aternity_of, self.unit_of = aternity_of, unit_of  # the start-ups are read from Aternity (boots_of)
+        self.boots_at: datetime | None = None
         self.store = Path(store) / "assess" if store else None
         self.days: dict[str, dict] = {}
         self.note: str | None = None
@@ -337,6 +369,7 @@ class Assessments:
             if not self.today.ready:
                 return
             with self.lock:
+                self._boots(now)
                 self._yesterday(now, client_of)
                 slot = self.due(now)
                 if slot is not None:
@@ -349,7 +382,7 @@ class Assessments:
         rec = self.days.setdefault(day, {"date": day, "periods": [], "summary": None})
         before = rec["periods"][-1] if rec["periods"] else None
         snap = snapshot(self.today.view(now), self.care.view(now) if self.care else None,
-                        self.status.view() if self.status else None, self.software.view() if self.software else None)
+                        self.status.view() if self.status else None, self.boots_view(now))
         label = self.today.local(now).strftime("%H:%M")
         f = facts(snap, before["snap"] if before else None, before["label"] if before else None)
         client, service = client_of()
@@ -385,6 +418,140 @@ class Assessments:
         log.info("Assessment: the summary of %s written (%s)", y.strftime("%b %d"),
                  f"worded by {service}" if text else note)
 
+    # -- start-ups (boots and logons) ---------------------------------------------
+    def _same_days(self, t: date) -> list[date]:
+        """The days today is compared with: the same kind (working / weekend), latest first."""
+        return [d for d in (t - timedelta(days=n) for n in range(1, 15)) if kind_of(d) == kind_of(t)][:USUAL_DAYS]
+
+    def _boots(self, now: datetime) -> None:
+        """Read today's start-ups again when the last read is old, and once each day before
+        that the usual needs. Aternity not set, or not answering: left as it is, tried again."""
+        if self.aternity_of is None or (self.boots_at and now - self.boots_at < BOOTS_EVERY):
+            return
+        client = self.aternity_of()
+        if client is None:
+            return
+        t = self.today.day(now)
+        for d in self._same_days(t)[::-1] + [t]:
+            rec = self.days.setdefault(d.isoformat(), {"date": d.isoformat(), "periods": [], "summary": None})
+            if d != t and rec.get("boots") is not None:
+                continue
+            start = self.today.midnight(d)
+            mark = len(client.warnings)
+            rows = client.boots(start, now if d == t else start + timedelta(days=1))
+            if len(client.warnings) > mark:  # not read (or cut short): no typical from part of a day
+                log.warning("Assessment: the start-ups of %s could not be read (%s)", d.strftime("%b %d"),
+                            client.warnings[-1])
+                return
+            rec["boots"] = boots_of(rows, self.today.local)
+            self._save(d.isoformat(), now)
+        self.boots_at = now
+        log.info("Assessment: start-ups read up to %s (%d today)", self.today.local(now).strftime("%H:%M"),
+                 sum(x["n"] for x in self.days[t.isoformat()]["boots"].values()))
+
+    def boots_view(self, now: datetime) -> dict | None:
+        """Today's start-ups per type, most first, each with the days before: the lowest and
+        highest typical time of those days (`MIN_USUAL` needed)."""
+        t = self.today.day(now)
+        mine = self.days.get(t.isoformat(), {}).get("boots")
+        if not mine:
+            return None
+        before = [self.days.get(d.isoformat(), {}).get("boots") or {} for d in self._same_days(t)]
+        types = {}
+        for name, x in sorted(mine.items(), key=lambda kv: (-kv[1]["n"], kv[0])):
+            if x["n"] < MIN_STARTS:
+                continue
+            past = [b[name]["typical"] for b in before if name in b and b[name]["n"] >= MIN_STARTS]
+            types[name] = {"n": x["n"], "typical": x["typical"],
+                           "usual": {"low": min(past), "high": max(past), "days": len(past)}
+                           if len(past) >= MIN_USUAL else None}
+        return {"unit": self.unit_of(), "types": types} if types else None
+
+    # -- the charts: today up to this hour against the days before ------------------
+    def charts(self, now: datetime) -> list[dict]:
+        """Three lines, one point per hour of today so far, each with the range of the same hour
+        on the days before (`MIN_USUAL` of them needed for a range)."""
+        t, today = self.today.day(now), self.today
+        cur = today.local(now).hour
+        with today.lock:
+            hours = {h.hour: h for h in today.hours.values() if h.day == t}
+            saved = dict(today.saved)
+            crashes = [(x[0], x[1]) for x in today.health if today.day(x[0]) == t and "crash" in x[2][1].lower()]
+            health_days = {d: v for d, v in today.health_days.items() if d < t}
+        same = [d for d in self._same_days(t) if saved.get(d, {}).get("complete")]
+
+        def band(values: list) -> tuple:
+            got = [v for v in values if v is not None]
+            return (min(got), max(got)) if len(got) >= MIN_USUAL else (None, None)
+
+        def share(counts: dict | None):
+            total = sum(counts.values()) if counts else 0
+            return round(100 * counts.get(TOP_STATUS, 0) / total, 1) if total >= MIN_ACTIONS else None
+        share_pts = [{"h": h, "v": share(dict(hours[h].status)) if h in hours and h <= cur else None,
+                      **dict(zip(("lo", "hi"), band([share(saved[d].get("hours", {}).get(str(h))) for d in same])))}
+                     for h in range(24)]
+
+        def so_far(first: dict, h: int) -> int:  # PCs whose first crash of the day was before the end of hour h
+            return sum(1 for secs in first.values() if secs < (h + 1) * 3600)
+        mine: dict = {}
+        for when, dev in crashes:
+            secs = (when - today.midnight(t)).total_seconds()
+            mine[dev] = min(mine.get(dev, secs), secs)
+        past = []
+        for d in [d for d in self._same_days(t) if d in health_days]:
+            first: dict = {}
+            for k, devs in health_days[d].items():
+                if "crash" in k[1].lower():
+                    for dev, secs in devs.items():
+                        first[dev] = min(first.get(dev, secs), secs)
+            past.append(first)
+        crash_pts = [{"h": h, "v": so_far(mine, h) if h <= cur else None,
+                      **dict(zip(("lo", "hi"), band([so_far(f, h) for f in past])))} for h in range(24)]
+
+        out = [{"key": "share", "title": f"Share of actions rated {TOP_STATUS}, per hour", "unit": "%", "points": share_pts},
+               {"key": "crash", "title": "PCs with a crash, so far today", "unit": "PCs", "points": crash_pts}]
+        boots = self.days.get(t.isoformat(), {}).get("boots") or {}
+        name = next((n for n in sorted(boots, key=lambda n: -boots[n]["n"]) if "logon" in n.lower()),
+                    max(boots, key=lambda n: boots[n]["n"], default=None))
+        if name:
+            before = [self.days.get(d.isoformat(), {}).get("boots") or {} for d in self._same_days(t)]
+            out.append({"key": "logon", "title": f"Typical {name} time, per hour", "unit": self.unit_of(), "points": [
+                {"h": h, "v": boots[name]["hours"].get(str(h)) if h <= cur else None,
+                 **dict(zip(("lo", "hi"), band([b.get(name, {}).get("hours", {}).get(str(h)) for b in before])))}
+                for h in range(24)]})
+        for c in out:  # the last hour with a value: the number beside the chart
+            last = next((p for p in reversed(c["points"]) if p["v"] is not None), None)
+            c["now"] = last
+        return out
+
+    def kpis(self, now: datetime, charts: list[dict]) -> list[dict]:
+        """The four numbers under the banner."""
+        v = self.today.view(now)
+        if not v.get("ready"):
+            return []
+        r, s = v["active"]["recent"], v["slow"]
+        out = [{"label": f"Active since {r['since']}", "big": f"{plural(r['users'], 'user')}",
+                "sub": f"{plural(r['pcs'], 'PC')}: {r['virtual']:,} virtual, {r['physical']:,} physical"},
+               {"label": f"{TOP_STATUS} slow actions today", "big": f"{s['actions']:,}",
+                "sub": f"on {plural(s['pcs'], 'PC')}", "usual": _usual(s.get("usual"))}]
+        crash = next((c["now"] for c in charts if c["key"] == "crash"), None)
+        if crash:
+            lo, hi = crash["lo"], crash["hi"]
+            usual = None if lo is None else ("more than usual" if crash["v"] > hi else "fewer than usual"
+                                             if crash["v"] < lo else "as usual")
+            out.append({"label": "PCs with a crash today", "big": f"{crash['v']:,}", "usual": usual,
+                        "sub": f"the days before by now: {lo:,} to {hi:,}" if lo is not None else ""})
+        b = self.boots_view(now)
+        if b:
+            name, x = next(((n, x) for n, x in b["types"].items() if "logon" in n.lower()), next(iter(b["types"].items())))
+            u = x["usual"]
+            out.append({"label": f"Typical {name}", "big": f"{x['typical']:g} {b['unit']}",
+                        "sub": plural(x["n"], "start-up") + " today"
+                        + (f"; the days before: {u['low']:g} to {u['high']:g} {b['unit']}" if u else ""),
+                        "usual": None if not u else "longer than usual" if x["typical"] > u["high"] else
+                        "shorter than usual" if x["typical"] < u["low"] else "as usual"})
+        return out
+
     # -- the page ---------------------------------------------------------------
     def view(self, now: datetime) -> dict:
         """What /api/assess returns: today's assessments (latest first), yesterday's summary."""
@@ -394,9 +561,12 @@ class Assessments:
             y = self.days.get((t - timedelta(days=1)).isoformat(), {})
             periods = [{k: v for k, v in p.items() if k != "snap"} for p in rec.get("periods", [])][::-1]
         nxt = next((h for h in HOURS if self.today.local(now).hour < h), None)
+        charts = self.charts(now) if self.today.ready else []
         return {"date": t.isoformat(), "zone": self.today.zone_label, "periods": periods,
                 "yesterday": y.get("summary"), "hours": list(HOURS),
-                "next": f"{nxt:02d}:00" if nxt is not None else None, "note": self.note}
+                "next": f"{nxt:02d}:00" if nxt is not None else None, "note": self.note,
+                "now": self.today.local(now).strftime("%H:%M"), "charts": charts,
+                "kpis": self.kpis(now, charts) if self.today.ready else []}
 
 
 # -- what `verify --ai` measures with (made-up names and numbers) --------------------------------

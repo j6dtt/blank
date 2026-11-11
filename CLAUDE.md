@@ -286,6 +286,23 @@ unset `<REQUIRED>` base URLs.
   `health_days`, when they are there), shown as "Yesterday": written
   once, so evening and morning never differ. `verify --ai`: "writes the
   assessment" (`SAMPLE`).
+  Layout B (the user's pick from mock-ups, 2026-11-11): a banner in the
+  verdict's colour (`--as`), four numbers (`kpis`), the text beside three
+  charts (`charts`, drawn by `asChart`: one point per hour of today so
+  far, the lowest to highest of the same hour on the `USUAL_DAYS` days
+  before as a band when `MIN_USUAL` have one, a mark at each
+  assessment): the share of actions rated Major (`MIN_ACTIONS` an
+  hour, else no point: the one worked-out percentage on the page, the
+  user's choice), the PCs with a crash so far today (each PC once, from
+  `health_days`' first times), the typical logon time (`MIN_STARTS`).
+  Start-ups: `_boots` reads `client.boots` for today again every
+  `BOOTS_EVERY` and each day before once (`boots_of`: per Aternity
+  type, how many, the middle value, per hour; saved in the day's file;
+  the type with "logon" in its name is charted, no type name is
+  assumed), and `boot_lines` puts them in the facts. Software is not
+  in it (the user). Yesterday's summary is always in view (`.asY`).
+  The verdict says why (`_judged`), needs `VERDICT_PCS` PCs, and what
+  it rests on is always among the lines.
 - `care.py`: the "Care list" tab, second (`/api/care`, `/api/care/user`;
   link `#care`, as `#today`, `#investigate`, `#startups`): users in
   `<data>/care_list.json` (`LIST_FILE`, read at every check, `CARE_MAX`

@@ -129,7 +129,9 @@ def create_app(config_path: str | None = None) -> FastAPI:
                                  os.environ.get("UXCORRELATE_DATA") or None, names)
     software = app.state.software = Software(zone, os.environ.get("UXCORRELATE_DATA") or None)
     status = app.state.status = Status()  # the connection lights in the top bar
-    assess = app.state.assess = Assessments(today, care, status, software, os.environ.get("UXCORRELATE_DATA") or None)
+    assess = app.state.assess = Assessments(today, care, status, os.environ.get("UXCORRELATE_DATA") or None,
+                                            aternity_of=lambda: aternity_client(),
+                                            unit_of=lambda: load_settings(config_path).boot_unit)
 
     def assess_ai():
         """The AI service that words an assessment (the chats' one), and its name; (None, "") when none is set."""

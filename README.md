@@ -155,6 +155,11 @@ first start).
 Assessment (top of the Today tab): a short reading of the day for
 executives, written at 09:00, 12:00, 15:00 and 18:00: a verdict, what is
 new since the one before, the day so far, and what to look at first.
+Under its banner (green, amber or red with the verdict): four numbers
+(active users, Major slow actions, PCs with a crash, the typical logon
+time) and three charts of today up to the hour, each against the same
+hour on the working days before. It reads Aternity's start-ups once an
+hour for this.
 Counts and names of events and applications only, never a user or a PC.
 The AI words it and every number is checked against the counts ("The
 counts behind it" shows them); earlier ones of the day and yesterday's

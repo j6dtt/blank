@@ -180,9 +180,30 @@
   }
   .multWrap { overflow-x: auto; }
   .multWrap .mult { min-width: 520px; }
-  #asBody { font-size: 15px; margin-top: 8px; } #asBody details { margin-top: 8px; font-size: 13px; }
-  #asBody summary { cursor: pointer; font-weight: 600; color: var(--accent); }
-  #asBody details ul { margin: 4px 0; padding-left: 20px; } #asBody .old { margin: 8px 0; padding-left: 10px; border-left: 2px solid var(--border); }
+  /* the assessment: a banner in the verdict's colour, four numbers, the text beside three charts (the user's pick) */
+  #asBox { border: 1px solid var(--as, var(--border)); border-top: 0; padding-top: 0; box-shadow: 0 2px 10px rgba(0, 0, 0, .10); }
+  .asBand { margin: 0 -16px 12px; padding: 10px 16px; background: var(--as, var(--muted)); color: #fff; display: flex; gap: 4px 14px;
+            align-items: baseline; flex-wrap: wrap; border-radius: 3px 3px 0 0; }
+  .asBand h2 { color: #fff; margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; font-family: inherit; opacity: .85; }
+  .asBand b { font: 600 20px var(--serif); } .asBand span { font-size: 13px; opacity: .92; }
+  .asBand button.link { color: #fff; margin-left: auto; padding: 0; text-decoration: underline; }
+  .asKpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+  .asKpi { border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; }
+  .asKpi .big { font: 600 20px var(--serif); } .asKpi .s { font-size: 12px; color: var(--muted); }
+  .asGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; margin-top: 12px; }
+  .asGrid > * { min-width: 0; } #asBody { font-size: 15px; }
+  #asCharts { display: grid; gap: 8px; align-content: start; }
+  .asChart { border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; }
+  .asChart .t { font-weight: 600; font-size: 13px; } .asChart .big { font: 600 18px var(--serif); } .asChart .s { font-size: 12px; color: var(--muted); }
+  .asChart svg text { font-size: 10px; fill: var(--muted); }
+  .asLeg { display: flex; gap: 4px 14px; flex-wrap: wrap; font-size: 11px; color: var(--muted); }
+  .asLeg i { display: inline-block; width: 14px; height: 3px; vertical-align: middle; margin-right: 4px; }
+  #asMore { margin-top: 10px; } #asMore details { margin-top: 6px; font-size: 13px; }
+  #asMore summary { cursor: pointer; font-weight: 600; color: var(--accent); }
+  #asMore ul { margin: 4px 0; padding-left: 20px; } #asMore .old { margin: 8px 0; padding-left: 10px; border-left: 2px solid var(--border); }
+  .asY { margin-top: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 4px; background: rgba(0, 0, 0, .025); }
+  .asY h3 { margin: 0 0 4px; font: 600 14px var(--serif); color: var(--accent); }
+  .asUp { color: var(--warn); font-weight: 600; } .asDown, .asSame { color: var(--ok); font-weight: 600; }
   .activeRow { display: flex; gap: 8px 28px; flex-wrap: wrap; margin: 8px 0 2px; font-size: 14px; }
   .activeRow b { font-size: 16px; }
   .exRow { text-align: right; margin-top: 4px; }
@@ -211,9 +232,11 @@
 <main>
   <div id="todayBox">
     <section class="panel" id="asBox" hidden style="margin-bottom:16px">
-      <div class="todayHead"><h2>Assessment</h2><span id="asVerdict"></span><span class="muted" id="asWhen"></span>
-        <button type="button" class="link" id="asCopy" style="margin-left:auto">Copy</button></div>
-      <div id="asBody"></div>
+      <div class="asBand" id="asBand"><h2>Assessment</h2><b id="asVerdict"></b><span id="asWhen"></span>
+        <button type="button" class="link" id="asCopy">Copy</button></div>
+      <div class="asKpis" id="asKpis"></div>
+      <div class="asGrid"><div id="asBody"></div><div id="asCharts"></div></div>
+      <div id="asMore"></div>
       <div class="exRow noExplain"><button type="button" class="link explain" data-tab="today">Explain ▸</button></div>
     </section>
     <section class="panel">
@@ -908,27 +931,63 @@ function asFacts(p) {
     + list("The day so far", p.today) + list("Still open from earlier", p.open) + list("Look first at", [p.first]);
 }
 let asData = null;
+const asUsual = (u) => !u ? "" : ` <span class="${/^(more|longer)/.test(u) ? "asUp" : /^(fewer|shorter)/.test(u) ? "asDown" : "asSame"}">`
+  + `${/^(more|longer)/.test(u) ? "▲ " : /^(fewer|shorter)/.test(u) ? "▼ " : ""}${esc(u)}</span>`;
+// One line per hour of today so far, the range of the days before as a band, a mark at each assessment.
+function asChart(c, marks) {
+  const W = 360, H = 104, L = 34, R = 8, T = 8, B = 18, pts = c.points;
+  const vals = pts.flatMap((p) => [p.v, p.hi]).filter((v) => v !== null && v !== undefined);
+  const fmt = (v) => c.unit === "%" ? `${v}%` : c.unit === "PCs" ? n(v) : `${v} ${c.unit}`;
+  if (!vals.length) return `<div class="asChart"><div class="t">${esc(c.title)}</div><div class="s">Nothing to draw yet today.</div></div>`;
+  const top = Math.max(...vals) * 1.15 || 1, x = (h) => L + (W - L - R) * h / 23, y = (v) => T + (H - T - B) * (1 - v / top);
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${esc(c.title)}">`
+    + `<line x1="${L}" y1="${y(0)}" x2="${W - R}" y2="${y(0)}" stroke="var(--border)"/>`
+    + `<line x1="${L}" y1="${y(top / 1.15)}" x2="${W - R}" y2="${y(top / 1.15)}" stroke="var(--border)" stroke-dasharray="3 3"/>`
+    + `<text x="${L - 4}" y="${y(top / 1.15) + 3}" text-anchor="end">${esc(fmt(Math.round(top / 1.15 * 10) / 10))}</text><text x="${L - 4}" y="${y(0) + 3}" text-anchor="end">0</text>`;
+  const band = pts.filter((p) => p.lo !== null && p.lo !== undefined);
+  if (band.length > 1) svg += `<path d="M${band.map((p) => `${x(p.h).toFixed(1)},${y(p.hi).toFixed(1)}`).join(" L")} L`
+    + `${band.slice().reverse().map((p) => `${x(p.h).toFixed(1)},${y(p.lo).toFixed(1)}`).join(" L")} Z" fill="var(--muted)" opacity=".18"/>`;
+  for (const h of marks) svg += `<line x1="${x(h)}" y1="${T}" x2="${x(h)}" y2="${y(0)}" stroke="var(--brass)" stroke-dasharray="2 3"/>`;
+  const line = pts.filter((p) => p.v !== null && p.v !== undefined);
+  if (line.length > 1) svg += `<polyline points="${line.map((p) => `${x(p.h).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ")}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>`;
+  for (const p of line) svg += `<g><title>${String(p.h).padStart(2, "0")}:00: ${esc(fmt(p.v))}${p.lo !== null && p.lo !== undefined ? `, the days before ${esc(fmt(p.lo))} to ${esc(fmt(p.hi))}` : ""}</title>`
+    + `<circle cx="${x(p.h).toFixed(1)}" cy="${y(p.v).toFixed(1)}" r="${p === line[line.length - 1] ? 4 : 6}" fill="${p === line[line.length - 1] ? "var(--accent)" : "transparent"}" stroke="${p === line[line.length - 1] ? "var(--panel)" : "none"}" stroke-width="2"/></g>`;
+  for (let h = 0; h < 24; h += 3) svg += `<text x="${x(h).toFixed(1)}" y="${H - 5}" text-anchor="middle">${String(h).padStart(2, "0")}</text>`;
+  const now = c.now;
+  return `<div class="asChart"><div class="t">${esc(c.title)}</div><div>` + (now ? `<span class="big">${esc(fmt(now.v))}</span> <span class="s">at ${String(now.h).padStart(2, "0")}:00`
+    + `${now.lo !== null && now.lo !== undefined ? ` · the days before: ${esc(fmt(now.lo))} to ${esc(fmt(now.hi))}` : " · no usual yet"}</span>` : "") + `</div>${svg}</svg></div>`;
+}
 function renderAssess(a) {
   asData = a;
   const p = a.periods[0], y = a.yesterday;
   $("asBox").hidden = false; $("asCopy").hidden = !p && !y;
-  $("asVerdict").innerHTML = p ? asTag(p.verdict) : "";
+  $("asBox").style.setProperty("--as", p ? (AS_COLOR[p.verdict] || "var(--muted)") : "var(--muted)");
+  $("asVerdict").textContent = p ? p.verdict : "Not written yet today";
   $("asWhen").textContent = p ? `as of ${p.label} ${a.zone}` + (p.since ? ` · new since ${p.since}` : " · the first of today")
-    + (a.next ? ` · next at ${a.next}` : "") : `The first of today is written at ${String(a.hours[0]).padStart(2, "0")}:00, then every 3 hours `
+    + (a.next ? ` · next at ${a.next}` : "") : `The first is written at ${String(a.hours[0]).padStart(2, "0")}:00, then every 3 hours `
     + `(${a.hours.map((h) => `${String(h).padStart(2, "0")}:00`).join(", ")}).`;
-  let html = "";
+  $("asKpis").innerHTML = (a.kpis || []).map((k) => `<div class="asKpi"><div class="s">${esc(k.label)}</div><div class="big">${esc(k.big)}</div>`
+    + `<div class="s">${esc(k.sub || "")}${asUsual(k.usual)}</div></div>`).join("");
+  $("asBody").innerHTML = p ? answerHtml(asText(p))
+    + `<div class="muted" style="font-size:12px;margin-top:6px">${esc(p.note || `Written by the AI (${p.service}) from the counts below; every number checked against them.`)}</div>`
+    : `<div class="muted">The charts and numbers are up to ${esc(a.now || "now")}; the written assessment comes at the next hour above.</div>`;
+  const marks = a.periods.map((q) => Number(q.label.slice(0, 2)) + Number(q.label.slice(3, 5)) / 60);
+  $("asCharts").innerHTML = (a.charts || []).map((c) => asChart(c, marks)).join("") + ((a.charts || []).length
+    ? `<div class="asLeg"><span><i style="background:var(--accent)"></i>Today, up to ${esc(a.now || "now")}</span>`
+      + `<span><i style="background:var(--muted);opacity:.4;height:8px"></i>The same hour on the days before (lowest to highest)</span>`
+      + `<span><i style="background:var(--brass)"></i>An assessment</span></div>` : "");
+  // yesterday's summary: written once after midnight, always in view (the end of day and the next morning are one text)
+  let more = y ? `<div class="asY"><h3>Yesterday, ${esc(y.label)}: the day in short</h3>`
+    + (y.text ? answerHtml(y.text) : `<ul>${y.lines.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`) + "</div>"
+    : `<div class="muted" style="font-size:12px">Yesterday's summary is written once, after midnight, when that day's counts are saved; none is saved for yesterday.</div>`;
   if (p) {
-    html += answerHtml(asText(p))
-      + `<div class="muted" style="font-size:12px;margin-top:6px">${esc(p.note || `Written by the AI (${p.service}) from the counts below; every number checked against them.`)}</div>`
-      + `<details><summary>The counts behind it</summary>${asFacts(p)}</details>`;
+    more += `<details><summary>The counts behind it</summary>${asFacts(p)}</details>`;
     const old = a.periods.slice(1);
-    if (old.length) html += `<details><summary>Earlier today (${old.length})</summary>` + old.map((q) =>
+    if (old.length) more += `<details><summary>Earlier today (${old.length})</summary>` + old.map((q) =>
       `<div class="old"><div>${asTag(q.verdict)} <span class="muted">as of ${esc(q.label)}</span></div>${answerHtml(asText(q))}</div>`).join("") + "</details>";
   }
-  if (y) html += `<details${p ? "" : " open"}><summary>Yesterday (${esc(y.label)})</summary><div class="old">`
-    + (y.text ? answerHtml(y.text) : `<ul>${y.lines.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`) + "</div></details>";
-  if (a.note) html += `<div class="muted" style="font-size:12px">${esc(a.note)}</div>`;
-  $("asBody").innerHTML = html;
+  if (a.note) more += `<div class="muted" style="font-size:12px">${esc(a.note)}</div>`;
+  $("asMore").innerHTML = more;
 }
 async function loadAssess() {
   try {
