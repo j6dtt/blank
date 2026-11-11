@@ -421,7 +421,8 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
     @app.get("/")
     def index():
-        return FileResponse(STATIC / "index.html")
+        # always asked for again: after new files are copied, a browser must not show the old page
+        return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/info")
     def info():
