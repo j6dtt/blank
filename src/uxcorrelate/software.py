@@ -110,6 +110,7 @@ class _Reads:
         self.client, self.notes = client, notes
         self.schema: dict | None = None
         self.error = ""  # the first read Aternity did not answer, in a few words
+        self.usage: dict[str, int] = {}  # every application in app usage -> its crashes (the name search)
         try:
             from .verify import parse_odata_metadata
             text = client.http.request("GET", "/$metadata", headers={"Accept": "application/xml"}).text
@@ -327,6 +328,8 @@ def _versions(q: _Reads, now: datetime, say) -> dict:
                 x[2] += to_float(r.get(s["hang_time"])) or 0
             elif r.get(s["status"]) == TOP_STATUS:
                 x[1] += to_float(r.get(s["volume"])) or 1
+        if key == "usage":  # every name, also those not read per version below
+            q.usage = {a: int(x[1]) for a, x in per.items()}
         cands = sorted((a for a, x in per.items() if len(x[0]) > 1 and (x[1] >= MIN_PROBLEM or x[2] > 0)),
                        key=lambda a: (-per[a][1], -per[a][2], a))
         if len(cands) > APPS_MAX:
@@ -399,6 +402,60 @@ def app_now(client, now: datetime, application: str) -> dict:
     read = [key for key in ("usage", "actions") if _app_rows(q, key, application, now - timedelta(days=DAYS), now, vs)]
     app = _judged(application, vs, read)
     return dict(_versions_view({application: app})[0], notes=notes, error=q.error if not read else "")
+
+
+# words that name no program by themselves: "Microsoft Edge" is looked for as "edge"
+GENERIC = {"microsoft", "ms", "the", "a", "an", "of", "for", "app", "application", "applications", "program",
+           "programs", "version", "versions", "browser"}
+
+
+def words(asked) -> list[str]:
+    """The words of a name asked for that say which program it is ("Microsoft Edge" -> edge)."""
+    tokens = re.findall(r"[a-z0-9+#]+", str(asked or "").lower())
+    return [t for t in tokens if t not in GENERIC] or tokens
+
+
+def named_like(name, asked) -> bool:
+    """Every telling word of what was asked is in the name: "edge" is in msedge.exe and in
+    Microsoft Edge Update. One rule for every name search (the user's finding on stage, Nov
+    2026: three fixes each looked for the exact name "Microsoft Edge", which Aternity never uses)."""
+    low, ws = str(name or "").lower(), words(asked)
+    return bool(ws) and all(w in low for w in ws)
+
+
+def _crashes(q: _Reads, now: datetime, say) -> list[dict] | None:
+    """Every crash event of the last DAYS days, added up by application, program file (the
+    failing part) and its version: PCs and events. Names and counts only. None: not read."""
+    cfg = q.client.cfg
+    entity, f = cfg.entities.get("health_events"), cfg.fields.get("health_events", {})
+    need = [f.get(k) for k in ("timestamp", "device", "name")]
+    if not entity or not all(need) or (q.schema is not None and entity not in q.schema):
+        q.notes.append("Health events are not published: crashes by program are not counted.")
+        return None
+    cols = [f[k] for k in ("device", "name", "application", "component", "component_version")
+            if f.get(k) and q.has(entity, f[k])]
+    ts = f["timestamp"]
+    per: dict[tuple, dict] = {}
+    for n in range(DAYS, 0, -1):  # a day at a time, as the Today reader
+        say(f"Reading crash events: day {DAYS - n + 1} of {DAYS}")
+        start, end = now - timedelta(days=n), now - timedelta(days=n - 1)
+        rows = q.rows(entity, "Crash events of a day", select=cols,
+                      filter=f"{ts} ge {odata_time(start)} and {ts} lt {odata_time(end)}")
+        if rows is None:
+            return None
+        for r in rows:
+            name, dev = r.get(f["name"]), r.get(f["device"])
+            if not dev or "crash" not in str(name or "").lower():
+                continue
+            key = (r.get(f.get("application", "")) or None, r.get(f.get("component", "")) or None,
+                   r.get(f.get("component_version", "")) or None)
+            x = per.setdefault(key, {"pcs": set(), "events": 0, "kinds": set()})
+            x["pcs"].add(dev)
+            x["events"] += 1
+            x["kinds"].add(str(name))
+    return [{"application": a, "part": p, "version": v, "pcs": len(x["pcs"]), "events": x["events"],
+             "kinds": sorted(x["kinds"])} for (a, p, v), x in sorted(
+                 per.items(), key=lambda kv: (-len(kv[1]["pcs"]), str(kv[0])))]
 
 
 def crashes_by_version(client, now: datetime, application: str) -> dict:
@@ -547,6 +604,8 @@ def read_snapshot(client, cfg, now: datetime, local, say=lambda s: None) -> dict
     snap = {"as_of": now.isoformat(), "date": local.day(now).isoformat(), "list": size, "programs": progs,
             "windows": _windows(q, cfg, local, now, say), "versions": _versions(q, now, say), "notes": notes,
             "days": DAYS}
+    snap["crashes"] = _crashes(q, now, say)
+    snap["usage"] = q.usage  # application -> crashes in app usage, every application
     # Aternity down: the list itself did not come. Not a day's counts (keep_reading tries again soon)
     snap["unread"] = q.error if size is None else ""
     snap["flags"] = _flags(snap)

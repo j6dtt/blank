@@ -338,6 +338,20 @@ unset `<REQUIRED>` base URLs.
   its crash events by the failing part's version
   (`software.crashes_by_version`: counts, no shares, never raised); the
   chat's known names include the health events' applications (web.py).
+  Name search, one rule (`software.words`, `named_like`; the user, Nov
+  2026, after three fixes that each looked for an exact name Aternity
+  never uses: "DO NOT FIX 'EDGE' SPECIFICALLY"): the telling words of
+  what was asked ("Microsoft Edge" -> edge, `GENERIC` words dropped)
+  against every name Aternity has: applications of app usage (all of
+  them: `snap["usage"]`) and every crash event of `DAYS` days by
+  application, program file and version (`software._crashes`,
+  `snap["crashes"]`: names and counts, read a day at a time with the
+  daily read). With no application of exactly that name,
+  version_problems shows the crashes per version of everything named
+  like it (`_crashes_like`; app usage applications not read daily are
+  read now, `LIKE_NOW` at most), never only a list of names to ask
+  again with. `pick` and the Today chat's `_match` end with the same
+  rule.
   compare, before_after, program_split and pcs do the same through
   `_app` (the name as typed when several have it; `_like` names them
   when Aternity has nothing).

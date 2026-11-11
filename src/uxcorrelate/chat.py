@@ -158,7 +158,9 @@ def _match(names, asked) -> list[str]:
     names = sorted({n for n in names if n})
     if not q:
         return []
-    return [n for n in names if " ".join(n.lower().split()) == q] or [n for n in names if q in n.lower()]
+    from .software import named_like  # the one word rule of every name search ("Microsoft Edge" -> edge)
+    return ([n for n in names if " ".join(n.lower().split()) == q] or [n for n in names if q in n.lower()]
+            or [n for n in names if named_like(n, asked)])
 
 
 AFTER_HANG = ("Application Crash (After Hang) is Aternity's own name; an investigation lists it under hangs "
@@ -435,7 +437,9 @@ def events(today: Today, now: datetime, group_by: str = "event", name: str | Non
     if app:
         in_app = f" of {matched[0]}" if len(matched) == 1 else f" of applications named like \"{app}\""
         if not matched:
-            notes.append(f"No application named like \"{app}\" had such an event in this period.")
+            notes.append(f"No application named like \"{app}\" had such an event in this period. Aternity records "
+                         f"some crashes with no application name ({NO_APP}); \"Ask about software\" counts "
+                         "crashes by the program file that crashed.")
         elif len(matched) > 1:
             notes.append(f"No application is named exactly \"{app}\"; {len(matched)} have it in their name, "
                          f"counted together: {', '.join(matched[:5])}{' …' if len(matched) > 5 else ''}.")

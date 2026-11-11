@@ -178,13 +178,18 @@ def test_an_application_the_daily_read_left_out_is_read_now_by_its_exact_name(tm
         assert "The most PCs with a crash: version 152.0, 2 of the 10 PCs that ran it" in got["notes"][-1]
     word = run("version_problems", {"application": "word"}, r, v, c, s, ["Word"])
     assert word["rows"] == [["16.1", 29, 29, 0, 0, 0, ""]]
-    several = run("version_problems", {"application": "edge"}, r, v, c, s)  # no application is named "edge"
-    assert several["rows"] == [["Microsoft Edge Update"], ["Microsoft Edge WebView2"]]
-    assert several["notes"][0].startswith('No application is named exactly "edge"; several have it in their name')
+    # no application is named "edge": every one with it in its name, each with its counts, not a list of names
+    several = run("version_problems", {"application": "edge"}, r, v, c, s)
+    assert several["title"] == 'Crashes by version: names with "edge"'
+    assert several["columns"] == ["Application or program file", "Version", "PCs with a crash", "PCs that ran it"]
+    assert several["rows"] == [["Microsoft Edge Update", "1.0", 5, 5], ["Microsoft Edge Update", "2.0", 5, 5],
+                               ["Microsoft Edge WebView2", "1.0", 5, 5], ["Microsoft Edge WebView2", "2.0", 5, 5],
+                               ["Microsoft Edge", "152.0", 2, 10], ["Microsoft Edge", "156.0", 1, 30]]
+    assert several["notes"][0].startswith('Aternity has no application named exactly "edge": this is every crash')
     none = run("version_problems", {"application": "Java"}, r, v, c, s)
-    assert none["title"] == "Java: nothing per version" and none["rows"] == []
-    assert 'no use and no crash event of an application named exactly "Java"' in none["notes"][0]
-    assert "The installed list has a program of that name" in none["notes"][-1]
+    assert none["title"] == "Java: no crash recorded" and none["rows"] == []
+    assert 'of an application or program file with "java" in its name' in none["notes"][0]
+    assert "The installed list has programs of that name" in none["notes"][-1]
     # the other read-now blocks ask for the exact name too, and name the ones like it when there is nothing
     cmp = run("compare", {"application": "Microsoft Edge"}, r, v, c, s)
     assert cmp["title"] == "Microsoft Edge: 156.0 against 152.0" and cmp["rows"][0] == ["PCs with a crash", 1, 30, 2, 10]
@@ -218,11 +223,23 @@ def test_an_application_not_in_app_usage_is_answered_from_its_crash_events(tmp_p
                                  (2, "156.0", "Application Crash (After Hang)"), (3, "152.0", "Application Crash"),
                                  (4, "152.0", "Application Hang"))]  # a hang is not a crash
     r, v, c, s = reader(tmp_path, data)
+    # a second program file with the word, recorded with no application at all (as a browser can be)
+    data["DEVICE_HEALTH_RAW"] += [{"DEVICE_NAME": f"PC-{i:02d}", "APPLICATION_NAME": None,
+                                   "HEALTH_EVENT_NAME": "Application Crash", "HEALTH_EVENT_COMPONENT": "msedgewebview2.exe",
+                                   "HEALTH_EVENT_COMPONENT_VERSION": "156.0", "TIMEFRAME": day1} for i in (7, 8, 9, 10)]
+    r, v, c, s = reader(tmp_path, data)
     got = run("version_problems", {"application": "Microsoft Edge"}, r, v, c, s)
-    assert got["title"] == "Microsoft Edge: crashes by version (health events)" and got["total"] == "3 PCs with a crash"
-    assert got["columns"] == ["Version of msedge.exe", "PCs with a crash", "Crash events"]
-    assert got["rows"] == [["156.0", 2, 3], ["152.0", 1, 1]]
-    assert "its application usage has no application named exactly \"Microsoft Edge\"" in got["notes"][0]
-    assert got["notes"][1] == "The most PCs with a crash: version 156.0, 2 PCs."
-    lost = run("version_problems", {"application": "Microsoft Edgy"}, r, v, c, s)  # in neither: said, no number
-    assert lost["rows"] == [] and "no use and no crash event" in lost["notes"][0]
+    assert got["title"] == 'Crashes by version: names with "edge"'
+    # every name with the word, each with its counts: app usage's (with the PCs that ran it) and the crash events'
+    assert got["rows"][:3] == [["Microsoft Edge Update", "1.0", 5, 5], ["Microsoft Edge Update", "2.0", 5, 5],
+                               ["Microsoft Edge WebView2", "1.0", 5, 5]]
+    assert ["msedgewebview2.exe", "156.0", 4, None] in got["rows"]
+    assert ["Microsoft Edge (msedge.exe)", "156.0", 2, None] in got["rows"]
+    assert ["Microsoft Edge (msedge.exe)", "152.0", 1, None] in got["rows"]
+    assert 'with "edge" in the name of the application or of the program file that crashed' in got["notes"][0]
+    assert got["notes"][1] == "The most PCs with a crash: Microsoft Edge Update 1.0, 5 PCs."
+    # the same rule for any name: nothing in the code knows a program
+    out = run("version_problems", {"application": "Microsoft Outlook"}, r, v, c, s)
+    assert out["title"] == "Outlook by version" and out["rows"][0][:3] == ["16.1", 40, 12]
+    lost = run("version_problems", {"application": "Microsoft Edgy"}, r, v, c, s)  # nothing named like it: said
+    assert lost["rows"] == [] and 'with "edgy" in its name' in lost["notes"][0]

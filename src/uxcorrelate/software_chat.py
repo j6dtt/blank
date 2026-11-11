@@ -27,10 +27,11 @@ from .chat import ROWS, _n, _result, _tool, converse
 from .config import SOFTWARE_OS_UPDATE, TOP_STATUS
 from .http import ApiError
 from .software import (DAYS, FEW_PCS, KIND, MIN_PCS, MIN_PROBLEM, RATIO, UPDATE_DAYS, Software, app_now, before_after,
-                       crashes_by_version,
+                       crashes_by_version, named_like, words,
                        compare, missing_on, order, pcs_with_problem, pcs_with_program, pcs_without_update,
                        program_view, shown, split_by_program, starts_with, version_of)
 
+LIKE_NOW = 5  # applications named like what was asked that are read now, at most
 PCS_ROWS = 20  # PCs given to the AI and shown in a list; the tab's lists show more
 PROBLEM = {"crash": "a crash", "hang": "hang time", "slow": f"a {TOP_STATUS} action"}
 
@@ -112,7 +113,8 @@ def pick(asked, names) -> tuple[str | None, list[str]]:
     exact = [n for n in names if low[n] == q]
     if exact:
         return exact[0], []
-    has = [n for n in names if q in low[n]] or [n for n in names if all(w in low[n] for w in q.split())]
+    has = ([n for n in names if q in low[n]] or [n for n in names if all(w in low[n] for w in q.split())]
+           or [n for n in names if named_like(n, asked)])  # "Microsoft Edge" finds a name with "edge" alone
     if len(has) == 1:
         return has[0], []
     ends = [n for n in has if low[n].endswith(" " + q)]
@@ -272,9 +274,14 @@ def version_problems(sw: Software, view: dict, args: dict, application: str | No
                         f"PCs with a {TOP_STATUS} action", "Versions raised"], rows,
                        [RULES, "Read per version: the applications with 2 versions or more and a crash, hang time or "
                                f"{MIN_PROBLEM} {TOP_STATUS} actions."], total=_n(len(apps), "application"), say=say)
-    name, near = pick(application, apps)
-    if name is not None:
-        return _by_version(args, apps[name], period, [])
+    # one application only when nothing else is named like it: "outlook" is Outlook, but "edge"
+    # is not Microsoft Edge Update just because it is the only one read per version
+    q = " ".join(str(application).lower().split())
+    like = [n for n in apps if " ".join(n.lower().split()) == q] or [n for n in apps if named_like(n, application)]
+    other = {e["application"] or e["part"] for e in (sw.snap or {}).get("crashes") or []
+             if any(x and named_like(x, application) for x in (e["application"], e["part"]))} - set(like)
+    if len(like) == 1 and (not other or " ".join(like[0].lower().split()) == q):
+        return _by_version(args, apps[like[0]], period, [])
     # not one of the applications read every day: the application as Aternity names it, read now
     # (stage, Nov 2026: "Microsoft Edge" was answered with "several applications have Microsoft
     # Edge: ask with the full name", naming Microsoft Edge Update and Microsoft Edge WebView2)
@@ -291,36 +298,73 @@ def version_problems(sw: Software, view: dict, args: dict, application: str | No
                        [f"{name} is {daily}."], say=f"{name} is {daily}.")
     a = app_now(client, now or datetime.now(timezone.utc), name)
     if not a["versions"] and not a["error"]:
-        # not in Aternity's application usage (the Edge browser on stage): its crash events by version
-        ev = crashes_by_version(client, now or datetime.now(timezone.utc), name)
-        if ev["rows"]:
-            top = ev["rows"][0]
-            notes = [f"From Aternity's health events ({', '.join(ev['kinds'][:3])}): its application usage has no "
-                     f"application named exactly \"{name}\" in the last {DAYS} days, so the PCs that ran each "
-                     "version are not known. These are counts, not shares: no version is raised, and a version "
-                     "on more PCs has more crashes by that alone.",
-                     f"The most PCs with a crash: version {top['version']}, {_n(top['pcs'], 'PC')}."]
-            say = (f"{name} crashes by version, last {DAYS} days, from health events: " + "; ".join(
-                f"{r['version']}: {_n(r['pcs'], 'PC')}" for r in ev["rows"][:3]) + ".")
-            return _result("version_problems", args, f"{name}: crashes by version (health events)", _live(),
-                           [f"Version of {ev['part'] or 'the failing part'}", "PCs with a crash", "Crash events"],
-                           [[r["version"], r["pcs"], r["events"]] for r in ev["rows"][:ROWS]], notes,
-                           total=f"{_n(ev['pcs'], 'PC')} with a crash", say=say)
-    if not a["versions"] and several and not a["error"]:
-        return _not_one("version_problems", args, "application", application, names, period)
+        # no application of exactly that name: everything named like it, with its counts (never
+        # only a list of names to ask again with: the user's finding on stage, three times)
+        like = _crashes_like(args, sw, view, client, now or datetime.now(timezone.utc), application, name)
+        if like is not None:
+            return like
     if not a["versions"]:
         why = (f"Aternity could not be read ({a['error']}): ask again in a minute." if a["error"] else
-               f"Aternity recorded no use and no crash event of an application named exactly \"{name}\" in the "
-               f"last {DAYS} days.")
+               f"Aternity recorded no crash in the last {DAYS} days, in its application usage or its crash events, "
+               f"of an application or program file with \"{' '.join(words(application))}\" in its name.")
         notes = [why] + a["notes"]
-        if near and not a["error"]:
-            notes.append("Applications with a name like it: " + ", ".join(near[:5]) + ".")
-        if not a["error"] and pick(name, view.get("programs", []))[0]:
-            notes.append("The installed list has a program of that name: ask how many versions of it are "
-                         "installed. Aternity may name the running application differently.")
-        return _result("version_problems", args, f"{name}: nothing per version", _live(), ["Application"],
-                       [[n] for n in near[:ROWS]] if not a["error"] else [], notes, say=" ".join(notes[:2]))
+        if not a["error"] and any(named_like(p, application) for p in view.get("programs", [])):
+            notes.append("The installed list has programs of that name: ask how many versions are installed.")
+        return _result("version_problems", args, f"{name}: no crash recorded", _live(), ["Application"], [], notes,
+                       say=" ".join(notes[:2]))
     return _by_version(args, a, _live(), [f"Read now: {name} is {daily}."] + a["notes"])
+
+
+def _crashes_like(args: dict, sw: Software, view: dict, client, now: datetime, asked, name: str) -> dict | None:
+    """Crashes per version of everything whose name has the words asked for: the applications
+    read per version (app usage: with the PCs that ran each) and every crash event of the daily
+    read, by application or by the program file that crashed (msedge.exe has "edge"). None:
+    nothing is named like it."""
+    rows = []
+    for a in view.get("versions", []):
+        if named_like(a["application"], asked) and "usage" in a["read"]:
+            rows += [[a["application"], v["version"], v["crash"], v["pcs"]] for v in a["versions"] if v["crash"]]
+    # applications in app usage with a crash that the daily read did not read per version: read now
+    daily = {a["application"] for a in view.get("versions", [])}
+    more = sorted((n for n, crashes in ((sw.snap or {}).get("usage") or {}).items()
+                   if crashes and n not in daily and named_like(n, asked)), key=str.lower)[:LIKE_NOW]
+    for n in more:
+        rows += [[n, v["version"], v["crash"], v["pcs"]] for v in app_now(client, now, n)["versions"] if v["crash"]]
+    in_usage = {r[0] for r in rows} | daily & {a for a in daily if named_like(a, asked)}
+    events = (sw.snap or {}).get("crashes")
+    if events is None:  # a read from before this was kept: the exact name's events, read now
+        ev = crashes_by_version(client, now, name)
+        events = [{"application": name, "part": ev["part"], "version": r["version"], "pcs": r["pcs"],
+                   "events": r["events"], "kinds": ev["kinds"]} for r in ev["rows"]]
+    kinds: set = set()
+    for e in events:
+        who = [x for x in (e["application"], e["part"]) if x and named_like(x, asked)]
+        if not who or e["application"] in in_usage:
+            continue
+        label = e["application"] if e["application"] and e["part"] in (None, e["application"]) else \
+            f"{e['application']} ({e['part']})" if e["application"] else e["part"]
+        rows.append([label, e["version"] or "(no version)", e["pcs"], None])
+        kinds |= set(e["kinds"])
+    if not rows:
+        return None
+    rows.sort(key=lambda r: (-r[2], str(r[0]).lower(), order(str(r[1]))))
+    top, names = rows[0], list(dict.fromkeys(r[0] for r in rows))
+    word = " ".join(words(asked))
+    notes = [f"Aternity has no application named exactly \"{name}\": this is every crash of the last {DAYS} days "
+             f"with \"{word}\" in the name of the application or of the program file that crashed "
+             f"({_n(len(names), 'name')}: {', '.join(names[:5])}{' …' if len(names) > 5 else ''}).",
+             f"The most PCs with a crash: {top[0]} {top[1]}, {_n(top[2], 'PC')}.",
+             "\"PCs that ran it\" is known only for applications in Aternity's application usage; where it is "
+             "empty the count is from crash events alone" + (f" ({', '.join(sorted(kinds)[:3])})" if kinds else "")
+             + ". Counts, not shares: a version on more PCs has more crashes by that alone, and none is raised."]
+    if len(rows) > ROWS:
+        notes.append(f"The {ROWS} with the most PCs are shown, of {len(rows)}.")
+    say = (f"Crashes named like \"{word}\", last {DAYS} days, most PCs first: " + "; ".join(
+        f"{r[0]} {r[1]}: {_n(r[2], 'PC')}" for r in rows[:3]) + ".")
+    return _result("version_problems", args, f"Crashes by version: names with \"{word}\"",
+                   f"the last {DAYS} days, as of the latest read ({view.get('as_of_local')})",
+                   ["Application or program file", "Version", "PCs with a crash", "PCs that ran it"], rows[:ROWS],
+                   notes, total=f"{_n(len(rows), 'version')} with a crash", say=say)
 
 
 def _by_version(args: dict, a: dict, period: str, first: list[str]) -> dict:
