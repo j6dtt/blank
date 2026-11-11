@@ -187,6 +187,7 @@
   .asBand h2 { color: #fff; margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; font-family: inherit; opacity: .85; }
   .asBand b { font: 600 20px var(--serif); } .asBand span { font-size: 13px; opacity: .92; }
   .asBand button.link { color: #fff; margin-left: auto; padding: 0; text-decoration: underline; }
+  .asCap { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 4px; }
   .asKpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
   .asKpi { border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; }
   .asKpi .big { font: 600 20px var(--serif); } .asKpi .s { font-size: 12px; color: var(--muted); }
@@ -234,6 +235,7 @@
     <section class="panel" id="asBox" hidden style="margin-bottom:16px">
       <div class="asBand" id="asBand"><h2>Assessment</h2><b id="asVerdict"></b><span id="asWhen"></span>
         <button type="button" class="link" id="asCopy">Copy</button></div>
+      <div class="asCap" id="asNow"></div>
       <div class="asKpis" id="asKpis"></div>
       <div class="asGrid"><div id="asBody"></div><div id="asCharts"></div></div>
       <div id="asMore"></div>
@@ -925,11 +927,6 @@ function asOurs(p) {
   return [`${p.verdict}${(p.why || []).length ? `: ${p.why.join("; ")}` : ""}.`, ...fresh.concat(p.today.slice(1, 4)).slice(0, 5).map((x) => `- ${x}`), `Next: look first at ${p.first}.`].join("\n");
 }
 const asText = (p) => p.text || asOurs(p);
-function asFacts(p) {
-  const list = (title, xs) => xs.length ? `<div><b>${esc(title)}</b><ul>${xs.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>` : "";
-  return list(`Why "${p.verdict}"`, p.why || []) + list(p.since ? `New since ${p.since}` : "New", p.new.length ? p.new : p.since ? ["Nothing new."] : [])
-    + list("The day so far", p.today) + list("Still open from earlier", p.open) + list("Look first at", [p.first]);
-}
 let asData = null;
 const asUsual = (u) => !u ? "" : ` <span class="${/^(more|longer)/.test(u) ? "asUp" : /^(fewer|shorter)/.test(u) ? "asDown" : "asSame"}">`
   + `${/^(more|longer)/.test(u) ? "▲ " : /^(fewer|shorter)/.test(u) ? "▼ " : ""}${esc(u)}</span>`;
@@ -966,10 +963,11 @@ function renderAssess(a) {
   $("asWhen").textContent = p ? `as of ${p.label} ${a.zone}` + (p.since ? ` · new since ${p.since}` : " · the first of today")
     + (a.next ? ` · next at ${a.next}` : "") : `The first is written at ${String(a.hours[0]).padStart(2, "0")}:00, then every 3 hours `
     + `(${a.hours.map((h) => `${String(h).padStart(2, "0")}:00`).join(", ")}).`;
+  $("asNow").textContent = (a.kpis || []).length ? `Now, as of ${a.now} (these numbers and the charts move with every read)` : "";
   $("asKpis").innerHTML = (a.kpis || []).map((k) => `<div class="asKpi"><div class="s">${esc(k.label)}</div><div class="big">${esc(k.big)}</div>`
     + `<div class="s">${esc(k.sub || "")}${asUsual(k.usual)}</div></div>`).join("");
-  $("asBody").innerHTML = p ? answerHtml(asText(p))
-    + `<div class="muted" style="font-size:12px;margin-top:6px">${esc(p.note || `Written by the AI (${p.service}) from the counts below; every number checked against them.`)}</div>`
+  $("asBody").innerHTML = p ? `<div class="asCap">Written at ${esc(p.label)}: its numbers are of that time</div>` + answerHtml(asText(p))
+    + `<div class="muted" style="font-size:12px;margin-top:6px">${esc(p.note || `Written by the AI (${p.service}); every number checked against the counts of ${p.label}.`)}</div>`
     : `<div class="muted">The charts and numbers are up to ${esc(a.now || "now")}; the written assessment comes at the next hour above.</div>`;
   const marks = a.periods.map((q) => Number(q.label.slice(0, 2)) + Number(q.label.slice(3, 5)) / 60);
   $("asCharts").innerHTML = (a.charts || []).map((c) => asChart(c, marks)).join("") + ((a.charts || []).length
@@ -980,8 +978,7 @@ function renderAssess(a) {
   let more = y ? `<div class="asY"><h3>Yesterday, ${esc(y.label)}: the day in short</h3>`
     + (y.text ? answerHtml(y.text) : `<ul>${y.lines.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`) + "</div>"
     : `<div class="muted" style="font-size:12px">Yesterday's summary is written once, after midnight, when that day's counts are saved; none is saved for yesterday.</div>`;
-  if (p) {
-    more += `<details><summary>The counts behind it</summary>${asFacts(p)}</details>`;
+  if (p) {  // (the counts it was written from are not shown: they are of its hour, and read as a mismatch beside the live numbers)
     const old = a.periods.slice(1);
     if (old.length) more += `<details><summary>Earlier today (${old.length})</summary>` + old.map((q) =>
       `<div class="old"><div>${asTag(q.verdict)} <span class="muted">as of ${esc(q.label)}</span></div>${answerHtml(asText(q))}</div>`).join("") + "</details>";

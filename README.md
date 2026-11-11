@@ -161,8 +161,9 @@ time) and three charts of today up to the hour, each against the same
 hour on the working days before. It reads Aternity's start-ups once an
 hour for this.
 Counts and names of events and applications only, never a user or a PC.
-The AI words it and every number is checked against the counts ("The
-counts behind it" shows them); earlier ones of the day and yesterday's
+The AI words it and every number is checked against the counts of its
+hour. The text is of the time it was written (said above it); the four
+numbers and the charts move with every read. Earlier ones of the day and yesterday's
 summary are one click away; Copy puts it on the clipboard. Kept 8 days in
 `./data/assess`.
 

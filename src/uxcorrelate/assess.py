@@ -565,7 +565,8 @@ class Assessments:
         return {"date": t.isoformat(), "zone": self.today.zone_label, "periods": periods,
                 "yesterday": y.get("summary"), "hours": list(HOURS),
                 "next": f"{nxt:02d}:00" if nxt is not None else None, "note": self.note,
-                "now": self.today.local(now).strftime("%H:%M"), "charts": charts,
+                # the live numbers and charts are as of the Today reader's last read, not of the text's hour
+                "now": self.today.local(self.today.as_of or now).strftime("%H:%M"), "charts": charts,
                 "kpis": self.kpis(now, charts) if self.today.ready else []}
 
 

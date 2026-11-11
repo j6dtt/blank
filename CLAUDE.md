@@ -302,7 +302,11 @@ unset `<REQUIRED>` base URLs.
   assumed), and `boot_lines` puts them in the facts. Software is not
   in it (the user). Yesterday's summary is always in view (`.asY`).
   The verdict says why (`_judged`), needs `VERDICT_PCS` PCs, and what
-  it rests on is always among the lines.
+  it rests on is always among the lines. The page does not show the
+  lines a text was written from ("The counts behind it", removed at
+  the user's word: frozen at its hour, they read as a mismatch beside
+  the live numbers); the text is captioned "Written at HH:MM" and the
+  numbers and charts "Now, as of HH:MM" (the Today reader's last read).
 - `care.py`: the "Care list" tab, second (`/api/care`, `/api/care/user`;
   link `#care`, as `#today`, `#investigate`, `#startups`): users in
   `<data>/care_list.json` (`LIST_FILE`, read at every check, `CARE_MAX`
