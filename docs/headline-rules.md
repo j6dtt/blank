@@ -17,6 +17,39 @@ Code: `answer._pick_headline` (which class), `answer.build_answer`
 Riverbed rule. Check it against past cases where IT found the real
 cause before relying on it.
 
+## The most serious thing the user hit leads
+
+The user's rule (Nov 2026, twice: a failing disk under a slow Outlook
+launch, then an Outlook crash under 5 slow Preview Mail actions): the
+headline leads with the most serious thing the user hit, wherever in the
+window it happened. In this order (`answer._lead`, `_lead_rank`):
+
+1. a failing disk;
+2. a crash: an application crash (app usage or a health event, a blue
+   screen included), and Aternity's "Application Crash (After Hang)";
+3. a hang Aternity recorded as a health event;
+4. slow actions (the classes below).
+
+- The first sentence is that issue ("Microsoft Outlook crashed on VD-41,
+  2 times"); the second is what is known of why (`_lead_verdict`): a
+  change that matches the failing part, else how many other PCs fail the
+  same way, else "No cause found for it".
+- The slow actions' own headline follows in the reason, whole ("Also:
+  …"), with its verdict. Nothing is dropped.
+- The issue is first under "What went wrong" (not under "Other things"),
+  and its step is first under "What to do".
+- When the slow actions' verdict already rests on something at least as
+  serious (class A: "Likely: Outlook crashed … at 3 of them", a failing
+  disk), the headline stays as it is.
+- Not leading: hang time from app usage alone (any value above 0, no
+  unit: too thin), background crashes, other health events, limits.
+- No weighing of counts: one crash leads over 23 slow actions with a
+  known cause (their cause is the next sentence). A judgment; change the
+  order here if a case shows it wrong.
+
+The Care list follows it: a tile's "Why" is this headline, and its issues
+are listed Critical first, then Major, an event before slow actions.
+
 ## No slow actions
 
 The headline counts what the user hit:

@@ -229,6 +229,54 @@ def _background_line(rows: list[dict]) -> str:
 HEAD_ORDER = {"disk": -1, "hang": 0, "crash": 0, "system": 1, "background": 1, "startup": 2, "infra": 3, "limit": 4}
 
 
+# The headline leads with the most serious thing the user hit (the user's rule, Nov 2026: a
+# failing disk first, then an Outlook crash 5 slow Preview Mail actions had pushed below the
+# answer): a failing disk, a crash, a hang, and only then slow actions, wherever in the window
+LEAD_RANK = {"disk": 0, "crash": 1, "hang": 2}
+
+
+def _lead_rank(g: dict) -> int | None:
+    """None: it does not lead. A hang leads only as a health event Aternity recorded: hang time
+    in app usage alone (any value above 0, no unit) is too thin to push slow actions down.
+    Aternity's "Application Crash (After Hang)" is a crash for the user."""
+    if (g.get("why") or {}).get("same_as_above"):
+        return None
+    if g["issue"] == "hang":
+        if g["source"] != "Aternity event":
+            return None
+        return LEAD_RANK["crash"] if "crash" in g["what"].lower() else LEAD_RANK["hang"]
+    return LEAD_RANK.get(g["issue"])
+
+
+def _lead(problems: list[dict], top: dict | None, cls: str) -> dict | None:
+    """The issue that leads the headline of an investigation with slow actions, when the
+    slow actions' own headline does not already rest on one at least as serious."""
+    cands = [g for g in problems if _lead_rank(g) is not None]
+    if not cands:
+        return None
+    best = min(cands, key=lambda g: (_lead_rank(g), -g["slow_actions"], -g["times"], str(g["first"])))
+    in_title = _lead_rank(top) if cls == "A" and top is not None else None
+    if in_title is not None and in_title <= _lead_rank(best):
+        return None
+    return best
+
+
+def _lead_verdict(g: dict) -> str:
+    """One sentence on why, from what is known of the issue: a matching change, else how far it reaches."""
+    why = g.get("why") or {}
+    o = why.get("others")
+    if why.get("possible"):
+        return "Possibly: " + why["possible"][0].rstrip(".")
+    if g.get("disk"):
+        return "Back up the user's data and replace the disk"
+    if o and o["pcs"]:
+        return (f"The same failure is on {plural(o['pcs'], 'other PC')}"
+                + (f" of {o['of']:,} {o['of_what']}" if o.get("of") else "") + ": not only this PC")
+    if o:
+        return "Only this PC had it in this window; no change on it matches the failing part"
+    return "No cause found for it"
+
+
 def _head_rank(g: dict) -> tuple:
     disk = g["what"].startswith("Free disk")
     return (-g["slow_actions"], HEAD_ORDER.get(g["issue"], 9) + disk, -g["times"])
@@ -455,6 +503,7 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
     at_slow = sorted((g for g in problems if g["slow_actions"]), key=_head_rank)
     head = _pick_headline(at_slow, slow, normal or [], after_start or [], impact, worst, split)
     found, todo = [], []
+    item_of: dict[int, dict] = {}  # each issue's item, to move the one that leads
     for g in at_slow:
         why = g.get("why") or {}
         if why.get("same_as_above"):
@@ -467,6 +516,7 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         # for the action it was read with (correlate._matches)
         found.append(_item(g, f"{g['times']} of {g['readings']:,} readings, {at.replace('at ', 'with ', 1)}"
                            if g.get("readings") else at))
+        item_of[id(g)] = found[-1]
         # a PC value over its limit with its why told: only the steps the data supports
         # (Aternity cannot show which program it was at that minute)
         for step in why.get("todo") or ([_limit_step(g, n)] if _pc_limit(g) and why.get("text") else [_todo(g)]):
@@ -492,6 +542,7 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
             count = f"{g['times']}x" + ((", not counted for a slow action" if g.get("near_other_app")
                                          else ", not near a slow action") if n else "")
         item = _item(g, count)
+        item_of[id(g)] = item
         put.append(item)
         steps = [s for s in g["why"].get("todo") or [] if s not in later]
         if n and g["issue"] in ("background", "limit"):
@@ -667,6 +718,25 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         if split:
             side = max(split, key=split.get)
             reason += f" Aternity measured most of the slow time {WHERE[side]} ({_pct(split[side])})."
+    # the most serious thing the user hit leads; the slow actions follow in the reason
+    lead = _lead(problems, top, cls) if n else None
+    lead_steps: list[str] = []
+    if lead:
+        why = lead.get("why") or {}
+        times = "" if lead.get("disk") or lead["times"] == 1 else f", {lead['times']} times"
+        known = " ".join(why.get("text", [])[:1])
+        reason = (f"{known + ' ' if known else ''}See What went wrong. Also: {title}. {reason}")
+        title = f"{lead['text']}{times}. {_lead_verdict(lead)}"
+        level = "issues"
+        lead_steps = list(why.get("todo") or [])
+        item = item_of.get(id(lead))
+        if item is not None:  # first under What went wrong, not under "Other things" below the answer
+            for box in (elsewhere_items, found):
+                if any(x is item for x in box):
+                    box[:] = [x for x in box if x is not item]
+            found.insert(0, item)
+        felt_issues, background = _issue_counts([g for g in problems if not g["slow_actions"] and g is not lead])
+        also = _background_line(background) if background else None
     # each other slow app and activity, with what is known of it
     also_slow = [x for x in head["also"] if x]
     if n and also_slow:
@@ -678,7 +748,7 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
                 f"Aternity does not say why: a question for whoever builds the {kind}.")
         if step not in todo:
             todo.insert(0, step)
-    disk_off = [_disk_phrase(g) for g in problems if g.get("disk") and not g["slow_actions"]]
+    disk_off = [_disk_phrase(g) for g in problems if g.get("disk") and not g["slow_actions"] and g is not lead]
     if n and disk_off:  # a state, not a moment: "not near" would be wrong
         reason += (f" Also: {_join(disk_off)}, not counted for {'the slow action' if n == 1 else 'the slow actions'}"
                    f" (see Other things on {pcs_label}).")
@@ -691,6 +761,7 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
                     "(see \"What was checked\" for what is ruled out).")
 
     todo += [s for s in later if s not in todo]
+    todo = lead_steps + [s for s in todo if s not in lead_steps]  # the leading issue's steps first
     # a failing disk's step first: back up the user's data before anything else
     first = [s for g in problems if g.get("disk") for s in (g.get("why") or {}).get("todo", [])]
     todo = first + [s for s in todo if s not in first]

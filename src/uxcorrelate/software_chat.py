@@ -27,6 +27,7 @@ from .chat import ROWS, _n, _result, _tool, converse
 from .config import SOFTWARE_OS_UPDATE, TOP_STATUS
 from .http import ApiError
 from .software import (DAYS, FEW_PCS, KIND, MIN_PCS, MIN_PROBLEM, RATIO, UPDATE_DAYS, Software, app_now, before_after,
+                       crashes_by_version,
                        compare, missing_on, order, pcs_with_problem, pcs_with_program, pcs_without_update,
                        program_view, shown, split_by_program, starts_with, version_of)
 
@@ -289,11 +290,28 @@ def version_problems(sw: Software, view: dict, args: dict, application: str | No
         return _result("version_problems", args, f"{name}: not read per version", period, ["Application"], [],
                        [f"{name} is {daily}."], say=f"{name} is {daily}.")
     a = app_now(client, now or datetime.now(timezone.utc), name)
+    if not a["versions"] and not a["error"]:
+        # not in Aternity's application usage (the Edge browser on stage): its crash events by version
+        ev = crashes_by_version(client, now or datetime.now(timezone.utc), name)
+        if ev["rows"]:
+            top = ev["rows"][0]
+            notes = [f"From Aternity's health events ({', '.join(ev['kinds'][:3])}): its application usage has no "
+                     f"application named exactly \"{name}\" in the last {DAYS} days, so the PCs that ran each "
+                     "version are not known. These are counts, not shares: no version is raised, and a version "
+                     "on more PCs has more crashes by that alone.",
+                     f"The most PCs with a crash: version {top['version']}, {_n(top['pcs'], 'PC')}."]
+            say = (f"{name} crashes by version, last {DAYS} days, from health events: " + "; ".join(
+                f"{r['version']}: {_n(r['pcs'], 'PC')}" for r in ev["rows"][:3]) + ".")
+            return _result("version_problems", args, f"{name}: crashes by version (health events)", _live(),
+                           [f"Version of {ev['part'] or 'the failing part'}", "PCs with a crash", "Crash events"],
+                           [[r["version"], r["pcs"], r["events"]] for r in ev["rows"][:ROWS]], notes,
+                           total=f"{_n(ev['pcs'], 'PC')} with a crash", say=say)
     if not a["versions"] and several and not a["error"]:
         return _not_one("version_problems", args, "application", application, names, period)
     if not a["versions"]:
         why = (f"Aternity could not be read ({a['error']}): ask again in a minute." if a["error"] else
-               f"Aternity recorded no use of an application named exactly \"{name}\" in the last {DAYS} days.")
+               f"Aternity recorded no use and no crash event of an application named exactly \"{name}\" in the "
+               f"last {DAYS} days.")
         notes = [why] + a["notes"]
         if near and not a["error"]:
             notes.append("Applications with a name like it: " + ", ".join(near[:5]) + ".")

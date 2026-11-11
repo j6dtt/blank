@@ -193,7 +193,12 @@ def test_explain_our_own_words_and_a_no_break_space_are_not_held_against_a_model
     assert "Half the" in explain.refused("Half the PCs are slow.", "today", "P", ["318 on 141 PCs"], "Explain.")
     flag = next(x for x in explain.SAMPLES if x[1] == "Red flag: Crashes more")
     assert explain.refused("A version is raised when it crashes at twice the share of the others.", *flag[:4]) is None
-    assert "twice" in explain.refused("That is twice their usual.", "care", "P", ["14 by 10:15"], "Why?")
+    why = explain.refused("They had 14, and that is twice their usual today.", "care", "P", ["14 by 10:15"], "Why?")
+    assert "twice" in why and "that is twice their usual today" in why  # the words around it are shown
+    tile = ("care", "Tile", ["Likely: Sample Mail hung on VD-31 at 2 of them"], "Why?")
+    assert explain.refused("Sample Mail hung twice on VD-31.", *tile) is None  # a count of 2, not a comparison
+    assert "twice" in explain.refused("Sample Mail hung twice as often as usual.", *tile)
+    assert "twice" in explain.refused("It hung twice.", "care", "Tile", ["It hung at 14:05"], "Why?")  # no 2 there
     assert explain.says("Look at Sample\u00a0ERP first.", ("sample erp",)) and explain.odd("Sample\u00a0ERP") == "U+00A0"
     assert not explain.says("Look at the mail first.", ("sample erp",)) and explain.odd("plain") == ""
 

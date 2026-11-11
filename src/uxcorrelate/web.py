@@ -313,6 +313,9 @@ def create_app(config_path: str | None = None) -> FastAPI:
             raise HTTPException(503, "The installed software is still being read: ask again in a few minutes.")
         client = AiClient(service, os.environ.get(service.key_env, "") if service.key_env else "")
         known = {a for h in list(today.hours.values()) for a in h.apps if a != NO_APP}  # today's app names
+        with today.lock:  # and those of health events (an application may be in them only: the Edge browser)
+            known |= {x[5] for x in today.health if x[5]}
+            known |= {k[1] for kinds in today.health_apps.values() for k in kinds if k[1]}
         try:
             answer = ask_software(body.question, body.history, client, software, aternity_client, settings.aternity,
                                   sorted(known), datetime.now(timezone.utc))

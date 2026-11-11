@@ -650,9 +650,12 @@ class FailingDiskServerSide(FailingDisk):
 
 def test_a_failing_disk_is_not_counted_where_aternity_puts_the_time_elsewhere():
     a = failing_disk(FailingDiskServerSide)["answer"]
-    assert "disk is failing" not in a["title"] and a["found"] == []
-    assert "Also: PC-77's disk is failing, not counted for the slow action (see Other things on PC-77)." in a["reason"]
-    disk = a["elsewhere"][0]
+    # the disk still leads (the most serious thing on the PC); the slow action keeps its own verdict
+    assert a["title"] == ("PC-77's disk is failing (Aternity recorded Faulty HD S.M.A.R.T. Status and HD Failure). "
+                          "Back up the user's data and replace the disk") and a["level"] == "issues"
+    assert ("Also: Microsoft Outlook Launch took 89.2 s on PC-77 (Major). 2 of the 14 other Microsoft Outlook users "
+            "were slow at the same time, more than on other days.") in a["reason"]
+    disk = a["found"][0]
     assert disk["count"] == "2 records, not counted for a slow action"
     assert ("Not counted for 1 slow action: Aternity put most of its time on the network or the server."
             in disk["why"])
@@ -668,8 +671,11 @@ class NoDiskRecords(FailingDisk):
 
 def test_other_users_slow_are_not_the_headline_when_the_time_was_on_the_pc():
     a = failing_disk(NoDiskRecords)["answer"]
-    assert a["title"] == ("Microsoft Outlook Launch took 89.2 s on PC-77 (Major), slow 1 of 1 times from Nov 10, "
-                          "usually 19.6 s: occasional. No cause found")
+    # with no disk record, the crash Aternity recorded on that PC leads; the launch follows
+    assert a["title"] == ("Application Crash (After Hang) (Microsoft.Notes.exe) on PC-77. Only this PC had it in this "
+                          "window; no change on it matches the failing part")
+    assert ("Also: Microsoft Outlook Launch took 89.2 s on PC-77 (Major), slow 1 of 1 times from Nov 10, "
+            "usually 19.6 s: occasional. No cause found.") in a["reason"]
     assert "Aternity measured most of the slow time on the PC (100%)." in a["reason"]
     assert not any("servers" in t for t in a["todo"])
 

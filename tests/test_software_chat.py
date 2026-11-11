@@ -183,7 +183,7 @@ def test_an_application_the_daily_read_left_out_is_read_now_by_its_exact_name(tm
     assert several["notes"][0].startswith('No application is named exactly "edge"; several have it in their name')
     none = run("version_problems", {"application": "Java"}, r, v, c, s)
     assert none["title"] == "Java: nothing per version" and none["rows"] == []
-    assert 'no use of an application named exactly "Java"' in none["notes"][0]
+    assert 'no use and no crash event of an application named exactly "Java"' in none["notes"][0]
     assert "The installed list has a program of that name" in none["notes"][-1]
     # the other read-now blocks ask for the exact name too, and name the ones like it when there is nothing
     cmp = run("compare", {"application": "Microsoft Edge"}, r, v, c, s)
@@ -196,3 +196,33 @@ def test_an_application_the_daily_read_left_out_is_read_now_by_its_exact_name(tm
     out = run("version_problems", {"application": "Outlook"}, r, v, c, s)  # one of the daily ones: not read again
     assert out["rows"][0][:3] == ["16.1", 40, 12] and "read from Aternity now" not in out["period"]
     assert "The most PCs with a crash: version 16.1, 12 of the 40" in " ".join(out["notes"])
+
+
+def test_an_application_not_in_app_usage_is_answered_from_its_crash_events(tmp_path):
+    """Stage, Nov 2026, after the fix above: Aternity's application usage had no application named
+    "Microsoft Edge" at all (only Microsoft Edge Update and Microsoft Edge WebView2), so the answer
+    was again a list of names. Its crashes are health events: counted by the failing part's version."""
+    data = tables()
+    day1 = data["DEVICE_HEALTH_RAW"][0]["TIMEFRAME"]
+
+    def use(app, i, version):
+        return {"DEVICE_NAME": f"PC-{i:02d}", "APPLICATION_NAME": app, "APPLICATION_VERSION": version,
+                "TIMEFRAME": data["APPLICATIONS_DAILY"][0]["TIMEFRAME"], "APPLICATION_CRASHES_TOTAL": 1,
+                "APPLICATION_HANG_TIME_TOTAL": 0}
+    for app in ("Microsoft Edge Update", "Microsoft Edge WebView2"):
+        data["APPLICATIONS_DAILY"] += [use(app, i, "1.0" if i <= 5 else "2.0") for i in range(1, 11)]
+    data["DEVICE_HEALTH_RAW"] += [
+        {"DEVICE_NAME": f"PC-{i:02d}", "APPLICATION_NAME": "Microsoft Edge", "HEALTH_EVENT_NAME": name,
+         "HEALTH_EVENT_COMPONENT": "msedge.exe", "HEALTH_EVENT_COMPONENT_VERSION": version, "TIMEFRAME": day1}
+        for i, version, name in ((1, "156.0", "Application Crash"), (2, "156.0", "Application Crash"),
+                                 (2, "156.0", "Application Crash (After Hang)"), (3, "152.0", "Application Crash"),
+                                 (4, "152.0", "Application Hang"))]  # a hang is not a crash
+    r, v, c, s = reader(tmp_path, data)
+    got = run("version_problems", {"application": "Microsoft Edge"}, r, v, c, s)
+    assert got["title"] == "Microsoft Edge: crashes by version (health events)" and got["total"] == "3 PCs with a crash"
+    assert got["columns"] == ["Version of msedge.exe", "PCs with a crash", "Crash events"]
+    assert got["rows"] == [["156.0", 2, 3], ["152.0", 1, 1]]
+    assert "its application usage has no application named exactly \"Microsoft Edge\"" in got["notes"][0]
+    assert got["notes"][1] == "The most PCs with a crash: version 156.0, 2 PCs."
+    lost = run("version_problems", {"application": "Microsoft Edgy"}, r, v, c, s)  # in neither: said, no number
+    assert lost["rows"] == [] and "no use and no crash event" in lost["notes"][0]

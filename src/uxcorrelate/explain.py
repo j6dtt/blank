@@ -185,6 +185,7 @@ SYSTEM = (f"You explain one panel of a web page to IT staff in plain English. Th
           f"one sentence.")
 # our own "2 times the share" said as "twice" is not a comparison of the model's (Nemotron, stage)
 SAME = {"twice": ("2 times", "two times"), "double": ("2 times", "two times")}
+COMPARES = re.compile(r"\s+(?:as|the|their|its|his|her|that|what|more|many|much|than)\b", re.I)
 NO_ANSWER = "The panel's lines and the meanings of its terms do not answer that."
 
 
@@ -215,10 +216,15 @@ def refused(text: str, tab: str, panel: str, lines: list[str], question: str) ->
     if extra:
         return "a number that is not on the panel (" + ", ".join(f"{x:g}" for x in sorted(extra)[:3]) + ")"
     have = plain(given(tab, panel, lines) + " " + question)
+    ok = numbers(" ".join(lines))  # the panel's own numbers, not those of the meanings
     for ratio in RATIO.finditer(text):  # "half the start-ups took less" is our own meaning of typical
         said = plain(ratio.group(0))
-        if said not in have and not any(x in have for x in SAME.get(said, ())):
-            return f"a comparison the panel does not give (\"{ratio.group(0)}\")"
+        if said in have or any(x in have for x in SAME.get(said, ())):
+            continue
+        if said == "twice" and 2.0 in ok and not COMPARES.match(text[ratio.end():]):
+            continue  # a count, as "it hung twice" for the panel's "at 2 of them": not "twice as many"
+        around = text[max(0, ratio.start() - 40):ratio.end() + 40].strip()
+        return f"a comparison the panel does not give (\"{ratio.group(0)}\" in \"…{around}…\")"
     return None
 
 

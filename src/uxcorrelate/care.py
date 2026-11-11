@@ -550,7 +550,9 @@ class Care:
                 "since": min((i["since"] for i in mine), default=None),
                 "since_local": today.local(_when(min(i["since"] for i in mine))).strftime("%H:%M") if mine else None,
                 "pcs": [{"device": d, "kind": kinds.get(d)} for d in pcs], "actions": actions, "major": major,
-                "usual": self.usual(user, now), "issues": sorted(mine, key=lambda i: i["since"]),
+                "usual": self.usual(user, now),
+                # the most serious first (the tile shows the first two): Critical, then Major, then by time
+                "issues": sorted(mine, key=lambda i: (rank.get(i["level"], 9), i["kind"] == "slow", i["since"])),
                 "cleared": cleared,
                 "days": days, "why": why, "investigating": "now" if self.running == user else
                 "waiting" if waiting else None}

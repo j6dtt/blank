@@ -401,6 +401,29 @@ def app_now(client, now: datetime, application: str) -> dict:
     return dict(_versions_view({application: app})[0], notes=notes, error=q.error if not read else "")
 
 
+def crashes_by_version(client, now: datetime, application: str) -> dict:
+    """An application's crash events of the last DAYS days by the version of the part that
+    failed (health events): for one Aternity's application usage does not hold, as the Edge
+    browser on stage (Nov 2026). Counts only: the PCs that ran each version are not known."""
+    per: dict[str, dict] = {}
+    kinds: Counter = Counter()
+    parts: Counter = Counter()
+    for e in client.app_health_events(application, now - timedelta(days=DAYS), now):
+        if "crash" not in (e.name or "").lower():
+            continue
+        x = per.setdefault(e.component_version or "(no version)", {"pcs": set(), "events": 0})
+        x["pcs"].add(e.device)
+        x["events"] += int(e.count or 1)
+        kinds[e.name] += 1
+        if e.component:
+            parts[e.component] += 1
+    rows = sorted(({"version": v, "pcs": len(x["pcs"]), "events": x["events"]} for v, x in per.items()),
+                  key=lambda r: (-r["pcs"], -r["events"], order(r["version"])))
+    return {"rows": rows, "kinds": [k for k, _ in kinds.most_common()],
+            "part": parts.most_common(1)[0][0] if parts else None,
+            "pcs": len(set().union(*(x["pcs"] for x in per.values()))) if per else 0}
+
+
 def judge(app: dict) -> None:
     """Flag 1 (decision 1): a version is raised when its share of PCs with a crash (or hang
     time), or of actions rated Major, is at least RATIO times its other versions' share, with

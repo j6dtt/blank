@@ -58,9 +58,12 @@ def erp(bad):
 def test_demo_points_at_the_branch_wan():
     result, start = run_demo()
     a, top = result["answer"], result["problems"][0]
-    assert a["level"] == "likely"
-    assert a["title"].startswith("23 slow actions, slowest CRM Portal Open Account 8.2 s on LT-JDOE-01. "
-                                 "Likely: den-br-rtr01:Gi0/1 (WAN-MPLS): Interface utilization")
+    # the most serious thing the user hit leads (the user's rule, Nov 2026): the Outlook crash at
+    # another time, then the 23 slow actions and their likely cause, in the reason
+    assert a["level"] == "issues"
+    assert a["title"] == "Application crash (OUTLOOK.EXE) on LT-JDOE-01. No cause found for it"
+    assert ("Also: 23 slow actions, slowest CRM Portal Open Account 8.2 s on LT-JDOE-01. Likely: "
+            "den-br-rtr01:Gi0/1 (WAN-MPLS): Interface utilization") in a["reason"]
     assert top["kind"] == "network" and top["slow_actions"] == top["of_slow"] == result["summary"]["slow"] == 23
     first_slow = min(t for t, rt, slow, app, _ in result["timeline"]["actions"] if slow)
     assert datetime.fromisoformat(first_slow.replace("Z", "+00:00")) == start + timedelta(minutes=INCIDENT[0])
@@ -114,7 +117,9 @@ def test_a_crash_of_another_app_is_not_blamed():
     by_app = {g["app"]: g for g in result["problems"]}
     assert by_app["Notepad"]["slow_actions"] == 0
     assert by_app["ERP"]["slow_actions"] == 1
-    assert result["answer"]["title"] == "ERP took 6.0 s on PC1. Likely: ERP was not responding on PC1"
+    a = result["answer"]  # a crash leads; it is still not what the slow action is put down to
+    assert a["title"] == "Notepad crashed on PC1. No cause found for it"
+    assert "Also: ERP took 6.0 s on PC1. Likely: ERP was not responding on PC1." in a["reason"]
 
 
 def test_aternity_status_decides_what_is_slow():
@@ -163,16 +168,17 @@ def test_answer_is_plain_language():
     a = run_demo()[0]["answer"]
     assert "At the same time, 20 of the 50 other people using CRM Portal also had a slow action (40%)." in a["who_else"]
     assert "are behind the same network point: den-br-rtr01 Gi0/0 (LAN)" in a["who_else"]
-    assert a["todo"][0].startswith("20 of the 20 slow CRM Portal users are behind den-br-rtr01")
-    assert a["found"][0]["count"] == "at 23 of 23 slow actions"
+    assert a["todo"][0].startswith("On LT-JDOE-01: look at OUTLOOK.EXE")  # the leading issue's step first
+    assert a["todo"][1].startswith("20 of the 20 slow CRM Portal users are behind den-br-rtr01")
+    assert a["found"][0]["count"] == "1x, not near a slow action" and a["found"][1]["count"] == "at 23 of 23 slow actions"
     assert a["time_went"]["network"] > 0.8 and a["felt"]["slow_actions"] == 23
     # the problems at other times are listed with their own why, not just counted
     # in their own section, below the answer
     elsewhere = [f["text"] for f in a["elsewhere"]]
     assert not any(f in a["found"] for f in a["elsewhere"]) and all(f["count"] for f in a["elsewhere"])
-    # what the user felt first, a limit passed last
-    assert elsewhere == ["Application crash (OUTLOOK.EXE) on LT-JDOE-01",
-                         "LT-JDOE-01: CPU reached 96.0% (limit 85.0)"]
+    # the crash leads the answer now, so it is first under What went wrong; a limit passed stays below
+    assert a["found"][0]["text"] == "Application crash (OUTLOOK.EXE) on LT-JDOE-01"
+    assert elsewhere == ["LT-JDOE-01: CPU reached 96.0% (limit 85.0)"]
 
 
 def test_who_else_says_when_only_this_user_is_slow():
@@ -492,7 +498,10 @@ def test_a_crash_at_another_time_still_gets_its_why():
     usage = [AppUsageSample(Traced.at, "PC1", "ERP", hang_time=12.0)]
     result = amy(erp(lambda i: i == 0), usage=usage, source=Traced)
     a = result["answer"]
-    hang = next(f for f in a["elsewhere"] if f["count"] and "not near a slow action" in f["count"])
+    # a hang Aternity recorded as an event leads: first under What went wrong, not below the answer
+    assert a["title"].startswith("Application hang (erp.exe) on PC1. Possibly: Oct 27 Scanner Updated 2.0 → 2.1")
+    assert "Also: ERP took 6.0 s on PC1. No cause found." in a["reason"] and a["elsewhere"] == []
+    hang = next(f for f in a["found"] if f["count"] and "not near a slow action" in f["count"])
     assert hang["why"][0] == "ERP failed in scanner.dll 2.1 (inside erp.exe 5.0): Not responding."
     assert hang["who"].startswith("3 other PCs (3 users)")
     assert any(t.startswith("Check the Scanner change of Oct 27") for t in a["todo"])

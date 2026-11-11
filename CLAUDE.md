@@ -182,7 +182,13 @@ unset `<REQUIRED>` base URLs.
   `docs/headline-rules.md` (`_pick_headline`; order provisional; "became
   slow" only when slow on most runs since, else occasional, never the
   headline); each
-  other slow app + activity is an "Also slow" line in the reason; PCs
+  other slow app + activity is an "Also slow" line in the reason; the
+  most serious thing the user hit leads, wherever in the window
+  (`_lead`, `_lead_rank`: a failing disk, a crash, a hang recorded as an
+  event, then slow actions; the user's rule, Nov 2026): it is the title
+  with what is known of why (`_lead_verdict`), first under What went
+  wrong and What to do, and the slow actions' own headline follows in
+  the reason ("Also: …"); PCs
   are named ("Other things on VD-41"), never "these PCs". The question is
   what went wrong for the user, not only what was slow: with no slow action
   the title counts hangs, app crashes and system events (`level` "issues",
@@ -327,6 +333,11 @@ unset `<REQUIRED>` base URLs.
   version of Microsoft Edge crashed the most?" was answered "several
   applications have Microsoft Edge" (Edge Update, Edge WebView2) on
   stage. A note names the version with the most PCs with a crash.
+  With nothing in app usage under that name (the Edge browser on stage:
+  only Edge Update and Edge WebView2 are there), the answer comes from
+  its crash events by the failing part's version
+  (`software.crashes_by_version`: counts, no shares, never raised); the
+  chat's known names include the health events' applications (web.py).
   compare, before_after, program_split and pcs do the same through
   `_app` (the name as typed when several have it; `_like` names them
   when Aternity has nothing).
