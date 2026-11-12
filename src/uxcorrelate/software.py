@@ -793,6 +793,72 @@ def keep_reading(sw: Software, make_client, cfg_of, sleep, clock=lambda: datetim
 
 
 # -- reads made by a click ------------------------------------------------------------
+PC_LIST = ("name", "version", "vendor", "type", "scope", "changed")  # a PC's own list (Ask anything)
+EVERY_PC_ROWS = LIST_ROWS * 25  # every PC's whole list (about 43 rows a PC on the live tenant)
+
+
+def pc_list_columns(q: _Reads) -> list[str]:
+    """The columns of a PC's own list that this Aternity publishes (PC_LIST)."""
+    return [SOFTWARE_COLUMNS[k] for k in PC_LIST if q.has(SOFTWARE_SOURCE, SOFTWARE_COLUMNS[k])]
+
+
+def programs_per_pc(client, notes: list[str]) -> dict | None:
+    """Installs on every PC ({pc: {"programs", "windows_updates"}}), counted as a PC's own list
+    is (one row each, Windows updates apart), and how. Aternity's DEVICE_COUNT counts the PCs
+    in a group (live), so it cannot give this. INSTALLED_SW_COUNT added up per PC would (one
+    read), but that it adds up is not seen on a live Aternity: it is used only when it equals
+    the own lists of the PCs with the most and the fewest. Else every PC's list is read and
+    counted; cut short, no count is given (it would be wrong)."""
+    S, c = SOFTWARE_SOURCE, SOFTWARE_COLUMNS
+    D, T, K = c["device"], c["type"], c["count"]
+    q = _Reads(client, notes)
+    if q.schema is not None and S not in q.schema:
+        notes.append(f"{S} is not published by this Aternity: nothing on installed software can be read.")
+        return None
+    typed = q.has(S, T)
+
+    def tally(rows, value) -> dict:
+        per: dict = {}
+        for r in rows:
+            if r.get(D):
+                p = per.setdefault(str(r.get(D)), {"programs": 0, "windows_updates": 0})
+                p["windows_updates" if typed and r.get(T) == SOFTWARE_OS_UPDATE else "programs"] += value(r)
+        return per
+
+    cols = pc_list_columns(q)
+    if q.has(S, K):
+        mark = len(client.warnings)
+        summed = q.rows(S, "Installs per PC, added up by Aternity", select=[D, T, K] if typed else [D, K],
+                        top=LIST_ROWS * 3)
+        if summed and len(client.warnings) == mark:
+            per = tally(summed, lambda r: _int(r.get(K)))
+            ranked = sorted(per, key=lambda d: (-sum(per[d].values()), d))
+            checked = []
+            for d in dict.fromkeys((ranked[0], ranked[-1])):
+                own = q.rows(S, f"{d}'s own list", filter=f"{D} eq {odata_quote(d)}", select=cols, top=LIST_ROWS)
+                if own is None:
+                    break
+                checked.append((d, tally([{**r, D: d} for r in own], lambda r: 1).get(d), per[d]))
+            if checked and all(mine == summed_ for _, mine, summed_ in checked):
+                return {"pcs": per, "how": "added up by Aternity (INSTALLED_SW_COUNT), the same as the own lists of "
+                                          + " and ".join(d for d, _, _ in checked)}
+            for d, mine, summed_ in checked:
+                if mine != summed_:
+                    notes.append(f"Aternity's sum per PC is not the PC's own list (on {d}: "
+                                 f"{sum((summed_ or {}).values()):,} against {sum((mine or {}).values()):,} rows): "
+                                 "every PC's list is counted instead.")
+                    break
+    mark = len(client.warnings)
+    rows = q.rows(S, "Every PC's installed list", select=[D] + cols, top=EVERY_PC_ROWS)
+    if rows is None:
+        return None
+    if len(client.warnings) > mark or len(rows) >= EVERY_PC_ROWS:
+        notes.append("So no count per PC is given (with part of the lists it would be wrong); "
+                     "aternity.max_pages in config.yaml lets Aternity send more pages.")
+        return None
+    return {"pcs": tally(rows, lambda r: 1), "how": f"counted from every PC's own list ({len(rows):,} rows)"}
+
+
 def pcs_with_program(client, name: str, version: str | None, prefix: bool = False) -> dict:
     """The PCs with a program (at one version, or `prefix`: every version starting with it),
     read now; each PC with its versions of the program."""

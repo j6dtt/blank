@@ -155,8 +155,9 @@ The AI looks things up in this app's data, as many steps as it needs
 meanings of our words), and answers in its own words. It can also read
 Aternity now, at most 5 times a question: a user's or PC's logons,
 their start-ups and why they were slow, a PC's installed software and
-Windows, what was installed, updated or removed on a PC, the Software
-tab's look-ups, and one investigation of a user or PC (the last 4 hours
+Windows, what was installed, updated or removed on a PC, how many
+programs every PC has (the most or fewest first), the Software tab's
+look-ups, and one investigation of a user or PC (the last 4 hours
 unless a time is asked for, 24 at most; up to a few minutes). While it
 works, the line under the box says which look-up it is on. "What I
 looked at" under each answer shows every step with its rows

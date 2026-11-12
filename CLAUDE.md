@@ -400,6 +400,10 @@ unset `<REQUIRED>` base URLs.
   Microsoft Edge), versions by their start (`software.version_of`,
   `starts_with`: "143" = every 143.x). A version is said to crash more
   only when raised (`RULES` note, "Raised" column).
+  pcs with a problem (crash, hang, slow) and no application takes the
+  name given as the application (Nemotron sent the Outlook crash
+  question as program=, which listed the PCs with it installed: stage,
+  Nov 2026); verify accepts both picks.
   version_problems for an application the daily read left out (1 version,
   under `MIN_PROBLEM`, beyond `APPS_MAX`) reads it now (`software.app_now`,
   same rows and rules as the daily read: `_app_rows`, `_judged`), asking
@@ -516,7 +520,13 @@ unset `<REQUIRED>` base URLs.
   "1 in 10 over" only from 10 measured), pc_software (one PC's
   `INSTALLED_SOFTWARE` + its Windows, columns via `software._Reads`),
   pc_changes (`cause._updates`, a batch of removals one row as
-  `answer._changed`), the Software tab's blocks as they are
+  `answer._changed`), programs_per_pc (`software.programs_per_pc`:
+  stage asked "which PC has the most software installed?" and got "I
+  can't tell"; DEVICE_COUNT counts the PCs in a group, so
+  INSTALLED_SW_COUNT added up per PC is used only when it equals the
+  own lists of the PCs with the most and fewest, else every PC's list
+  is counted, none when cut short; kept `PER_PC_KEEP_MIN`), the
+  Software tab's blocks as they are
   (`software_chat.TOOLS`/`run_block`, `_block` makes a step), and
   investigate (a whole investigation, `INVESTIGATE_HOURS` by default,
   `INVESTIGATE_MAX_H` at most; the AI reads `render_text`, cut to
@@ -525,7 +535,8 @@ unset `<REQUIRED>` base URLs.
   `MAX_READS` reads and `MAX_INVESTIGATIONS` per question. `/api/ask`
   is a job (`/api/jobs/{id}`): the page shows each look-up as it
   starts. A failed look-up is a step that says so, never a lost
-  question. Step 3: it replaces both block chats. `verify --ai`:
+  question. Earlier look-ups go in the instructions, not after the
+  answers (the AI wrote "(I looked at: …)" into its own, stage). Step 3: it replaces both block chats. `verify --ai`:
   "answers open questions" (`AI_ASK` over `ask_records`, made-up;
   `AskAternity` made-up logons; the step 2 questions must use their
   look-up).

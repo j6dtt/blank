@@ -66,7 +66,8 @@ def test_a_name_with_a_no_break_hyphen_is_the_same_name():
     asked = {verify.AI_ASK[0][0]: ("events", {"kinds": ["HD Failure", "Faulty HD S.M.A.R.T. Status"], "days": 7}),
              verify.AI_ASK[1][0]: ("activity", {"user": "sample02"}), verify.AI_ASK[2][0]: ("activity", {}),
              verify.AI_ASK[3][0]: ("logons", {"user": "sample05"}),
-             verify.AI_ASK[4][0]: ("startups", {"user": "sample02"})}
+             verify.AI_ASK[4][0]: ("startups", {"user": "sample02"}),
+             verify.AI_ASK[5][0]: ("programs_per_pc", {})}
 
     class Hyphens:  # answers with every hyphen a no-break one
         cfg = SimpleNamespace(name="nemotron")
@@ -78,7 +79,7 @@ def test_a_name_with_a_no_break_hyphen_is_the_same_name():
     checks = []
     verify._answers(Hyphens(), lambda item, ok, message, fix="", rows=(): checks.append((ok, message, list(rows))))
     ok, message, rows = checks[0]
-    assert ok is True and "Right for 5 of 5" in message and "unusual characters: U+2011" in rows[1]
+    assert ok is True and "Right for 6 of 6" in message and "unusual characters: U+2011" in rows[1]
 
 
 def test_it_stops_after_its_steps_and_is_asked_to_answer():
@@ -124,7 +125,9 @@ def test_a_follow_up_is_sent_with_the_answers_and_look_ups_before():
                                   "looked": "events(kinds=['HD Failure'], days=7)"}], ai, t, names, now)
     sent = ai.seen[0]
     assert [m["role"] for m in sent] == ["system", "user", "assistant", "user"]
-    assert "(I looked at: events(kinds=['HD Failure'], days=7))" in sent[2]["content"]
+    # the look-ups go in the instructions: put after an answer, the AI wrote "(I looked at: …)" into its own (stage)
+    assert sent[2]["content"] == "PC-K1 and PC-K2." and "(I looked at" not in json.dumps(sent)
+    assert "\"What PCs had hard drive issues?\": events(kinds=['HD Failure'], days=7)" in sent[0]["content"]
 
 
 def test_the_page_endpoint_needs_an_ai_service():
@@ -265,3 +268,38 @@ def test_the_page_runs_a_question_as_a_job(monkeypatch):
             break
         time.sleep(0.05)
     assert job["result"]["answer"] == "Nothing to look up." and any("asked of gpt" in x for x in job["lines"])
+
+
+def test_programs_per_pc_are_aternitys_sums_only_when_they_are_the_pcs_own_lists(monkeypatch):
+    """Stage, Nov 2026: "Which PC has the most software installed?" was "I can't tell"."""
+    import test_software
+    t, names, now = ask_records()
+    data = sw_tables()
+    for r in data["INSTALLED_SOFTWARE"]:
+        r["INSTALLED_SW_COUNT"] = 1
+    seen = []
+    c, s = sw_client(seen=seen, data=data)  # the fake does not add INSTALLED_SW_COUNT up: every list is counted
+    agent._per_pc.clear()
+    reach = agent.Reach(aternity_of=lambda: c, cfg=s.aternity)
+    most = agent.run("programs_per_pc", {}, t, names, now, reach)
+    assert most["rows"][:2] == [["PC-01", 4, 1, "no action today"], ["PC-02", 4, 1, "no action today"]]
+    assert most["summary"]["counted"] == "counted from every PC's own list (138 rows)"
+    assert most["summary"]["pcs"] == 60 and most["summary"]["fewest_programs"] == 1
+    assert any("not the PC's own list" in n for n in most["notes"])
+    assert sum(1 for e, *_ in seen if e == "INSTALLED_SOFTWARE") == 4  # the sum, 2 own lists, every list
+    again = agent.run("programs_per_pc", {"order": "fewest"}, t, names, now, reach)  # kept: not read again
+    assert sum(1 for e, *_ in seen if e == "INSTALLED_SOFTWARE") == 4 and again["rows"][0][1] == 1
+    assert any(n.startswith("Counted at") for n in again["notes"])
+    # Aternity adds it up: one read, checked on the PCs with the most and the fewest
+    monkeypatch.setattr(test_software, "MEASURES", test_software.MEASURES | {"INSTALLED_SW_COUNT"})
+    seen.clear()
+    agent._per_pc.clear()
+    c2, _ = sw_client(seen=seen, data=data)
+    summed = agent.run("programs_per_pc", {}, t, names, now, agent.Reach(aternity_of=lambda: c2, cfg=s.aternity))
+    assert summed["rows"][0] == ["PC-01", 4, 1, "no action today"]
+    assert summed["summary"]["counted"].startswith("added up by Aternity") and len(seen) == 3  # the sum, 2 lists
+    # only virtual desktops: those Aternity marked so in today's actions
+    agent._per_pc.clear()
+    vd = agent.run("programs_per_pc", {"kind": "virtual"}, t, names, now, agent.Reach(aternity_of=lambda: c2,
+                                                                                      cfg=s.aternity))
+    assert vd["rows"] == [] and vd["summary"]["pcs"] == 0 and "Only virtual ones" in vd["notes"][-2]

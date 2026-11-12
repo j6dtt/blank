@@ -79,8 +79,9 @@ TOOLS = [
                            "another installed program on the same PCs (for example Outlook crashes by Teams Meeting "
                            "Add-in version), read now.",
           {"application": APP, "program": PROG, "problem": PROB}, ("application", "program")),
-    _tool("pcs", "The PCs with an installed program (at a version), or the PCs with a crash, hang time or Major slow "
-                 "action on an application version; each PC can be investigated.",
+    _tool("pcs", "The PCs with an installed program (at a version): give program; or the PCs with a crash, hang time "
+                 "or Major slow action on an application version: give application and problem. Each PC can be "
+                 "investigated.",
           {"program": PROG, "version": VER, "application": APP, "problem": PROB}),
     _tool("pcs_without_update", "The PCs missing a Windows update (e.g. a KB security update) that most PCs of their "
                                 "Windows version have, read now, with what they have in its place; each PC can be "
@@ -555,6 +556,11 @@ def program_split(client, now: datetime, sw: Software, view: dict, known, args: 
 
 def pcs(client, now: datetime, sw: Software, view: dict, known, args: dict, program=None, version=None,
         application=None, problem=None):
+    # a crash, hang time or slow action is an application's: with a problem and no application, the name
+    # given is the application (Nemotron sent "Which PCs crashed in Outlook 16.0.20430?" as program=,
+    # problem=crash, and got the PCs with it installed: stage, Nov 2026)
+    if problem in PROBLEM and not application and program:
+        application, program = program, None
     by_problem = bool(application) and (problem in PROBLEM or not program)
     if by_problem:
         problem = problem if problem in PROBLEM else "crash"

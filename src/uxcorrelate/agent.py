@@ -50,6 +50,9 @@ INVESTIGATE_MAX_H = 24  # an investigation's window, at most: longer ones on the
 STARTUP_DAYS = 7  # start-ups looked at when no number of days is asked for (at most LOGIN_DAYS)
 CHANGE_DAYS = 14  # a PC's change log looked at, at most (as an investigation's "what changed")
 TEXT_CHARS = 12000  # an investigation's report as given to the AI, at most
+PER_PC_KEEP_MIN = 60  # programs per PC, counted once and kept this long (every PC's list may be read)
+PER_PC_ROWS = 50  # PCs listed, the most (or fewest) first
+_per_pc: dict = {}  # Aternity's address -> (when counted, the count, its notes)
 
 
 @dataclass
@@ -87,7 +90,8 @@ SYSTEM = (
     "mean.\n"
     f"Read from Aternity when you ask, slower (at most {MAX_READS} per question): a user's or PC's logons "
     "(logons); their start-ups, how long each took against their own usual and why (startups); a PC's installed "
-    "software and Windows (pc_software) and what was installed, updated or removed on it (pc_changes); "
+    "software and Windows (pc_software), what was installed, updated or removed on it (pc_changes), and how "
+    "many programs every PC has (programs_per_pc); "
     "installed software and application versions across all PCs (flags, most, versions, version_problems, "
     "compare, before_after, program_split, pcs, pcs_without_update); a whole investigation of a user or PC "
     f"(investigate: at most {MAX_INVESTIGATIONS} per question and the slowest; use it when asked why someone "
@@ -157,6 +161,11 @@ TOOLS = [
         "pc": _S, "program": {"type": "string", "description": "Only the programs named like this."},
         "days": {"type": "integer", "description": f"How many days back (1 to {CHANGE_DAYS}; {CHANGE_DAYS} if not "
                                                    "given)."}}),
+    _tool("programs_per_pc", "How many programs each PC has installed, across every PC, read now: the PCs with "
+                             "the most (or the fewest), the typical number, Windows updates apart. kind: only virtual "
+                             "desktops or only physical PCs (known for the PCs with an action today).", {
+        "order": {"type": "string", "enum": ["most", "fewest"]},
+        "kind": {"type": "string", "enum": ["virtual", "physical"]}}),
     _tool("investigate", "A whole investigation of a user or a PC, as the Investigate tab runs it: what the user "
                          "felt, what went wrong and why (PC, network, application, software changes, other users "
                          "and PCs), and what to do. It takes up to a few minutes. Times are local, as YYYY-MM-DD "
@@ -166,7 +175,7 @@ TOOLS = [
         "hours": {"type": "integer", "description": "Instead of start and end: this many hours back from now."}}),
 ]
 
-NOW = {"logons", "startups", "pc_software", "pc_changes", "investigate"}  # read Aternity now (logons: unless current)
+NOW = {"logons", "startups", "pc_software", "pc_changes", "programs_per_pc", "investigate"}  # read Aternity now (logons: unless current)
 
 
 def _software_tools() -> list[dict]:
@@ -580,7 +589,7 @@ def pc_software(today: Today, names, now: datetime, reach: Reach | None, pc: str
                 program: str | None = None) -> dict:
     from .aternity import odata_quote
     from .models import parse_time
-    from .software import LIST_ROWS, _Reads, order, windows_of
+    from .software import LIST_ROWS, PC_LIST, _Reads, order, windows_of
     args = {"pc": pc, "program": program}
     if not pc:
         return _step("pc_software", args, "Which PC?", notes=["Name a PC."])
@@ -592,7 +601,7 @@ def pc_software(today: Today, names, now: datetime, reach: Reach | None, pc: str
         return _step("pc_software", args, f"{name}'s software", notes=[NOT_SET])
     S, c = SOFTWARE_SOURCE, SOFTWARE_COLUMNS
     q = _Reads(client, notes)
-    keys = [k for k in ("name", "version", "vendor", "type", "scope", "changed") if q.has(S, c[k])]
+    keys = [k for k in PC_LIST if q.has(S, c[k])]  # as programs_per_pc counts a PC's list
     got = q.rows(S, f"{name}'s installed software", filter=f"{c['device']} eq {odata_quote(name)}",
                  select=[c[k] for k in keys], top=LIST_ROWS)
     windows = {}
@@ -685,6 +694,50 @@ def pc_changes(today: Today, names, now: datetime, reach: Reach | None, pc: str 
                  "Version", "Version before", "Note"], rows, summary, notes)
 
 
+def programs_per_pc(today: Today, names, now: datetime, reach: Reach | None, order: str | None = None,
+                    kind: str | None = None) -> dict:
+    from statistics import median
+
+    from .software import programs_per_pc as count
+    order = "fewest" if str(order or "").lower() == "fewest" else "most"
+    kind = str(kind).lower() if str(kind or "").lower() in ("virtual", "physical") else None
+    args = {"order": order, "kind": kind}
+    client = _client(reach)
+    if client is None:
+        return _step("programs_per_pc", args, "Programs per PC", notes=[NOT_SET])
+    key = getattr(getattr(client, "cfg", None), "base_url", "") or ""
+    kept = _per_pc.get(key)
+    if kept and time.monotonic() - kept[0] < PER_PC_KEEP_MIN * 60:
+        got, notes = kept[1], list(kept[2]) + [f"Counted at {kept[3]}, kept for {PER_PC_KEEP_MIN} minutes."]
+    else:
+        notes = []
+        got = count(client, notes)
+        if got is not None:
+            _per_pc[key] = (time.monotonic(), got, list(notes), f"{today.local(now):%H:%M}")
+    if got is None:
+        return _step("programs_per_pc", args, "Programs per PC", notes=notes)
+    with today.lock:
+        kinds = {d.lower(): k for h in today.hours.values() for d, k in h.dev_kind.items()}
+    pcs = got["pcs"]
+    if kind:
+        pcs = {d: v for d, v in pcs.items() if kinds.get(d.lower()) == kind}
+        notes.append(f"Only {kind} ones: the PCs Aternity marked so in today's actions ({len(pcs):,} of "
+                     f"{len(got['pcs']):,} PCs in the list).")
+    ranked = sorted(pcs, key=lambda d: (pcs[d]["programs"] if order == "fewest" else -pcs[d]["programs"], d))
+    rows = [[d, pcs[d]["programs"], pcs[d]["windows_updates"], kinds.get(d.lower(), "no action today")]
+            for d in ranked[:PER_PC_ROWS]]
+    values = [v["programs"] for v in pcs.values()]
+    summary = {"pcs": len(pcs), "counted": got["how"]}
+    if values:
+        top = ranked[0]
+        summary.update(typical_programs=median(values), most_programs=max(values), fewest_programs=min(values),
+                       first_listed=f"{top}: {pcs[top]['programs']} programs")
+    notes.append("Programs: every row of the PC's installed list except Windows updates, as pc_software lists "
+                 "them (a program with 2 versions counts twice).")
+    return _step("programs_per_pc", args, f"PCs with the {order} programs installed" + (f" ({kind})" if kind else ""),
+                 ["PC", "Programs", "Windows updates", "Kind (today)"], rows, summary, notes)
+
+
 def _local_time(today: Today, text) -> datetime | None:
     try:
         t = datetime.strptime(" ".join(str(text).replace("T", " ").split())[:16], "%Y-%m-%d %H:%M")
@@ -775,6 +828,8 @@ def run(name: str, args: dict, today: Today, names, now: datetime, reach: Reach 
                 return pc_software(today, names, now, reach, **take("pc", "program"))
             if name == "pc_changes":
                 return pc_changes(today, names, now, reach, **take("pc", "program", "days"))
+            if name == "programs_per_pc":
+                return programs_per_pc(today, names, now, reach, **take("order", "kind"))
             if name == "investigate":
                 return investigate(today, names, now, reach, **take("user", "pc", "app", "start", "end", "hours"))
             return software(name, args, reach, now)
@@ -860,14 +915,18 @@ def ask(question: str, history: list, client: AiClient, today: Today, names, now
     started = time.monotonic()
     question = " ".join(str(question or "").split())[:500]
     sys_text = system(today, now)
-    messages = [{"role": "system", "content": sys_text}]
-    said = []
+    turns, said, before = [], [], []
     for h in (history or [])[-HISTORY:]:
         if isinstance(h, dict) and h.get("q") and h.get("a"):
-            a = str(h["a"])[:1500] + (f"\n(I looked at: {str(h['looked'])[:400]})" if h.get("looked") else "")
-            messages += [{"role": "user", "content": str(h["q"])[:500]}, {"role": "assistant", "content": a}]
+            q, a = str(h["q"])[:500], str(h["a"])[:1500]
+            turns += [{"role": "user", "content": q}, {"role": "assistant", "content": a}]
             said.append(a)
-    messages.append({"role": "user", "content": question})
+            if h.get("looked"):  # in the instructions: put after an answer, the AI wrote it into its own (stage)
+                before.append(f"- \"{q[:120]}\": {str(h['looked'])[:400]}")
+                said.append(str(h["looked"])[:400])
+    if before:
+        sys_text += "\nWhat you looked up for the questions before in this chat:\n" + "\n".join(before)
+    messages = [{"role": "system", "content": sys_text}, *turns, {"role": "user", "content": question}]
     steps: list[dict] = []
     note, text, told = None, "", False
     reads = ran = 0  # reads of Aternity now, investigations

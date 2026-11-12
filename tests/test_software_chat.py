@@ -102,6 +102,9 @@ def test_the_blocks_read_now_compare_split_and_list_pcs(tmp_path):
     crash = run("pcs", {"application": "outlook", "version": "16.1", "problem": "crash"}, r, v, c, s)
     assert crash["total"] == "12 PCs" and crash["rows"][0][:4] == ["PC-01", "user1", 1, 1]
     assert crash["runs"][0]["username"] == "user1" and crash["runs"][0]["end"] <= NOW.isoformat()
+    # a problem with a program and no application: the name is the application's (Nemotron's pick, stage)
+    as_program = run("pcs", {"program": "outlook", "version": "16.1", "problem": "crash"}, r, v, c, s)
+    assert as_program["rows"] == crash["rows"] and as_program["total"] == "12 PCs"
     assert run("pcs", {"application": "outlook"}, r, v, c, s)["rows"] == [["16.1"], ["16.2"]]  # which version?
     kb = run("pcs_without_update", {"update": "kb1"}, r, v, c, s)
     assert kb["title"] == "PCs on Microsoft Windows 11 Enterprise 23H2 without KB1" and kb["total"] == "8 PCs"

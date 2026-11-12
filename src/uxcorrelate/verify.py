@@ -1862,8 +1862,9 @@ AI_SW_TRIES = (  # the Software tab's chat (software_chat.TOOLS)
      {"tool": "program_split", "application": "outlook", "program": "teams"}),
     ("Which PCs still run Edge 143?", {"tool": "pcs", "program": "edge", "version": "143"}),
     ("What versions of the Teams Meeting Add-in are installed?", {"tool": "versions", "program": "teams"}),
-    ("Which PCs crashed in Outlook 16.0.20430?",
-     {"tool": "pcs", "application": "outlook", "version": "16.0.20430"}),  # problem: crash, the default
+    ("Which PCs crashed in Outlook 16.0.20430?",  # problem: crash, the default; with a problem, a program
+     ({"tool": "pcs", "application": "outlook", "version": "16.0.20430"},  # name is the application (pcs):
+      {"tool": "pcs", "program": "outlook", "version": "16.0.20430", "problem": "crash"})),  # Nemotron, stage
     ("What are the red flags?", {"tool": "flags", "kind": "all"}),  # all of them (left out: the same)
     ("Which PCs are missing KB5126652?", {"tool": "pcs_without_update", "update": "kb5126652"}),
     # stage, Nov 2026: answered from the crash red flags, which leave out what is not compared
@@ -2188,6 +2189,8 @@ AI_ASK = (  # question, names the answer must have, names it must not, the look-
     # read from Aternity now (made-up records: AskAternity): PC-31 is in the logon records only
     ("Which PCs did sample05 log in to this week?", ("PC-12", "PC-31"), (), "logons"),
     ("Were sample02's start-ups slow this week?", ("VD-77",), (), "startups"),
+    # stage, Nov 2026: "which PC has the most software installed?" was "I can't tell" (no look-up had it)
+    ("Which PC has the most software installed?", ("PC-11",), (), "programs_per_pc"),
 )
 
 
@@ -2207,6 +2210,36 @@ class AskAternity:
     def boots(self, start, end, username=None, device=None, location=None):
         return [r for r in self.rows if start <= r.timestamp < end and username in (None, r.username)
                 and device in (None, r.device)]
+
+    # a made-up installed list: PC-11 48 programs, VD-77 30, PC-12 25, each with 3 Windows updates
+    SW = {"device": "DEVICE_NAME", "name": "INSTALLED_SW_NAME", "version": "INSTALLED_SW_VERSION",
+          "type": "INSTALLED_SW_TYPE", "count": "INSTALLED_SW_COUNT"}
+
+    @property
+    def http(self):
+        from types import SimpleNamespace
+        props = "".join(f'<Property Name="{c}" Type="Edm.String"/>' for c in self.SW.values())
+        xml = (f'<Edmx><DataServices><Schema><EntityType Name="INSTALLED_SOFTWARE_Type">{props}</EntityType>'
+               '<EntitySet Name="INSTALLED_SOFTWARE" EntityType="x.INSTALLED_SOFTWARE_Type"/></Schema>'
+               '</DataServices></Edmx>')
+        return SimpleNamespace(request=lambda *a, **k: SimpleNamespace(text=xml))
+
+    def query(self, entity, filter=None, top=None, orderby=None, select=None, raw=False):
+        c = self.SW
+        rows = [{c["device"]: pc, c["name"]: f"Sample Program {i}", c["version"]: "1.0", c["type"]: "Application",
+                 c["count"]: 1} for pc, n in (("PC-11", 48), ("VD-77", 30), ("PC-12", 25)) for i in range(n)]
+        rows += [{c["device"]: pc, c["name"]: f"KB50{i}", c["version"]: None, c["type"]: SOFTWARE_OS_UPDATE,
+                  c["count"]: 1} for pc in ("PC-11", "VD-77", "PC-12") for i in range(3)]
+        if entity != SOFTWARE_SOURCE:
+            return []
+        if filter:  # a PC's own list: "DEVICE_NAME eq '<pc>'"
+            rows = [r for r in rows if filter.endswith(f"'{r[c['device']]}'")]
+        keys = [k for k in (select or []) if k != c["count"]]
+        out: dict = {}
+        for r in rows:  # added up per the columns asked for
+            g = out.setdefault(tuple(r.get(k) for k in keys), {**{k: r.get(k) for k in keys}, c["count"]: 0})
+            g[c["count"]] += 1
+        return [{k: v for k, v in g.items() if k in (select or [])} for g in out.values()]
 
 
 def ask_records():
