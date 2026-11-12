@@ -57,9 +57,12 @@ TOOLS = [
                                     "PC kind (virtual desktops against physical PCs)."},
         "app": APP, "days": _days(KEEP_FILES_DAYS)}),
     _tool("events", "Count the PCs with crashes and other health events (Aternity's own severity: Critical, "
-                    "Major, Minor). A question naming an application (e.g. Outlook crashes) needs app.", {
+                    "Major, Minor). A question naming an application (e.g. Outlook crashes) needs app. A question "
+                    "naming a kind of event (e.g. crashes, hangs) needs name: by application without it, every "
+                    "kind of event is counted.", {
         "group_by": {"type": "string", "enum": ["event", "day", "app"],
-                     "description": "One row per kind of event, per day, or per application."},
+                     "description": "One row per kind of event (e.g. Application Crash, System Crash), per day, or "
+                                    "per application (which applications had them)."},
         "name": {"type": "string", "description": "Only events whose name has this, e.g. Application Crash."},
         "severity": {"type": "string", "enum": ["Critical", "Major", "Minor"]},
         "app": APP, "days": _days(HEALTH_DAYS + 1)}),
@@ -206,13 +209,24 @@ def _event_notes(kinds, asked: bool) -> list[str]:
     return out + ([EVENTS_ONLY] if asked and of_app else [])
 
 
+def _singular(text: str) -> str:
+    """Each word as one: crashes -> crash, hangs -> hang, processes -> process (an AI sends the
+    word of the question; Aternity names a kind of event in the singular)."""
+    def one(w: str) -> str:
+        low = w.lower()
+        if low.endswith(("shes", "ches", "xes", "sses")):
+            return w[:-2]
+        return w[:-1] if low.endswith("s") and not low.endswith("ss") and len(w) > 3 else w
+    return " ".join(one(w) for w in str(text or "").split())
+
+
 def _kinds_named(kinds, name) -> tuple[set, list[str]]:
     """The kinds of event a name means: those with it in their name; when none has, those that
     share a telling word with it ("hard drive failure" -> HD Failure), with a note saying so."""
     kinds = set(kinds)
     if not (name or "").strip():
         return kinds, []
-    got = {k for k in kinds if _has(k[1], name)}
+    got = {k for k in kinds if _has(k[1], name) or _has(k[1], _singular(name))}  # "crashes": Application Crash
     if got:
         return got, []
     from .software import words

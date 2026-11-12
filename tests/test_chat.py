@@ -225,6 +225,10 @@ def test_events_and_who_of_one_application_only():
     assert events(t, NOW, name="crash", app="mail")["rows"] == [["Application Crash", "Application", "Major", 1]]
     tool = next(x["function"] for x in TOOLS if x["function"]["name"] == "events")
     assert "app" in tool["parameters"]["properties"]
+    # the question's own word: Aternity names a kind in the singular (crashes -> Application Crash)
+    assert events(t, NOW, "app", name="crashes")["rows"] == events(t, NOW, "app", name="crash")["rows"] != []
+    assert who(t, NOW, "event", name="Application Crashes")["rows"] == who(t, NOW, "event", name="application crash")["rows"]
+    assert "naming a kind of event (e.g. crashes, hangs) needs name" in tool["description"]
 
 
 def test_the_events_usual_in_one_note_more_than_usual_first():

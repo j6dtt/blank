@@ -1831,7 +1831,11 @@ def _overview(settings: Settings, client: AternityClient, schema: dict[str, set[
 AI = "AI service"
 # question, and the building block (tool) and settings a right pick has (words: in it, any case)
 AI_TRIES = (
-    ("Which crashes hit the most PCs in the last 7 days?", {"tool": "events", "group_by": "event", "days": 7}),
+    # two right picks: by kind of event, or by application with only the crashes (stage, Nov 2026:
+    # Nemotron took it by application with no name, which counts every kind of event)
+    ("Which crashes hit the most PCs in the last 7 days?", ({"tool": "events", "group_by": "event", "days": 7},
+                                                            {"tool": "events", "group_by": "app", "name": "crash",
+                                                             "days": 7})),
     ("Are virtual desktops slower than physical PCs today?", {"tool": "slow_actions", "group_by": "pc_kind"}),
     ("Which users had the most slow actions in Microsoft Outlook today?",
      {"tool": "who", "what": "slow", "app": "outlook"}),
@@ -1878,7 +1882,19 @@ def _picked(call) -> str:
     return f"picked {call[0]}({', '.join(f'{k}={v}' for k, v in call[1].items())})"
 
 
-def _right(call, want: dict) -> bool:
+def _wants(want) -> tuple:
+    """A try's right picks: one, or several that each answer it."""
+    return want if isinstance(want, tuple) else (want,)
+
+
+def _pick_text(want) -> str:
+    return " or ".join(f"{w['tool']}({', '.join(f'{k}={v}' for k, v in w.items() if k != 'tool')})"
+                       for w in _wants(want))
+
+
+def _right(call, want) -> bool:
+    if isinstance(want, tuple):
+        return any(_right(call, w) for w in want)
     if not call or call[0] != want["tool"]:
         return False
     for key, value in want.items():
@@ -1888,7 +1904,7 @@ def _right(call, want: dict) -> bool:
         if key == "kind" and value == "all" and not got:
             continue  # the flags block reads no kind as all of them
         if (value not in got) if isinstance(value, str) and value and key in (
-                "app", "username", "application", "program", "version", "update") else (got != str(value)):
+                "app", "username", "application", "program", "version", "update", "name") else (got != str(value)):
             return False
     return True
 
@@ -1992,6 +2008,8 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
             f"{time.monotonic() - started:.1f} s.")
 
         # picks the right building block: the Today tab's chat, then the Software tab's
+        said: dict = {}  # question -> (reply, call): each try's own reply
+
         def picks(label: str, system: str, tools: list, tries: tuple) -> tuple | None:
             """(question, reply, call) of the first right pick; None when none is right, False when
             the service refused tool calling."""
@@ -2006,12 +2024,12 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
                     break
                 times.append(time.monotonic() - started)
                 call = tool_call(reply)
+                said[question] = (reply, call)
                 if _right(call, want):
                     right += 1
                     first = first or (question, reply, call)
                 else:
-                    rows.append(f"\"{question}\": {_picked(call)}; a right pick is {want['tool']}("
-                                f"{', '.join(f'{k}={v}' for k, v in want.items() if k != 'tool')})")
+                    rows.append(f"\"{question}\": {_picked(call)}; a right pick is {_pick_text(want)}")
             if stop is not None:
                 add(label, False, "The service refused a question sent with our building "
                     f"block (tool calling): {stop.short()}.", "This model or service may not do tool calling: the "
@@ -2041,11 +2059,15 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
         _explains(client, add)
         _assesses(client, add)
 
-        # repeats the counts it is given
-        if first is None:
-            add("repeats the counts", None, "Not tried: it needs one right pick first.")
-            continue
-        question, reply, call = first
+        # repeats the counts it is given: always for the crash question they are of (stage, Nov
+        # 2026: with that one missed, they went to "Are virtual desktops slower …?" and Nemotron's
+        # answer had no words). Its own pick there when it took events, else that pick made for it.
+        question, want_call = AI_TRIES[0][0], _wants(AI_TRIES[0][1])[0]
+        reply, call = said.get(question, ({}, None))
+        if not call or call[0] != want_call["tool"]:
+            call = (want_call["tool"], {k: v for k, v in want_call.items() if k != "tool"}, "call_counts")
+            reply = {"content": "", "tool_calls": [{"id": call[2], "type": "function", "function": {
+                "name": call[0], "arguments": json.dumps(call[1])}}]}
         try:
             answer = client.chat(ask(question) + [
                 {"role": "assistant", "content": reply.get("content") or "", "tool_calls": reply["tool_calls"]},
@@ -2058,10 +2080,13 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
         digits = "".join(ch for ch in text if ch not in ",.   ")
         want = [str(r["pcs"]) for r in AI_COUNTS["rows"]]
         found = [w for w in want if w in digits]
+        again = tool_call(answer)
         add("repeats the counts", len(found) == len(want),
             f"Given {' and '.join(want)}, its answer had {len(found)} of the {len(want)} counts.",
             "The chat would show wrong numbers in its sentence. Tell Claude these lines.",
-            [f"its answer: {_cut(' '.join(text.split()), 220)}"])
+            [f"its answer: {_cut(' '.join(text.split()), 220)}" if text.strip() else
+             f"its answer had no words: it {_picked(again)} again" if again else
+             f"its answer had no words; the reply's parts: {', '.join(sorted(answer)) or 'none'}"])
     return checks
 
 

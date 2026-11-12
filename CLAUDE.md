@@ -471,7 +471,10 @@ unset `<REQUIRED>` base URLs.
   this week" had given today's one PC, then counts per day (stage, Nov
   2026). An event name no kind has is matched by a shared telling word
   (`_kinds_named`: "hard drive failure" -> HD Failure), said in a
-  note. logins (the user's request 2026-11-12, chat only: no tab, no
+  note; a plural is read as Aternity's singular (`_singular`: crashes
+  -> Application Crash). A question naming a kind of event needs
+  `name` (by application without it, every kind is counted: Nemotron
+  took "Which crashes hit the most PCs?" so on stage, Nov 2026). logins (the user's request 2026-11-12, chat only: no tab, no
   page of its own): who logged in to a PC, or which PC a user logged in
   to. The latest (`LOGIN_DAYS` back) or one local day: Aternity's
   start-up and logon rows read now for that one user or PC

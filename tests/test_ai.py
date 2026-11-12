@@ -10,7 +10,8 @@ from uxcorrelate.verify import AI_OUTSIDE, AI_SW_TRIES, AI_TRIES, render_checks,
 
 FULL = {"outlook": "Microsoft Outlook", "mossley": "MOSSLEY", "edge": "Microsoft Edge", "kb5126652": "KB5126652",
         "teams": "Microsoft Teams Meeting Add-in for Microsoft Office"}  # what a model sends
-PICKS = {q: {k: FULL.get(v, v) if isinstance(v, str) else v for k, v in want.items()}
+PICKS = {q: {k: FULL.get(v, v) if isinstance(v, str) else v for k, v in (want[0] if isinstance(want, tuple)
+                                                                         else want).items()}
          for q, want in AI_TRIES + AI_SW_TRIES}
 
 
@@ -49,6 +50,9 @@ def service(seen, picks=PICKS, login="bearer", models=("model-a", "model-b"), to
         if "tools" in body and not tools:
             return httpx.Response(400, json={"error": {"message": "tools are not supported"}})
         if last["role"] == "tool":
+            if numbers is None:  # no words: another pick instead
+                return reply(None, [{"id": "call-2", "type": "function",
+                                     "function": {"name": "who", "arguments": '{"what": "event"}'}}])
             return reply(f"The widest are {numbers} PCs.")
         pick = picks.get(last["content"]) if "tools" in body else None
         if pick:
@@ -124,6 +128,20 @@ def test_wrong_picks_and_a_pick_for_an_outside_question_fail_with_what_it_picked
                in r for r in c.rows)
 
 
+def test_the_crash_question_by_application_is_right_only_with_the_crashes():
+    """Stage, Nov 2026: Nemotron took "Which crashes hit the most PCs …?" by application with no
+    name, which counts every kind of event per application."""
+    q = AI_TRIES[0][0]
+    for pick, right in (({"tool": "events", "group_by": "app", "name": "crashes", "days": 7}, True),
+                        ({"tool": "events", "group_by": "app", "days": 7}, False)):
+        picks = dict(PICKS)
+        picks[q] = pick
+        c = run(picks=picks)[0]["picks the right question"]
+        assert ("Right in 11 of 11 tries" in c.message) is right
+    assert any("picked events(group_by=app, days=7); a right pick is events(group_by=event, days=7) or "
+               "events(group_by=app, name=crash, days=7)" in r for r in c.rows)
+
+
 def test_the_software_chats_red_flags_need_all_of_them():
     """Stage, Nov 2026: GPT answered "What are the red flags?" with the crash flags alone."""
     q = "What are the red flags?"
@@ -148,6 +166,21 @@ def test_a_count_worded_wrong_fails():
     checks, _ = run(numbers="2,858 and 412")
     c = checks["repeats the counts"]
     assert c.ok is False and "1 of the 2 counts" in c.message and "2,858" in c.rows[0]
+
+
+def test_the_counts_go_to_the_crash_question_even_when_it_was_missed():
+    """Stage, Nov 2026: Nemotron missed the crash question; the counts went to the next right
+    pick ("Are virtual desktops slower …?") and its answer had no words."""
+    picks = dict(PICKS)
+    picks[AI_TRIES[0][0]] = {"tool": "who", "what": "event"}
+    seen = []
+    checks, _ = run(seen, picks=picks)
+    assert "2 of the 2 counts" in checks["repeats the counts"].message
+    sent = json.loads(seen[-1].content)["messages"]
+    assert sent[1]["content"] == AI_TRIES[0][0] and sent[-1]["role"] == "tool"
+    assert sent[2]["tool_calls"][0]["function"]["name"] == "events" and sent[-1]["tool_call_id"] == "call_counts"
+    blank = run(numbers=None)[0]["repeats the counts"]
+    assert blank.ok is False and blank.rows == ["its answer had no words: it picked who(what=event) again"]
 
 
 def test_no_service_set_is_a_note_with_what_to_add_not_a_failure(tmp_path):
