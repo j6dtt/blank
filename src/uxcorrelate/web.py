@@ -33,7 +33,8 @@ from .status import Status, keep_checking
 from .today import NO_APP, Today, keep_reading
 
 STATIC = Path(__file__).parent / "static"
-KEEP_JOBS = 20
+KEEP_DONE_MIN = 10  # a finished job is kept this long for its tab (it asks every second); a running one always
+_clock = time.monotonic  # the jobs' clock (a test moves it)
 NETIM_REFRESH_S = 3600  # rebuild the NetIM device/interface index this often
 log = logging.getLogger("uxcorrelate")
 
@@ -486,6 +487,8 @@ def create_app(config_path: str | None = None) -> FastAPI:
     log.addHandler(job_log)
     log.setLevel(logging.INFO)
     jobs: dict[str, dict] = {}
+    done_at: dict[str, float] = {}  # job id -> when it finished
+    jobs_lock = threading.Lock()
 
     def run_logons(body: LogonBody) -> dict:
         if utc(body.end) <= utc(body.start):
@@ -498,7 +501,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         except ApiError as exc:
             raise HTTPException(502, str(exc))
 
-    def run_job(job: dict, work, body) -> None:
+    def run_job(job_id: str, job: dict, work, body) -> None:
         job_log.by_thread[threading.get_ident()] = job["lines"]
         try:
             job["result"] = work(body)
@@ -509,14 +512,21 @@ def create_app(config_path: str | None = None) -> FastAPI:
             job["error"] = f"{type(exc).__name__}: {exc}"
         finally:
             job_log.by_thread.pop(threading.get_ident(), None)
+            with jobs_lock:
+                done_at[job_id] = _clock()
             job["done"] = True
 
     def start(work, body) -> dict:
-        for old in list(jobs)[:-KEEP_JOBS]:
-            jobs.pop(old, None)
+        """A job in its own thread. Jobs finished over KEEP_DONE_MIN ago are dropped; a running
+        one never is (with 20 kept by count, a 21st start dropped one still running)."""
         job_id = uuid.uuid4().hex
-        jobs[job_id] = job = {"lines": [], "done": False, "result": None, "error": None}
-        threading.Thread(target=run_job, args=(job, work, body), daemon=True).start()
+        with jobs_lock:
+            gone = [i for i, t in done_at.items() if _clock() - t > KEEP_DONE_MIN * 60]
+            for old in gone:
+                jobs.pop(old, None)
+                done_at.pop(old, None)
+            jobs[job_id] = job = {"lines": [], "done": False, "result": None, "error": None}
+        threading.Thread(target=run_job, args=(job_id, job, work, body), daemon=True).start()
         return {"id": job_id}
 
     @app.post("/api/jobs")

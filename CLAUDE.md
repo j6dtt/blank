@@ -559,7 +559,10 @@ unset `<REQUIRED>` base URLs.
 - `http.py` is the shared REST client (basic auth, retries on 429/5xx);
   `models.py` holds the dataclasses and `parse_time`.
 - `report.py` renders the text report, `cli.py` is the argparse entry point,
-  and `web.py` is the FastAPI app.
+  and `web.py` is the FastAPI app. Investigations and start-ups run as
+  jobs (`/api/jobs`, a thread each, the page asks every second); a
+  finished job is kept `KEEP_DONE_MIN` (10) for its tab, a running one
+  always (20 kept by count dropped running ones).
 - `static/index.html` is the single-page UI. It is dependency-free and draws
   its charts with inline SVG. Tabs, in order: Today, Care list,
   Investigate, Slow start-ups, Software (`mode()`; each with a link,
