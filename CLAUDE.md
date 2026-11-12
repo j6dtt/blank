@@ -556,7 +556,8 @@ unset `<REQUIRED>` base URLs.
   per tab (`ASK_EXAMPLES`); answers stay when the tab changes. `verify --ai`:
   "answers open questions" (`AI_ASK` over `ask_records`, made-up;
   `AskAternity` made-up logons; the step 2 questions must use their
-  look-up).
+  look-up; step 3's asks about a made-up Care list tab, `ASK_PAGE`, and
+  must use page).
 - `ai.py`: client for the self-hosted AI services (`ai.services` in
   config.yaml, key from the env var named in `key_env`). OpenAI-style API
   (`verify.verify_ai`, passed on prod for both services: key, reachable,

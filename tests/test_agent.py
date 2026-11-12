@@ -67,7 +67,7 @@ def test_a_name_with_a_no_break_hyphen_is_the_same_name():
              verify.AI_ASK[1][0]: ("activity", {"user": "sample02"}), verify.AI_ASK[2][0]: ("activity", {}),
              verify.AI_ASK[3][0]: ("logons", {"user": "sample05"}),
              verify.AI_ASK[4][0]: ("startups", {"user": "sample02"}),
-             verify.AI_ASK[5][0]: ("programs_per_pc", {})}
+             verify.AI_ASK[5][0]: ("programs_per_pc", {}), verify.AI_ASK[6][0]: ("page", {})}
 
     class Hyphens:  # answers with every hyphen a no-break one
         cfg = SimpleNamespace(name="nemotron")
@@ -79,7 +79,7 @@ def test_a_name_with_a_no_break_hyphen_is_the_same_name():
     checks = []
     verify._answers(Hyphens(), lambda item, ok, message, fix="", rows=(): checks.append((ok, message, list(rows))))
     ok, message, rows = checks[0]
-    assert ok is True and "Right for 6 of 6" in message and "unusual characters: U+2011" in rows[1]
+    assert ok is True and "Right for 7 of 7" in message and "unusual characters: U+2011" in rows[1]
 
 
 def test_it_stops_after_its_steps_and_is_asked_to_answer():

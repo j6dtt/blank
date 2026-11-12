@@ -2191,7 +2191,18 @@ AI_ASK = (  # question, names the answer must have, names it must not, the look-
     ("Were sample02's start-ups slow this week?", ("VD-77",), (), "startups"),
     # stage, Nov 2026: "which PC has the most software installed?" was "I can't tell" (no look-up had it)
     ("Which PC has the most software installed?", ("PC-11",), (), "programs_per_pc"),
+    # step 3: the one chat on every tab sees the tab open (ASK_PAGE); VD-48 and 15:50 are on it only
+    ("Why is Front desk flagged on this page, and when does it clear?", ("VD-48", "15:50"), (), "page"),
 )
+ASK_PAGE = {  # a made-up Care list tab, as the page sends it with a question (index.html's shown())
+    "Why is Front desk flagged on this page, and when does it clear?": {"tab": "care", "lines": [
+        "Care list", "as of 15:05 · 2 users checked every 5 min",
+        "Critical since 14:35 · Front desk · sample07 · VD-48 (virtual desktop) · HD Failure (System) 2 times, "
+        "first at 14:35, the last at 14:50 on VD-48. Clears after 15:50 if no new HD Failure. · Show more ▸",
+        "✓ OK · Payroll lead · sample08 · PC-52 · 40 actions today, none rated Major; their usual by now: 0 to 2.",
+        "An issue: an event Aternity rates Critical or Major, or more Major slow actions by this time of day than "
+        "on any of their own days before. It is over after an hour with no new one."]},
+}
 
 
 class AskAternity:
@@ -2287,7 +2298,7 @@ def _answers(client, add) -> None:
     for question, must, never, tool in AI_ASK:
         started = time.monotonic()
         try:
-            a = agent.ask(question, [], client, t, names, now, reach)
+            a = agent.ask(question, [], client, t, names, now, reach, ASK_PAGE.get(question))
         except ApiError as exc:
             rows.append(f"\"{question}\": the service did not answer ({exc.short()})")
             continue
