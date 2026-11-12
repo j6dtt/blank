@@ -2226,6 +2226,7 @@ def _answers(client, add) -> None:
     import time
 
     from . import agent
+    from .explain import odd, plain
     t, names, now = ask_records()
     right, rows, times = 0, [], []
     for question, must, never in AI_ASK:
@@ -2236,16 +2237,18 @@ def _answers(client, add) -> None:
             rows.append(f"\"{question}\": the service did not answer ({exc.short()})")
             continue
         times.append(time.monotonic() - started)
-        low = a["answer"].lower()
-        missing = [m for m in must if m.lower() not in low]
-        wrong = [w for w in never if w.lower() in low]
+        low = plain(a["answer"])  # a no-break hyphen or space is the same name
+        missing = [m for m in must if plain(m) not in low]
+        wrong = [w for w in never if plain(w) in low]
         ok = not missing and not wrong and not a["flagged"] and a["answer"]
         right += bool(ok)
         rows.append(f"\"{question}\": {'right' if ok else 'wrong'} after {len(a['steps'])} look-up(s) "
                     f"({_cut(a['looked'], 120) or 'none'})" + (f"; missing {', '.join(missing)}" if missing else "")
                     + (f"; named {', '.join(wrong)}" if wrong else "")
                     + (f"; numbers not in what it looked at: {', '.join(a['flagged'])}" if a["flagged"] else "")
-                    + (f"; {a['note']}" if a["note"] else "") + f"; its answer: {_cut(' '.join(a['answer'].split()), 160)}")
+                    + (f"; {a['note']}" if a["note"] else "")
+                    + (f"; unusual characters: {odd(a['answer'])}" if odd(a["answer"]) else "")
+                    + f"; its answer: {_cut(' '.join(a['answer'].split()), 160)}")
     add("answers open questions (Ask anything)", right == len(AI_ASK),
         f"Right for {right} of {len(AI_ASK)} open questions over made-up records: the right PCs, users or "
         f"applications, every number from what it looked at"

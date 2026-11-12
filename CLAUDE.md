@@ -504,8 +504,11 @@ unset `<REQUIRED>` base URLs.
   counts (`ROWS_MAX`, `RESULT_CHARS`), and answers in its own words
   (`SYSTEM`; Aternity's kinds of event named in `system`). Every step
   goes to the page ("What I looked at", Investigate ▸ per row from
-  `runs`); a number in none of them, or a worked-out ratio, is marked
-  (`flagged`), not replaced. History: the answers and a line of the
+  `runs`); a number in none of them, or a worked-out comparison
+  (`COMPARED`: "twice as", not "twice", a count), is marked
+  (`flagged`), not replaced. Names the AI sends are read with plain
+  dashes and spaces (`_norm`; `explain.plain` for verify: Nemotron
+  writes no-break hyphens, stage, Nov 2026). History: the answers and a line of the
   look-ups (`looked`). The tools read only what the Today reader and
   the names hold. Step 2: tools that read Aternity now (logons, a PC's
   software and start-ups, an investigation); step 3: it replaces both

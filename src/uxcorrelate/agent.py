@@ -13,12 +13,14 @@ read Aternity now (a user's logons, a PC's software, an investigation).
 from __future__ import annotations
 
 import json
+import re
 import time
+import unicodedata
 from collections import Counter
 from datetime import datetime, timedelta
 
 from .ai import AiClient
-from .chat import RATIO, _kinds_named, _match, _singular, allowed, numbers
+from .chat import _kinds_named, _match, _singular, allowed, numbers
 from .config import TOP_STATUS
 from .today import EVENT_PAD, HEALTH_DAYS, NO_APP, SLOW_PAD, Today
 
@@ -54,6 +56,12 @@ SYSTEM = (
     "mean. Not in reach yet: installed software, start-ups, logons, NetIM, investigations (the page's other "
     "tabs have them: say so when asked)."
 )
+
+# a worked-out comparison ("twice as many", "3 times worse"); "twice" alone is a count (Nemotron's
+# "opened Sample Mail twice", 2 rows, was marked on stage, Nov 2026)
+COMPARED = re.compile(r"\b(?:\d[\d.,]*|two|three|four|five|six|ten)\s*(?:x|times)\s+(?:more|less|fewer|worse|"
+                      r"better|higher|lower|slower|faster|as)\b|\b(?:twice|double|triple|half)\s+(?:as|the|that)\b",
+                      re.I)
 
 _S = {"type": "string"}
 
@@ -380,8 +388,21 @@ def meanings(term: str | None = None) -> dict:
                  [[k, v] for k, v in hits], notes=[] if hits else [f"No term like \"{term}\"."])
 
 
+def _norm(v):
+    """A name as the AI sent it, with Aternity's plain characters: no invisible ones, a dash
+    of any kind as "-", an odd space as a space (a model may write "VD\u201177")."""
+    if isinstance(v, list):
+        return [_norm(x) for x in v]
+    if not isinstance(v, str):
+        return v
+    v = unicodedata.normalize("NFKC", v)
+    v = "".join("-" if unicodedata.category(c) == "Pd" or c == "\u2212" else " " if unicodedata.category(c) == "Zs"
+                else c for c in v if unicodedata.category(c) != "Cf")
+    return " ".join(v.split())
+
+
 def run(name: str, args: dict, today: Today, names, now: datetime) -> dict:
-    args = {k: v for k, v in (args or {}).items() if v not in (None, "", [])}
+    args = {k: _norm(v) for k, v in (args or {}).items() if v not in (None, "", [])}
     try:
         if name == "find":
             return find(today, names, now, str(args.get("text", "")))
@@ -482,7 +503,7 @@ def ask(question: str, history: list, client: AiClient, today: Today, names, now
         note = note or "The AI gave no answer."
     given = [question, sys_text, *said] + [for_ai(s) for s in steps]
     flagged = sorted(numbers(text) - allowed(*given, small=10))
-    worked = RATIO.search(text)
+    worked = COMPARED.search(text)
     return {"question": question, "answer": text, "steps": steps, "looked": looked(steps),
             "flagged": [f"{x:g}" for x in flagged] + ([worked.group(0)] if worked else []),
             "note": note, "service": client.cfg.name, "seconds": round(time.monotonic() - started, 1)}

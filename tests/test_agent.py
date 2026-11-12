@@ -49,7 +49,33 @@ def test_a_number_found_in_none_of_what_it_looked_at_is_marked_not_hidden():
     a = agent.ask("How many hard drive faults?", [], Script(call("events", kinds=["HD Failure"], days=7),
                                                             {"content": "PC-K1 had 37 of them, twice as many."}),
                   t, names, now)
-    assert a["answer"] == "PC-K1 had 37 of them, twice as many." and a["flagged"] == ["37", "twice"]
+    assert a["answer"] == "PC-K1 had 37 of them, twice as many." and a["flagged"] == ["37", "twice as"]
+    # "twice" alone is a count, not a comparison (Nemotron: "opened Sample Mail twice", 2 rows; stage, Nov 2026)
+    two = agent.ask("And sample02?", [], Script(call("activity", user="sample02"),
+                                                {"content": "sample02 opened Sample Mail twice on VD-77."}), t, names, now)
+    assert two["flagged"] == []
+
+
+def test_a_name_with_a_no_break_hyphen_is_the_same_name():
+    """Stage, Nov 2026: Nemotron's answer about sample02 was judged without VD-77 in it."""
+    from uxcorrelate import verify
+    t, names, now = ask_records()
+    nb = agent.activity(t, now, pc="VD-77")["rows"]
+    assert agent.run("activity", {"pc": "VD\u201177"}, t, names, now)["rows"] == nb != []
+    asked = {verify.AI_ASK[0][0]: ("events", {"kinds": ["HD Failure", "Faulty HD S.M.A.R.T. Status"], "days": 7}),
+             verify.AI_ASK[1][0]: ("activity", {"user": "sample02"}), verify.AI_ASK[2][0]: ("activity", {})}
+
+    class Hyphens:  # answers with every hyphen a no-break one
+        cfg = SimpleNamespace(name="nemotron")
+
+        def chat(self, messages, tools=None):
+            if messages[-1]["role"] == "tool":
+                return {"content": "Found: " + messages[-1]["content"].replace("-", "\u2011")}
+            return call(*asked[messages[-1]["content"]][:1], **asked[messages[-1]["content"]][1])
+    checks = []
+    verify._answers(Hyphens(), lambda item, ok, message, fix="", rows=(): checks.append((ok, message, list(rows))))
+    ok, message, rows = checks[0]
+    assert ok is True and "Right for 3 of 3" in message and "unusual characters: U+2011" in rows[1]
 
 
 def test_it_stops_after_its_steps_and_is_asked_to_answer():

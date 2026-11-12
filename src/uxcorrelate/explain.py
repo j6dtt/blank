@@ -269,10 +269,13 @@ def refused(text: str, tab: str, panel: str, lines: list[str], question: str) ->
 
 
 def plain(text: str) -> str:
-    """Lower case, one space between words, no invisible characters: a model may write a
-    no-break space inside a name ("Sample\u00a0ERP")."""
+    """Lower case, one space between words, no invisible characters, every dash a "-": a
+    model may write a no-break space inside a name ("Sample\u00a0ERP") or a no-break hyphen
+    ("VD\u201177": Nemotron's answer was judged without VD-77 in it, stage, Nov 2026)."""
     text = unicodedata.normalize("NFKC", str(text or ""))
-    return " ".join("".join(c for c in text if unicodedata.category(c) != "Cf").lower().split())
+    text = "".join("-" if unicodedata.category(c) == "Pd" or c == "\u2212" else c
+                   for c in text if unicodedata.category(c) != "Cf")
+    return " ".join(text.lower().split())
 
 
 def says(text: str, words) -> bool:
@@ -282,7 +285,7 @@ def says(text: str, words) -> bool:
 def odd(text: str) -> str:
     """The unusual spaces and invisible characters of an answer, for a verify row."""
     found = sorted({f"U+{ord(c):04X}" for c in str(text or "")
-                    if ord(c) > 127 and unicodedata.category(c) in ("Zs", "Cf", "Zl", "Zp")})
+                    if ord(c) > 127 and unicodedata.category(c) in ("Zs", "Cf", "Zl", "Zp", "Pd")})
     return ", ".join(found)
 
 
