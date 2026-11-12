@@ -122,6 +122,13 @@
   .answer .a { font-size: 15px; margin: 4px 0 8px; }
   .answer .note { font-size: 12px; color: var(--warn); margin-bottom: 6px; }
   .answer .src { font-size: 12px; margin-top: 6px; }
+  #askAnswers .a p { margin: 4px 0; }
+  #askAnswers .a ul, #askAnswers .a ol { margin: 4px 0; padding-left: 22px; }
+  #askAnswers details.steps { font-size: 12px; margin-top: 6px; }
+  #askAnswers details.steps > summary { cursor: pointer; color: var(--accent); }
+  #askAnswers .step { margin: 10px 0 0; }
+  #askAnswers .step .t { font-weight: 600; font-size: 13px; }
+  #askAnswers .step .sum { color: var(--muted); margin: 2px 0; overflow-wrap: anywhere; }
   .answer td { vertical-align: middle; }
   .answer button.link { padding: 0; white-space: nowrap; }
   /* Care list: one tile per user with an issue today, the others as names */
@@ -271,6 +278,21 @@
       <p class="muted" style="font-size:12px;margin:6px 0 0">Severity is Aternity's own. Bars: PCs per day over the
         7 days before; green is today so far. Hover a bar for its day. Click a row for its users and PCs.</p>
       <div class="exRow noExplain"><button type="button" class="link explain" data-tab="today">Explain ▸</button></div>
+    </section>
+    <section class="panel noExplain" id="tAsk" style="margin-top:16px">
+      <div class="todayHead"><h2>Ask anything</h2><span class="muted">new, being tried</span>
+        <span class="muted" id="askWho"></span></div>
+      <form id="askForm" class="chatForm" autocomplete="off">
+        <input name="q" id="askQ" maxlength="500" placeholder="e.g. What PCs had hard drive issues this week?">
+        <button id="askGo">Ask</button>
+      </form>
+      <div class="chips" id="askChips"></div>
+      <div class="muted" id="askBusy" style="margin-top:8px"></div>
+      <div id="askAnswers"></div>
+      <p class="muted" style="font-size:12px;margin:10px 0 0">The AI looks things up in this app's data, as many
+        steps as it needs, and answers in its own words; a follow-up question remembers the answers before.
+        Under each answer: what it looked at. A number not found there is marked.
+        <button type="button" class="link" id="askClear" hidden>Clear the answers</button></p>
     </section>
     <section class="panel noExplain" id="tChat" style="margin-top:16px">
       <div class="todayHead"><h2>Ask about today</h2><span class="muted" id="chatWho"></span></div>
@@ -558,7 +580,7 @@ async function init() {
     $("lf").start.value = toLocalInput(new Date(end - 24 * 3600e3));
     $("lf").end.value = toLocalInput(end);
     $("apps").innerHTML = info.applications.map((a) => `<option value="${esc(a)}">`).join("");
-    todayChat.ready(info.chat); softChat.ready(info.chat);
+    todayChat.ready(info.chat); softChat.ready(info.chat); askReady(info.chat);
   } catch (e) { $("error").textContent = "Could not load settings: " + e; }
 }
 
@@ -903,8 +925,9 @@ $("cDetailBody").addEventListener("click", (ev) => {
   } else if (ev.target.id === "cRemove") {
     careDialog({ username: careUser.username, label: careUser.label });
   } else if (ev.target.id === "cRun") {
-    const first = careUser.issues.length ? new Date(careUser.issues[0].since) : new Date(Date.now() - 4 * 3600e3);
-    investigateNow({ username: careUser.username, start: new Date(first - 30 * 60e3).toISOString(), end: new Date().toISOString() });
+    // the server's window: from before their first issue of the day, open or over (as the one that ran by itself)
+    const start = careUser.start || new Date(Date.now() - 4 * 3600e3).toISOString();
+    investigateNow({ username: careUser.username, start, end: new Date().toISOString() });
   }
 });
 
@@ -1076,6 +1099,90 @@ function makeChat(p, url, examples) {
       el("Chips").innerHTML = examples.map((q) => `<button type="button">${esc(q)}</button>`).join("");
     },
   };
+}
+// ---- Ask anything (agent.py): the AI looks things up, as many steps as it needs, and answers in its
+// own words; what it looked at is under each answer, a number found in none of it is marked ----
+const ASK_EXAMPLES = ["What PCs had hard drive issues this week?", "How is today going so far?",
+  "Which applications are worst today, and on which PCs?"];
+function mdHtml(text) {  // the AI's text: paragraphs, lists, bold; escaped first
+  const inline = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>");
+  const out = []; let list = null;
+  const close = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  for (const raw of String(text || "").split("\n")) {
+    const line = raw.trimEnd(); let m;
+    if ((m = line.match(/^\s*[-*•]\s+(.*)$/))) { if (list !== "ul") { close(); out.push("<ul>"); list = "ul"; } out.push(`<li>${inline(m[1])}</li>`); }
+    else if ((m = line.match(/^\s*\d{1,2}[.)]\s+(.*)$/))) { if (list !== "ol") { close(); out.push("<ol>"); list = "ol"; } out.push(`<li>${inline(m[1])}</li>`); }
+    else if (/^\s*\|?\s*:?-{3,}/.test(line)) { /* a table's rule line */ }
+    else if (!line.trim()) close();
+    else { close(); out.push(`<p>${inline(line.replace(/^#+\s*/, "").replace(/^\|\s*|\s*\|$/g, "").replace(/\s*\|\s*/g, " · "))}</p>`); }
+  }
+  close(); return out.join("");
+}
+const askState = { history: [], answers: [] };
+function sumText(v) {  // a step's summary value, short
+  if (v === null || v === undefined) return "—";
+  if (Array.isArray(v)) return v.map((x) => typeof x === "object" ? JSON.stringify(x) : String(x)).join(", ");
+  if (typeof v === "object") return Object.entries(v).map(([k, x]) => `${k}: ${typeof x === "object" && x !== null ? JSON.stringify(x) : x}`).join(", ");
+  return String(v);
+}
+function stepHtml(s, i, j) {
+  let html = `<div class="step"><div class="t">${j + 1}. ${esc(s.title)}${s.total_rows ? ` · ${n(s.total_rows)} rows` : ""}</div>`;
+  if (s.summary) html += Object.entries(s.summary).map(([k, v]) => `<div class="sum">${esc(k.replace(/_/g, " "))}: ${esc(sumText(v).slice(0, 400))}</div>`).join("");
+  if (s.notes.length) html += `<div class="muted">${s.notes.map(esc).join("<br>")}</div>`;
+  if (s.rows.length) {
+    const shown = s.rows.slice(0, 25), runs = s.runs || [];
+    html += `<div class="tableWrap"><table><tr>${runs.length ? "<th></th>" : ""}${s.columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>`
+      + shown.map((row, k) => `<tr>${runs.length ? `<td>${runs[k] ? `<button type="button" class="link" data-a="${i}" data-s="${j}" data-k="${k}">Investigate ▸</button>` : ""}</td>` : ""}`
+        + row.map((v) => `<td${typeof v === "number" ? ' class="num"' : ""}>${cell(v)}</td>`).join("") + "</tr>").join("") + "</table></div>";
+    if (s.rows.length > shown.length) html += `<div class="muted">… and ${n(s.rows.length - shown.length)} more rows the AI was given.</div>`;
+  }
+  return html + "</div>";
+}
+function askRender() {
+  $("askClear").hidden = !askState.answers.length;
+  $("askAnswers").innerHTML = askState.answers.map((a, i) => {
+    let html = `<div class="answer"><div class="q">${esc(a.question)} · ${a.seconds} s · ${a.steps.length} look-up${a.steps.length === 1 ? "" : "s"}</div><div class="a">${mdHtml(a.answer)}</div>`;
+    if (a.flagged.length) html += `<div class="note">Not found in what it looked at: ${a.flagged.map(esc).join(", ")}. Check ${a.flagged.length === 1 ? "it" : "them"} before using the answer.</div>`;
+    if (a.note) html += `<div class="note">${esc(a.note)}</div>`;
+    if (a.steps.length) html += `<details class="steps"><summary>What I looked at (${a.steps.length})</summary>${a.steps.map((s, j) => stepHtml(s, i, j)).join("")}</details>`;
+    return html + "</div>";
+  }).join("");
+}
+$("askChips").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button");
+  if (b) { $("askQ").value = b.textContent; $("askForm").requestSubmit(); }
+});
+$("askForm").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const q = $("askQ").value.trim();
+  if (!q || $("askGo").disabled) return;
+  $("askGo").disabled = true;
+  const started = Date.now();
+  const tick = () => { $("askBusy").textContent = `Looking it up… ${Math.round((Date.now() - started) / 1000)} s`; };
+  tick(); const timer = setInterval(tick, 1000);
+  try {
+    const r = await fetch("api/ask", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: q, history: askState.history.slice(-6) }) });
+    const a = await r.json();
+    if (!r.ok) throw new Error(detail(a));
+    askState.history.push({ q: a.question, a: a.answer, looked: a.looked });
+    askState.answers.unshift(a); askState.answers = askState.answers.slice(0, 10);
+    $("askQ").value = ""; $("askBusy").textContent = "";
+    askRender();
+  } catch (e) { $("askBusy").textContent = "No answer: " + e.message; }
+  finally { clearInterval(timer); $("askGo").disabled = false; }
+});
+$("askClear").addEventListener("click", () => { askState.history = []; askState.answers = []; askRender(); });
+$("askAnswers").addEventListener("click", (ev) => {
+  const b = ev.target.closest("button[data-a]");
+  if (!b) return;
+  investigateNow(askState.answers[Number(b.dataset.a)].steps[Number(b.dataset.s)].runs[Number(b.dataset.k)]);
+});
+function askReady(service) {
+  $("askForm").hidden = !service; $("askChips").hidden = !service;
+  $("askWho").textContent = service ? `· answered with ${service}` : "";
+  if (!service) $("askBusy").textContent = "It needs an AI service: ai.services in config.yaml (uxcorrelate verify --ai checks it).";
+  $("askChips").innerHTML = ASK_EXAMPLES.map((q) => `<button type="button">${esc(q)}</button>`).join("");
 }
 const todayChat = makeChat("chat", "api/chat", CHAT_EXAMPLES);
 const softChat = makeChat("sChat", "api/software/chat", SW_CHAT_EXAMPLES);

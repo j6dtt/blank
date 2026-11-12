@@ -68,6 +68,14 @@ def _when(t: str) -> datetime:
     return datetime.fromisoformat(t.replace("Z", "+00:00"))
 
 
+def _inv_start(issues: list) -> datetime | None:
+    """Where an investigation of a user's day starts: INV_PAD before their first issue of the
+    day, open or over (one rule for the one that runs by itself and "Investigate again now",
+    which took the most serious open one: a 06:04 crash, over, was left out on stage, Nov 2026)."""
+    first = min((_when(i["since"]) for i in issues), default=None)
+    return first - INV_PAD if first else None
+
+
 def _file_name(username: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9._-]", "_", username)[:40]
     return f"{safe}-{hashlib.sha1(username.lower().encode()).hexdigest()[:8]}.json"
@@ -479,7 +487,7 @@ class Care:
         try:
             t = self.today.day(now)
             today = [i for i in self.issues.get(user, []) if i["day"] == t.isoformat()]
-            start = min((_when(i["since"]) for i in today), default=now - HOUR) - INV_PAD
+            start = _inv_start(today) or now - HOUR - INV_PAD
             name = self.names.get(user, user)
             u = next((x for x in self.users if x.username.lower() == user), CareUser(username=name))
             log.info("Care list: investigating %s, %s to %s", self._who(u), f"{self.today.local(start):%H:%M}",
@@ -572,6 +580,7 @@ class Care:
                 "level": min((i["level"] for i in mine), key=lambda s: rank.get(s, 9)) if mine else None,
                 "since": min((i["since"] for i in mine), default=None),
                 "since_local": today.local(_when(min(i["since"] for i in mine))).strftime("%H:%M") if mine else None,
+                "start": _iso(_inv_start(today_all)) if today_all else None,  # "Investigate again now"
                 "pcs": [{"device": d, "kind": kinds.get(d)} for d in pcs], "actions": actions, "major": major,
                 "usual": self.usual(user, now),
                 # the most serious first (the tile shows the first two): Critical, then Major, then by time

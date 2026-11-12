@@ -1846,6 +1846,8 @@ AI_TRIES = (
     ("How many users and PCs are active right now?", {"tool": "active"}),
     # stage, Nov 2026: a list for the week got today's one PC, then counts per day
     ("List the PCs with a System Crash this week", {"tool": "who", "what": "event", "days": 7}),
+    # stage, Nov 2026: "hard drive" is no kind's name; the AI is given Aternity's names (AI_KINDS)
+    ("What PCs had a hard drive issue this week?", {"tool": "who", "what": "event", "days": 7, "name": "hd"}),
     # look-ups of who logged in where (the user's request, Nov 2026)
     ("Who last logged into the PC WS-0042?", {"tool": "logins", "device": "ws-0042"}),
     ("Which desktop did mossley log in to on 2026-11-03?", {"tool": "logins", "username": "mossley", "date": "2026-11-03"}),
@@ -1868,6 +1870,8 @@ AI_SW_TRIES = (  # the Software tab's chat (software_chat.TOOLS)
     ("Which software crashed the most?", {"tool": "most"}),
     ("Which Teams version crashed the most?", {"tool": "version_problems", "application": "teams"}),
 )
+AI_KINDS = ["Application Crash", "Application Hang", "Low Memory Pagefaults", "System Crash",  # Aternity's names;
+            "Faulty HD S.M.A.R.T. Status", "HD Failure", "Application Crash (After Hang)"]  # the HD ones: prod
 AI_OUTSIDE = "What is the weather in Paris today?"  # not in the data: no pick is the right answer
 AI_COUNTS = {"period": "last 7 days", "partial": False,  # made-up counts, to see if they are repeated right
              "rows": [{"failure": "Sample Agent crash", "pcs": 2885}, {"failure": "Sample Viewer crash", "pcs": 412}]}
@@ -1918,7 +1922,8 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
 
     from .ai import LOGINS, AiClient, reply_message, tool_call
     from . import software_chat
-    from .chat import SYSTEM, TOOLS
+    from .chat import SYSTEM as CHAT, TOOLS, kinds_text
+    SYSTEM = CHAT + kinds_text(AI_KINDS)  # as each question has it: the kinds of event Aternity recorded
     env = os.environ if env is None else env
     if not settings.ai.services:
         return [Check(AI, "services", None, AI_SETUP)]
@@ -2058,6 +2063,7 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
         ask = lambda q: [{"role": "system", "content": SYSTEM}, {"role": "user", "content": q}]  # noqa: E731
         _explains(client, add)
         _assesses(client, add)
+        _answers(client, add)
 
         # repeats the counts it is given: always for the crash question they are of (stage, Nov
         # 2026: with that one missed, they went to "Are virtual desktops slower …?" and Nemotron's
@@ -2171,6 +2177,80 @@ def _assesses(client, add) -> None:
         add("writes the assessment", True, f"A verdict line, {points} points ({tagged} with their label) and a next step "
             f"from made-up facts, only their numbers and words, in {took:.1f} s.", "",
             [f"its text: {_cut(' / '.join(text.splitlines()), 300)}"])
+
+
+# "Ask anything" (agent.py): open questions over made-up records; the names a right answer has, and
+# those it must not (a hard drive is "HD" in Aternity's names: the user's question on stage, Nov 2026)
+AI_ASK = (
+    ("What PCs had hard drive issues this week?", ("PC-K1", "PC-K2"), ("PC-K3",)),
+    ("Tell me about the user sample02 today", ("VD-77", "Sample Mail"), ()),
+    ("Which application had the most Major slow actions today?", ("Sample ERP",), ()),
+)
+
+
+def ask_records():
+    """A made-up Today reader and names for AI_ASK: 15:00 UTC today."""
+    from .names import NameList
+    from .today import Today
+    t = Today("")
+    now = t.midnight(datetime.now(timezone.utc).date()) + timedelta(hours=15)
+    f = {"timestamp": "T", "device": "D", "username": "U", "application": "A", "status": "S", "activity": "N",
+         "response_time": "R", "virtualization": "V"}
+    act = lambda m, pc, user, app, status, virtual=False: {  # noqa: E731
+        "T": (now - timedelta(hours=2, minutes=m)).isoformat(), "D": pc, "U": user, "A": app, "S": status,
+        "N": "Open", "R": 12.5, "V": "true" if virtual else "false"}
+    rows = ([act(5, "VD-77", "sample02", "Sample Mail", "Major", True), act(9, "VD-77", "sample02", "Sample Mail",
+                                                                            "Major", True),
+             act(12, "VD-77", "sample02", "Sample ERP", "Normal", True)]
+            + [act(m, "PC-11", "sample03", "Sample ERP", "Major") for m in (1, 3, 6, 8, 11)]
+            + [act(2, "PC-12", "sample05", "Sample Mail", "Normal")])
+    t.add_hour(t.hour_of(now - timedelta(hours=2, minutes=15)), rows, f, now)
+    h = {"timestamp": "T", "device": "D", "category": "C", "name": "E", "severity": "S", "application": "A",
+         "username": "U"}
+    ev = lambda when, pc, user, name, sev, cat, app=None: {  # noqa: E731
+        "T": when.isoformat(), "D": pc, "U": user, "E": name, "S": sev, "C": cat, "A": app}
+    t.set_health([ev(now - timedelta(hours=3), "PC-K1", "sample04", "HD Failure", "Critical", "Hardware"),
+                  ev(now - timedelta(hours=1), "PC-K3", "sample05", "Application Crash", "Major", "Application",
+                     "Sample Mail")], h, today=True)
+    t.set_health([ev(now - timedelta(days=2), "PC-K2", None, "Faulty HD S.M.A.R.T. Status", "Major", "Hardware")],
+                 h, today=False, days_read=tuple(t.day(now) - timedelta(days=n) for n in range(1, 7)))
+    t.ready, t.as_of = True, now
+    names = NameList()
+    names.add(rows, f, now - timedelta(hours=3), now)
+    return t, names, now
+
+
+def _answers(client, add) -> None:
+    """Ask anything: does the model look things up in several steps and answer open questions
+    with the right names (and not the wrong ones), every number from what it looked at?"""
+    import time
+
+    from . import agent
+    t, names, now = ask_records()
+    right, rows, times = 0, [], []
+    for question, must, never in AI_ASK:
+        started = time.monotonic()
+        try:
+            a = agent.ask(question, [], client, t, names, now)
+        except ApiError as exc:
+            rows.append(f"\"{question}\": the service did not answer ({exc.short()})")
+            continue
+        times.append(time.monotonic() - started)
+        low = a["answer"].lower()
+        missing = [m for m in must if m.lower() not in low]
+        wrong = [w for w in never if w.lower() in low]
+        ok = not missing and not wrong and not a["flagged"] and a["answer"]
+        right += bool(ok)
+        rows.append(f"\"{question}\": {'right' if ok else 'wrong'} after {len(a['steps'])} look-up(s) "
+                    f"({_cut(a['looked'], 120) or 'none'})" + (f"; missing {', '.join(missing)}" if missing else "")
+                    + (f"; named {', '.join(wrong)}" if wrong else "")
+                    + (f"; numbers not in what it looked at: {', '.join(a['flagged'])}" if a["flagged"] else "")
+                    + (f"; {a['note']}" if a["note"] else "") + f"; its answer: {_cut(' '.join(a['answer'].split()), 160)}")
+    add("answers open questions (Ask anything)", right == len(AI_ASK),
+        f"Right for {right} of {len(AI_ASK)} open questions over made-up records: the right PCs, users or "
+        f"applications, every number from what it looked at"
+        + (f"; each took {min(times):.1f} to {max(times):.1f} s." if times else "."),
+        "Ask anything would give wrong or made-up answers with this model. Tell Claude these lines.", rows)
 
 
 def render_checks(checks: list[Check]) -> str:

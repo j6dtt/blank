@@ -4,9 +4,14 @@ import json
 
 import httpx
 
-from uxcorrelate import assess, explain
+from uxcorrelate import agent, assess, explain
 from uxcorrelate.config import AiService, Settings, load_settings
-from uxcorrelate.verify import AI_OUTSIDE, AI_SW_TRIES, AI_TRIES, render_checks, verify_ai
+from uxcorrelate.verify import AI_ASK, AI_OUTSIDE, AI_SW_TRIES, AI_TRIES, render_checks, verify_ai
+
+ASKED = {  # Ask anything: the stand-in's look-up for each open question
+    AI_ASK[0][0]: ("events", {"kinds": ["HD Failure", "Faulty HD S.M.A.R.T. Status"], "days": 7}),
+    AI_ASK[1][0]: ("activity", {"user": "sample02"}),
+    AI_ASK[2][0]: ("activity", {})}
 
 FULL = {"outlook": "Microsoft Outlook", "mossley": "MOSSLEY", "edge": "Microsoft Edge", "kb5126652": "KB5126652",
         "teams": "Microsoft Teams Meeting Add-in for Microsoft Office"}  # what a model sends
@@ -47,6 +52,12 @@ def service(seen, picks=PICKS, login="bearer", models=("model-a", "model-b"), to
         if body["messages"][0]["content"] == explain.SYSTEM:
             assert "tools" not in body
             return reply(explained(last["content"], explains, reads))
+        if body["messages"][0]["content"].startswith(agent.SYSTEM):  # Ask anything: one look-up, then its rows
+            if last["role"] == "tool":
+                return reply("Found: " + last["content"])
+            tool, args = ASKED[last["content"]]
+            return reply(None, [{"id": "call-a", "type": "function",
+                                 "function": {"name": tool, "arguments": json.dumps(args)}}])
         if "tools" in body and not tools:
             return httpx.Response(400, json={"error": {"message": "tools are not supported"}})
         if last["role"] == "tool":
@@ -83,12 +94,13 @@ def run(seen=None, env=None, cfg=None, **kw):
 def test_a_good_service_passes_every_check_and_the_key_is_never_printed():
     seen = []
     checks, text = run(seen)
-    assert [c.ok for c in checks.values()] == [None, True, True, True, True, True, True, True, True]
+    assert [c.ok for c in checks.values()] == [None, True, True, True, True, True, True, True, True, True]
+    assert "Right for 3 of 3 open questions" in checks["answers open questions (Ask anything)"].message
     assert "A verdict line, 2 points (2 with their label) and a next step" in checks["writes the assessment"].message
     assert "Right for 10 of 10 made-up panels" in checks["explains a panel"].message
     assert "right up to 40,000." in checks["explains a long page"].message
     assert len(checks["explains a long page"].rows) == 3
-    assert "Right in 11 of 11 tries" in checks["picks the right question"].message
+    assert "Right in 12 of 12 tries" in checks["picks the right question"].message
     assert "Right in 12 of 12 tries" in checks["picks the right question (Software tab)"].message
     assert "made no pick (right)" in checks["picks the right question"].message
     assert "2 of the 2 counts" in checks["repeats the counts"].message
@@ -123,7 +135,7 @@ def test_wrong_picks_and_a_pick_for_an_outside_question_fail_with_what_it_picked
     picks[AI_OUTSIDE] = {"tool": "events"}
     checks, _ = run(picks=picks)
     c = checks["picks the right question"]
-    assert c.ok is False and "Right in 10 of 11 tries" in c.message and "made a pick (wrong)" in c.message
+    assert c.ok is False and "Right in 11 of 12 tries" in c.message and "made a pick (wrong)" in c.message
     assert any(first in r and "picked events(group_by=day, days=7); a right pick is events(group_by=event, days=7)"
                in r for r in c.rows)
 
@@ -137,7 +149,7 @@ def test_the_crash_question_by_application_is_right_only_with_the_crashes():
         picks = dict(PICKS)
         picks[q] = pick
         c = run(picks=picks)[0]["picks the right question"]
-        assert ("Right in 11 of 11 tries" in c.message) is right
+        assert ("Right in 12 of 12 tries" in c.message) is right
     assert any("picked events(group_by=app, days=7); a right pick is events(group_by=event, days=7) or "
                "events(group_by=app, name=crash, days=7)" in r for r in c.rows)
 

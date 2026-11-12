@@ -400,6 +400,32 @@ def create_app(config_path: str | None = None) -> FastAPI:
                  if r else " with no building block", f"; {answer['note']}" if answer["note"] else "")
         return answer
 
+    @app.post("/api/ask")
+    def ask_anything(body: ChatBody):
+        """Ask anything (agent.py): the AI looks things up, as many steps as it needs, and answers."""
+        from . import agent
+        from .ai import AiClient
+        service = chat_service(load_settings(config_path))
+        if service is None:
+            raise HTTPException(503, "The chat needs an AI service: ai.services in config.yaml "
+                                     "(uxcorrelate verify --ai checks it).")
+        if not body.question.strip():
+            raise HTTPException(400, "Type a question.")
+        if not today.ready:
+            raise HTTPException(503, "Still reading Aternity: ask again in a minute.")
+        client = AiClient(service, os.environ.get(service.key_env, "") if service.key_env else "")
+        try:
+            answer = agent.ask(body.question, body.history, client, today, names, datetime.now(timezone.utc))
+        except ApiError as exc:
+            log.warning("Ask anything: the AI service %s did not answer (%s)", service.name, exc.short())
+            raise HTTPException(502, f"The AI service {service.name} did not answer ({exc.short()}). Try again; "
+                                     "`uxcorrelate verify --ai` checks it.")
+        log.info("Ask anything: \"%s\" answered in %.1f s by %s after %d look-up(s)%s%s", answer["question"][:80],
+                 answer["seconds"], service.name, len(answer["steps"]),
+                 f" ({answer['looked'][:200]})" if answer["steps"] else "",
+                 f"; {answer['note']}" if answer["note"] else "")
+        return answer
+
     @app.get("/api/assess")
     def assessment():
         """The assessments for executives: today's, latest first, and yesterday's summary."""

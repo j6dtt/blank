@@ -63,13 +63,17 @@ TOOLS = [
         "group_by": {"type": "string", "enum": ["event", "day", "app"],
                      "description": "One row per kind of event (e.g. Application Crash, System Crash), per day, or "
                                     "per application (which applications had them)."},
-        "name": {"type": "string", "description": "Only events whose name has this, e.g. Application Crash."},
+        "name": {"type": "string", "description": "Only these kinds of event: their names as Aternity writes "
+                                                  "them (the list given), e.g. Application Crash; several: "
+                                                  "separated by |."},
         "severity": {"type": "string", "enum": ["Critical", "Major", "Minor"]},
         "app": APP, "days": _days(HEALTH_DAYS + 1)}),
     _tool("who", "List the users and PCs with the most Major slow actions today, or the PCs with an event, today "
                  "or over several days. Use it whenever the question asks to list, name or show which PCs or users.", {
         "what": {"type": "string", "enum": ["slow", "event"]}, "app": APP,
-        "name": {"type": "string", "description": "For what=event: the event's name, e.g. Application Crash."},
+        "name": {"type": "string", "description": "For what=event: the kinds of event, their names as Aternity "
+                                                  "writes them (the list given), e.g. Application Crash; several: "
+                                                  "separated by |."},
         "days": {"type": "integer", "description": f"For what=event: how many days, today included: 1 = today "
                                                    f"only, 7 = this week (at most {HEALTH_DAYS + 1})."}},
         ("what",)),
@@ -221,19 +225,25 @@ def _singular(text: str) -> str:
 
 
 def _kinds_named(kinds, name) -> tuple[set, list[str]]:
-    """The kinds of event a name means: those with it in their name; when none has, those that
-    share a telling word with it ("hard drive failure" -> HD Failure), with a note saying so."""
+    """The kinds of event a name means: one name, or several separated by "|" (the AI is given
+    Aternity's own names, `kinds_text`, and picks those that mean what was asked: "hard drive
+    issue" found nothing by its words, HD Failure on stage, Nov 2026). Each: those with it in
+    their name; when none has, those that share a telling word with it, with a note saying so;
+    when nothing has, a note naming the kinds there are."""
     kinds = set(kinds)
-    if not (name or "").strip():
+    parts = [p.strip() for p in str(name or "").split("|") if p.strip()]
+    if not parts:
         return kinds, []
-    got = {k for k in kinds if _has(k[1], name) or _has(k[1], _singular(name))}  # "crashes": Application Crash
+    got = {k for k in kinds for p in parts if _has(k[1], p) or _has(k[1], _singular(p))}  # "crashes"
     if got:
         return got, []
     from .software import words
-    ws = [w for w in words(name) if len(w) >= 3]
+    ws = [w for p in parts for w in words(p) if len(w) >= 3]
     near = {k for k in kinds if any(w in (k[1] or "").lower() for w in ws)}
     if not near:
-        return set(), []
+        there = sorted({k[1] for k in kinds if k[1]})
+        return set(), ([f"No kind of event is named like \"{name}\". The kinds recorded in this period: "
+                        f"{', '.join(there[:12])}{' …' if len(there) > 12 else ''}."] if there else [])
     return near, [f"No event is named like \"{name}\": shown are those that share a word with it "
                   f"({', '.join(sorted(k[1] for k in near)[:6])}{' …' if len(near) > 6 else ''})."]
 
@@ -683,7 +693,7 @@ def who(today: Today, now: datetime, what: str = "slow", app: str | None = None,
         of = f" of applications named like \"{app}\"" if app else ""
         if not kinds:
             return _result("who", used, f"Users and PCs with \"{name or 'any'}\" events{of}", period, [], [],
-                           [f"No event named like \"{name or 'any'}\"{of} today."])
+                           [f"No event named like \"{name or 'any'}\"{of} today."] + notes)
         if len(kinds) > 1:  # all of them, each row saying which (it was only the one on the most PCs)
             notes.append(f"\"{name or ''}\" matches {len(kinds)} kinds of event{of}, all listed: "
                          f"{', '.join(k[1] for k in kinds[:5])}{' …' if len(kinds) > 5 else ''}.")
@@ -729,6 +739,7 @@ def who(today: Today, now: datetime, what: str = "slow", app: str | None = None,
                    f"{_n(w['pcs'], 'PC')} and {_n(w['users'], 'user')}", runs=runs, label=(0, 1), value=2)
 
 
+KINDS_MAX = 80  # kinds of event named to the AI with each question, the most PCs first
 LOGIN_DAYS = 14  # how far back the latest logons are looked for (one user or one PC, read now)
 LOGIN_GAP = timedelta(hours=1)  # rows of one user and PC within this are one logon (as logons.py)
 
@@ -931,6 +942,8 @@ def investigate(today: Today, names, now: datetime, username: str | None = None,
 
 def run_block(name: str, args: dict, today: Today, names, now: datetime, aternity_of=None) -> dict | None:
     args = {k: v for k, v in (args or {}).items() if v not in (None, "")}
+    if isinstance(args.get("name"), list):  # several kinds sent as a list
+        args["name"] = " | ".join(str(n) for n in args["name"] if n)
     try:
         if name == "slow_actions":
             return slow_actions(today, now, **{k: args[k] for k in ("group_by", "app", "days") if k in args})
@@ -987,8 +1000,30 @@ def clean(text, size: int = TEXT_MAX) -> str:
     return "\n".join(out[:LINES_MAX])[:size]
 
 
+def event_kinds(today: Today) -> list[str]:
+    """The kinds of event Aternity recorded today and the days before, the most PCs first
+    (`KINDS_MAX` at most): their names, given to the AI to pick from."""
+    pcs: Counter = Counter()
+    with today.lock:
+        for x in today.health:
+            pcs[x[2][1]] += 1
+        for kinds in today.health_days.values():
+            for k, devs in kinds.items():
+                pcs[k[1]] += len(devs)
+    return [n for n, _ in pcs.most_common(KINDS_MAX) if n]
+
+
+def kinds_text(names: list[str]) -> str:
+    if not names:
+        return ""
+    # no number of days in it: a number here would be allowed in every answer
+    return (" Kinds of event Aternity recorded today and the days before, the most PCs first: "
+            f"{'; '.join(names)}. For an event's name, use these names as written, the ones that mean what was "
+            "asked (several: separated by |); never the question's own words.")
+
+
 def system(today: Today, now: datetime) -> str:
-    return f"{SYSTEM} Today is {today.local(now):%A %b %d, %Y}; times are {today.zone_label}."
+    return f"{SYSTEM}{kinds_text(event_kinds(today))} Today is {today.local(now):%A %b %d, %Y}; times are {today.zone_label}."
 
 
 def ask(question: str, history: list, client: AiClient, today: Today, names, now: datetime, aternity_of=None) -> dict:

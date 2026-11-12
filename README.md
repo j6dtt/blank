@@ -148,6 +148,15 @@ slow actions (by application, hour, activity, day, virtual or physical),
 crashes and events (today and the 14 days before), who had them today,
 and "Investigate <user or PC>" (a button that runs it). Earlier questions
 are remembered for follow-ups until "Clear the answers" or a reload.
+"Ask anything" (above it, new, being tried): ask in your own words
+("What PCs had hard drive issues this week?", "Tell me about sample02").
+The AI looks things up in this app's data, as many steps as it needs
+(find a name, health events, today's actions, today's overview, the
+meanings of our words), and answers in its own words. "What I looked
+at" under each answer shows every step with its rows (Investigate ▸ on
+each); a number found in none of them is marked, not hidden. It reads
+only what the app already holds (no extra Aternity load); installed
+software, start-ups, logons and investigations come next.
 The usual for actions builds up over the first week from the counts saved
 in `./data` each night (`mkdir -p data && chmod a+rwx data` before the
 first start).

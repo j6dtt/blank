@@ -344,7 +344,9 @@ unset `<REQUIRED>` base URLs.
   (same kind of day, `USUAL_DAYS`, `MIN_USUAL`; their `HISTORY_DAYS` read
   by username once a day, spelled as Aternity writes it via `NameList`).
   A new issue queues an investigation (`Care.work`, one at a time, one per
-  user per `RUN_EVERY`), `INV_PAD` before their first issue to now; its
+  user per `RUN_EVERY`), `INV_PAD` before their first issue of the day (open or over) to
+  now, and "Investigate again now" the same (`_inv_start`, the tile's
+  `start`); its
   title is the tile's "Why", the page opens it without a re-run. Issues
   and the latest investigation: `<data>/care/<user>.json`, `KEEP_DAYS`
   (usernames on disk, agreed). A slow issue is a spell: over (`cleared`,
@@ -469,9 +471,14 @@ unset `<REQUIRED>` base URLs.
   the PCs over up to `HEALTH_DAYS`+1 days from `health_days`, which
   keeps the PC, not the user; `WHO_ROWS`): "List PCs with System crash
   this week" had given today's one PC, then counts per day (stage, Nov
-  2026). An event name no kind has is matched by a shared telling word
-  (`_kinds_named`: "hard drive failure" -> HD Failure), said in a
-  note; a plural is read as Aternity's singular (`_singular`: crashes
+  2026). The AI is given Aternity's own names of the kinds of event with
+  each question (`event_kinds`, `kinds_text`, `KINDS_MAX`, in
+  `system`) and picks the ones meant, several separated by "|"
+  ("What PCs had hard drive issue this week?" was "no event named
+  Hard drive": HD Failure and Faulty HD S.M.A.R.T. Status, stage,
+  Nov 2026). A name no kind has is matched by a shared telling word
+  (`_kinds_named`), said in a note; with none, the note names the
+  kinds there are; a plural is read as Aternity's singular (`_singular`: crashes
   -> Application Crash). A question naming a kind of event needs
   `name` (by application without it, every kind is counted: Nemotron
   took "Which crashes hit the most PCs?" so on stage, Nov 2026). logins (the user's request 2026-11-12, chat only: no tab, no
@@ -488,6 +495,22 @@ unset `<REQUIRED>` base URLs.
   not record is never made up; how long it keeps them is not known.
   Hangs per
   app and software changes are not blocks yet (to measure with verify).
+- `agent.py`: "Ask anything" (`/api/ask`, `#tAsk` above the Today
+  chat; step 1 of the open chat, the user's request 2026-11-12: "HOW
+  DO WE MAKE THIS LIKE NORMAL REGULAR CHAT", after the block chat
+  answered "no event named Hard drive"). The AI looks things up with
+  general tools (`TOOLS`: find, events, activity, overview, meanings),
+  several per question (`MAX_STEPS`), sees rows with a summary of the
+  counts (`ROWS_MAX`, `RESULT_CHARS`), and answers in its own words
+  (`SYSTEM`; Aternity's kinds of event named in `system`). Every step
+  goes to the page ("What I looked at", Investigate ▸ per row from
+  `runs`); a number in none of them, or a worked-out ratio, is marked
+  (`flagged`), not replaced. History: the answers and a line of the
+  look-ups (`looked`). The tools read only what the Today reader and
+  the names hold. Step 2: tools that read Aternity now (logons, a PC's
+  software and start-ups, an investigation); step 3: it replaces both
+  block chats. `verify --ai`: "answers open questions" (`AI_ASK` over
+  `ask_records`, made-up).
 - `ai.py`: client for the self-hosted AI services (`ai.services` in
   config.yaml, key from the env var named in `key_env`). OpenAI-style API
   (`verify.verify_ai`, passed on prod for both services: key, reachable,

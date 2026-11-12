@@ -178,6 +178,24 @@ def test_a_list_of_pcs_with_an_event_over_the_week_and_a_name_matched_by_a_share
                for n in hd["notes"])
     assert EVENTS_ONLY not in hd["notes"]  # hang time says nothing of a disk
     assert hd["notes"][-1] == "Counts only: to see which PCs, ask to list the PCs with it."
+    # the AI is given Aternity's own names and picks the ones meant ("What PCs had hard drive issue
+    # this week?" was answered "no event named Hard drive" on stage, Nov 2026); several with |
+    t.set_health([ev(NOW - HOUR, "PC5", "HD Failure", "Critical", cat="Hardware"),
+                  ev(NOW - HOUR, "PC6", "Faulty HD S.M.A.R.T. Status", "Major", cat="Hardware"),
+                  ev(NOW - HOUR, "PC7", "System Crash", "Critical", cat="System")], H, today=True)
+    from uxcorrelate.chat import event_kinds, system
+    assert {"HD Failure", "Faulty HD S.M.A.R.T. Status"} <= set(event_kinds(t))
+    assert "HD Failure" in system(t, NOW) and "never the question's own words" in system(t, NOW)
+    both = run_block("who", {"what": "event", "name": "HD Failure | Faulty HD S.M.A.R.T. Status", "days": 7}, t,
+                     None, NOW)
+    assert sorted(x[1] for x in both["rows"]) == ["PC5", "PC6"]
+    as_list = run_block("who", {"what": "event", "name": ["HD Failure", "Faulty HD S.M.A.R.T. Status"]}, t, None, NOW)
+    assert sorted(x[1] for x in as_list["rows"]) == ["PC5", "PC6"]
+    # the question's own words, with no kind sharing one: the answer names the kinds there are
+    none = events(t, NOW, name="hard drive issue", days=7)
+    assert none["rows"] == [] and any(n.startswith('No kind of event is named like "hard drive issue". The kinds '
+                                                   'recorded in this period: ') and "HD Failure" in n
+                                      for n in none["notes"])
     assert who(t, NOW, "event", name="hard drive failure")["rows"][0][1] == "PC5"
     assert "days" in next(x["function"] for x in TOOLS if x["function"]["name"] == "who")["parameters"]["properties"]
 

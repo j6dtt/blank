@@ -167,6 +167,13 @@ def test_an_event_is_over_after_an_hour_with_no_new_one_and_a_later_one_is_a_new
     care.check(client(), at(17, 5))
     assert len(care.issues["mq2208"]) == 3 and care.view(at(17, 5))["users"][0]["status"] == "issue"
     assert care.pending == ["mq2208"]
+    # "Investigate again now" and the one that runs by itself: from 30 min before the day's first
+    # issue, over or not (stage, Nov 2026: the button took the open 17:00 one, leaving 09:00 out)
+    assert care.view(at(17, 5))["users"][0]["start"] == "2026-11-09T14:30:00Z"  # 08:30 Chicago
+    assert care.detail("mq2208", at(17, 5))["start"] == "2026-11-09T14:30:00Z"
+    calls = []
+    care.run_next(lambda u, s, e: calls.append(s) or {"answer": {"title": "T"}}, at(17, 5))
+    assert calls == [datetime(2026, 11, 9, 14, 30, tzinfo=timezone.utc)]
 
 
 def test_an_open_event_saved_by_the_build_before_is_the_same_issue():
