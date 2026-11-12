@@ -153,19 +153,24 @@ in `./data` each night (`mkdir -p data && chmod a+rwx data` before the
 first start).
 
 Assessment (top of the Today tab): a short reading of the day for
-executives, written at 09:00, 12:00, 15:00 and 18:00: a verdict, what is
-new since the one before, the day so far, and what to look at first.
-Under its banner (green, amber or red with the verdict): four numbers
-(active users, Major slow actions, PCs with a crash, the typical logon
-time) and three charts of today up to the hour, each against the same
-hour on the working days before. It reads Aternity's start-ups once an
-hour for this.
+executives, written at 09:00, 12:00, 15:00 and 18:00, under a banner
+(green, amber or red with the verdict): the verdict and what the day
+means for people working, then points labelled Changed (since the one
+before), Watch (above its usual range now), Earlier (above it earlier
+today, not now) and Start-ups, and what to look at first. Yesterday's
+summary is beside it. The words that rate a count are fixed: isolated
+(under 5 PCs), limited (5 to 49), widespread (50 or more); above,
+within or below its usual range (the lowest to the highest of the same
+kind of day before, by this time); rose, fell, steady, new, cleared.
 Counts and names of events and applications only, never a user or a PC.
-The AI words it and every number is checked against the counts of its
-hour. The text is of the time it was written (said above it); the four
-numbers and the charts move with every read. Earlier ones of the day and yesterday's
-summary are one click away; Copy puts it on the clipboard. Kept 8 days in
-`./data/assess`.
+The AI words it and every number and rating word is checked against the
+counts of its hour; otherwise our own text is shown. Earlier ones of
+the day are one click away; Copy puts it on the clipboard. Kept 8 days
+in `./data/assess`. Three small charts of today up to the hour (the
+share of actions rated Major, PCs with a crash so far, the typical
+logon time), each against the same hour on the days before, are a row
+of their own in Today's issues, under the active users and PCs; Aternity's
+start-ups are read once an hour for them.
 
 Care list tab (second): up to 50 users, each checked every 15 minutes.
 "+ Add a user" (top right of the tab) opens a box: the username as

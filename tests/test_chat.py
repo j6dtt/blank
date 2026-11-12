@@ -403,3 +403,51 @@ def test_the_endpoint(monkeypatch, tmp_path):
 def test_pc_kind(value, kind):
     from uxcorrelate.today import pc_kind
     assert pc_kind(value) == kind
+
+
+def test_login_look_ups_who_logged_in_where():
+    """The user's request, Nov 2026: "who last logged into <PC>?", "who logged into <PC> on <date>?",
+    "which desktop did <user> log in on <date>?", "which desktop is <user> currently logged in?"."""
+    from uxcorrelate.chat import logins
+    from uxcorrelate.models import BootSample
+    t = filled()
+    day0 = t.midnight(date(2026, 11, 9))
+    recs = [BootSample(day0 + 8 * HOUR, "PC3", "amy", type="Machine Boot", duration=70.0),
+            BootSample(day0 + 8 * HOUR + timedelta(minutes=2), "PC3", "amy", type="User Logon", duration=40.0),
+            BootSample(day0 + 13 * HOUR, "PC3", "bob", type="User Logon", duration=35.0),
+            BootSample(day0 - 2 * 24 * HOUR + 9 * HOUR, "VD-7", "amy", type="User Logon", duration=50.0)]
+
+    class Aternity:
+        warnings: list = []
+        asked: list = []
+
+        def boots(self, start, end, username=None, device=None):
+            self.asked.append((start, end, username, device))
+            return [r for r in recs if start <= r.timestamp < end and (not username or r.username == username)
+                    and (not device or r.device == device)]
+    a = Aternity()
+    last = logins(t, None, NOW, lambda: a, device="PC3")
+    assert last["title"] == "Logons on PC3" and last["total"] == "2 logons"
+    assert last["rows"] == [["Mon Nov 09 13:00", "bob", "PC3", "User Logon"],
+                            ["Mon Nov 09 08:00", "amy", "PC3", "Machine Boot, User Logon"]]  # two rows, one logon
+    assert last["say"] == "The latest logon on PC3: bob, Mon Nov 09 13:00." and last["runs"][0]["device"] == "PC3"
+    assert any("a logon it did not record is not here" in n and "Looked back 14 days" in n for n in last["notes"])
+    on = logins(t, None, NOW, lambda: a, username="amy", date="2026-11-07")
+    assert on["rows"] == [["Sat Nov 07 09:00", "amy", "VD-7", "User Logon"]] and on["period"].startswith("Sat Nov 07, 2026")
+    assert a.asked[-1][:2] == (t.midnight(date(2026, 11, 7)), t.midnight(date(2026, 11, 8)))  # that local day only
+    none = logins(t, None, NOW, lambda: a, device="PC3", date="2026-11-08")
+    assert none["rows"] == [] and "recorded no start-up or logon on PC3" in none["say"]
+    assert "not a date" in logins(t, None, NOW, lambda: a, device="PC3", date="last week")["notes"][0]
+    # now: from today's activity, no read of Aternity
+    before = len(a.asked)
+    now = logins(t, None, NOW, lambda: a, username="u-PC4", current=True)
+    assert now["title"] == "Where u-PC4 is working now" and len(a.asked) == before
+    assert now["rows"] == [["u-PC4", "PC4", "physical", "14:00 to 15:00"]]
+    assert now["say"] == "u-PC4 last worked on PC4 (physical), in the hour 14:00 to 15:00."
+    assert logins(t, None, NOW, lambda: a, device="vd-1", current="true")["rows"][0][:2] == ["u-vd-1", "VD-1"]
+    assert "no measured action today" in logins(t, None, NOW, lambda: a, username="nobody", current=True)["say"]
+    assert logins(t, None, NOW, lambda: a)["title"] == "Whose logons?"
+    assert logins(t, None, NOW, None, device="PC3")["title"] == "Aternity is not set"
+    assert run_block("logins", {"device": "PC3"}, t, None, NOW, lambda: a)["total"] == "2 logons"
+    tool = next(x["function"] for x in TOOLS if x["function"]["name"] == "logins")
+    assert set(tool["parameters"]["properties"]) == {"username", "device", "date", "current"}

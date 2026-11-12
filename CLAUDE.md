@@ -276,37 +276,51 @@ unset `<REQUIRED>` base URLs.
   called by the Today reader's `after=`; after a restart the latest hour
   passed is written with the time it is). Our code counts the facts as
   lines (`snapshot`: counts and names of events and applications, never
-  a user or PC; `today_lines`, `new_lines` against the snapshot saved
-  with the one before, `open_lines`), the verdict and what to look at
-  first are by fixed rules (`verdict`, `first`: an AI service down is
-  said, never first), the AI words them in `chat.SHAPE` (`word`), held
-  to the lines' numbers (`refused`), else the lines are shown. Written
-  once and saved in `<data>/assess/<date>.json`, `KEEP_DAYS`. The day
-  before gets one summary (`_yesterday`, from `Today.saved` and
-  `health_days`, when they are there), shown as "Yesterday": written
-  once, so evening and morning never differ. `verify --ai`: "writes the
-  assessment" (`SAMPLE`).
-  Layout B (the user's pick from mock-ups, 2026-11-11): a banner in the
-  verdict's colour (`--as`), four numbers (`kpis`), the text beside three
-  charts (`charts`, drawn by `asChart`: one point per hour of today so
-  far, the lowest to highest of the same hour on the `USUAL_DAYS` days
-  before as a band when `MIN_USUAL` have one, a mark at each
-  assessment): the share of actions rated Major (`MIN_ACTIONS` an
-  hour, else no point: the one worked-out percentage on the page, the
-  user's choice), the PCs with a crash so far today (each PC once, from
-  `health_days`' first times), the typical logon time (`MIN_STARTS`).
-  Start-ups: `_boots` reads `client.boots` for today again every
-  `BOOTS_EVERY` and each day before once (`boots_of`: per Aternity
-  type, how many, the middle value, per hour; saved in the day's file;
+  a user or PC, with what the charts give, `chart_facts`), the verdict
+  and what to look at first are by fixed rules (`verdict`, `first`: an
+  AI service down is said, never first; the verdict says why,
+  `_judged`, needs `VERDICT_PCS` PCs, and what it rests on is always
+  among the lines). The richer wording (the user's pick, 2026-11-12):
+  `meaning` (what the day means for people working: slow actions, PCs
+  with a crash, the typical logon, each against its usual range), then
+  lines under four labels (`PARTS`): Changed (`changed_lines`: new,
+  rose, steady since the one before; the share of actions rated Major
+  rose / fell, an hour against an hour), Watch (`watch_lines`: above its
+  usual range now and not moved), Earlier (`earlier_lines`: hours above
+  the range, or a count an earlier assessment had above it, cleared
+  since), Start-ups (`startup_lines`); the day so far (`today_lines`).
+  Fixed words: `reach` (isolated under `ISOLATED` = `VERDICT_PCS` PCs,
+  limited, widespread from `WIDESPREAD` 50: my suggestion, not
+  confirmed), above / within / below its usual range (`_against`; saved
+  words of before Nov 12 read by `_pos`). The AI words them (`SYSTEM`,
+  `word`; each point starts with its label), held to the lines' numbers
+  and to the fixed words (`refused`: a word no line gives), else our own
+  text (`ours`, kept with each period). Written once and saved in
+  `<data>/assess/<date>.json`, `KEEP_DAYS`. The day before gets one
+  summary (`_yesterday`, from `Today.saved` and `health_days`), shown as
+  "Yesterday": written once, so evening and morning never differ.
+  `verify --ai`: "writes the assessment" (`SAMPLE`; it counts the
+  points with their label). Layout (Proposal 1, the user's pick,
+  2026-11-12): the box is the banner in the verdict's colour (`--as`)
+  and the words (`answerHtml(text, labels)`: a label is a small tag,
+  the verdict sentence bold) with yesterday beside them (`#asYest`);
+  no row of numbers. The three charts (`charts`, `miniChart`) are a row
+  of their own in Today's issues under the active strip (`#tMinis`):
+  one point per hour of today so far, the lowest to highest of the same
+  hour on the `USUAL_DAYS` days before as a band when `MIN_USUAL` have
+  one: the share of actions rated Major (`MIN_ACTIONS` an hour, else no
+  point: the one worked-out percentage on the page, the user's choice),
+  the PCs with a crash so far today (each PC once, from `health_days`'
+  first times), the typical logon time (`MIN_STARTS`; when there is
+  none, `boots_note` says why). Start-ups: `_boots` reads `client.boots`
+  for today again every `BOOTS_EVERY` and each day before once
+  (`boots_of`: per Aternity type, how many, the middle value, per hour;
   the type with "logon" in its name is charted, no type name is
-  assumed), and `boot_lines` puts them in the facts. Software is not
-  in it (the user). Yesterday's summary is always in view (`.asY`).
-  The verdict says why (`_judged`), needs `VERDICT_PCS` PCs, and what
-  it rests on is always among the lines. The page does not show the
-  lines a text was written from ("The counts behind it", removed at
-  the user's word: frozen at its hour, they read as a mismatch beside
-  the live numbers); the text is captioned "Written at HH:MM" and the
-  numbers and charts "Now, as of HH:MM" (the Today reader's last read).
+  assumed). Software is not in it (the user). The page does not show the
+  lines a text was written from (frozen at its hour, they read as a
+  mismatch beside the live numbers); the text is captioned "Written at
+  HH:MM". The Today tiles have no small per-day chart (the user,
+  2026-11-12); the "Other crashes" table keeps its bars.
 - `care.py`: the "Care list" tab, second (`/api/care`, `/api/care/user`;
   link `#care`, as `#today`, `#investigate`, `#startups`): users in
   `<data>/care_list.json` (`LIST_FILE`, read at every check, `CARE_MAX`
@@ -457,12 +471,24 @@ unset `<REQUIRED>` base URLs.
   this week" had given today's one PC, then counts per day (stage, Nov
   2026). An event name no kind has is matched by a shared telling word
   (`_kinds_named`: "hard drive failure" -> HD Failure), said in a
-  note. Hangs per
+  note. logins (the user's request 2026-11-12, chat only: no tab, no
+  page of its own): who logged in to a PC, or which PC a user logged in
+  to. The latest (`LOGIN_DAYS` back) or one local day: Aternity's
+  start-up and logon rows read now for that one user or PC
+  (`client.boots(username=, device=)`, via `aternity_of` passed to
+  `ask` / `run_block`; rows of one user and PC within `LOGIN_GAP` are
+  one logon, with the types Aternity recorded; no type name assumed).
+  `current`: from the Today reader's `Hour.user_devs`, the latest hour
+  of today with a measured action, no read of Aternity; it says where
+  they last worked, not that a session is open. Names by `_named`
+  (exact, the one that has it, else as typed). A logon Aternity did
+  not record is never made up; how long it keeps them is not known.
+  Hangs per
   app and software changes are not blocks yet (to measure with verify).
 - `ai.py`: client for the self-hosted AI services (`ai.services` in
   config.yaml, key from the env var named in `key_env`). OpenAI-style API
   (`verify.verify_ai`, passed on prod for both services: key, reachable,
-  login header, plain reply, the right block in 6 tries + no pick outside
+  login header, plain reply, the right block in 11 tries + no pick outside
   the data, counts repeated right; it tests `chat.TOOLS` and `SYSTEM`,
   then `software_chat.TOOLS` with `AI_SW_TRIES`, 12 tries covering every
   block, not yet on prod).

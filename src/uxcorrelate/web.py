@@ -387,7 +387,8 @@ def create_app(config_path: str | None = None) -> FastAPI:
             raise HTTPException(503, "Still reading Aternity: ask again in a minute.")
         client = AiClient(service, os.environ.get(service.key_env, "") if service.key_env else "")
         try:
-            answer = ask(body.question, body.history, client, today, names, datetime.now(timezone.utc))
+            answer = ask(body.question, body.history, client, today, names, datetime.now(timezone.utc),
+                         aternity_client)
         except ApiError as exc:
             log.warning("Chat: the AI service %s did not answer (%s)", service.name, exc.short())
             raise HTTPException(502, f"The AI service {service.name} did not answer ({exc.short()}). Try again; "

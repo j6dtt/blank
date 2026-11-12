@@ -6,11 +6,17 @@ recommended"): every 3 hours in working hours (`HOURS`), counts and application 
 (no user, no PC), one summary of the day written after midnight and shown the next morning
 as "Yesterday" (written once, so the two never differ), kept `KEEP_DAYS` days.
 
-Our code works the facts out, as plain lines; the AI words them (`chat.SHAPE`) and every
-number in its text must be in those lines, as in the chats; otherwise the lines are shown
-as they are. Written once per period and saved in `<data>/assess/<date>.json`, so everyone
-reads the same text and it costs one AI call a period. The verdict and the "look first at"
-line are by fixed rules (`verdict`, `first`), never the AI's.
+Our code works the facts out, as plain lines under four labels (`PARTS`: Changed, Watch,
+Earlier, Start-ups) with a sentence on what the day means for people working (`meaning`); the
+AI words them, and every number in its text must be in those lines, as in the chats, and the
+fixed words (`reach`: isolated, limited, widespread; above, within or below the usual range;
+rose, fell, steady, new, cleared) only where a line gives them; otherwise our own text
+(`ours`) is shown. Written once per period and saved in `<data>/assess/<date>.json`, so
+everyone reads the same text and it costs one AI call a period. The verdict and the "look
+first at" line are by fixed rules (`verdict`, `first`), never the AI's.
+
+Layout (Proposal 1, the user's pick, Nov 12 2026): the box is the banner and the words, with
+yesterday beside them; the three charts (`charts`) are a row of their own in Today's issues.
 """
 
 from __future__ import annotations
@@ -18,11 +24,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from .chat import RATIO, SHAPE, allowed, clean, numbers
+from .chat import RATIO, allowed, clean, numbers
 from .config import SEVERITY_ORDER, TOP_STATUS
 from .http import ApiError, short_error
 from .models import plural
@@ -35,44 +42,109 @@ MIN_ACTIONS = 50  # an hour with fewer measured actions has no share (one slow a
 MIN_STARTS = 5  # an hour, or a type, with fewer start-ups has no typical time
 BOOTS_EVERY = timedelta(minutes=55)  # today's start-ups are read again after this (the charts are "up to the hour")
 VERDICT_PCS = 5  # fewer PCs than this do not make the day's verdict (as software.MIN_PROBLEM)
+ISOLATED = VERDICT_PCS  # under this many PCs: isolated (too few to make the verdict)
+WIDESPREAD = 50  # this many PCs or more: widespread; in between: limited (my suggestion, Nov 2026)
+TEXT_MAX = 2000  # the AI's text (the chats' answers are shorter)
 SOURCES = ("Aternity", "NetIM")  # a connection down that an executive must know of
 ATTENTION, WORSE, NORMAL, UNKNOWN = ("Needs attention", "Worse than usual", "A normal day so far",
                                      "No usual to compare with yet")
 log = logging.getLogger("uxcorrelate")
 
 SYSTEM = ("You write a short assessment for executives of how the company's PC users are doing today, from "
-          "Riverbed Aternity. You are given the verdict and the facts as lines: what is new since the last "
-          "assessment, the day so far, what is still open, and what to look at first. Write it " + SHAPE + ". "
-          "The first sentence gives the verdict as it is given and why, in plain words. The points say what is new and "
-          "what matters in the day so far, by name, most serious first; leave out what does not matter to an "
-          "executive. The last line is the given \"look first at\". Use only numbers that are in the lines, written "
-          "exactly as given, and do not work out new ones (no sums, no percentages, no \"twice as many\"). Say "
-          "more, fewer or as usual only where a line says so. Never name a user or a PC. No greeting, no sign-off.")
+          "Riverbed Aternity. You are given the verdict, what the day means for people working, and the facts as "
+          "lines under the labels Changed, Watch, Earlier and Start-ups, then the day so far and what to look at "
+          "first. Write it as plain text with no markdown and no table, in this shape: first one or two sentences: "
+          "the verdict as it is given, then what the day means for people working, in plain words; then two to four "
+          "lines that each start with \"- \" and give one thing, by name, with its number, most serious first, each "
+          "starting with the label of the facts it comes from (\"Changed: \", \"Watch: \", \"Earlier: \" or "
+          "\"Start-ups: \") when they have one; leave out what does not matter to an executive; then one last line "
+          "that starts with \"Next: \" and gives the \"look first at\". The words isolated, limited, widespread, "
+          "above, within or below the usual range, rose, fell, steady and cleared are set by rules on the counts: "
+          "use them only where a line gives them, for that same count. Use only numbers that are in the lines, "
+          "written exactly as given, and do not work out new ones (no sums, no new percentages, no \"twice as "
+          "many\"). Never name a user or a PC. No greeting, no sign-off.")
+
+# The fixed words (the user's choice, Nov 12 2026: "the richer wording"): each is set by a rule on the
+# counts, so two days described the same way really were the same.
+OLD = {"more than usual": "above", "fewer than usual": "below", "as usual": "within"}  # saved before Nov 12
+RATED = re.compile(r"\b(isolated|limited|widespread|rose|fell|steady|cleared)\b", re.I)
+PLACED = re.compile(r"\b(above|within|below)\b\W+(?:\w+\W+){0,2}?usual\b", re.I)
 
 
-def _usual(u: dict | None) -> str | None:
-    """A count's own verdict against the days before, in words; None when not known yet."""
+def reach(pcs: int) -> str:
+    """How far it reaches: isolated under `ISOLATED` PCs, limited under `WIDESPREAD`, else widespread."""
+    return "isolated" if pcs < ISOLATED else "limited" if pcs < WIDESPREAD else "widespread"
+
+
+def _usual(u: dict | None) -> dict | None:
+    """A count's place against the same kind of day before by this time (today.usual): above,
+    within or below its usual range (the lowest to the highest of those days); None: not known yet."""
     if not u or not u.get("enough"):
         return None
-    return {"more": "more than usual", "fewer": "fewer than usual"}.get(u.get("verdict"), "as usual")
+    return {"pos": {"more": "above", "fewer": "below"}.get(u.get("verdict"), "within"),
+            "low": u["low"], "high": u["high"], "days": u["days"]}
+
+
+def _pos(u) -> str | None:
+    """above / within / below; also from the words an assessment saved before Nov 12."""
+    return u.get("pos") if isinstance(u, dict) else OLD.get(u)
+
+
+def _pcs(n: int) -> str:
+    return f"{n:,} PC" if n == 1 else f"{n:,} PCs"
+
+
+def _against(u, whose: str = "its") -> str:
+    """'above its usual range (0 to 1 PCs by this time)'; 'no usual to compare with yet'."""
+    pos = _pos(u)
+    if pos is None:
+        return "no usual to compare with yet"
+    if not isinstance(u, dict):
+        return f"{pos} {whose} usual range"
+    lo, hi = u["low"], u["high"]
+    return f"{pos} {whose} usual range ({_pcs(lo) if lo == hi else f'{lo:,} to {hi:,} PCs'} by this time)"
+
+
+def _what(e: dict) -> str:
+    """'Application Crash (Major)'; the slow actions already say their rating."""
+    name, sev = e.get("what") or e["name"], e.get("severity")
+    return name if not sev or name.startswith(sev) else f"{name} ({sev})"
+
+
+def _join(parts: list[str]) -> str:
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def _rated(e: dict) -> bool:
+    return e.get("severity") in SEVERITY_ORDER[:2]
 
 
 def _rank(e: dict) -> tuple:
     """Most serious first: Aternity's severity, then a crash, a hang, then the PCs."""
     name = (e.get("name") or "").lower()
     sev = SEVERITY_ORDER.index(e["severity"]) if e.get("severity") in SEVERITY_ORDER else len(SEVERITY_ORDER)
-    return (sev, 0 if "crash" in name else 1 if "hang" in name else 2, e.get("usual") != "more than usual",
-            -e["pcs"])
+    return (sev, 0 if "crash" in name else 1 if "hang" in name else 2, _pos(e.get("usual")) != "above", -e["pcs"])
 
 
-def snapshot(today_view: dict, care_view: dict | None, status_view: dict | None, boots: dict | None = None) -> dict:
+def chart_facts(charts: list[dict]) -> dict:
+    """What the charts give the words (no PC, no user): the latest point, and the hours of
+    today above the usual range (the per-hour ones make "Earlier" and "Watch")."""
+    return {c["key"]: {"what": c.get("what") or c["title"], "unit": c["unit"], "now": c.get("now"),
+                       "above": [p["h"] for p in c["points"] if p["v"] is not None and p.get("hi") is not None
+                                 and p["v"] > p["hi"]]}
+            for c in charts}
+
+
+def snapshot(today_view: dict, care_view: dict | None, status_view: dict | None, boots: dict | None = None,
+             charts: dict | None = None) -> dict:
     """What an assessment rests on, as counts and names of events and applications: no user,
-    no PC. Saved with it, so the next one can say what is new."""
+    no PC. Saved with it, so the next one can say what changed."""
     s = today_view["slow"]
     events = [{"name": e["name"], "category": e["category"], "severity": e.get("severity"), "pcs": e["pcs"],
                "usual": _usual(e.get("usual"))} for e in today_view.get("events", []) if e["pcs"]]
     users = (care_view or {}).get("users", [])
     return {
+        "kind": today_view.get("kind"),
         "active": {k: today_view["active"]["today"][k] for k in ("users", "pcs", "virtual", "physical")},
         "events": sorted(events, key=_rank),
         "slow": {"pcs": s["pcs"], "actions": s["actions"], "users": s["users"], "usual": _usual(s.get("usual"))},
@@ -80,21 +152,26 @@ def snapshot(today_view: dict, care_view: dict | None, status_view: dict | None,
         "care": {"listed": len(users), "with_issue": sum(1 for u in users if u.get("status") == "issue"),
                  "issues": sum(len(u.get("issues", [])) + len(u.get("cleared", [])) for u in users)},
         "down": sorted(i["name"] for i in (status_view or {}).get("items", []) if i.get("state") == "down"),
-        # start-ups today, per Aternity type: how many, the typical time, the days before (boots_of)
+        # start-ups today, per Aternity type: how many, the typical time, the days before (boots_view)
         "boots": boots,
+        "charts": charts or {},
     }
 
 
+def _counts(snap: dict) -> list[dict]:
+    """The counts rated Critical or Major: the events, then the slow actions."""
+    return [e for e in snap["events"] if _rated(e)] + [dict(snap["slow"], severity=TOP_STATUS, what=f"{TOP_STATUS} slow actions")]
+
+
 def _judged(snap: dict) -> tuple[str, list[str]]:
-    """The verdict and why, by fixed rules. A count rated Critical or Major that is more than
-    usual on `VERDICT_PCS` PCs or more makes the day worse than usual (Critical: needs
+    """The verdict and why, by fixed rules. A count rated Critical or Major that is above its
+    usual range on `VERDICT_PCS` PCs or more makes the day worse than usual (Critical: needs
     attention), as does a connection to Aternity or NetIM being down. Fewer PCs than that are
-    listed, but 2 PCs against a usual 0 to 1 are not the company's day (stage, Nov 2026)."""
-    counts = [dict(e, what=e["name"]) for e in snap["events"]] + [
-        dict(snap["slow"], severity=TOP_STATUS, what=f"{TOP_STATUS} slow actions")]
-    top = [c for c in counts if c.get("severity") in SEVERITY_ORDER[:2]]
-    more = [c for c in top if c["usual"] == "more than usual" and c["pcs"] >= VERDICT_PCS]
-    why = [f"{c['what']} ({c['severity']}) is on {plural(c['pcs'], 'PC')}, more than usual" for c in more]
+    isolated: listed, but 2 PCs against a usual 0 to 1 are not the company's day (stage, Nov 2026)."""
+    top = _counts(snap)
+    above = [c for c in top if _pos(c["usual"]) == "above"]
+    more = [c for c in above if c["pcs"] >= VERDICT_PCS]
+    why = [f"{_what(c)} is on {_pcs(c['pcs'])}, {reach(c['pcs'])}, above its usual range" for c in more]
     down = [n for n in snap["down"] if n in SOURCES]
     if down:
         return ATTENTION, [f"the connection to {' and '.join(down)} is down"] + why
@@ -102,12 +179,11 @@ def _judged(snap: dict) -> tuple[str, list[str]]:
         return ATTENTION, why
     if more:
         return WORSE, why
-    if not any(c["usual"] for c in top):
+    if not any(_pos(c["usual"]) for c in top):
         return UNKNOWN, ["the days before are not saved yet for any count rated Critical or Major"]
-    small = [c for c in top if c["usual"] == "more than usual"]
-    return NORMAL, [f"nothing rated Critical or Major is more than usual on {VERDICT_PCS} PCs or more"
-                    + (f" ({', '.join(c['what'] + ': ' + plural(c['pcs'], 'PC') for c in small)} more than usual)"
-                       if small else "")]
+    small = [c for c in above if c["pcs"] < VERDICT_PCS]
+    return NORMAL, [f"nothing rated Critical or Major is above its usual range on {VERDICT_PCS} PCs or more"
+                    + (f" ({', '.join(_what(c) + ': ' + _pcs(c['pcs']) for c in small)}, isolated)" if small else "")]
 
 
 def verdict(snap: dict) -> str:
@@ -116,42 +192,208 @@ def verdict(snap: dict) -> str:
 
 def first(snap: dict) -> str:
     """What to look at first: a connection down, else the most serious event (Critical or
-    Major), else the slow actions when more than usual, else nothing to act on."""
+    Major), else the slow actions when above their usual range, else nothing to act on."""
     down = [n for n in snap["down"] if n in SOURCES]  # an AI service down is said, never what to look at first
     if down:
         return (f"the connection to {' and '.join(down)}, which is down (the lights at the top right of "
                 "the page say since when)")
-    top = [e for e in snap["events"] if e.get("severity") in SEVERITY_ORDER[:2]]
+    top = [e for e in snap["events"] if _rated(e)]
     if top:
         e = top[0]
-        return (f"{e['name']} on {plural(e['pcs'], 'PC')} ({e['severity']}"
-                + (f", {e['usual']}" if e["usual"] else "") + "): on the Today tab, click its tile for who has it")
-    if snap["slow"]["usual"] == "more than usual":
+        pos = _pos(e["usual"])
+        return (f"{e['name']} on {_pcs(e['pcs'])} ({e['severity']}, {reach(e['pcs'])}"
+                + (f", {pos} its usual range" if pos else "") + "): on the Today tab, click its tile for who has it")
+    if _pos(snap["slow"]["usual"]) == "above":
         app = max(snap["apps"], key=snap["apps"].get, default=None)
-        return (f"{TOP_STATUS} slow actions, more than usual" + (f"; the application with the most is {app}" if app else "")
+        return (f"{TOP_STATUS} slow actions, above their usual range" + (f"; the application with the most is {app}" if app else "")
                 + ": on the Today tab, click it for who has them")
     return "nothing needs action now; the next assessment says what changes"
 
 
 def _event_line(e: dict) -> str:
-    return (f"{e['name']} ({e['severity'] or 'no severity'}): {plural(e['pcs'], 'PC')}"
-            + (f", {e['usual']}" if e["usual"] else ""))
+    return f"{_what(e)}: {_pcs(e['pcs'])}, {reach(e['pcs'])}, {_against(e['usual'])}"
+
+
+def _logon(boots: dict | None) -> tuple[str, dict] | None:
+    """The start-up type an executive feels: the one with "logon" in its name, else the most."""
+    types = (boots or {}).get("types") or {}
+    return next(((n, x) for n, x in types.items() if "logon" in n.lower()), next(iter(types.items()), None))
+
+
+def _time_pos(x: dict) -> str | None:
+    u = x.get("usual")
+    return None if not u else "above" if x["typical"] > u["high"] else "below" if x["typical"] < u["low"] else "within"
+
+
+def _point_pos(p: dict | None) -> str | None:
+    if not p or p.get("lo") is None:
+        return None
+    return "above" if p["v"] > p["hi"] else "below" if p["v"] < p["lo"] else "within"
+
+
+def _fmt(v, unit: str) -> str:
+    return f"{v:g}%" if unit == "%" else f"{v:,}" if unit == "PCs" else f"{v:g} {unit}"
+
+
+def meaning(snap: dict) -> str:
+    """What the day means for people working: the three things they feel (slow actions, PCs
+    with a crash, the typical logon), each against its usual range."""
+    parts = []
+    s = _pos(snap["slow"]["usual"])
+    parts.append(f"{TOP_STATUS} slow actions are {s} their usual range" if s
+                 else f"{TOP_STATUS} slow actions have no usual to compare with yet")
+    crash = _point_pos((snap.get("charts") or {}).get("crash", {}).get("now"))
+    if crash:
+        parts.append(f"PCs with a crash so far are {crash} their usual range")
+    logon = _logon(snap.get("boots"))
+    if logon and _time_pos(logon[1]):
+        parts.append(f"a typical {logon[0]} is {_time_pos(logon[1])} its usual range")
+    return f"Against the {snap.get('kind') or 'days'} before: {_join(parts)}."
+
+
+def changed_lines(snap: dict, before: dict | None, since: str | None) -> tuple[list[str], set, str | None]:
+    """What moved since the assessment before: new, rose (counts of the day only rise or stay),
+    rose or fell (the share of actions rated Major, an hour against an hour), connections and
+    the Care list; and one line of what stayed steady. None before: the first of the day."""
+    if before is None:
+        return [], set(), None
+    out, keys, steady = [], set(), []
+    for n in snap["down"]:
+        if n not in before["down"]:
+            out.append(f"The connection to {n} went down.")
+    for n in before["down"]:
+        if n not in snap["down"]:
+            out.append(f"The connection to {n} is back.")
+    was = {(e["category"], e["name"]): e for e in before["events"]}
+    for e in snap["events"]:
+        if not (_rated(e) or _pos(e["usual"]) == "above"):  # a Minor event is not executive news
+            continue
+        k, old = (e["category"], e["name"]), was.get((e["category"], e["name"]))
+        if old is None:
+            out.append(f"{_what(e)} is new since {since}: {_pcs(e['pcs'])}, {reach(e['pcs'])}, {_against(e['usual'])}.")
+            keys.add(k)
+        elif e["pcs"] > old["pcs"]:
+            out.append(f"{_what(e)} rose from {old['pcs']:,} to {_pcs(e['pcs'])} since {since}: {reach(e['pcs'])}, "
+                       f"{_against(e['usual'])}.")
+            keys.add(k)
+        elif _rated(e):
+            steady.append(e)
+    s, b = snap["slow"], before["slow"]
+    if s["pcs"] > b["pcs"]:
+        out.append(f"{TOP_STATUS} slow actions rose from {b['pcs']:,} to {_pcs(s['pcs'])} since {since}, "
+                   f"{_against(s['usual'], 'their')}.")
+        keys.add("slow")
+    risen = sorted(((a, n - before["apps"].get(a, 0)) for a, n in snap["apps"].items()
+                    if n > before["apps"].get(a, 0)), key=lambda kv: (-kv[1], kv[0]))[:TOP]
+    if risen:
+        out.append(f"{TOP_STATUS} slow actions added since {since}, by application: "
+                   + ", ".join(f"{a} ({n:,})" for a, n in risen) + ".")
+    c = (snap.get("charts") or {}).get("share") or {}
+    o = ((before.get("charts") or {}).get("share") or {}).get("now")
+    if c.get("now") and o and c["now"]["h"] != o["h"]:
+        p, u = c["now"], c["unit"]
+        moved = "rose" if p["v"] > o["v"] else "fell" if p["v"] < o["v"] else "steady"
+        place = _point_pos(p)
+        out.append(f"{c['what']} {moved}: {_fmt(o['v'], u)} at {o['h']:02d}:00, {_fmt(p['v'], u)} at {p['h']:02d}:00"
+                   + (f", {place} its usual range ({_fmt(p['lo'], u)} to {_fmt(p['hi'], u)} at that hour)" if place else "")
+                   + ".")
+    more = snap["care"]["issues"] - before["care"]["issues"]
+    if more > 0:
+        out.append(f"Care list: {plural(more, 'new issue')} for the users watched.")
+    line = (f"Steady since {since}: " + ", ".join(f"{_what(e)} ({_pcs(e['pcs'])})" for e in steady[:TOP]) + ".") if steady else None
+    return out, keys, line
+
+
+def _spells(hours: list[int]) -> list[tuple[int, int]]:
+    """Hours in a row: [8, 9, 13] -> [(8, 9), (13, 13)]."""
+    out: list[tuple[int, int]] = []
+    for h in sorted(hours):
+        if out and h == out[-1][1] + 1:
+            out[-1] = (out[-1][0], h)
+        else:
+            out.append((h, h))
+    return out
+
+
+def _span(a: int, b: int) -> str:
+    return f"from {a:02d}:00 to {(b + 1) % 24:02d}:00"
+
+
+def watch_lines(snap: dict, changed: set) -> list[str]:
+    """What is above its usual range now and did not move since the assessment before (what
+    moved is said under Changed, once): events rated Critical or Major, the slow actions, and an
+    hour-by-hour line above its range up to now."""
+    out = []
+    for e in snap["events"]:
+        if _rated(e) and _pos(e["usual"]) == "above" and (e["category"], e["name"]) not in changed:
+            out.append(f"{_what(e)} is on {_pcs(e['pcs'])}, {_against(e['usual'])}: {reach(e['pcs'])}"
+                       + (", too few to change the day's verdict" if e["pcs"] < VERDICT_PCS else "") + ".")
+    s = snap["slow"]
+    if _pos(s["usual"]) == "above" and "slow" not in changed:
+        out.append(f"{TOP_STATUS} slow actions are on {_pcs(s['pcs'])}, {_against(s['usual'], 'their')}.")
+    for key in ("share", "logon"):
+        c = (snap.get("charts") or {}).get(key) or {}
+        spells, p = _spells(c.get("above", [])), c.get("now")
+        if spells and p and spells[-1][1] == p["h"]:
+            out.append(f"{c['what']} has been above its usual range since {spells[-1][0]:02d}:00: {_fmt(p['v'], c['unit'])} "
+                       f"at {p['h']:02d}:00, against {_fmt(p['lo'], c['unit'])} to {_fmt(p['hi'], c['unit'])}.")
+    return out
+
+
+def earlier_lines(snap: dict, earlier: list[tuple[str, dict]]) -> list[str]:
+    """What was above its usual range earlier today and is not now (cleared): hours of the
+    per-hour lines, and counts an earlier assessment had above their range."""
+    out = []
+    for key in ("share", "logon"):
+        c = (snap.get("charts") or {}).get(key) or {}
+        spells, p = _spells(c.get("above", [])), c.get("now")
+        on = bool(spells and p and spells[-1][1] == p["h"])
+        done = spells[:-1] if on else spells
+        if done:
+            out.append(f"{c['what']} was above its usual range {_join([_span(a, b) for a, b in done])}"
+                       + ("." if on else "; cleared since."))
+    now = {(e["category"], e["name"]): e for e in snap["events"]}
+    seen: dict = {}
+    for label, s in earlier:  # the earliest it was said
+        for e in s["events"]:
+            if _rated(e) and _pos(e["usual"]) == "above":
+                seen.setdefault((e["category"], e["name"]), (label, e))
+        if _pos(s["slow"]["usual"]) == "above":
+            seen.setdefault("slow", (label, dict(s["slow"], name=f"{TOP_STATUS} slow actions")))
+    for k, (label, e) in seen.items():
+        cur = snap["slow"] if k == "slow" else now.get(k)
+        if cur is None or _pos(cur["usual"]) != "above":
+            out.append(f"{_what(e)} was above its usual range at {label}; cleared since"
+                       + (f": {_against(cur['usual'], 'their' if k == 'slow' else 'its')} now." if cur else "."))
+    return out
+
+
+def startup_lines(boots: dict | None, kind: str | None = None) -> list[str]:
+    """Start-up and logon times today, each of Aternity's types against its usual range."""
+    if not boots or not boots.get("types"):
+        return []
+    unit, out = boots.get("unit", "s"), []
+    for name, x in list(boots["types"].items())[:TOP]:
+        u, pos = x.get("usual"), _time_pos(x)
+        out.append(f"A typical {name} takes {x['typical']:g} {unit} today ({x['n']:,} so far), "
+                   + (f"{pos} its usual range ({u['low']:g} to {u['high']:g} {unit} on the {u['days']} "
+                      f"{kind or 'days'} before)" if u else "no usual to compare with yet") + ".")
+    return out
 
 
 def today_lines(snap: dict) -> list[str]:
     """The day so far."""
     a, s = snap["active"], snap["slow"]
-    out = [f"Active: {plural(a['users'], 'user')} on {plural(a['pcs'], 'PC')} ({a['virtual']:,} virtual desktops, "
+    out = [f"Active: {plural(a['users'], 'user')} on {_pcs(a['pcs'])} ({a['virtual']:,} virtual desktops, "
            f"{a['physical']:,} physical PCs).",
-           f"{TOP_STATUS} slow actions: {s['actions']:,} on {plural(s['pcs'], 'PC')}"
-           + (f", {s['usual']}" if s["usual"] else ", no usual to compare with yet") + "."]
-    rated = [e for e in snap["events"] if e.get("severity") in SEVERITY_ORDER[:2]]
-    # the most serious, and every one that is more than usual: what the verdict rests on is always shown
-    top = rated[:TOP] + [e for e in rated[TOP:] if e["usual"] == "more than usual"]
+           f"{TOP_STATUS} slow actions: {s['actions']:,} on {_pcs(s['pcs'])}, {_against(s['usual'], 'their')}."]
+    rated = [e for e in snap["events"] if _rated(e)]
+    # the most serious, and every one above its usual range: what the verdict rests on is always shown
+    top = rated[:TOP] + [e for e in rated[TOP:] if _pos(e["usual"]) == "above"]
     out += [f"{_event_line(e)}." for e in top] or ["No crash or event rated Critical or Major."]
     if len(rated) > len(top):
-        out.append(f"{plural(len(rated) - len(top), 'other kind')} of event rated Critical or Major, none more "
-                   "than usual.")
+        out.append(f"{plural(len(rated) - len(top), 'other kind')} of event rated Critical or Major, none above "
+                   "its usual range.")
     apps = sorted(snap["apps"].items(), key=lambda kv: (-kv[1], kv[0]))[:TOP]
     if apps:
         out.append(f"Applications with the most {TOP_STATUS} slow actions: "
@@ -160,88 +402,59 @@ def today_lines(snap: dict) -> list[str]:
     if c["listed"]:
         out.append(f"Care list: {c['with_issue']:,} of the {plural(c['listed'], 'user')} watched "
                    f"{'has' if c['with_issue'] == 1 else 'have'} an open issue.")
-    out += boot_lines(snap.get("boots"))
     return out
 
 
-def boot_lines(boots: dict | None) -> list[str]:
-    """Start-up and logon times today, each of Aternity's types against the days before."""
-    if not boots or not boots.get("types"):
-        return []
-    unit, out = boots.get("unit", "s"), []
-    for name, x in list(boots["types"].items())[:TOP]:
-        u = x.get("usual")
-        out.append(f"{name}: {plural(x['n'], 'start-up')} today, typically {x['typical']:g} {unit}"
-                   + (f" (the {plural(u['days'], 'day')} before: {u['low']:g} to {u['high']:g} {unit})" if u
-                      else " (no usual to compare with yet)") + ".")
-    return out
-
-
-def new_lines(snap: dict, before: dict | None) -> list[str]:
-    """What is new since the assessment before (None: the first of the day, nothing to compare)."""
-    if before is None:
-        return []
-    out = []
-    was = {(e["category"], e["name"]): e for e in before["events"]}
-    for e in snap["events"]:
-        old = was.get((e["category"], e["name"]))
-        if old is None:
-            out.append(f"New: {_event_line(e)}.")
-        elif e["pcs"] > old["pcs"]:
-            out.append(f"{_event_line(e)}; it was {old['pcs']:,} at the last assessment.")
-    s, b = snap["slow"], before["slow"]
-    if s["pcs"] > b["pcs"]:
-        out.append(f"{TOP_STATUS} slow actions: now on {plural(s['pcs'], 'PC')}; it was {b['pcs']:,} at the last "
-                   "assessment" + (f"; {s['usual']}" if s["usual"] else "") + ".")
-    risen = sorted(((a, n - before["apps"].get(a, 0)) for a, n in snap["apps"].items()
-                    if n > before["apps"].get(a, 0)), key=lambda kv: (-kv[1], kv[0]))[:TOP]
-    if risen:
-        out.append(f"{TOP_STATUS} slow actions added since the last assessment, by application: "
-                   + ", ".join(f"{a} ({n:,})" for a, n in risen) + ".")
-    more = snap["care"]["issues"] - before["care"]["issues"]
-    if more > 0:
-        out.append(f"Care list: {plural(more, 'new issue')} for the users watched.")
-    for n in snap["down"]:
-        if n not in before["down"]:
-            out.append(f"The connection to {n} went down.")
-    for n in before["down"]:
-        if n not in snap["down"]:
-            out.append(f"The connection to {n} is back.")
-    return out
-
-
-def open_lines(snap: dict, before: dict | None) -> list[str]:
-    """What an earlier assessment already had and is still there (not said as new again)."""
-    if before is None:
-        return []
-    was = {(e["category"], e["name"]) for e in before["events"] if e.get("severity") in SEVERITY_ORDER[:2]}
-    return [f"{_event_line(e)}." for e in snap["events"]
-            if (e["category"], e["name"]) in was and e.get("severity") in SEVERITY_ORDER[:2]][:TOP]
-
-
-def facts(snap: dict, before: dict | None, since: str | None) -> dict:
-    new = new_lines(snap, before)
+def facts(snap: dict, earlier: list[tuple[str, dict]] | None = None) -> dict:
+    """Everything an assessment says, as lines under their labels. `earlier`: today's
+    assessments before this one, (time, snapshot), oldest first."""
+    earlier = earlier or []
+    before, since = (earlier[-1][1], earlier[-1][0]) if earlier else (None, None)
+    changed, keys, steady = changed_lines(snap, before, since)
     said, why = _judged(snap)
-    return {"verdict": said, "why": why, "since": since,
-            "new": new if before is not None else [],
-            "nothing_new": before is not None and not new,
-            "today": today_lines(snap), "open": open_lines(snap, before), "first": first(snap)}
+    return {"verdict": said, "why": why, "since": since, "meaning": meaning(snap),
+            "changed": changed + ([steady] if steady else []), "nothing_new": before is not None and not changed,
+            "watch": watch_lines(snap, keys), "earlier": earlier_lines(snap, earlier),
+            "startups": startup_lines(snap.get("boots"), snap.get("kind")),
+            "today": today_lines(snap), "first": first(snap)}
+
+
+PARTS = (("Changed", "changed"), ("Watch", "watch"), ("Earlier", "earlier"), ("Start-ups", "startups"))
+LABELS = tuple(label for label, _ in PARTS)  # one on each point, so the eye finds what kind of news it is
 
 
 def given(f: dict, label: str) -> str:
-    """The facts as the lines the AI is given (and the numbers its text is held to)."""
-    head = (f"What is new since {f['since']}:" if f["since"] else "The first assessment of the day (nothing to "
-            "compare with yet).")
-    new = f["new"] or (["Nothing new."] if f["since"] else [])
+    """The facts as the lines the AI is given (and the numbers and words its text is held to)."""
     because = f" Because: {'; '.join(f['why'])}." if f.get("why") else ""
-    return "\n".join([f"Assessment at {label}.", f"Verdict: {f['verdict']}.{because}", head, *new, "The day so far:",
-                      *f["today"], *(["Still open from earlier:"] + f["open"] if f["open"] else []),
-                      f"Look first at: {f['first']}."])
+    out = [f"Assessment at {label}.", f"Verdict: {f['verdict']}.{because}"]
+    if f.get("meaning"):
+        out.append(f"For people working: {f['meaning']}")
+    if f["since"]:
+        out += [f"Changed since {f['since']}:"] + [f"- {x}" for x in f.get("changed") or ["Nothing changed."]]
+    elif f.get("meaning"):
+        out.append("Changed: nothing to compare with yet (the first assessment of the day).")
+    for head, key in PARTS[1:]:
+        if f.get(key):
+            out += [f"{head}:"] + [f"- {x}" for x in f[key]]
+    return "\n".join(out + ["The day so far:", *f["today"], f"Look first at: {f['first']}."])
+
+
+def ours(f: dict) -> str:
+    """Our own text in the same shape, when the AI's is not shown: the verdict and what it
+    means, one point of each label (then more of what changed and what to watch), next."""
+    head = f"{f['verdict']}" + (f": {'; '.join(f['why'])}" if f.get("why") else "") + "."
+    if f.get("meaning"):
+        head += " " + f["meaning"]
+    pts = [f"- {label}: {f[key][0]}" for label, key in PARTS if f.get(key)]
+    pts += [f"- {label}: {x}" for label, key in PARTS[:2] for x in f.get(key, [])[1:]]
+    pts = pts[:4] + [f"- {x}" for x in f["today"][1:]][:max(0, 2 - len(pts))]
+    return "\n".join([head, *pts, f"Next: look first at {f['first']}."])
 
 
 def refused(text: str, lines: str) -> str | None:
     """Why the AI's text is not shown (None: fine): empty, a number that is not in the lines, a
-    worked-out comparison, or a user or PC named (it is given none, so none can be right)."""
+    worked-out comparison, or one of the fixed words where no line gives it (a user or PC
+    cannot be named right: it is given none)."""
     if not text:
         return "it gave no text"
     extra = numbers(text) - allowed(lines, SYSTEM)
@@ -250,6 +463,14 @@ def refused(text: str, lines: str) -> str | None:
     ratio = RATIO.search(text)
     if ratio:
         return f"a comparison the facts do not give (\"{ratio.group(0)}\")"
+    have = lines.lower()
+    for m in RATED.finditer(text):
+        if not re.search(rf"\b{m.group(1).lower()}\b", have):
+            return f"the word \"{m.group(1)}\", which no line gives"
+    said = {m.group(1).lower() for m in PLACED.finditer(have)}
+    for m in PLACED.finditer(text):
+        if m.group(1).lower() not in said:
+            return f"\"{m.group(0)}\", which no line gives"
     return None
 
 
@@ -260,7 +481,7 @@ def word(client, f: dict, label: str, service: str = "") -> tuple[str | None, st
     lines = given(f, label)
     try:
         text = clean(client.chat([{"role": "system", "content": SYSTEM}, {"role": "user", "content": lines}])
-                     .get("content"))
+                     .get("content"), size=TEXT_MAX)
     except ApiError as exc:
         return None, f"The AI service {service or 'set'} did not answer ({exc.short()}): these are the facts as counted."
     why = refused(text, lines)
@@ -294,7 +515,7 @@ def summary_lines(day: date, saved: dict | None, events: dict, sev: dict, period
            f"{plural(saved.get('top_pcs', 0), 'PC')}."]
     top = sorted(((k, len(devs)) for k, devs in events.items() if sev.get(k) in SEVERITY_ORDER[:2] and devs),
                  key=lambda kv: (SEVERITY_ORDER.index(sev[kv[0]]), -kv[1], kv[0]))[:TOP]
-    out += [f"{k[1]} ({sev[k]}): {plural(n, 'PC')}." for k, n in top] or ["No crash or event rated Critical or Major."]
+    out += [f"{k[1]} ({sev[k]}): {_pcs(n)}, {reach(n)}." for k, n in top] or ["No crash or event rated Critical or Major."]
     apps = sorted(((a, c.get(TOP_STATUS, 0)) for a, c in saved.get("apps", {}).items() if c.get(TOP_STATUS)),
                   key=lambda kv: (-kv[1], kv[0]))[:TOP]
     if apps:
@@ -316,6 +537,7 @@ class Assessments:
         self.today, self.care, self.status = today, care, status
         self.aternity_of, self.unit_of = aternity_of, unit_of  # the start-ups are read from Aternity (boots_of)
         self.boots_at: datetime | None = None
+        self.boots_note: str | None = "The start-ups are read with the next read of Aternity."  # why there is no logon chart
         self.store = Path(store) / "assess" if store else None
         self.days: dict[str, dict] = {}
         self.note: str | None = None
@@ -369,7 +591,11 @@ class Assessments:
             if not self.today.ready:
                 return
             with self.lock:
-                self._boots(now)
+                try:  # the start-ups failing must not stop the assessment being written
+                    self._boots(now)
+                except Exception as exc:
+                    self.boots_note = f"The start-ups could not be read ({short_error(exc)}); tried again with the next read."
+                    log.warning("Assessment: %s", self.boots_note)
                 self._yesterday(now, client_of)
                 slot = self.due(now)
                 if slot is not None:
@@ -380,18 +606,19 @@ class Assessments:
     def _write(self, now: datetime, slot: int, client_of) -> None:
         day = self.today.day(now).isoformat()
         rec = self.days.setdefault(day, {"date": day, "periods": [], "summary": None})
-        before = rec["periods"][-1] if rec["periods"] else None
         snap = snapshot(self.today.view(now), self.care.view(now) if self.care else None,
-                        self.status.view() if self.status else None, self.boots_view(now))
+                        self.status.view() if self.status else None, self.boots_view(now),
+                        chart_facts(self.charts(now)))
         label = self.today.local(now).strftime("%H:%M")
-        f = facts(snap, before["snap"] if before else None, before["label"] if before else None)
+        f = facts(snap, [(p["label"], p["snap"]) for p in rec["periods"] if p.get("snap")])
         client, service = client_of()
         text, note = word(client, f, label, service)
         rec["periods"].append({"slot": slot, "label": label, "at": now.isoformat().replace("+00:00", "Z"), **f,
-                               "text": text, "note": note, "service": service if text else "", "snap": snap})
+                               "ours": ours(f), "text": text, "note": note, "service": service if text else "",
+                               "snap": snap})
         self._save(day, now)
-        log.info("Assessment written at %s: %s; %d new since %s; %s", label, f["verdict"], len(f["new"]),
-                 f["since"] or "the start of the day", f"worded by {service}" if text else note)
+        log.info("Assessment written at %s: %s; %d changed since %s; %s", label, f["verdict"],
+                 len(f["changed"]), f["since"] or "the start of the day", f"worded by {service}" if text else note)
 
     def _yesterday(self, now: datetime, client_of) -> None:
         """The day before, once, when its counts are saved (after midnight, late rows in)."""
@@ -408,8 +635,9 @@ class Assessments:
         if lines is None:
             return
         rec = self.days.setdefault(y.isoformat(), {"date": y.isoformat(), "periods": [], "summary": None})
-        f = {"verdict": "The day in short", "why": [], "since": None, "new": [], "nothing_new": False, "today": lines,
-             "open": [], "first": "today's first assessment, for what carries over"}
+        f = {"verdict": "The day in short", "why": [], "since": None, "meaning": "", "changed": [], "nothing_new": False,
+             "watch": [], "earlier": [], "startups": [], "today": lines,
+             "first": "today's first assessment, for what carries over"}
         client, service = client_of()
         text, note = word(client, f, f"the end of {y:%A %b %d}", service)
         rec["summary"] = {"label": f"{y:%a %b %d}", "lines": lines, "text": text, "note": note,
@@ -430,6 +658,7 @@ class Assessments:
             return
         client = self.aternity_of()
         if client is None:
+            self.boots_note = "Aternity is not set, so no start-ups are read."
             return
         t = self.today.day(now)
         for d in self._same_days(t)[::-1] + [t]:
@@ -440,12 +669,16 @@ class Assessments:
             mark = len(client.warnings)
             rows = client.boots(start, now if d == t else start + timedelta(days=1))
             if len(client.warnings) > mark:  # not read (or cut short): no typical from part of a day
-                log.warning("Assessment: the start-ups of %s could not be read (%s)", d.strftime("%b %d"),
-                            client.warnings[-1])
+                self.boots_note = (f"Aternity's start-ups of {d:%b %d} could not be read ({client.warnings[-1]}); "
+                                   "tried again with the next read.")
+                log.warning("Assessment: %s", self.boots_note)
                 return
             rec["boots"] = boots_of(rows, self.today.local)
             self._save(d.isoformat(), now)
         self.boots_at = now
+        got = self.days[t.isoformat()]["boots"]
+        self.boots_note = None if any(x["n"] >= MIN_STARTS for x in got.values()) else (
+            f"Aternity has {sum(x['n'] for x in got.values())} start-ups for today so far: too few for a typical time.")
         log.info("Assessment: start-ups read up to %s (%d today)", self.today.local(now).strftime("%H:%M"),
                  sum(x["n"] for x in self.days[t.isoformat()]["boots"].values()))
 
@@ -508,53 +741,33 @@ class Assessments:
         crash_pts = [{"h": h, "v": so_far(mine, h) if h <= cur else None,
                       **dict(zip(("lo", "hi"), band([so_far(f, h) for f in past])))} for h in range(24)]
 
-        out = [{"key": "share", "title": f"Share of actions rated {TOP_STATUS}, per hour", "unit": "%", "points": share_pts},
-               {"key": "crash", "title": "PCs with a crash, so far today", "unit": "PCs", "points": crash_pts}]
+        out = [{"key": "share", "title": f"Share of actions rated {TOP_STATUS}, per hour", "unit": "%", "points": share_pts,
+                "what": f"The share of actions rated {TOP_STATUS}"},
+               {"key": "crash", "title": "PCs with a crash, so far today", "unit": "PCs", "points": crash_pts,
+                "what": "PCs with a crash so far"}]
         boots = self.days.get(t.isoformat(), {}).get("boots") or {}
         name = next((n for n in sorted(boots, key=lambda n: -boots[n]["n"]) if "logon" in n.lower()),
                     max(boots, key=lambda n: boots[n]["n"], default=None))
         if name:
             before = [self.days.get(d.isoformat(), {}).get("boots") or {} for d in self._same_days(t)]
-            out.append({"key": "logon", "title": f"Typical {name} time, per hour", "unit": self.unit_of(), "points": [
+            out.append({"key": "logon", "title": f"Typical {name} time, per hour", "unit": self.unit_of(),
+                        "what": f"The typical {name} time", "points": [
                 {"h": h, "v": boots[name]["hours"].get(str(h)) if h <= cur else None,
                  **dict(zip(("lo", "hi"), band([b.get(name, {}).get("hours", {}).get(str(h)) for b in before])))}
                 for h in range(24)]})
+        else:  # said in the chart's place, never a silent gap (stage, Nov 2026: the logon chart was just not there)
+            out.append({"key": "logon", "title": "Typical logon time, per hour", "unit": self.unit_of(), "points": [],
+                        "what": "The typical logon time",
+                        "note": self.boots_note or "No start-up has a time today yet."})
         for c in out:  # the last hour with a value: the number beside the chart
             last = next((p for p in reversed(c["points"]) if p["v"] is not None), None)
             c["now"] = last
         return out
 
-    def kpis(self, now: datetime, charts: list[dict]) -> list[dict]:
-        """The four numbers under the banner."""
-        v = self.today.view(now)
-        if not v.get("ready"):
-            return []
-        r, s = v["active"]["recent"], v["slow"]
-        out = [{"label": f"Active since {r['since']}", "big": f"{plural(r['users'], 'user')}",
-                "sub": f"{plural(r['pcs'], 'PC')}: {r['virtual']:,} virtual, {r['physical']:,} physical"},
-               {"label": f"{TOP_STATUS} slow actions today", "big": f"{s['actions']:,}",
-                "sub": f"on {plural(s['pcs'], 'PC')}", "usual": _usual(s.get("usual"))}]
-        crash = next((c["now"] for c in charts if c["key"] == "crash"), None)
-        if crash:
-            lo, hi = crash["lo"], crash["hi"]
-            usual = None if lo is None else ("more than usual" if crash["v"] > hi else "fewer than usual"
-                                             if crash["v"] < lo else "as usual")
-            out.append({"label": "PCs with a crash today", "big": f"{crash['v']:,}", "usual": usual,
-                        "sub": f"the days before by now: {lo:,} to {hi:,}" if lo is not None else ""})
-        b = self.boots_view(now)
-        if b:
-            name, x = next(((n, x) for n, x in b["types"].items() if "logon" in n.lower()), next(iter(b["types"].items())))
-            u = x["usual"]
-            out.append({"label": f"Typical {name}", "big": f"{x['typical']:g} {b['unit']}",
-                        "sub": plural(x["n"], "start-up") + " today"
-                        + (f"; the days before: {u['low']:g} to {u['high']:g} {b['unit']}" if u else ""),
-                        "usual": None if not u else "longer than usual" if x["typical"] > u["high"] else
-                        "shorter than usual" if x["typical"] < u["low"] else "as usual"})
-        return out
-
     # -- the page ---------------------------------------------------------------
     def view(self, now: datetime) -> dict:
-        """What /api/assess returns: today's assessments (latest first), yesterday's summary."""
+        """What /api/assess returns: today's assessments (latest first), yesterday's summary, and
+        the charts (drawn in Today's issues, as of the Today reader's last read)."""
         t = self.today.day(now)
         with self.lock:
             rec = self.days.get(t.isoformat(), {})
@@ -563,24 +776,30 @@ class Assessments:
         nxt = next((h for h in HOURS if self.today.local(now).hour < h), None)
         charts = self.charts(now) if self.today.ready else []
         return {"date": t.isoformat(), "zone": self.today.zone_label, "periods": periods,
-                "yesterday": y.get("summary"), "hours": list(HOURS),
+                "yesterday": y.get("summary"), "hours": list(HOURS), "labels": list(LABELS),
                 "next": f"{nxt:02d}:00" if nxt is not None else None, "note": self.note,
-                # the live numbers and charts are as of the Today reader's last read, not of the text's hour
+                # the charts are as of the Today reader's last read, not of the text's hour
                 "now": self.today.local(self.today.as_of or now).strftime("%H:%M"), "charts": charts,
-                "kpis": self.kpis(now, charts) if self.today.ready else []}
+                "days": len(self._same_days(t))}
 
 
 # -- what `verify --ai` measures with (made-up names and numbers) --------------------------------
-SAMPLE = {"verdict": WORSE, "why": ["Sample Viewer crash (Major) is on 41 PCs, more than usual"], "since": "09:00",
-          "nothing_new": False,
-          "new": ["Sample Viewer crash (Major): 41 PCs, more than usual; it was 12 at the last assessment.",
-                  "Major slow actions added since the last assessment, by application: Sample ERP (212), "
-                  "Sample Mail (96)."],
+SAMPLE = {"verdict": WORSE, "why": ["Sample Viewer crash (Major) is on 41 PCs, limited, above its usual range"],
+          "since": "09:00", "nothing_new": False,
+          "meaning": "Against the working days before: Major slow actions are within their usual range, PCs with a "
+                     "crash so far are above their usual range and a typical Sample Logon is within its usual range.",
+          "changed": ["Sample Viewer crash (Major) rose from 12 to 41 PCs since 09:00: limited, above its usual range "
+                      "(3 to 9 PCs by this time).",
+                      "Major slow actions added since 09:00, by application: Sample ERP (212), Sample Mail (96)."],
+          "watch": ["Sample Agent hang (Major) is on 3 PCs, above its usual range (0 to 1 PCs by this time): isolated, "
+                    "too few to change the day's verdict."],
+          "earlier": ["The share of actions rated Major was above its usual range from 08:00 to 09:00; cleared since."],
+          "startups": ["A typical Sample Logon takes 46 s today (812 so far), within its usual range (40 to 54 s on "
+                       "the 5 working days before)."],
           "today": ["Active: 3,310 users on 3,905 PCs (2,650 virtual desktops, 1,255 physical PCs).",
-                    "Major slow actions: 1,870 on 644 PCs, as usual.",
-                    "Sample Agent crash (Critical): 7 PCs, as usual.",
+                    "Major slow actions: 1,870 on 644 PCs, within their usual range (590 to 700 PCs by this time).",
+                    "Sample Agent crash (Critical): 7 PCs, limited, within its usual range (5 to 9 PCs by this time).",
                     "Applications with the most Major slow actions: Sample ERP (540), Sample Mail (410)."],
-          "open": ["Sample Agent crash (Critical): 7 PCs, as usual."],
-          "first": "Sample Viewer crash on 41 PCs (Major, more than usual): on the Today tab, click its tile for who "
-                   "has it"}
-SAMPLE_WORDS = ("sample viewer", "41")  # a right text has what is new
+          "first": "Sample Viewer crash on 41 PCs (Major, limited, above its usual range): on the Today tab, click its "
+                   "tile for who has it"}
+SAMPLE_WORDS = ("sample viewer", "41")  # a right text has what changed

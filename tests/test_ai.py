@@ -39,8 +39,9 @@ def service(seen, picks=PICKS, login="bearer", models=("model-a", "model-b"), to
         last = body["messages"][-1]
         if body["messages"][0]["content"] == assess.SYSTEM:
             assert "tools" not in body
-            return reply("Worse than usual.\n- Sample Viewer crash is on 41 PCs, more than usual.\n- Sample ERP added "
-                         "212 Major slow actions.\nNext: look first at Sample Viewer crash on 41 PCs."
+            return reply("Worse than usual: Sample Viewer crash is on 41 PCs, above its usual range.\n- Changed: Sample "
+                         "Viewer crash rose from 12 to 41 PCs.\n- Changed: Sample ERP added 212 Major slow actions.\n"
+                         "Next: look first at Sample Viewer crash on 41 PCs."
                          if explains != "invents" else "About 5,000 PCs are affected.")
         if body["messages"][0]["content"] == explain.SYSTEM:
             assert "tools" not in body
@@ -79,11 +80,11 @@ def test_a_good_service_passes_every_check_and_the_key_is_never_printed():
     seen = []
     checks, text = run(seen)
     assert [c.ok for c in checks.values()] == [None, True, True, True, True, True, True, True, True]
-    assert "A verdict line, 2 points and a next step" in checks["writes the assessment"].message
+    assert "A verdict line, 2 points (2 with their label) and a next step" in checks["writes the assessment"].message
     assert "Right for 10 of 10 made-up panels" in checks["explains a panel"].message
     assert "right up to 40,000." in checks["explains a long page"].message
     assert len(checks["explains a long page"].rows) == 3
-    assert "Right in 8 of 8 tries" in checks["picks the right question"].message
+    assert "Right in 11 of 11 tries" in checks["picks the right question"].message
     assert "Right in 12 of 12 tries" in checks["picks the right question (Software tab)"].message
     assert "made no pick (right)" in checks["picks the right question"].message
     assert "2 of the 2 counts" in checks["repeats the counts"].message
@@ -118,7 +119,7 @@ def test_wrong_picks_and_a_pick_for_an_outside_question_fail_with_what_it_picked
     picks[AI_OUTSIDE] = {"tool": "events"}
     checks, _ = run(picks=picks)
     c = checks["picks the right question"]
-    assert c.ok is False and "Right in 7 of 8 tries" in c.message and "made a pick (wrong)" in c.message
+    assert c.ok is False and "Right in 10 of 11 tries" in c.message and "made a pick (wrong)" in c.message
     assert any(first in r and "picked events(group_by=day, days=7); a right pick is events(group_by=event, days=7)"
                in r for r in c.rows)
 

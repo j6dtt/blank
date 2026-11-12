@@ -411,7 +411,8 @@ def test_the_add_and_remove_endpoints(tmp_path, monkeypatch):
     app.state.care.today.__dict__.update(today_with(3).__dict__)
     # every change needs the PIN: today's date, YYYYMMDD, in the page's time zone (the user's choice)
     pin = app.state.care.pin(datetime.now(timezone.utc))
-    assert len(pin) == 8 and pin == f"{datetime.now(timezone.utc):%Y%m%d}"
+    # in the page's time zone (the test's Today is Chicago's: after midnight UTC it is still the day before)
+    assert len(pin) == 8 and pin == f"{app.state.care.today.local(datetime.now(timezone.utc)):%Y%m%d}"
     for wrong in ({}, {"pin": "20200101"}, {"pin": ""}):
         no = http.post("/api/care/users", json={"username": "tz9013", "label": "Desk", **wrong})
         assert no.status_code == 403 and no.json()["detail"] == "Wrong PIN: the Care list was not changed."

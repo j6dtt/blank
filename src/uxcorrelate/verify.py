@@ -1842,6 +1842,10 @@ AI_TRIES = (
     ("How many users and PCs are active right now?", {"tool": "active"}),
     # stage, Nov 2026: a list for the week got today's one PC, then counts per day
     ("List the PCs with a System Crash this week", {"tool": "who", "what": "event", "days": 7}),
+    # look-ups of who logged in where (the user's request, Nov 2026)
+    ("Who last logged into the PC WS-0042?", {"tool": "logins", "device": "ws-0042"}),
+    ("Which desktop did mossley log in to on 2026-11-03?", {"tool": "logins", "username": "mossley", "date": "2026-11-03"}),
+    ("Which desktop is mossley on right now?", {"tool": "logins", "username": "mossley", "current": "true"}),
 )
 AI_SW_TRIES = (  # the Software tab's chat (software_chat.TOOLS)
     ("Which programs are most out of date?", {"tool": "flags", "kind": "behind"}),
@@ -2130,6 +2134,8 @@ def _assesses(client, add) -> None:
     text, note = assess.word(client, assess.SAMPLE, "12:00", "this service")
     took = time.monotonic() - started
     points = sum(1 for line in (text or "").splitlines() if line.startswith("- "))
+    tagged = sum(1 for line in (text or "").splitlines()
+                 if any(line.lower().startswith(f"- {k.lower()}:") for k in assess.LABELS))
     if text is None:
         add("writes the assessment", False, f"Not shown: {note}",
             "The Today tab would show the facts as counted instead of this model's text. Tell Claude this line.")
@@ -2137,8 +2143,9 @@ def _assesses(client, add) -> None:
         add("writes the assessment", None, f"Its text is usable but {'has no points' if points < 2 else 'leaves out what is new'}"
             f" ({points} points, in {took:.1f} s).", "", [f"its text: {_cut(' / '.join(text.splitlines()), 300)}"])
     else:
-        add("writes the assessment", True, f"A verdict line, {points} points and a next step from made-up facts, only "
-            f"their numbers, in {took:.1f} s.", "", [f"its text: {_cut(' / '.join(text.splitlines()), 300)}"])
+        add("writes the assessment", True, f"A verdict line, {points} points ({tagged} with their label) and a next step "
+            f"from made-up facts, only their numbers and words, in {took:.1f} s.", "",
+            [f"its text: {_cut(' / '.join(text.splitlines()), 300)}"])
 
 
 def render_checks(checks: list[Check]) -> str:

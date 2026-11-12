@@ -22,7 +22,7 @@ import re
 import unicodedata
 
 from . import after_start, care, impact, logons, normal, software, today
-from .assess import MIN_ACTIONS, MIN_STARTS, VERDICT_PCS
+from .assess import ISOLATED, MIN_ACTIONS, MIN_STARTS, VERDICT_PCS, WIDESPREAD
 from .chat import RATIO, allowed, clean, numbers
 from .cause import DISK_BACK
 from .config import TILE_SEVERITIES, TOP_STATUS
@@ -43,18 +43,33 @@ COMMON = {
                      "what was found.",
 }
 
+_REACH = (f"How far a count reaches: isolated is fewer than {ISOLATED} PCs (too few to make the day's verdict), "
+          f"limited is {ISOLATED} to {WIDESPREAD - 1} PCs, widespread is {WIDESPREAD} PCs or more.")
+_MOVED = ("Since the assessment before: rose or fell, or steady when the same. A count of the day so far only "
+          f"rises or stays; the share of actions rated {TOP_STATUS} in an hour can fall.")
+
 GLOSSARY: dict[str, dict[str, str]] = {
     "today": {
         "Today": f"From midnight (in the time zone shown) to the last read. Aternity is read every "
                  f"{today.REFRESH_MIN} minutes.",
-        "Assessment": "A short reading of the day for executives, written every 3 hours in working hours: what "
-                      "is new since the one before, the day so far, and what to look at first. Our code counts "
-                      "the facts (counts and names of events and applications, no user or PC), the AI words "
-                      "them, and every number is checked against them. The verdict is by fixed rules, and says why: \"Needs "
-                      "attention\" (a connection to Aternity or NetIM down, or a Critical event more than usual on "
-                      f"{VERDICT_PCS} PCs or more), \"Worse than usual\" (a Major count more than usual on "
-                      f"{VERDICT_PCS} PCs or more), \"A normal day so far\", or \"No usual to compare with yet\". A "
-                      "count more than usual on fewer PCs is listed but does not make the verdict.",
+        "Assessment": "A short reading of the day for executives, written every 3 hours in working hours: the "
+                      "verdict and what the day means for people working, then points labelled Changed (since the "
+                      "assessment before), Watch (above its usual range now), Earlier (above it earlier today, "
+                      "not now) and Start-ups, and what to look at first. Our code counts the facts (counts and "
+                      "names of events and applications, no user or PC), the AI words them, and every number and "
+                      "rating word is checked against them. The verdict is by fixed rules, and says why: \"Needs "
+                      "attention\" (a connection to Aternity or NetIM down, or a Critical event above its usual "
+                      f"range on {VERDICT_PCS} PCs or more), \"Worse than usual\" (a Major count above its usual "
+                      f"range on {VERDICT_PCS} PCs or more), \"A normal day so far\", or \"No usual to compare with "
+                      "yet\". A count above its usual range on fewer PCs is isolated: listed, but it does not make "
+                      "the verdict.",
+        "isolated": _REACH, "limited": _REACH, "widespread": _REACH,
+        "usual range": "The lowest to the highest count of the same kind of day before (working days with "
+                       f"working days), up to {today.USUAL_DAYS} days, by the same time of day. Above it: more "
+                       "than on any of those days (the tiles say \"More than usual\"); below it: fewer than on "
+                       "any; within it: in between.",
+        "rose": _MOVED, "fell": _MOVED, "steady": _MOVED,
+        "cleared": "Above its usual range at an earlier assessment or hour of today, and not now.",
         "Share of actions rated Major": f"Per hour of today: the actions Aternity rated {TOP_STATUS} out of all the "
                                         "actions it measured in that hour. The grey band is the lowest to the "
                                         "highest share of the same hour on the working days before. An hour with "

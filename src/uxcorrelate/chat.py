@@ -28,6 +28,7 @@ from datetime import date, datetime, timedelta
 
 from .ai import AiClient, tool_call
 from .config import TOP_STATUS, AiService, Settings
+from .http import ApiError
 from .today import EVENT_PAD, HEALTH_DAYS, KEEP_FILES_DAYS, MIN_USUAL, NO_APP, USUAL_DAYS, Today, kind_of
 
 ROWS = 10  # rows given to the AI and shown, most first (hours: all of today's)
@@ -72,6 +73,14 @@ TOOLS = [
     _tool("active", "How many users and PCs are active (had at least one action Aternity measured): today so far and "
                     "in the last hour, with the PCs split into virtual desktops and physical PCs. Use it for how many "
                     "users, people, PCs or desktops are active, online, working or in use.", {}),
+    # the user's request, Nov 2026: look-ups only the chat has (no tab, no page of their own)
+    _tool("logins", "Who logged in to a PC, or which PC (desktop) a user logged in to: the latest, on one date, or "
+                    "now. Use it for \"who last logged into <PC>\", \"who logged into <PC> on <date>\", \"which "
+                    "desktop did <user> log in to on <date>\" and \"which desktop is <user> on now\".", {
+        "username": {"type": "string"}, "device": {"type": "string", "description": "The PC's (desktop's) name."},
+        "date": {"type": "string", "description": "One day, as YYYY-MM-DD. Leave out for the latest logons."},
+        "current": {"type": "boolean", "description": "true for now: where the user is working, or who is on "
+                                                      "the PC, by today's activity."}}),
     _tool("investigate", "Investigate one user or PC: why they were slow, or what went wrong.", {
         "username": {"type": "string"}, "device": {"type": "string", "description": "The PC's name."},
         "app": APP, "hours": {"type": "integer", "description": "How many hours back from now."}}),
@@ -101,7 +110,8 @@ SYSTEM = ("You answer questions from IT staff about the experience of the compan
           "question to ask here (for example who had them, per hour, which activities), Investigate by a user's "
           "name, or the Care list for the users watched there. Use only the few numbers that matter, written "
           "exactly as given.")
-NO_COUNT = ("I can only give numbers from the counts: slow actions, crashes and events, who had them today, or an "
+NO_COUNT = ("I can only give numbers from the counts: slow actions, crashes and events, who had them today, active "
+            "users and PCs, who logged in to which PC, or an "
             "investigation of one user or PC.")
 NUM = re.compile(r"\d[\d,]*(?:\.\d+)?")
 # a comparison worked out from the counts ("3 times worse", "twice as many"): a new number in words
@@ -705,6 +715,141 @@ def who(today: Today, now: datetime, what: str = "slow", app: str | None = None,
                    f"{_n(w['pcs'], 'PC')} and {_n(w['users'], 'user')}", runs=runs, label=(0, 1), value=2)
 
 
+LOGIN_DAYS = 14  # how far back the latest logons are looked for (one user or one PC, read now)
+LOGIN_GAP = timedelta(hours=1)  # rows of one user and PC within this are one logon (as logons.py)
+
+
+def _named(names, kind: str, value) -> tuple[str | None, list[str], list[str]]:
+    """A username or PC name as Aternity writes it: exactly it (any case), else the one name
+    that has it. Returns (name, notes, the names to choose from when several have it)."""
+    value = (value or "").strip()
+    if not value or names is None:
+        return value or None, [], []
+    with names.lock:
+        exact = [n for n in names.seen[kind] if n.lower() == value.lower()]
+    if exact:
+        return exact[0], [], []
+    m = names.match(kind, value)
+    if len(m["names"]) == 1:
+        return m["names"][0], [f"\"{value}\" is taken as {m['names'][0]}, the one {kind} with it in its name."], []
+    if not m["names"]:  # not seen in the last days' activity: Aternity is asked for it as typed
+        return value, [f"\"{value}\" is not among the names seen in Aternity's activity: used as typed."], []
+    return None, [], m["names"][:ROWS]
+
+
+def logins(today: Today, names, now: datetime, aternity_of=None, username: str | None = None,
+           device: str | None = None, date: str | None = None, current=False) -> dict:
+    """Who logged in to a PC, or which PC a user logged in to: from Aternity's start-up and
+    logon records, read now for that one user or PC (the latest, or one day); "now" from the
+    Today reader's activity. A logon Aternity did not record is never made up."""
+    used = {"username": username, "device": device, "date": date, "current": current}
+    current = current is True or str(current).strip().lower() in ("true", "1", "yes", "now")
+    picked, notes = {}, []
+    for kind, value in (("username", username), ("device", device)):
+        name, said, choices = _named(names, kind, value)
+        if choices:
+            return _result("logins", used, f"Which {kind}?", "names seen in Aternity's activity", [kind.capitalize()],
+                           [[n] for n in choices], [f"No {kind} is \"{value}\"; several have it in their name: ask "
+                                                    "again with one of them."],
+                           say=f"No {kind} is \"{value}\"; several have it in their name: ask again with one of them.")
+        notes += said
+        if name:
+            picked[kind] = name
+    user, pc = picked.get("username"), picked.get("device")
+    if not user and not pc:
+        return _result("logins", used, "Whose logons?", "", [], [], ["Name a user or a PC."],
+                       say="Name a user or a PC, and ask again.")
+    who = " on ".join(x for x in (user, pc) if x)
+    t = today.day(now)
+    if current:
+        # now: the latest hours of today with a measured action of that user (or on that PC)
+        with today.lock:
+            hours = sorted((h for h in today.hours.values() if h.day == t), key=lambda h: h.start, reverse=True)
+            seen: dict[tuple, tuple] = {}
+            for h in hours:
+                for u, devs in h.user_devs.items():
+                    for d in devs:
+                        if (not user or u == user.lower()) and (not pc or d.lower() == pc.lower()):
+                            seen.setdefault((u, d), (h.start, h.dev_kind.get(d)))
+        rows = [[user or today_names(names, u), d, kind or "not known", f"{today.local(start):%H:%M} to "
+                 f"{today.local(start + timedelta(hours=1)):%H:%M}"]
+                for (u, d), (start, kind) in sorted(seen.items(), key=lambda kv: kv[1][0], reverse=True)[:WHO_ROWS]]
+        notes += ["Now: the latest hour of today with an action Aternity measured for them, read every "
+                  "15 minutes. It says where they last worked, not that the session is still open."]
+        if not rows:
+            notes.append("Ask with a date, or without one for their latest logons.")
+            return _result("logins", used, f"{who}: not seen working today", _period(today, t, 1), [], [], notes,
+                           say=f"{who} has no measured action today so far.")
+        runs = [{"username": r[0], "device": r[1], "application": None,
+                 "start": (now - timedelta(hours=4)).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                 "end": now.replace(microsecond=0).isoformat().replace("+00:00", "Z")} for r in rows]
+        top = rows[0]
+        say = (f"{top[0]} last worked on {top[1]} ({top[2]}), in the hour {top[3]}." if user else
+               f"{top[1]} was last used by {top[0]}, in the hour {top[3]}.")
+        return _result("logins", used, f"Where {who} is working now" if user else f"Who is on {pc} now",
+                       _period(today, t, 1), ["User", "PC", "Kind", "Last measured action in the hour"], rows, notes,
+                       _n(len(seen), "PC" if user else "user"), runs=runs, label=(0, 1), say=say)
+    # the logon records: one day, or the latest LOGIN_DAYS
+    day = None
+    if date:
+        try:
+            day = datetime.strptime(str(date).strip()[:10], "%Y-%m-%d").date()
+        except ValueError:
+            notes.append(f"\"{date}\" is not a date as YYYY-MM-DD: the latest logons are shown instead.")
+    start = today.midnight(day) if day else today.midnight(t - timedelta(days=LOGIN_DAYS - 1))
+    end = min(today.midnight(day + timedelta(days=1)), now) if day else now
+    period = f"{day:%a %b %d, %Y}, {today.zone_label}" if day else f"the last {LOGIN_DAYS} days, read from Aternity now"
+    client = aternity_of() if aternity_of else None
+    if client is None:
+        return _result("logins", used, "Aternity is not set", "", [], [], ["aternity.base_url in config.yaml."],
+                       say="Aternity is not set, so its logon records cannot be read.")
+    mark = len(client.warnings)
+    found = client.boots(start, end, username=user, device=pc)
+    if len(client.warnings) > mark:
+        notes.append(f"Aternity's logon records could not be read in full ({client.warnings[-1]}).")
+    # rows of one user and PC within an hour are one logon, with what Aternity recorded for it
+    found.sort(key=lambda r: r.timestamp)
+    groups: list[dict] = []
+    for r in found:
+        g = next((g for g in reversed(groups) if g["user"] == r.username and g["pc"] == r.device
+                  and r.timestamp - g["last"] <= LOGIN_GAP), None)
+        if g is None:
+            g = {"user": r.username, "pc": r.device, "at": r.timestamp, "last": r.timestamp, "types": []}
+            groups.append(g)
+        g["last"] = r.timestamp
+        if r.type and r.type not in g["types"]:
+            g["types"].append(r.type)
+    groups.sort(key=lambda g: g["at"], reverse=True)
+    rows = [[f"{today.local(g['at']):%a %b %d %H:%M}", g["user"] or "—", g["pc"], ", ".join(g["types"]) or "—"]
+            for g in groups[:WHO_ROWS]]
+    runs = [{"username": g["user"], "device": g["pc"], "application": None,
+             "start": (g["at"] - EVENT_PAD).isoformat().replace("+00:00", "Z"),
+             "end": min(g["at"] + EVENT_PAD, now).replace(microsecond=0).isoformat().replace("+00:00", "Z")}
+            for g in groups[:WHO_ROWS]]
+    notes.append("From Aternity's start-up and logon records, read now: a logon it did not record is not here. "
+                 + ("" if day else f"Looked back {LOGIN_DAYS} days; how long Aternity keeps these records is not known."))
+    if len(groups) > WHO_ROWS:
+        notes.append(f"The latest {WHO_ROWS} are shown, of {len(groups):,}.")
+    title = f"Logons of {who}" if user else f"Logons on {pc}"
+    if not groups:
+        return _result("logins", used, title, period, [], [], notes + [
+            f"Aternity recorded no start-up or logon {'of' if user else 'on'} {who} in this period."],
+            say=f"Aternity recorded no start-up or logon {'of' if user else 'on'} {who} in {period}.")
+    g = groups[0]
+    say = (f"The latest logon on {pc}: {g['user'] or 'no user named'}, {today.local(g['at']):%a %b %d %H:%M}." if pc and not user
+           else f"{user} last logged in on {g['pc']}, {today.local(g['at']):%a %b %d %H:%M}.")
+    return _result("logins", used, title, period, ["When", "User", "PC", "Aternity recorded"], rows, notes,
+                   _n(len(groups), "logon"), runs=runs, label=(1, 2), say=say)
+
+
+def today_names(names, user: str) -> str:
+    """A username as Aternity writes it (the reader keeps them in lower case)."""
+    if names is None:
+        return user
+    with names.lock:
+        return next((n for n in names.seen["username"] if n.lower() == user), user)
+
+
 def investigate(today: Today, names, now: datetime, username: str | None = None, device: str | None = None,
                 app: str | None = None, hours=None) -> dict:
     used = {"username": username, "device": device, "app": app, "hours": hours}
@@ -770,7 +915,7 @@ def investigate(today: Today, names, now: datetime, username: str | None = None,
                    say=f"Ready to investigate {who_txt}, {span}: press Investigate ▸.")
 
 
-def run_block(name: str, args: dict, today: Today, names, now: datetime) -> dict | None:
+def run_block(name: str, args: dict, today: Today, names, now: datetime, aternity_of=None) -> dict | None:
     args = {k: v for k, v in (args or {}).items() if v not in (None, "")}
     try:
         if name == "slow_actions":
@@ -782,6 +927,13 @@ def run_block(name: str, args: dict, today: Today, names, now: datetime) -> dict
             return who(today, now, **{k: args[k] for k in ("what", "app", "name", "days") if k in args})
         if name == "active":
             return active(today, now)
+        if name == "logins":
+            try:
+                return logins(today, names, now, aternity_of,
+                              **{k: args[k] for k in ("username", "device", "date", "current") if k in args})
+            except ApiError as exc:
+                return _result("logins", args, "Aternity could not be read", "now", [], [], [exc.short()],
+                               say=f"Aternity could not be read ({exc.short()}): ask again in a minute.")
         if name == "investigate":
             return investigate(today, names, now, **{k: args[k] for k in ("username", "device", "app", "hours")
                                                      if k in args})
@@ -807,7 +959,7 @@ def allowed(*texts: str, small: int = 0) -> set[float]:
     return got | {float(round(x)) for x in got} | {float(n) for n in range(small + 1)}
 
 
-def clean(text) -> str:
+def clean(text, size: int = TEXT_MAX) -> str:
     # markdown marks; an underscore inside a name stays (GPT's "bad_module_info" became
     # "badmoduleinfo" on stage): only one at the edge of a word is emphasis
     # Lines are kept (SHAPE): a bullet of any kind ("*", "•", "1.") becomes "- ".
@@ -818,17 +970,18 @@ def clean(text) -> str:
         line = " ".join(line.split())
         if line and line != "-":
             out.append(line)
-    return "\n".join(out[:LINES_MAX])[:TEXT_MAX]
+    return "\n".join(out[:LINES_MAX])[:size]
 
 
 def system(today: Today, now: datetime) -> str:
     return f"{SYSTEM} Today is {today.local(now):%A %b %d, %Y}; times are {today.zone_label}."
 
 
-def ask(question: str, history: list, client: AiClient, today: Today, names, now: datetime) -> dict:
-    """One question on the Today tab (see converse)."""
+def ask(question: str, history: list, client: AiClient, today: Today, names, now: datetime, aternity_of=None) -> dict:
+    """One question on the Today tab (see converse). `aternity_of`: for the blocks that read
+    Aternity now (logins)."""
     return converse(question, history, client, system(today, now), TOOLS,
-                    lambda name, args: run_block(name, args, today, names, now), NO_COUNT)
+                    lambda name, args: run_block(name, args, today, names, now, aternity_of), NO_COUNT)
 
 
 def converse(question: str, history: list, client: AiClient, system_text: str, tools: list, run, no_count: str) -> dict:
