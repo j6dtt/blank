@@ -1,4 +1,5 @@
-"""The "Care list" tab (/api/care): named users checked every 15 minutes.
+"""The "Care list" tab (/api/care): named users checked after every read of Aternity (every
+refresh_minutes of config.yaml, 15 unless set).
 
 The list is `<data>/care_list.json` (LIST_FILE), written by the page's "Add
 a user" and a tile's "Remove" (`add`, `remove`) and read at every check;
@@ -316,6 +317,14 @@ class Care:
             return f"back within their usual at {self.today.local(_when(i['cleared'])):%H:%M}"
         return f"none in {QUIET_WORDS} after {self.today.local(_when(i.get('last') or i['since'])):%H:%M}"
 
+    def _clears(self, i: dict) -> str:
+        """When an open spell ends if nothing new comes (checked after each read, so at the first check after)."""
+        at = self.today.local(_when(i.get("last") or i["since"]) + QUIET)
+        what = i.get("what") or ""
+        new = f"new {TOP_STATUS} action" if i["kind"] == "slow" else \
+            f"new {what.split('/', 1)[1]}" if "/" in what else "new one"
+        return f"Clears after {at:%H:%M} if no {new}."
+
     def _who(self, u: CareUser) -> str:
         return f"{u.label} ({u.username})" if u.label else u.username
 
@@ -540,7 +549,7 @@ class Care:
         return {"ready": True, "as_of": _iso(self.as_of or now),
                 "as_of_local": today.local(self.as_of or now).strftime("%H:%M"), "zone": today.zone_label,
                 "date": t.isoformat(), "count": len(issue), "users": issue + other, "notes": notes,
-                "checked": len(self.users), "max": CARE_MAX}
+                "checked": len(self.users), "max": CARE_MAX, "refresh_minutes": today.refresh_min}
 
     def tile(self, u: CareUser, now: datetime) -> dict:
         user, today = u.username.lower(), self.today
@@ -555,7 +564,7 @@ class Care:
             issues = [dict(i) for i in self.issues.get(user, [])]
             report = self.reports.get(user)
         today_all = [i for i in issues if i["day"] == t.isoformat()]
-        mine = [i for i in today_all if not i.get("cleared")]
+        mine = [dict(i, clears=self._clears(i)) for i in today_all if not i.get("cleared")]
         cleared = [dict(i, cleared_local=today.local(_when(i["cleared"])).strftime("%H:%M"),
                         since_local=today.local(_when(i["since"])).strftime("%H:%M"), over=self._over(i))
                    for i in today_all if i.get("cleared")]

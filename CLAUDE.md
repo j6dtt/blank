@@ -241,9 +241,11 @@ unset `<REQUIRED>` base URLs.
   (working Mon-Fri / weekend; `usual`: more / fewer than any of them, or as
   usual), at the same time of day. One background reader per process
   (`keep_reading`; HTTP and HTTPS share it): activity an hour at a time,
-  the last 24 h at start, then every 15 min the current hour and each hour
-  once more 15 min after it ends (late rows logged); health events today
-  every 15 min, the 14 days before once a day. Activity is kept ~8 days, so
+  the last 24 h at start, then every `refresh_minutes` (config.yaml, 15
+  unless set, 5 to 60: `REFRESH_RANGE`; `Today.refresh_min`; the names
+  and the Care list go with it) the current hour and each hour once more
+  15 min after it ends (late rows logged); health events today at each
+  read, the 14 days before once a day. Activity is kept ~8 days, so
   each finished day's counts are saved in `$UXCORRELATE_DATA/days/<date>.json`
   (`./data`, writable by uid 1000; counts and app names, no user or PC);
   only complete days count as usual. A tile or row opens who is behind it
@@ -355,7 +357,10 @@ unset `<REQUIRED>` base URLs.
   new issue (key `slow <day> <n>`), a late row within `QUIET` rejoins it.
   Events of one kind are spells too (user's choice): over after `QUIET`
   with no new one; matched to saved issues by kind and overlap; one first
-  seen when already over is kept as over, not investigated. Every user has a tile:
+  seen when already over is kept as over, not investigated. An open
+  spell says when it ends if nothing new comes (`_clears`: "Clears after
+  HH:MM if no new Major action / HD Failure", its last + `QUIET`; the
+  user asked why a 16:00 issue was open at 16:55). Every user has a tile:
   issue, then not seen in 8 days, then "✓ OK" (actions, Major, usual by
   now, cleared spells). Slow start-ups and alerts: step 2.
 - `software.py`: the "Software" tab, fifth (`/api/software`, `#software`;
@@ -387,9 +392,10 @@ unset `<REQUIRED>` base URLs.
   `summary`: GPT for management, held to the flags' numbers (chat's
   `numbers`/`allowed`/`RATIO`), else `our_summary`. `split_by_program`:
   an app's problems by another program's version (chat only, never a flag).
-- `software_chat.py`: "Ask about software", at the bottom of the Software
-  tab (`/api/software/chat`), the same loop as the Today chat
-  (`chat.converse`). Blocks (`TOOLS`): flags (kind "all", first and
+- `software_chat.py`: the Software tab's look-ups. Ask anything uses its
+  blocks as they are (`agent.SOFTWARE_TOOLS`); its own chat "Ask about
+  software" (`/api/software/chat`, the same loop as `chat.converse`) is
+  no longer on the page (step 3), `verify --ai` still measures its picks. Blocks (`TOOLS`): flags (kind "all", first and
   required: offered only the kinds, GPT answered "the red flags" with
   crash alone on stage; or one kind's whole list; a question naming one
   application goes to version_problems, said in both descriptions, as
@@ -439,8 +445,10 @@ unset `<REQUIRED>` base URLs.
   compare, before_after, program_split and pcs do the same through
   `_app` (the name as typed when several have it; `_like` names them
   when Aternity has nothing).
-- `chat.py`: "Ask about today", under the Today tab (`/api/chat`); its
-  question loop `converse` is shared with `software_chat.py`. The AI
+- `chat.py`: the block chat "Ask about today" (`/api/chat`; no longer on
+  the page since step 3 of Ask anything, the endpoint and `verify --ai`
+  kept; its helpers `logins`, `_match`, `numbers`/`allowed` serve Ask
+  anything); its question loop `converse` is shared with `software_chat.py`. The AI
   (`ai.chat` by name, else the first of `ai.services`; GPT on prod) picks
   one building block of `TOOLS` (slow_actions, events, who, investigate),
   our code counts from what the Today reader holds (no extra Aternity
@@ -499,8 +507,8 @@ unset `<REQUIRED>` base URLs.
   not record is never made up; how long it keeps them is not known.
   Hangs per
   app and software changes are not blocks yet (to measure with verify).
-- `agent.py`: "Ask anything" (`/api/ask`, `#tAsk` above the Today
-  chat; step 1 of the open chat, the user's request 2026-11-12: "HOW
+- `agent.py`: "Ask anything" (`/api/ask`, `#tAsk`: the one chat, at the
+  bottom of every tab since step 3; step 1 of the open chat, the user's request 2026-11-12: "HOW
   DO WE MAKE THIS LIKE NORMAL REGULAR CHAT", after the block chat
   answered "no event named Hard drive"). The AI looks things up with
   general tools (`TOOLS`: find, events, activity, overview, meanings),
@@ -522,10 +530,12 @@ unset `<REQUIRED>` base URLs.
   pc_changes (`cause._updates`, a batch of removals one row as
   `answer._changed`), programs_per_pc (`software.programs_per_pc`:
   stage asked "which PC has the most software installed?" and got "I
-  can't tell"; DEVICE_COUNT counts the PCs in a group, so
-  INSTALLED_SW_COUNT added up per PC is used only when it equals the
-  own lists of the PCs with the most and fewest, else every PC's list
-  is counted, none when cut short; kept `PER_PC_KEEP_MIN`), the
+  can't tell"; every PC's list in one read is refused on live,
+  "Returned data too long"; INSTALLED_SW_COUNT added up per PC was 511
+  for a list of 619 rows: used only when it equals the different
+  program names (or rows) of the own lists of the PCs with the most and
+  fewest, said which; else the numbers, no count; kept
+  `PER_PC_KEEP_MIN`; pc_software's "programs" are names too), the
   Software tab's blocks as they are
   (`software_chat.TOOLS`/`run_block`, `_block` makes a step), and
   investigate (a whole investigation, `INVESTIGATE_HOURS` by default,
@@ -536,7 +546,14 @@ unset `<REQUIRED>` base URLs.
   is a job (`/api/jobs/{id}`): the page shows each look-up as it
   starts. A failed look-up is a step that says so, never a lost
   question. Earlier look-ups go in the instructions, not after the
-  answers (the AI wrote "(I looked at: …)" into its own, stage). Step 3: it replaces both block chats. `verify --ai`:
+  answers (the AI wrote "(I looked at: …)" into its own, stage). Step 3
+  (2026-11-12, "finish 1, 2, and 3"): it replaced "Ask about today",
+  "Ask about software" and "Ask about this page"; the page sends the tab
+  open as shown (`tabShown()`, `shown()` of `TAB_SHOWS`) with each
+  question, `page` gives it to the AI with our meaning of each term on
+  that tab (`explain.given`, cut at `explain.LINES_MAX`; a step's text is
+  given whole by `for_ai`), and the instructions name the tab. Examples
+  per tab (`ASK_EXAMPLES`); answers stay when the tab changes. `verify --ai`:
   "answers open questions" (`AI_ASK` over `ask_records`, made-up;
   `AskAternity` made-up logons; the step 2 questions must use their
   look-up).
@@ -591,12 +608,12 @@ unset `<REQUIRED>` base URLs.
   answer becomes `our_words` (the meanings of the terms asked about,
   then the panel's). "Explain ▸" (`button.explain`, `data-tab`) at the
   bottom right of a panel, one dialog (`explainNow`), with a question
-  box; "Ask about this page" (`form.askPage`, `data-tab`/`data-scope`)
-  under the Care list, the start-ups and an investigation (the whole tab
-  as shown). Nothing saved. Steps 3-4 (2026-11-11): the link is added by
+  box. A question about a whole tab is Ask anything's (`page`, which
+  gives the AI `given` of the tab); "Ask about this page" was removed
+  (step 3). Nothing saved. Steps 3-4 (2026-11-11): the link is added by
   script to every panel of Software, Investigate and Slow start-ups; a
   button's text is sent only when it is a name shown as a link (an
-  issue, a program). Software keeps "Ask about software" for counts.
+  issue, a program).
 - `status.py`: the connection lights at the right of the top bar
   (`/api/status`, user's request 2026-11-10): Aternity, NetIM and each
   `ai.services` entry, one small read each every `CHECK_EVERY_S` (60) by
@@ -622,8 +639,9 @@ unset `<REQUIRED>` base URLs.
   `display` on an element with `hidden` needs its own `[hidden]` rule.
   Every "Investigate ▸" (Today lists, the chats, the Care list, the
   Software lists) goes through `investigateNow()`: fill the Investigate
-  form and run it at once. Both chats are one `makeChat(prefix, url,
-  examples)` (ids `chat…` on Today, `sChat…` on Software).
+  form and run it at once. One chat on every tab: Ask anything
+  (`#tAsk`, last in `main`; `tabNow` is the tab open; "Ask a question ▾"
+  on Today and Software scrolls to it).
   Two scripts must not declare the same top-level name (the later one wins
   silently: a second `renderWho` once broke the Today list).
 - `tests/`: pytest. HTTP is mocked with `httpx.MockTransport`; the engine is

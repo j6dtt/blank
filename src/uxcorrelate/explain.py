@@ -50,8 +50,7 @@ _MOVED = ("Since the assessment before: rose or fell, or steady when the same. A
 
 GLOSSARY: dict[str, dict[str, str]] = {
     "today": {
-        "Today": f"From midnight (in the time zone shown) to the last read. Aternity is read every "
-                 f"{today.REFRESH_MIN} minutes.",
+        "Today": "",  # set_refresh: how often Aternity is read
         "Assessment": "A short reading of the day for executives, written at "
                       + ", ".join(f"{h:02d}:00" for h in HOURS) + ": the "
                       "verdict and what the day means for people working, then points labelled Changed (since the "
@@ -102,8 +101,7 @@ GLOSSARY: dict[str, dict[str, str]] = {
                                                           "each with its PCs per day over the last 7 days.",
     },
     "care": {
-        "Care list": f"Named users checked after every read of Aternity ({today.REFRESH_MIN} minutes), up to "
-                     f"{care.CARE_MAX}. Every user has a tile.",
+        "Care list": "",  # set_refresh
         "issue": f"Either an event Aternity rated {_SEV} with that user's name today, or more {TOP_STATUS} slow "
                  "actions by this time of day than on any of their own days before.",
         "their usual by now": f"The fewest and the most {TOP_STATUS} slow actions that user had by this time "
@@ -111,6 +109,9 @@ GLOSSARY: dict[str, dict[str, str]] = {
                               f"{care.USUAL_DAYS}; {care.MIN_USUAL} needed).",
         "over": f"An issue ends after {_QUIET_H} hour with no new one. A slow-actions issue also ends when the "
                 "user is back within their usual. A later one is a new issue.",
+        "Clears after": f"An open issue ends {_QUIET_H} hour after its last one if no new one comes. The "
+                        "Care list is checked after every read of Aternity, so it shows as over at the first "
+                        "check after that time.",
         "✓ OK": "No open issue for that user now. The tile says how many actions were measured today and how "
                 f"many were rated {TOP_STATUS}.",
         "not found": f"The name was not seen in Aternity's activity in {care.HISTORY_DAYS} days: it may be "
@@ -227,6 +228,18 @@ SYSTEM = (f"You explain one panel of a web page to IT staff in plain English. Th
 SAME = {"twice": ("2 times", "two times"), "double": ("2 times", "two times")}
 COMPARES = re.compile(r"\s+(?:as|the|their|its|his|her|that|what|more|many|much|than)\b", re.I)
 NO_ANSWER = "The panel's lines and the meanings of its terms do not answer that."
+
+
+def set_refresh(minutes: int) -> None:
+    """config.yaml's refresh_minutes into the two meanings that say how often Aternity is read
+    (written at import with the default; web.py calls this at start)."""
+    GLOSSARY["today"]["Today"] = (f"From midnight (in the time zone shown) to the last read. Aternity is read every "
+                                  f"{minutes} minutes.")
+    GLOSSARY["care"]["Care list"] = (f"Named users checked after every read of Aternity ({minutes} minutes), up to "
+                                     f"{care.CARE_MAX}. Every user has a tile.")
+
+
+set_refresh(today.REFRESH_MIN)  # the default; web.py sets config.yaml's
 
 
 def meanings(tab: str) -> dict[str, str]:

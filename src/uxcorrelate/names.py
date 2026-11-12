@@ -2,7 +2,7 @@
 
 Every username and device name seen in Aternity's activity
 (BUSINESS_ACTIVITIES_RAW). The rows come from the Today reader
-(`today.keep_reading`): the last 24 hours at start, then every 15 minutes.
+(`today.keep_reading`): the last 24 hours at start, then every refresh_minutes.
 A name not seen for KEEP_DAYS (about what Aternity keeps of activity) is
 dropped. Users and PCs with no activity in that time are not
 offered: the boxes still take any name typed.

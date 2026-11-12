@@ -47,6 +47,11 @@ boot_unit: s
 # investigation's sentences are in it too. Empty: UTC.
 timezone: ""
 
+# how often the Today tab, the name list and the Care list read Aternity,
+# in minutes (5 to 60; 15 if left out). Lower: issues show sooner, and
+# Aternity is read more often. Restart after a change.
+refresh_minutes: 15
+
 # --- Only if `uxcorrelate verify` reports a wrong name ----------------
 # The Aternity data sources and columns, NetIM API paths and NetIM metrics
 # have built-in defaults (src/uxcorrelate/config.py). When verify says one

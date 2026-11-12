@@ -84,3 +84,11 @@ The same "Explain ▸" is on every panel of these tabs (added by the page's
 script). An investigation and the start-ups each have an "Ask about this
 …" box for the whole tab as shown (a whole investigation fits: measured).
 Software keeps "Ask about software" for counts; its panels have the link.
+
+## Since 2026-11-12: one chat on every tab
+
+"Ask about this page", "Ask about today" and "Ask about software" were
+replaced by Ask anything at the bottom of every tab (`agent.py`, step
+3). The page sends the tab as shown with each question; its `page`
+look-up gives it to the AI with the same meanings (`explain.given`).
+"Explain ▸" on each panel is unchanged.

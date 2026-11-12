@@ -12,10 +12,11 @@ Counts only; the status and severity words are Aternity's.
 
 Reading, by one background thread (`keep_reading`):
 - activity an hour at a time: at start the last START_HOURS (also the name
-  list's history), then every REFRESH_MIN the current hour, and each hour
+  list's history), then every refresh_min (config.yaml refresh_minutes, else
+  REFRESH_MIN) the current hour, and each hour
   once more LATE_MIN after it ends, for rows Aternity sends late (the log
   says how many came late);
-- health events: today's every REFRESH_MIN (about 1,400 rows a day on the
+- health events: today's every refresh_min (about 1,400 rows a day on the
   live tenant), and the HEALTH_DAYS before once a day (kept 90 days).
 Activity is kept only about 8 days, so the usual for actions comes from the
 counts saved at the end of each day in <data>/days/<date>.json (counts and
@@ -41,7 +42,7 @@ from .http import short_error
 from .models import parse_time, to_float
 
 log = logging.getLogger("uxcorrelate")
-REFRESH_MIN = 15
+REFRESH_MIN = 15  # minutes between reads unless config.yaml has refresh_minutes (Today.refresh_min)
 LATE_MIN = 15  # an hour is read once more this long after it ends
 START_HOURS = 24
 HEALTH_DAYS = 14  # 7 days of small bars, and the same kind of day for the usual
@@ -120,6 +121,7 @@ class Hour:
 class Today:
     def __init__(self, zone: str = "", store: str | os.PathLike | None = None):
         self.zone, self.zone_label, self.zone_note = zone_of(zone)
+        self.refresh_min = REFRESH_MIN  # web.py sets config.yaml's refresh_minutes
         self.store = Path(store) / "days" if store else None
         self.hours: dict[datetime, Hour] = {}
         self.saved: dict[date, dict] = {}  # summaries of past days, from the files
@@ -427,7 +429,7 @@ class Today:
                 "as_of_local": self.local(self.as_of or now).strftime("%H:%M"),
                 "zone": self.zone_label, "date": t.isoformat(), "kind": kind, "slow": slow, "tiles": tiles,
                 "none": none, "hours": per_hour, "applications": app_rows, "events": events,
-                "health_days": len(before), "notes": notes, "refresh_minutes": REFRESH_MIN,
+                "health_days": len(before), "notes": notes, "refresh_minutes": self.refresh_min,
                 # active: today so far, and the last full hour with this one so far
                 "active": {"today": self.active(hours),
                            "recent": dict(self.active([h for h in hours if h.start >= cut - HOUR]),
@@ -507,7 +509,7 @@ def _read_hour(today: Today, names, client, start: datetime, now: datetime) -> N
                                                    "activity", "response_time", "virtualization") if f.get(k)])
     except Exception as exc:  # Aternity down: the next read tries again
         today.note("activity", f"Aternity activity could not be read ({short_error(exc)}); trying again in "
-                               f"{REFRESH_MIN} min.")
+                               f"{today.refresh_min} min.")
         return
     today.notes.pop("activity", None)
     partial = len(client.warnings) > mark
@@ -541,7 +543,7 @@ def _read_health(today: Today, client, now: datetime) -> None:
             rows = client.query(entity, f"{ts} ge {odata_time(start)} and {ts} lt {odata_time(end)}", select=cols)
         except Exception as exc:
             today.note("health", f"Aternity health events could not be read ({short_error(exc)}); trying again "
-                                 f"in {REFRESH_MIN} min.")
+                                 f"in {today.refresh_min} min.")
             return
         today.notes.pop("health", None)
         today.set_health(rows, f, is_today, len(client.warnings) > mark, () if is_today else (d,))
@@ -554,7 +556,7 @@ def _read_health(today: Today, client, now: datetime) -> None:
 
 def keep_reading(today: Today, names, make_client, sleep, clock=lambda: datetime.now(timezone.utc),
                  care=None, after=None) -> None:
-    """Runs in a background thread: the last 24 hours first, then every REFRESH_MIN.
+    """Runs in a background thread: the last 24 hours first, then every today.refresh_min.
     After each read, the Care list's users are checked against what was read, then
     `after(now)` runs (the assessment, written when a period is due)."""
     try:
@@ -584,7 +586,7 @@ def keep_reading(today: Today, names, make_client, sleep, clock=lambda: datetime
     if after is not None:
         after(clock())
     while True:
-        sleep(REFRESH_MIN * 60)
+        sleep(today.refresh_min * 60)
         try:
             client = make_client() or client  # a new client: its list of cut-short reads starts empty
         except Exception:

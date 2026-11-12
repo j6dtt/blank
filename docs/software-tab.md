@@ -18,7 +18,8 @@ Once a day the app reads two things from Aternity:
 From these it raises red flags. Each flag is a plain count of PCs
 ("3,408 of 5,328 PCs"), never a score. They are ranked by PCs
 affected and shown at the top of the tab. A chat on the tab
-("Ask about software") answers questions from the same counts. GPT
+("Ask about software"; since 2026-11-12 Ask anything, using its
+look-ups) answers questions from the same counts. GPT
 picks what to count and words the answer; every number in its
 sentence must be one of our counts.
 

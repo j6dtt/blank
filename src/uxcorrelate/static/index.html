@@ -61,6 +61,7 @@
   main > *, .grid2 > * { min-width: 0; }  /* a wide table scrolls inside its panel, the page never does */
   .warn { color: var(--warn); }
   .err { color: var(--bad); white-space: pre-wrap; }
+  .err:empty { display: none; }  /* main's grid would leave a gap for it */
   svg text { fill: var(--muted); font-size: 11px; }
   .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
@@ -279,36 +280,6 @@
         7 days before; green is today so far. Hover a bar for its day. Click a row for its users and PCs.</p>
       <div class="exRow noExplain"><button type="button" class="link explain" data-tab="today">Explain ▸</button></div>
     </section>
-    <section class="panel noExplain" id="tAsk" style="margin-top:16px">
-      <div class="todayHead"><h2>Ask anything</h2><span class="muted">new, being tried</span>
-        <span class="muted" id="askWho"></span></div>
-      <form id="askForm" class="chatForm" autocomplete="off">
-        <input name="q" id="askQ" maxlength="500" placeholder="e.g. Tell me about a user or PC, or why was a user slow this morning?">
-        <button id="askGo">Ask</button>
-      </form>
-      <div class="chips" id="askChips"></div>
-      <div class="muted" id="askBusy" style="margin-top:8px"></div>
-      <div id="askAnswers"></div>
-      <p class="muted" style="font-size:12px;margin:10px 0 0">The AI looks things up in this app's data, as many
-        steps as it needs, and answers in its own words; a follow-up question remembers the answers before.
-        It can also read Aternity now: logons, start-ups, a PC's software and changes, the Software tab, and
-        run an investigation (up to a few minutes). Under each answer: what it looked at. A number not found
-        there is marked.
-        <button type="button" class="link" id="askClear" hidden>Clear the answers</button></p>
-    </section>
-    <section class="panel noExplain" id="tChat" style="margin-top:16px">
-      <div class="todayHead"><h2>Ask about today</h2><span class="muted" id="chatWho"></span></div>
-      <form id="chatForm" class="chatForm" autocomplete="off">
-        <input name="q" id="chatQ" maxlength="500" placeholder="e.g. Which apps had the most Major slow actions today?">
-        <button id="chatGo">Ask</button>
-      </form>
-      <div class="chips" id="chatChips"></div>
-      <div class="muted" id="chatBusy" style="margin-top:8px"></div>
-      <div id="chatAnswers"></div>
-      <p class="muted" style="font-size:12px;margin:10px 0 0">The AI only picks what to count and words the answer.
-        Every number comes from this app's own counts, shown under each answer; a sentence with any other number
-        is replaced by ours. <button type="button" class="link" id="chatClear" hidden>Clear the answers</button></p>
-    </section>
   </div>
   <div id="careBox" hidden>
     <section class="panel">
@@ -328,15 +299,6 @@
         <button type="button" class="link" id="cDetailClose">✕ Close</button></div>
       <div id="cDetailBody"></div>
       <div class="exRow noExplain"><button type="button" class="link explain" data-tab="care">Explain ▸</button></div>
-    </section>
-    <section class="panel noExplain" style="margin-top:16px">
-      <h2>Ask about this page</h2>
-      <form class="chatForm askPage" data-tab="care" data-scope="careBox" data-name="Care list" autocomplete="off">
-        <input maxlength="500" placeholder="e.g. What does &quot;their usual by now&quot; mean?">
-        <button>Ask</button>
-      </form>
-      <p class="muted" style="font-size:12px;margin:10px 0 0">The AI is given the Care list as shown above and our written
-        meaning of each term, and puts them in plain English. It reads nothing else; nothing is saved.</p>
     </section>
   </div>
   <div id="softBox" hidden>
@@ -397,20 +359,6 @@
         <datalist id="sProgs"></datalist>
         <div id="sProg"></div>
       </section>
-      <section class="panel noExplain" id="sChat" style="margin-top:16px">
-        <div class="todayHead"><h2>Ask about software</h2><span class="muted" id="sChatWho"></span></div>
-        <form id="sChatForm" class="chatForm" autocomplete="off">
-          <input name="q" id="sChatQ" maxlength="500" placeholder="e.g. Which programs are most out of date?">
-          <button id="sChatGo">Ask</button>
-        </form>
-        <div class="chips" id="sChatChips"></div>
-        <div class="muted" id="sChatBusy" style="margin-top:8px"></div>
-        <div id="sChatAnswers"></div>
-        <p class="muted" style="font-size:12px;margin:10px 0 0">The AI only picks what to count and words the answer.
-          Every number comes from this app's own counts, shown under each answer (a list of PCs, two versions side
-          by side, before and after an update are read from Aternity now); a sentence with any other number is
-          replaced by ours. <button type="button" class="link" id="sChatClear" hidden>Clear the answers</button></p>
-      </section>
     </div>
     <section class="panel" id="sPcs" hidden style="margin-top:16px">
       <div class="todayHead" style="justify-content:space-between"><h2 id="sPcsTitle"></h2>
@@ -455,15 +403,6 @@
     <section class="panel" id="lLocPanel" style="margin-top:16px">
       <h2>By location</h2>
       <div class="tableWrap scroll"><table id="lLoc"></table></div>
-    </section>
-    <section class="panel noExplain" style="margin-top:16px">
-      <h2>Ask about this page</h2>
-      <form class="chatForm askPage" data-tab="startups" data-scope="lout" data-name="Slow start-ups" autocomplete="off">
-        <input maxlength="500" placeholder="e.g. What took the time on the slowest start-ups?">
-        <button>Ask</button>
-      </form>
-      <p class="muted" style="font-size:12px;margin:10px 0 0">The AI is given the start-ups as shown above and our written
-        meaning of each term, and puts them in plain English. It reads nothing else; nothing is saved.</p>
     </section>
   </div>
   <div id="out" hidden>
@@ -524,15 +463,6 @@
       <button type="button" class="link" id="otherBtn"></button>
       <div class="tableWrap" id="otherBox" hidden><table id="others"></table></div>
     </section>
-    <section class="panel noExplain" style="margin-top:16px">
-      <h2>Ask about this investigation</h2>
-      <form class="chatForm askPage" data-tab="investigate" data-scope="out" data-name="Investigation" autocomplete="off">
-        <input maxlength="500" placeholder="e.g. What is the first thing IT should do, and why?">
-        <button>Ask</button>
-      </form>
-      <p class="muted" style="font-size:12px;margin:10px 0 0">The AI is given the whole investigation as shown above and our
-        written meaning of each term, and puts them in plain English. It reads nothing else; nothing is saved.</p>
-    </section>
     <button type="button" class="link" id="detBtn" style="margin-top:12px">Details for IT ▸</button>
     <section class="panel" id="details" hidden style="margin-top:12px">
       <div id="rules"></div>
@@ -540,6 +470,22 @@
       <div class="tableWrap"><table id="objects"></table></div>
     </section>
   </div>
+  <section class="panel noExplain" id="tAsk">
+    <div class="todayHead"><h2>Ask anything</h2><span class="muted" id="askWho"></span></div>
+    <form id="askForm" class="chatForm" autocomplete="off">
+      <input name="q" id="askQ" maxlength="500" placeholder="e.g. Tell me about a user or PC, or what does this page show?">
+      <button id="askGo">Ask</button>
+    </form>
+    <div class="chips" id="askChips"></div>
+    <div class="muted" id="askBusy" style="margin-top:8px"></div>
+    <div id="askAnswers"></div>
+    <p class="muted" style="font-size:12px;margin:10px 0 0">The same chat on every tab: it sees the tab you have open,
+      as shown, with what its terms mean. The AI looks things up in this app's data, as many steps as it needs, and
+      answers in its own words; a follow-up question remembers the answers before. It can also read Aternity now:
+      logons, start-ups, a PC's software and changes, the Software tab, and run an investigation (up to a few
+      minutes). Under each answer: what it looked at. A number not found there is marked.
+      <button type="button" class="link" id="askClear" hidden>Clear the answers</button></p>
+  </section>
 </main>
 <div class="dlgWrap" id="cDlg" hidden><form class="dlg panel" id="cForm" role="dialog" aria-modal="true" aria-labelledby="cDlgTitle"
     style="display:block;max-width:440px" autocomplete="off">
@@ -582,13 +528,15 @@ async function init() {
     $("lf").start.value = toLocalInput(new Date(end - 24 * 3600e3));
     $("lf").end.value = toLocalInput(end);
     $("apps").innerHTML = info.applications.map((a) => `<option value="${esc(a)}">`).join("");
-    todayChat.ready(info.chat); softChat.ready(info.chat); askReady(info.chat);
+    askReady(info.chat);
   } catch (e) { $("error").textContent = "Could not load settings: " + e; }
 }
 
 // The tabs; switching keeps each tab's form and last result.
 const TAB_LINK = { today: "today", care: "care", inv: "investigate", log: "startups", soft: "software" };
+let tabNow = "today";  // the tab open (Ask anything sends what it shows)
 function mode(tab) {
+  tabNow = tab;
   const inv = tab === "inv", logons = tab === "log", today = tab === "today", care = tab === "care", soft = tab === "soft";
   $("tabToday").classList.toggle("on", today); $("tabInv").classList.toggle("on", inv); $("tabLog").classList.toggle("on", logons);
   $("tabCare").classList.toggle("on", care); $("tabSoft").classList.toggle("on", soft);
@@ -597,6 +545,7 @@ function mode(tab) {
   $("out").hidden = !inv || !$("out").dataset.has; $("lout").hidden = !logons || !$("lout").dataset.has;
   $("error").textContent = "";
   history.replaceState(null, "", "#" + TAB_LINK[tab]);
+  if ($("askChips").innerHTML) askChips();  // set once the AI service is known
   if (today) loadToday();
   if (care) loadCare();
   if (soft) loadSoftware();
@@ -792,13 +741,13 @@ function whyText(u) {
 function renderCare(c) {
   $("cStatus").textContent = c.ready ? "" : `Waiting for Today's first read of Aternity (${c.status || "starting"}).`;
   $("cWhen").textContent = c.ready ? `${new Date(c.date + "T12:00:00Z").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}`
-    + ` · as of ${c.as_of_local} · ${c.checked} ${c.checked === 1 ? "user" : "users"} checked every 15 min` : "";
+    + ` · as of ${c.as_of_local} · ${c.checked} ${c.checked === 1 ? "user" : "users"} checked every ${c.refresh_minutes} min` : "";
   $("cTiles").innerHTML = c.users.map((u) => {
     const ok = u.status === "ok";
     const head = u.status === "unknown" ? `<span class="sev" style="background:var(--muted)">not found</span>`
       : ok ? `<span class="sev" style="background:var(--ok)">✓ OK</span>`
       : `<div>${sevTag(u.level)} <span class="muted" style="font-size:12px">since ${esc(u.since_local)}</span></div>`;
-    const lines = u.status === "unknown" ? [u.note] : ok ? [okText(u)] : u.issues.slice(0, 2).map((i) => i.text);
+    const lines = u.status === "unknown" ? [u.note] : ok ? [okText(u)] : u.issues.slice(0, 2).map((i) => [i.text, i.clears]);
     const more = u.issues.length > 2 ? `<div class="u">+${u.issues.length - 2} more</div>` : "";
     const gone = u.cleared.map((i) => `<div class="u">${i.kind === "slow"
       ? `More Major slow actions than usual from ${esc(i.since_local)}; over: ${esc(i.over)}.`
@@ -807,7 +756,9 @@ function renderCare(c) {
     const days = u.days.map((d, k) => ({ day: d.date, pcs: d.issues, window: k === u.days.length - 1 }));
     return `<div class="tile click" role="button" tabindex="0" data-user="${esc(u.username)}">${head}`
       + `<div class="name">${esc(u.title)}</div>${u.label ? `<div class="u">${esc(u.username)}</div>` : ""}`
-      + `<div class="u">${esc(pcText(u))}</div>` + lines.map((x) => `<div class="u"><b>${esc(x)}</b></div>`).join("") + more + gone
+      + `<div class="u">${esc(pcText(u))}</div>` + lines.map((x) => Array.isArray(x)
+        ? `<div class="u"><b>${esc(x[0])}</b>${x[1] ? ` <span class="muted">${esc(x[1])}</span>` : ""}</div>`
+        : `<div class="u"><b>${esc(x)}</b></div>`).join("") + more + gone
       + (why ? `<div class="u">${esc(why)}</div>` : "")
       + (u.status === "unknown" ? "" : !days.some((d) => d.pcs) ? `<div class="u">No issue in the last ${days.length} days.</div>`
         : `<div class="u">Issues per day, last ${days.length} days:</div>` + spark(days, "issues", "Issues per day"))
@@ -828,7 +779,7 @@ async function openCare(username) {
     $("cDetailTitle").textContent = d.label ? `${d.label} (${d.username})` : d.username;
     const rep = d.report;
     let html = `<p>${esc(pcText(d))}. Today: ${n(d.actions)} actions measured, ${n(d.major)} rated Major; ${esc(usualWords(d.usual))}.</p>`;
-    const today = d.issues.map((i) => `<li>${sevTag(i.level)} ${esc(i.text)}</li>`)
+    const today = d.issues.map((i) => `<li>${sevTag(i.level)} ${esc(i.text)}${i.clears ? ` <span class="muted">${esc(i.clears)}</span>` : ""}</li>`)
       .concat(d.cleared.map((i) => `<li>${sevTag(i.level)} ${esc(i.text)} <span class="muted">Over: ${esc(i.over)}.</span></li>`));
     html += `<h3>Today</h3>` + (today.length ? `<ul>${today.join("")}</ul>` : `<p class="muted">No issue today.</p>`);
     html += `<h3>Investigation</h3>`;
@@ -933,12 +884,6 @@ $("cDetailBody").addEventListener("click", (ev) => {
   }
 });
 
-// ---- the chats: a question → the AI picks a building block → our counts → its sentence ----
-// One for each tab (Today: ids chat…, Software: sChat…), each with its own answers.
-const CHAT_EXAMPLES = ["Which apps had the most Major slow actions today?", "Which crashes hit the most PCs this week?",
-  "Are virtual desktops slower than physical PCs today?", "Who had the most slow actions in Outlook today?"];
-const SW_CHAT_EXAMPLES = ["Which programs are most out of date?", "Which application versions crash more than the others?",
-  "Which programs have 2 versions on one PC?", "Did Microsoft Outlook get worse after its last update?"];
 const cell = (v) => v === null || v === undefined ? "—" : typeof v === "number" ? v.toLocaleString() : esc(v);
 // ---- The assessment for executives (assess.py): the latest of today, what it rests on, the earlier
 // ones, yesterday's summary. Written by the server every 3 hours; the page only shows it. ----
@@ -1040,72 +985,26 @@ function answerHtml(text, tags) {
   flush();
   return `<div class="ans">${html}</div>`;
 }
-function makeChat(p, url, examples) {
-  const el = (k) => $(p + k);
-  let history = [], answers = [];
-  function render() {
-    el("Clear").hidden = !answers.length;
-    el("Answers").innerHTML = answers.map((a, i) => {
-      const r = a.result;
-      let html = `<div class="answer"><div class="q">${esc(a.question)} · ${a.seconds} s</div><div class="a">${answerHtml(a.answer)}</div>`;
-      if (a.note) html += `<div class="note">${esc(a.note)}</div>`;
-      if (r) {
-        if (r.action) html += `<div><button type="button" data-a="${i}">Investigate ▸ ${esc([r.action.username, r.action.device].filter(Boolean).join(" on "))}, ${esc(r.period)}</button></div>`;
-        else if (r.rows.length) html += `<div class="tableWrap"><table><tr>${r.runs ? "<th></th>" : ""}${r.columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>`
-          + r.rows.map((row, k) => `<tr>${r.runs ? `<td><button type="button" class="link" data-a="${i}" data-k="${k}">Investigate ▸</button></td>` : ""}`
-            + row.map((v) => `<td${typeof v === "number" ? ' class="num"' : ""}>${cell(v)}</td>`).join("") + "</tr>").join("") + "</table></div>";
-        const src = r.action ? "" : "Counted: " + esc([r.title, r.period, r.total].filter(Boolean).join(" · "));
-        const notes = r.notes.map(esc);
-        if (src || notes.length) html += `<div class="muted src">${[src, ...notes].filter(Boolean).join("<br>")}</div>`;
-      }
-      return html + "</div>";
-    }).join("");
-  }
-  el("Chips").addEventListener("click", (ev) => {
-    const b = ev.target.closest("button");
-    if (b) { el("Q").value = b.textContent; el("Form").requestSubmit(); }
-  });
-  el("Form").addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    const q = el("Q").value.trim();
-    if (!q || el("Go").disabled) return;
-    el("Go").disabled = true;
-    const started = Date.now();
-    const tick = () => { el("Busy").textContent = `Asking… ${Math.round((Date.now() - started) / 1000)} s`; };
-    tick(); const timer = setInterval(tick, 1000);
-    try {
-      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: q, history: history.slice(-3) }) });
-      const a = await r.json();
-      if (!r.ok) throw new Error(detail(a));
-      history.push({ q: a.question, a: a.answer });
-      answers.unshift(a); answers = answers.slice(0, 10);
-      el("Q").value = "";
-      el("Busy").textContent = "";
-      render();
-    } catch (e) { el("Busy").textContent = "No answer: " + e.message; }
-    finally { clearInterval(timer); el("Go").disabled = false; }
-  });
-  el("Clear").addEventListener("click", () => { history = []; answers = []; render(); });
-  el("Answers").addEventListener("click", (ev) => {
-    const b = ev.target.closest("button[data-a]");
-    if (!b) return;
-    const r = answers[Number(b.dataset.a)].result;
-    investigateNow(b.dataset.k !== undefined ? r.runs[Number(b.dataset.k)] : r.action);
-  });
-  return {
-    ready(service) {
-      el("Form").hidden = !service; el("Chips").hidden = !service;
-      el("Who").textContent = service ? `answered with ${service}` : "";
-      if (!service) el("Busy").textContent = "The chat needs an AI service: ai.services in config.yaml (uxcorrelate verify --ai checks it).";
-      el("Chips").innerHTML = examples.map((q) => `<button type="button">${esc(q)}</button>`).join("");
-    },
-  };
-}
 // ---- Ask anything (agent.py): the AI looks things up, as many steps as it needs, and answers in its
 // own words; what it looked at is under each answer, a number found in none of it is marked ----
-const ASK_EXAMPLES = ["What PCs had hard drive issues this week?", "How is today going so far?",
-  "Which applications are worst today, and on which PCs?", "Which software crashed the most this week?"];
+// examples under the box, for the tab open (TAB_LINK's names)
+const ASK_EXAMPLES = {
+  today: ["What PCs had hard drive issues this week?", "How is today going so far?",
+    "Which applications are worst today, and on which PCs?", "Which software crashed the most this week?"],
+  care: ["Which users here have an open issue, and why?", "What does \"their usual by now\" mean?",
+    "Tell me about the first user on this list"],
+  investigate: ["What is the first thing IT should do, and why?", "Explain this investigation in plain words",
+    "Did other users have the same problem?"],
+  startups: ["What took the time on the slowest start-ups?", "Which start-ups were slower than their PC's usual, and why?"],
+  software: ["Which programs are most out of date?", "Which software crashed the most this week?",
+    "Which PC has the most software installed?", "What does this page say needs doing first?"],
+};
+// what the tab open shows (as Explain ▸ reads a panel), sent with each question for the AI's page look-up
+const TAB_SHOWS = { today: "todayBox", care: "careBox", inv: "out", log: "lout", soft: "softBox" };
+function tabShown() {
+  const box = $(TAB_SHOWS[tabNow]);
+  return { tab: TAB_LINK[tabNow], lines: box && !box.hidden ? shown(box).slice(0, 5000) : [] };
+}
 function mdHtml(text) {  // the AI's text: paragraphs, lists, bold; escaped first
   const inline = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>");
   const out = []; let list = null;
@@ -1168,7 +1067,7 @@ $("askForm").addEventListener("submit", async (ev) => {
   tick(); const timer = setInterval(tick, 1000);
   try {
     const r = await fetch("api/ask", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: q, history: askState.history.slice(-6) }) });
+      body: JSON.stringify({ question: q, history: askState.history.slice(-6), page: tabShown() }) });
     const job = await r.json();
     if (!r.ok) throw new Error(detail(job));
     let a = null;
@@ -1215,16 +1114,18 @@ $("askAnswers").addEventListener("click", (ev) => {
   if (!b) return;
   investigateNow(askState.answers[Number(b.dataset.a)].steps[Number(b.dataset.s)].runs[Number(b.dataset.k)]);
 });
+function askChips() {  // the examples of the tab open
+  $("askChips").innerHTML = (ASK_EXAMPLES[TAB_LINK[tabNow]] || []).map((q) => `<button type="button">${esc(q)}</button>`).join("");
+}
 function askReady(service) {
   $("askForm").hidden = !service; $("askChips").hidden = !service;
-  $("askWho").textContent = service ? `· answered with ${service}` : "";
+  $("askWho").textContent = service ? `answered with ${service}` : "";
   if (!service) $("askBusy").textContent = "It needs an AI service: ai.services in config.yaml (uxcorrelate verify --ai checks it).";
-  $("askChips").innerHTML = ASK_EXAMPLES.map((q) => `<button type="button">${esc(q)}</button>`).join("");
+  askChips();
 }
-const todayChat = makeChat("chat", "api/chat", CHAT_EXAMPLES);
-const softChat = makeChat("sChat", "api/software/chat", SW_CHAT_EXAMPLES);
-$("tAskLink").addEventListener("click", () => { $("tChat").scrollIntoView({ behavior: "smooth" }); $("chatQ").focus(); });
-$("sAskLink").addEventListener("click", () => { $("sChat").scrollIntoView({ behavior: "smooth" }); $("sChatQ").focus(); });
+const toAsk = () => { $("tAsk").scrollIntoView({ behavior: "smooth" }); $("askQ").focus({ preventScroll: true }); };
+$("tAskLink").addEventListener("click", toAsk);
+$("sAskLink").addEventListener("click", toAsk);
 
 // One bar per hour of the day (24 slots), the usual as a line across each slot.
 function hoursChart(hours, status) {
@@ -2067,13 +1968,6 @@ $("dlgBody").addEventListener("submit", (ev) => {
   const q = $("exQ").value.trim();
   if (q && explaining) explainNow(explaining.tab, explaining.panel, explaining.lines, q);
 });
-document.querySelectorAll("form.askPage").forEach((f) => f.addEventListener("submit", (ev) => {  // a whole tab as shown
-  ev.preventDefault();
-  const box = f.querySelector("input"), q = box.value.trim();
-  if (!q) return;
-  box.value = "";
-  explainNow(f.dataset.tab, f.dataset.name, shown($(f.dataset.scope)), q);
-}));
 // Software, Investigate and Slow start-ups: the same link at the bottom right of every panel that shows data
 for (const [box, tab] of [["softBox", "software"], ["out", "investigate"], ["lout", "startups"]]) {
   $(box).querySelectorAll("section.panel:not(.noExplain)").forEach((p) => p.insertAdjacentHTML("beforeend",

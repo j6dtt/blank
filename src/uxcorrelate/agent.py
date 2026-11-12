@@ -14,6 +14,12 @@ slow (logons.logon_report), a PC's installed software and Windows, what changed 
 change log as an investigation reads it, cause._updates), the Software tab's look-ups
 (software_chat's blocks, as they are) and a whole investigation (one per question). At most
 `MAX_READS` of them per question; the page runs a question as a job and shows each step.
+
+Step 3 (2026-11-12, "finish 1, 2, and 3"): the one chat, on every tab (it replaced "Ask about
+today", "Ask about software" and "Ask about this page"). The page sends the tab it has open as
+shown (index.html's shown(), as Explain ▸ does), and `page` gives it to the AI with our meaning
+of each term on that tab (explain.given), so "what does this mean?" is answered from what the
+user sees.
 """
 
 from __future__ import annotations
@@ -50,6 +56,7 @@ INVESTIGATE_MAX_H = 24  # an investigation's window, at most: longer ones on the
 STARTUP_DAYS = 7  # start-ups looked at when no number of days is asked for (at most LOGIN_DAYS)
 CHANGE_DAYS = 14  # a PC's change log looked at, at most (as an investigation's "what changed")
 TEXT_CHARS = 12000  # an investigation's report as given to the AI, at most
+PAGE_LINES = 5000  # lines of the tab the page sends, at most (explain.LINES_MAX cuts them by size)
 PER_PC_KEEP_MIN = 60  # programs per PC, counted once and kept this long (every PC's list may be read)
 PER_PC_ROWS = 50  # PCs listed, the most (or fewest) first
 _per_pc: dict = {}  # Aternity's address -> (when counted, the count, its notes)
@@ -99,7 +106,9 @@ SYSTEM = (
     f"{INVESTIGATE_HOURS} hours; its answer is the app's own, tell it as written).\n"
     "- \"Tell me about\" a user or PC: what they did today (activity) and their events first, then their "
     "logons or software when that helps; an investigation only when asked why or what went wrong.\n"
-    "- NetIM (the network) is read only within an investigation."
+    "- NetIM (the network) is read only within an investigation.\n"
+    "- The tab the user has open is given by page, as they see it, with this app's meaning of each term on it: "
+    "use it for a question about \"this\", \"here\", a tile, a row, a number or a word they see."
 )
 
 # a worked-out comparison ("twice as many", "3 times worse"); "twice" alone is a count (Nemotron's
@@ -139,6 +148,10 @@ TOOLS = [
                       "health events with their PCs against usual, and how many users and PCs are active.", {}),
     _tool("meanings", "What a word on this app's pages means (as written by this app), e.g. Major, usual, "
                       "virtual desktop. With no term: the list of terms.", {"term": _S}),
+    _tool("page", "What the user sees on the tab they have open now (Today, Care list, Investigate, Slow "
+                  "start-ups or Software), line by line as the page shows it (tiles, tables, the labels of charts), "
+                  "with this app's meaning of each term on that tab. Use it when the question is about what they "
+                  "are looking at.", {}),
     # step 2: read from Aternity now
     _tool("logons", f"Who logged in to a PC, or which PCs a user logged in to, from Aternity's start-up and logon "
                     f"records, read now: the latest (the last {LOGIN_DAYS} days) or one day. current=true: where "
@@ -475,6 +488,25 @@ def overview(today: Today, now: datetime) -> dict:
     return _step("overview", {}, f"Today's overview, as of {v['as_of_local']}", summary=keep, notes=v["notes"])
 
 
+def page(shown: dict | None) -> dict:
+    """The tab the user has open, as the page shows it (index.html's shown(): a tile or a table
+    row is one line), with our meaning of each term on that tab, as Explain ▸ gives a panel."""
+    from . import explain
+    shown = shown if isinstance(shown, dict) else {}
+    tab = str(shown.get("tab") or "")
+    name = explain.TABS.get(tab, "")
+    raw = shown.get("lines") if isinstance(shown.get("lines"), list) else []
+    lines, cut = explain.trim([str(x) for x in raw[:PAGE_LINES]])
+    if not name:
+        return _step("page", {}, "The page", notes=["No page was sent with this question."])
+    if not lines:
+        return _step("page", {}, f"The {name} tab", notes=[f"The {name} tab shows nothing yet (no result on it)."])
+    step = _step("page", {}, f"The {name} tab, as shown", summary={"lines": len(lines)},
+                 notes=["The tab is long: only its first part was given to the AI."] if cut else [])
+    step["text"] = explain.given(tab, "the whole tab, as shown", lines)
+    return step
+
+
 def meanings(term: str | None = None) -> dict:
     from . import explain
     every = dict(explain.COMMON)
@@ -589,7 +621,7 @@ def pc_software(today: Today, names, now: datetime, reach: Reach | None, pc: str
                 program: str | None = None) -> dict:
     from .aternity import odata_quote
     from .models import parse_time
-    from .software import LIST_ROWS, PC_LIST, _Reads, order, windows_of
+    from .software import LIST_ROWS, PC_LIST, _Reads, order, pc_counts, windows_of
     args = {"pc": pc, "program": program}
     if not pc:
         return _step("pc_software", args, "Which PC?", notes=["Name a PC."])
@@ -632,11 +664,13 @@ def pc_software(today: Today, names, now: datetime, reach: Reach | None, pc: str
         rows = [r for r in rows if r[0] in like]
         if not rows:
             notes.append(f"No program named like \"{program}\" on {name} ({every:,} listed).")
-    summary = {**windows, "programs": sum(1 for r in rows if r[3] != SOFTWARE_OS_UPDATE),
-               "windows_updates": [r[0] for r in rows if r[3] == SOFTWARE_OS_UPDATE][:40]}
+    n = pc_counts([{c["name"]: r[0], c["type"]: r[3]} for r in rows])
+    summary = {**windows, "programs": n["programs"], "rows": n["rows"],
+               "windows_updates": sorted({r[0] for r in rows if r[3] == SOFTWARE_OS_UPDATE and r[0]})[:40]}
     if not got:
         notes.append(f"Aternity lists no installed software for {name}: is the name right?")
-    notes.append("Aternity's installed list as it last read the PC; Last change is Aternity's own date.")
+    notes.append("Aternity's installed list as it last read the PC; Last change is Aternity's own date. Programs: "
+                 "different names, Windows updates apart; a program can have several rows (versions, users).")
     return _step("pc_software", args, f"{name}'s installed software" + (f": {program}" if program else ""),
                  ["Program", "Version", "Vendor", "Type", "For", "Last change"], rows, summary, notes)
 
@@ -732,8 +766,8 @@ def programs_per_pc(today: Today, names, now: datetime, reach: Reach | None, ord
         top = ranked[0]
         summary.update(typical_programs=median(values), most_programs=max(values), fewest_programs=min(values),
                        first_listed=f"{top}: {pcs[top]['programs']} programs")
-    notes.append("Programs: every row of the PC's installed list except Windows updates, as pc_software lists "
-                 "them (a program with 2 versions counts twice).")
+    notes.append(f"Programs: {got['counts']} of the PC's installed list, Windows updates apart"
+                 + (", as pc_software counts them." if got["counts"] == "different program names" else "."))
     return _step("programs_per_pc", args, f"PCs with the {order} programs installed" + (f" ({kind})" if kind else ""),
                  ["PC", "Programs", "Windows updates", "Kind (today)"], rows, summary, notes)
 
@@ -813,7 +847,8 @@ def _norm(v):
     return " ".join(v.split())
 
 
-def run(name: str, args: dict, today: Today, names, now: datetime, reach: Reach | None = None) -> dict:
+def run(name: str, args: dict, today: Today, names, now: datetime, reach: Reach | None = None,
+        shown: dict | None = None) -> dict:
     args = {k: _norm(v) for k, v in (args or {}).items() if v not in (None, "", [])}
     take = lambda *keys: {k: args[k] for k in keys if k in args}  # noqa: E731
     if name in NOW or name in SOFTWARE:
@@ -852,6 +887,8 @@ def run(name: str, args: dict, today: Today, names, now: datetime, reach: Reach 
             return overview(today, now)
         if name == "meanings":
             return meanings(args.get("term"))
+        if name == "page":
+            return page(shown)
     except (TypeError, ValueError, KeyError) as exc:
         return _step(name, args, "Not run", notes=[f"The settings could not be used ({exc})."])
     return _step(name, args, "Not run", notes=[f"There is no tool named {name}."])
@@ -875,15 +912,17 @@ def _calls(message: dict) -> list[tuple[str, dict, str]]:
 
 
 def for_ai(step: dict) -> str:
-    """One step as the AI is given it: no Investigate windows; cut to RESULT_CHARS."""
+    """One step as the AI is given it: no Investigate windows; cut to RESULT_CHARS (a step's
+    text, the page or an investigation's report, is given whole: it is cut to size already)."""
     given = {k: v for k, v in step.items() if k not in ("runs", "tool", "args", "open")}
-    text = json.dumps(given, default=str)
-    while len(text) > RESULT_CHARS and given.get("rows"):
+    text = json.dumps(given, default=str, ensure_ascii=False)
+    limit = max(RESULT_CHARS, len(json.dumps(step.get("text", ""), ensure_ascii=False)) + 2000)
+    while len(text) > limit and given.get("rows"):
         given["rows"] = given["rows"][: len(given["rows"]) // 2]
         given["notes"] = step["notes"] + [f"Only the first {len(given['rows'])} rows are given here (size); the "
                                           "summary counts them all."]
-        text = json.dumps(given, default=str)
-    return text[:RESULT_CHARS]
+        text = json.dumps(given, default=str, ensure_ascii=False)
+    return text[:limit]
 
 
 def system(today: Today, now: datetime) -> str:
@@ -911,10 +950,15 @@ def _reads(name: str, args: dict) -> bool:
 
 
 def ask(question: str, history: list, client: AiClient, today: Today, names, now: datetime,
-        reach: Reach | None = None) -> dict:
+        reach: Reach | None = None, shown: dict | None = None) -> dict:
+    """`shown`: the tab the user has open, as the page shows it ({"tab", "lines"}), for `page`."""
+    from .explain import TABS
     started = time.monotonic()
     question = " ".join(str(question or "").split())[:500]
     sys_text = system(today, now)
+    tab = TABS.get(str((shown or {}).get("tab") or "")) if isinstance(shown, dict) else None
+    if tab:
+        sys_text += f"\nThe user has the {tab} tab open now (page gives what it shows)."
     turns, said, before = [], [], []
     for h in (history or [])[-HISTORY:]:
         if isinstance(h, dict) and h.get("q") and h.get("a"):
@@ -954,7 +998,7 @@ def ask(question: str, history: list, client: AiClient, today: Today, names, now
                 log.info("Ask anything: look-up %d, %s", len(steps) + 1, _call(name, args)[:300])
                 reads += _reads(name, args)
                 ran += name == "investigate"
-                step = run(name, args, today, names, now, reach)
+                step = run(name, args, today, names, now, reach, shown)
                 steps.append(step)
                 content = for_ai(step)
             messages.append({"role": "tool", "tool_call_id": call_id, "content": content})

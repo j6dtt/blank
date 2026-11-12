@@ -197,7 +197,7 @@ def test_a_pcs_software_and_what_changed_on_it_are_read_now():
     pc = agent.run("pc_software", {"pc": "PC-01"}, t, names, now, reach)
     assert [r[:2] for r in pc["rows"]] == [["Java", "8.1"], ["Java", "11.0"], ["Microsoft Edge", "121.0"],
                                            ["Zoom", "5.1"], ["KB1", None]]  # by name, oldest first; Windows updates last
-    assert pc["summary"]["windows"] == "Microsoft Windows 11 Enterprise 23H2" and pc["summary"]["programs"] == 4
+    assert pc["summary"]["windows"] == "Microsoft Windows 11 Enterprise 23H2" and pc["summary"]["programs"] == 3 and pc["summary"]["rows"] == 4  # Java twice
     assert pc["summary"]["windows_updates"] == ["KB1"] and pc["rows"][3][4] == "Specific User"
     assert [r[0] for r in agent.run("pc_software", {"pc": "PC-01", "program": "java"}, t, names, now,
                                     reach)["rows"]] == ["Java", "Java"]
@@ -268,38 +268,85 @@ def test_the_page_runs_a_question_as_a_job(monkeypatch):
             break
         time.sleep(0.05)
     assert job["result"]["answer"] == "Nothing to look up." and any("asked of gpt" in x for x in job["lines"])
+    # the tab the page has open goes with the question (step 3: the one chat, on every tab)
+    ai = Script(call("page"), {"content": "Mail crashed on VD-7."})
+    monkeypatch.setattr(ai_mod, "AiClient", lambda service, key: ai)
+    r = tc.post("/api/ask", json={"question": "What is this?", "page": {"tab": "care", "lines": ["Mail crashed on VD-7"]}})
+    for _ in range(100):
+        job = tc.get(f"/api/jobs/{r.json()['id']}").json()
+        if job["done"]:
+            break
+        time.sleep(0.05)
+    assert job["result"]["steps"][0]["title"] == "The Care list tab, as shown"
+    assert any("asked of gpt on the Care list tab" in x for x in job["lines"])
 
 
-def test_programs_per_pc_are_aternitys_sums_only_when_they_are_the_pcs_own_lists(monkeypatch):
-    """Stage, Nov 2026: "Which PC has the most software installed?" was "I can't tell"."""
+def test_the_tab_open_is_given_as_shown_with_the_meaning_of_its_terms():
+    """Step 3: one chat on every tab; "what does this mean?" is answered from what the user sees."""
+    t, names, now = ask_records()
+    shown = {"tab": "care", "lines": ["Care list · checked every 15 min",
+                                      "Director · sample02 · VD-77 · 3 Major slow actions by 10:05 · Clears after 11:00"]}
+    ai = Script(call("page"), {"content": "sample02 had 3 Major slow actions by 10:05; it clears after 11:00 "
+                                          "if no new Major action comes."})
+    a = agent.ask("Why is the director flagged?", [], ai, t, names, now, shown=shown)
+    step = a["steps"][0]
+    assert step["title"] == "The Care list tab, as shown" and step["summary"] == {"lines": 2}
+    assert "The user has the Care list tab open now" in ai.seen[0][0]["content"]
+    given = ai.seen[1][-1]["content"]  # the page's lines, then our meaning of each term on that tab
+    assert "Director · sample02" in given and "Clears after" in given and "their usual by now" in given
+    assert a["flagged"] == []  # its numbers are on the page
+    assert "text" not in json.dumps(step["summary"]) and step["rows"] == []
+    # nothing sent, or a tab with nothing on it yet: said, not made up
+    none = agent.ask("What is this?", [], Script(call("page"), {"content": "I can't see a page."}), t, names, now)
+    assert none["steps"][0]["notes"] == ["No page was sent with this question."]
+    empty = agent.ask("Explain this", [], Script(call("page"), {"content": "No investigation yet."}), t, names, now,
+                      shown={"tab": "investigate", "lines": []})
+    assert empty["steps"][0]["notes"] == ["The Investigate tab shows nothing yet (no result on it)."]
+    # a long tab is cut to the size both models read right (explain.LINES_MAX), and given whole
+    big = {"tab": "software", "lines": [f"Program {i}: on {i} PCs, 2 versions" for i in range(3000)]}
+    ai = Script(call("page"), {"content": "Program 1 is on 1 PC."})
+    a = agent.ask("Which program is on the most PCs?", [], ai, t, names, now, shown=big)
+    assert a["steps"][0]["notes"] == ["The tab is long: only its first part was given to the AI."]
+    assert "Program 1000:" in ai.seen[1][-1]["content"] and len(ai.seen[1][-1]["content"]) > agent.RESULT_CHARS
+
+
+def test_programs_per_pc_are_aternitys_count_only_when_it_is_the_pcs_own_lists(monkeypatch):
+    """Stage, Nov 2026: "Which PC has the most software installed?" was "I can't tell"; then
+    Aternity's count was 511 for a PC whose list has 619 rows, and every PC's list in one read
+    was refused ("Returned data too long")."""
     import test_software
     t, names, now = ask_records()
-    data = sw_tables()
-    for r in data["INSTALLED_SOFTWARE"]:
-        r["INSTALLED_SW_COUNT"] = 1
-    seen = []
-    c, s = sw_client(seen=seen, data=data)  # the fake does not add INSTALLED_SW_COUNT up: every list is counted
-    agent._per_pc.clear()
-    reach = agent.Reach(aternity_of=lambda: c, cfg=s.aternity)
-    most = agent.run("programs_per_pc", {}, t, names, now, reach)
-    assert most["rows"][:2] == [["PC-01", 4, 1, "no action today"], ["PC-02", 4, 1, "no action today"]]
-    assert most["summary"]["counted"] == "counted from every PC's own list (138 rows)"
-    assert most["summary"]["pcs"] == 60 and most["summary"]["fewest_programs"] == 1
-    assert any("not the PC's own list" in n for n in most["notes"])
-    assert sum(1 for e, *_ in seen if e == "INSTALLED_SOFTWARE") == 4  # the sum, 2 own lists, every list
-    again = agent.run("programs_per_pc", {"order": "fewest"}, t, names, now, reach)  # kept: not read again
-    assert sum(1 for e, *_ in seen if e == "INSTALLED_SOFTWARE") == 4 and again["rows"][0][1] == 1
-    assert any(n.startswith("Counted at") for n in again["notes"])
-    # Aternity adds it up: one read, checked on the PCs with the most and the fewest
     monkeypatch.setattr(test_software, "MEASURES", test_software.MEASURES | {"INSTALLED_SW_COUNT"})
-    seen.clear()
-    agent._per_pc.clear()
-    c2, _ = sw_client(seen=seen, data=data)
-    summed = agent.run("programs_per_pc", {}, t, names, now, agent.Reach(aternity_of=lambda: c2, cfg=s.aternity))
-    assert summed["rows"][0] == ["PC-01", 4, 1, "no action today"]
-    assert summed["summary"]["counted"].startswith("added up by Aternity") and len(seen) == 3  # the sum, 2 lists
+
+    def counted(count):  # the installed list, with INSTALLED_SW_COUNT per row as count(row, seen before)
+        data, seen = sw_tables(), set()
+        for r in data["INSTALLED_SOFTWARE"]:
+            key = (r["DEVICE_NAME"], r["INSTALLED_SW_NAME"])
+            r["INSTALLED_SW_COUNT"] = count(key in seen)
+            seen.add(key)
+        reads = []
+        c, s = sw_client(seen=reads, data=data)
+        agent._per_pc.clear()
+        return agent.run("programs_per_pc", {}, t, names, now, agent.Reach(aternity_of=lambda: c, cfg=s.aternity)), reads
+
+    # Aternity counts each program name once: PC-01 has Java 8.1 and 11.0, Edge, Zoom = 3 programs in 4 rows
+    by_name, reads = counted(lambda again: 0 if again else 1)
+    assert by_name["rows"][0] == ["PC-01", 3, 1, "no action today"] and by_name["summary"]["counted"].startswith(
+        "added up by Aternity (INSTALLED_SW_COUNT): the different program names, as in the own lists of")
+    assert len(reads) == 3  # the count, then the lists of the PCs with the most and the fewest
+    assert "different program names" in by_name["notes"][-1]
+    by_row, _ = counted(lambda again: 1)  # one per row: the rows, said so
+    assert by_row["rows"][0][:2] == ["PC-01", 4] and "the rows, as in" in by_row["summary"]["counted"]
+    neither, _ = counted(lambda again: 2)  # neither: the numbers are said, no count is given
+    assert neither["rows"] == [] and "no count is given: PC-01: Aternity 10, its list 4 names in 5 rows" in \
+        neither["notes"][-1]
+    # kept an hour: asked again, not read again
+    c, s = sw_client(data=sw_tables())
+    agent._per_pc["k"] = (time.monotonic(), {"pcs": {"PC-01": {"programs": 3, "windows_updates": 1}},
+                                             "counts": "different program names", "how": "x"}, [], "16:00")
+    c.cfg.base_url = "k"
+    kept = agent.run("programs_per_pc", {"order": "fewest"}, t, names, now, agent.Reach(aternity_of=lambda: c))
+    assert kept["rows"] == [["PC-01", 3, 1, "no action today"]] and "Counted at 16:00" in kept["notes"][0]
     # only virtual desktops: those Aternity marked so in today's actions
-    agent._per_pc.clear()
-    vd = agent.run("programs_per_pc", {"kind": "virtual"}, t, names, now, agent.Reach(aternity_of=lambda: c2,
-                                                                                      cfg=s.aternity))
-    assert vd["rows"] == [] and vd["summary"]["pcs"] == 0 and "Only virtual ones" in vd["notes"][-2]
+    vd = agent.run("programs_per_pc", {"kind": "virtual"}, t, names, now, agent.Reach(aternity_of=lambda: c))
+    assert vd["rows"] == [] and "Only virtual ones" in vd["notes"][1]

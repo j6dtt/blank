@@ -351,9 +351,12 @@ class AiService:
     timeout: float = 120.0
 
 
+REFRESH_RANGE = (5, 60)  # refresh_minutes, at least and at most (the user, 2026-11-12: try 5 on stage)
+
+
 @dataclass
 class CareUser:
-    """One user on the Care list tab: checked every 15 minutes."""
+    """One user on the Care list tab: checked after every read of Aternity (refresh_minutes)."""
     username: str = ""  # exactly as in Aternity
     label: str = ""     # shown big on the tile (usernames are not friendly)
 
@@ -407,6 +410,8 @@ class Settings:
     boot_unit: str = "s"
     # where "Today" starts and ends (midnight there), e.g. America/New_York; empty: UTC
     timezone: str = ""
+    # how often the Today tab, the name list and the Care list read Aternity (REFRESH_RANGE)
+    refresh_minutes: int = 15
 
 
 def _merge_dataclass(obj: Any, data: dict[str, Any]) -> None:
@@ -440,6 +445,9 @@ def load_settings(path: str | os.PathLike | None = None) -> Settings:
             settings.boot_unit = str(raw["boot_unit"])
         if raw.get("timezone"):
             settings.timezone = str(raw["timezone"]).strip()
+        if raw.get("refresh_minutes") not in (None, ""):
+            low, high = REFRESH_RANGE
+            settings.refresh_minutes = min(max(int(raw["refresh_minutes"]), low), high)
         if metrics is not None:
             settings.netim.metrics = [NetimMetric(**m) for m in metrics]
         settings.ai.chat = str((raw.get("ai") or {}).get("chat") or "").strip()

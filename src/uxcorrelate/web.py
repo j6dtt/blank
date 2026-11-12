@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from .assess import Assessments
 from .care import Care
 from .chat import ask, chat_service
-from .config import load_settings
+from .config import Settings, load_settings
 from .correlate import InvestigationRequest, investigate
 from .http import ApiError, short_error
 from .logons import logon_report
@@ -64,6 +64,7 @@ class InvestigateBody(BaseModel):
 class ChatBody(BaseModel):
     question: str
     history: list[dict] = []
+    page: dict | None = None  # Ask anything: the tab the page has open, as shown ({"tab", "lines"})
 
 
 class ExplainBody(BaseModel):
@@ -122,10 +123,14 @@ def create_app(config_path: str | None = None) -> FastAPI:
     # reader of Aternity (started with the server, not in tests that never start it).
     names = app.state.names = NameList()
     try:
-        zone = load_settings(config_path).timezone
+        first = load_settings(config_path)
+        zone, refresh = first.timezone, first.refresh_minutes
     except Exception:  # a broken config.yaml: the reader says so
-        zone = ""
+        zone, refresh = "", Settings().refresh_minutes
     today = app.state.today = Today(zone, os.environ.get("UXCORRELATE_DATA") or None)
+    today.refresh_min = refresh  # how often Aternity is read (config.yaml refresh_minutes)
+    from . import explain as _explain
+    _explain.set_refresh(refresh)
     care = app.state.care = Care(today, lambda: load_settings(config_path).care_list,
                                  os.environ.get("UXCORRELATE_DATA") or None, names)
     software = app.state.software = Software(zone, os.environ.get("UXCORRELATE_DATA") or None)
@@ -431,10 +436,12 @@ def create_app(config_path: str | None = None) -> FastAPI:
                             known=sorted(known), investigate=ask_investigate, boot_unit=settings.boot_unit)
 
         def work(body: ChatBody) -> dict:
-            log.info("Ask anything: \"%s\", asked of %s", " ".join(body.question.split())[:80], service.name)
+            tab = _explain.TABS.get(str((body.page or {}).get("tab")))
+            log.info("Ask anything: \"%s\", asked of %s%s", " ".join(body.question.split())[:80], service.name,
+                     f" on the {tab} tab" if tab else "")
             try:
                 answer = agent.ask(body.question, body.history, client, today, names, datetime.now(timezone.utc),
-                                   reach)
+                                   reach, body.page)
             except ApiError as exc:
                 log.warning("Ask anything: the AI service %s did not answer (%s)", service.name, exc.short())
                 raise HTTPException(502, f"The AI service {service.name} did not answer ({exc.short()}). Try "

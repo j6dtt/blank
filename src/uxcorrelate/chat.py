@@ -800,7 +800,8 @@ def logins(today: Today, names, now: datetime, aternity_of=None, username: str |
                  f"{today.local(start + timedelta(hours=1)):%H:%M}"]
                 for (u, d), (start, kind) in sorted(seen.items(), key=lambda kv: kv[1][0], reverse=True)[:WHO_ROWS]]
         notes += ["Now: the latest hour of today with an action Aternity measured for them, read every "
-                  "15 minutes. It says where they last worked, not that the session is still open."]
+                  f"{today.refresh_min} minutes. It says where they last worked, not that the session is still "
+                  "open."]
         if not rows:
             notes.append("Ask with a date, or without one for their latest logons.")
             return _result("logins", used, f"{who}: not seen working today", _period(today, t, 1), [], [], notes,

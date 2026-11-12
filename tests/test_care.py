@@ -153,6 +153,8 @@ def test_an_event_is_over_after_an_hour_with_no_new_one_and_a_later_one_is_a_new
     care = Care(today_with(0, [crash(9, 0), crash(14, 0), crash(14, 40)]), lambda: USERS[:1])
     care.check(client(), at(14, 50))
     issues = care.issues["mq2208"]  # 09:00 was over before it was first seen: kept, not investigated
+    assert [i["clears"] for i in care.view(at(14, 50))["users"][0]["issues"]] == [
+        "Clears after 15:40 if no new Application Crash."]  # the hour after 14:40
     assert [(i["since"][11:16], "cleared" in i) for i in issues] == [("15:00", True), ("20:00", False)]
     assert care.pending == ["mq2208"]
     care.run_next(lambda u, s, e: {"answer": {"title": "Mail crashed on VD-7"}}, at(14, 50))
@@ -218,7 +220,10 @@ def test_a_slow_spell_is_over_after_an_hour_with_no_major_action_and_a_later_one
     care.run_next(lambda u, s, e: {"answer": {"title": "Mail was slow on VD-7"}}, NOW)
     at = lambda h, m: datetime(2026, 11, 9, h + 6, m, tzinfo=timezone.utc)  # noqa: E731  (Chicago time)
     care.check(client(), at(15, 10))
-    assert care.view(at(15, 10))["users"][0]["status"] == "issue"  # 50 min after the last
+    mq = care.view(at(15, 10))["users"][0]
+    assert mq["status"] == "issue"  # 50 min after the last
+    assert mq["issues"][0]["clears"] == "Clears after 15:20 if no new Major action."  # the hour after 14:20
+    assert care.detail("mq2208", at(15, 10))["issues"][0]["clears"] == mq["issues"][0]["clears"]
     care.check(client(), at(15, 25))  # 65 min: over, though 3 is still more than their usual 0 to 2
     mq = care.view(at(15, 25))["users"][0]
     assert (mq["status"], mq["issues"], mq["level"]) == ("ok", [], None)
@@ -318,6 +323,27 @@ def test_care_list_in_config_yaml(tmp_path):
     path.write_text("care_list:\n  - username: xk4471\n    label: Front desk\n  - tz9013\n  - username: ''\n")
     got = load_settings(path).care_list
     assert [(u.username, u.label) for u in got] == [("xk4471", "Front desk"), ("tz9013", "")]
+
+
+def test_how_often_aternity_is_read_is_a_setting_in_config_yaml(tmp_path):
+    """The user, 2026-11-12: try 5 minutes on stage. One setting for the Today reader, the
+    names and the Care list (they share its reads), kept between 5 and 60 minutes."""
+    from uxcorrelate import explain, today as today_mod
+    path = tmp_path / "config.yaml"
+    for value, got in (("5", 5), ("2", 5), ("90", 60), ("''", 15)):
+        path.write_text(f"refresh_minutes: {value}\n")
+        assert load_settings(path).refresh_minutes == got
+    path.write_text("timezone: ''\n")
+    assert load_settings(path).refresh_minutes == today_mod.REFRESH_MIN == 15
+    path.write_text("refresh_minutes: 5\ncare_list:\n  - mq2208\n")
+    try:
+        app = web.create_app(str(path))
+        assert app.state.today.refresh_min == 5
+        assert app.state.care.today.refresh_min == 5  # the Care list checks after each of its reads
+        assert "every 5 minutes" in explain.GLOSSARY["today"]["Today"]
+        assert "(5 minutes)" in explain.GLOSSARY["care"]["Care list"]
+    finally:
+        explain.set_refresh(today_mod.REFRESH_MIN)  # the meanings are the module's: as before for other tests
 
 
 def test_the_endpoints(tmp_path):

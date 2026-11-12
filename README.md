@@ -131,25 +131,23 @@ in `timezone` (config.yaml). Tiles for crashes and events Aternity rates
 Critical or Major and for its Major slow actions, each against the same
 kind of day before ("More than usual", "As usual", "Fewer than usual");
 Major slow actions per hour and per application; other crashes and events
-on the most PCs, each with its 7 days before. It updates every 15 minutes
-(the open tab fetches every 5).
+on the most PCs, each with its 7 days before. It reads Aternity every 15
+minutes, or every `refresh_minutes` set in config.yaml (5 to 60; the
+Care list is checked after each read). The open tab fetches every 5.
 Click a tile ("Show who"), an application row or an event row for the
 users and PCs behind it, most first (50 at most): a slow action list
 gives each one's slowest action, an event list how many times. Their
 "Investigate ▸" opens the Investigate tab and runs it at once for that
 user and PC, from 30 minutes before their first one to 30 minutes after
 the last (an hour each side for events; for an application, only that
-application). "Ask about today" (at the bottom; "Ask a question ▾" at
-the top jumps there): type a question, or click an example. The AI
-picks what to count and words a sentence; this app does the counting, and
-the counts are shown under the sentence. A sentence with a number that is
-not in the counts is replaced by the app's own. It answers about Major
-slow actions (by application, hour, activity, day, virtual or physical),
-crashes and events (today and the 14 days before), who had them today,
-and "Investigate <user or PC>" (a button that runs it). Earlier questions
-are remembered for follow-ups until "Clear the answers" or a reload.
-"Ask anything" (above it, new, being tried): ask in your own words
-("What PCs had hard drive issues this week?", "Tell me about sample02").
+application).
+"Ask anything" (at the bottom of every tab, the same chat with the same
+answers whichever tab is open; "Ask a question ▾" on Today and Software
+jumps there): ask in your own words ("What PCs had hard drive issues
+this week?", "Tell me about sample02", "What does this page show?"). The
+examples under the box change with the tab. It sees the tab you have
+open, as shown, with what its terms mean (look-up "The … tab, as
+shown"), so "what does this mean?" is answered from what you see.
 The AI looks things up in this app's data, as many steps as it needs
 (find a name, health events, today's actions, today's overview, the
 meanings of our words), and answers in its own words. It can also read
@@ -188,7 +186,8 @@ logon time), each against the same hour on the days before, are a row
 of their own in Today's issues, under the active users and PCs; Aternity's
 start-ups are read once an hour for them.
 
-Care list tab (second): up to 50 users, each checked every 15 minutes.
+Care list tab (second): up to 50 users, each checked after every read of
+Aternity (every 15 minutes, or `refresh_minutes` in config.yaml).
 "+ Add a user" (top right of the tab) opens a box: the username as
 Aternity writes it (names seen in Aternity are offered as you type) and
 an optional label shown big on the tile; the tile is there at once and
@@ -204,7 +203,9 @@ An issue is an event Aternity rates Critical or Major, or more Major slow
 actions by this time of day than on any of the user's own days before.
 Either is over after an hour with no new one (slow actions also once the
 user is back within their usual by that time of day); a later one is a new
-issue. The tile keeps a line saying when it was and how it ended. Every user has a tile:
+issue. An open issue says when it ends if nothing new comes ("Clears
+after 17:00 if no new Major action"; it shows as over at the first check
+after that time). The tile keeps a line saying when it was and how it ended. Every user has a tile:
 those with an issue first (Critical first), then names not seen in 8 days,
 then green "✓ OK" tiles (actions today, how many Major, their usual by
 now, and any slow spell that cleared). A new issue runs an investigation
@@ -290,15 +291,13 @@ flags. Top to bottom:
   "not on N ▸" lists those PCs, read now, the ones with nothing in its
   place first), **Programs by how many PCs have them** (click a column), **A program**
   (its versions; click one for its PCs, read now).
-- **Ask about software** (bottom; "Ask a question ▾" beside the summary
-  jumps there): as on the Today tab, GPT picks what to count and words
-  the answer, our counts are shown under it, and a sentence with a number
-  not in them is replaced by ours. It also answers what the charts do
-  not: an application's crashes split by the version of another program
-  ("Do Outlook crashes depend on the Teams Meeting Add-in version?"; never
-  a red flag), which PCs have a version ("Which PCs still run Edge 143?")
-  or lack a Windows update ("Which PCs are missing KB…?"), each with
-  Investigate ▸.
+- **Ask anything** (bottom; "Ask a question ▾" beside the summary jumps
+  there): the same chat as on every tab, with this tab's examples. It uses
+  the tab's look-ups as they are: an application's crashes split by the
+  version of another program ("Do Outlook crashes depend on the Teams
+  Meeting Add-in version?"; never a red flag), which PCs have a version
+  ("Which PCs still run Edge 143?") or lack a Windows update ("Which PCs
+  are missing KB…?").
 Each chart has "Table ▾" with its numbers. Counts and names are saved in
 `$UXCORRELATE_DATA/software/<date>.json` (no PC or user names), 90 days.
 
