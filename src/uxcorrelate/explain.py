@@ -22,7 +22,7 @@ import re
 import unicodedata
 
 from . import after_start, care, impact, logons, normal, software, today
-from .assess import ISOLATED, MIN_ACTIONS, MIN_STARTS, VERDICT_PCS, WIDESPREAD
+from .assess import HOURS, ISOLATED, MIN_ACTIONS, MIN_STARTS, VERDICT_PCS, WIDESPREAD
 from .chat import RATIO, allowed, clean, numbers
 from .cause import DISK_BACK
 from .config import TILE_SEVERITIES, TOP_STATUS
@@ -52,7 +52,8 @@ GLOSSARY: dict[str, dict[str, str]] = {
     "today": {
         "Today": f"From midnight (in the time zone shown) to the last read. Aternity is read every "
                  f"{today.REFRESH_MIN} minutes.",
-        "Assessment": "A short reading of the day for executives, written every 3 hours in working hours: the "
+        "Assessment": "A short reading of the day for executives, written at "
+                      + ", ".join(f"{h:02d}:00" for h in HOURS) + ": the "
                       "verdict and what the day means for people working, then points labelled Changed (since the "
                       "assessment before), Watch (above its usual range now), Earlier (above it earlier today, "
                       "not now) and Start-ups, and what to look at first. Our code counts the facts (counts and "

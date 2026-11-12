@@ -204,7 +204,8 @@ def test_one_is_written_when_due_and_kept(tmp_path):
     t = filled()  # NOW is 14:30 in Chicago: the 12:00 one is owed
     a = A.Assessments(t, store=tmp_path)
     ai = Ai("No usual to compare with yet.\n- System Crash is on 1 PC.\nNext: look at System Crash.")
-    assert a.due(NOW) == 12 and a.due(NOW - 6 * HOUR) is None  # 08:30: before the first
+    assert a.due(NOW) == 12 and a.due(NOW - 9 * HOUR) is None  # 05:30: before the first
+    assert a.due(NOW - 6 * HOUR) == 6  # 08:30: the 06:00 one
     a.tick(NOW, lambda: (ai, "gpt"))
     v = a.view(NOW)
     assert len(v["periods"]) == 1 and v["next"] == "15:00" and v["yesterday"] is None
@@ -252,7 +253,7 @@ def test_the_endpoint(tmp_path, monkeypatch):
     cfg.write_text("timezone: America/Chicago\n")
     app = web.create_app(str(cfg))
     got = TestClient(app).get("/api/assess").json()
-    assert got["periods"] == [] and got["hours"] == [9, 12, 15, 18] and got["yesterday"] is None
+    assert got["periods"] == [] and got["hours"] == [6, 9, 12, 15, 18] and got["yesterday"] is None
 
 
 def test_start_ups_are_in_the_facts_and_software_is_not():

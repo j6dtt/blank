@@ -153,7 +153,7 @@ in `./data` each night (`mkdir -p data && chmod a+rwx data` before the
 first start).
 
 Assessment (top of the Today tab): a short reading of the day for
-executives, written at 09:00, 12:00, 15:00 and 18:00, under a banner
+executives, written at 06:00, 09:00, 12:00, 15:00 and 18:00, under a banner
 (green, amber or red with the verdict): the verdict and what the day
 means for people working, then points labelled Changed (since the one
 before), Watch (above its usual range now), Earlier (above it earlier

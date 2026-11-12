@@ -271,7 +271,7 @@ unset `<REQUIRED>` base URLs.
   is the whole answer) and `ask` (`suggestions`: chips in the dialog).
 - `assess.py`: the assessment for executives, first panel of the Today
   tab (`/api/assess`, `#asBox`; the user's request and "all recommended",
-  2026-11-11). Every 3 hours in working hours (`HOURS` 9, 12, 15, 18
+  2026-11-11). Every 3 hours from 06:00 (`HOURS` 6, 9, 12, 15, 18, the user 2026-11-12
   local; the first read after an hour writes it, `Assessments.tick`,
   called by the Today reader's `after=`; after a restart the latest hour
   passed is written with the time it is). Our code counts the facts as

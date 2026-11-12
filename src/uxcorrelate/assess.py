@@ -2,7 +2,7 @@
 
 The user's request (2026-11-11): "an AI overall assessment for executive hourly or 3-hour
 (what new in the last x hour and overall today up to the hour)". Choices taken ("all
-recommended"): every 3 hours in working hours (`HOURS`), counts and application names only
+recommended"): every 3 hours (`HOURS`, from 06:00: the user, 2026-11-12), counts and application names only
 (no user, no PC), one summary of the day written after midnight and shown the next morning
 as "Yesterday" (written once, so the two never differ), kept `KEEP_DAYS` days.
 
@@ -35,7 +35,7 @@ from .http import ApiError, short_error
 from .models import plural
 from .today import MIN_USUAL, USUAL_DAYS, kind_of
 
-HOURS = (9, 12, 15, 18)  # local time: an assessment at each; the first read after it writes it
+HOURS = (6, 9, 12, 15, 18)  # local time: an assessment at each; the first read after it writes it
 KEEP_DAYS = 8
 TOP = 3  # events, applications named in one assessment
 MIN_ACTIONS = 50  # an hour with fewer measured actions has no share (one slow action would move it a lot)
