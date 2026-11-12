@@ -152,11 +152,17 @@ are remembered for follow-ups until "Clear the answers" or a reload.
 ("What PCs had hard drive issues this week?", "Tell me about sample02").
 The AI looks things up in this app's data, as many steps as it needs
 (find a name, health events, today's actions, today's overview, the
-meanings of our words), and answers in its own words. "What I looked
-at" under each answer shows every step with its rows (Investigate ▸ on
-each); a number found in none of them is marked, not hidden. It reads
-only what the app already holds (no extra Aternity load); installed
-software, start-ups, logons and investigations come next.
+meanings of our words), and answers in its own words. It can also read
+Aternity now, at most 5 times a question: a user's or PC's logons,
+their start-ups and why they were slow, a PC's installed software and
+Windows, what was installed, updated or removed on a PC, the Software
+tab's look-ups, and one investigation of a user or PC (the last 4 hours
+unless a time is asked for, 24 at most; up to a few minutes). While it
+works, the line under the box says which look-up it is on. "What I
+looked at" under each answer shows every step with its rows
+(Investigate ▸ on each; "Open this investigation ▸" shows the one it
+ran on the Investigate tab, "Open in Slow start-ups ▸" runs that tab);
+a number found in none of them is marked, not hidden.
 The usual for actions builds up over the first week from the counts saved
 in `./data` each night (`mkdir -p data && chmod a+rwx data` before the
 first start).

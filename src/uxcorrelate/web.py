@@ -400,12 +400,21 @@ def create_app(config_path: str | None = None) -> FastAPI:
                  if r else " with no building block", f"; {answer['note']}" if answer["note"] else "")
         return answer
 
+    def ask_investigate(username, device, application, start: datetime, end: datetime) -> dict:
+        """An investigation asked for in Ask anything, as the Investigate tab runs it."""
+        settings, aternity, netim = sources()
+        req = InvestigationRequest(start=start, end=end, username=username, device=device, application=application)
+        return investigate(req, aternity, netim, settings)
+
     @app.post("/api/ask")
     def ask_anything(body: ChatBody):
-        """Ask anything (agent.py): the AI looks things up, as many steps as it needs, and answers."""
+        """Ask anything (agent.py): the AI looks things up, as many steps as it needs, and answers.
+        Run as a job (some look-ups read Aternity now, an investigation takes minutes): the page
+        asks /api/jobs/{id} every second and shows each look-up as it starts."""
         from . import agent
         from .ai import AiClient
-        service = chat_service(load_settings(config_path))
+        settings = load_settings(config_path)
+        service = chat_service(settings)
         if service is None:
             raise HTTPException(503, "The chat needs an AI service: ai.services in config.yaml "
                                      "(uxcorrelate verify --ai checks it).")
@@ -414,17 +423,28 @@ def create_app(config_path: str | None = None) -> FastAPI:
         if not today.ready:
             raise HTTPException(503, "Still reading Aternity: ask again in a minute.")
         client = AiClient(service, os.environ.get(service.key_env, "") if service.key_env else "")
-        try:
-            answer = agent.ask(body.question, body.history, client, today, names, datetime.now(timezone.utc))
-        except ApiError as exc:
-            log.warning("Ask anything: the AI service %s did not answer (%s)", service.name, exc.short())
-            raise HTTPException(502, f"The AI service {service.name} did not answer ({exc.short()}). Try again; "
-                                     "`uxcorrelate verify --ai` checks it.")
-        log.info("Ask anything: \"%s\" answered in %.1f s by %s after %d look-up(s)%s%s", answer["question"][:80],
-                 answer["seconds"], service.name, len(answer["steps"]),
-                 f" ({answer['looked'][:200]})" if answer["steps"] else "",
-                 f"; {answer['note']}" if answer["note"] else "")
-        return answer
+        known = {a for h in list(today.hours.values()) for a in h.apps if a != NO_APP}  # as the Software chat
+        with today.lock:
+            known |= {x[5] for x in today.health if x[5]}
+            known |= {k[1] for kinds in today.health_apps.values() for k in kinds if k[1]}
+        reach = agent.Reach(aternity_of=aternity_client, cfg=settings.aternity, software=software,
+                            known=sorted(known), investigate=ask_investigate, boot_unit=settings.boot_unit)
+
+        def work(body: ChatBody) -> dict:
+            log.info("Ask anything: \"%s\", asked of %s", " ".join(body.question.split())[:80], service.name)
+            try:
+                answer = agent.ask(body.question, body.history, client, today, names, datetime.now(timezone.utc),
+                                   reach)
+            except ApiError as exc:
+                log.warning("Ask anything: the AI service %s did not answer (%s)", service.name, exc.short())
+                raise HTTPException(502, f"The AI service {service.name} did not answer ({exc.short()}). Try "
+                                         "again; `uxcorrelate verify --ai` checks it.")
+            log.info("Ask anything: \"%s\" answered in %.1f s by %s after %d look-up(s)%s%s",
+                     answer["question"][:80], answer["seconds"], service.name, len(answer["steps"]),
+                     f" ({answer['looked'][:200]})" if answer["steps"] else "",
+                     f"; {answer['note']}" if answer["note"] else "")
+            return answer
+        return start(work, body)
 
     @app.get("/api/assess")
     def assessment():

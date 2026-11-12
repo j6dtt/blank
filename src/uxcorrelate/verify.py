@@ -2181,11 +2181,32 @@ def _assesses(client, add) -> None:
 
 # "Ask anything" (agent.py): open questions over made-up records; the names a right answer has, and
 # those it must not (a hard drive is "HD" in Aternity's names: the user's question on stage, Nov 2026)
-AI_ASK = (
-    ("What PCs had hard drive issues this week?", ("PC-K1", "PC-K2"), ("PC-K3",)),
-    ("Tell me about the user sample02 today", ("VD-77", "Sample Mail"), ()),
-    ("Which application had the most Major slow actions today?", ("Sample ERP",), ()),
+AI_ASK = (  # question, names the answer must have, names it must not, the look-up it must use (step 2)
+    ("What PCs had hard drive issues this week?", ("PC-K1", "PC-K2"), ("PC-K3",), None),
+    ("Tell me about the user sample02 today", ("VD-77", "Sample Mail"), (), None),
+    ("Which application had the most Major slow actions today?", ("Sample ERP",), (), None),
+    # read from Aternity now (made-up records: AskAternity): PC-31 is in the logon records only
+    ("Which PCs did sample05 log in to this week?", ("PC-12", "PC-31"), (), "logons"),
+    ("Were sample02's start-ups slow this week?", ("VD-77",), (), "startups"),
 )
+
+
+class AskAternity:
+    """Made-up logon records for AI_ASK (the Ask anything look-ups that read Aternity now):
+    sample05 on PC-12 today and PC-31 two days ago; sample02 on VD-77, today's logon took
+    95 s, the three before about 30 s."""
+
+    def __init__(self, now: datetime):
+        from .models import BootSample
+        self.warnings: list[str] = []
+        b = lambda hours, pc, user, took: BootSample(timestamp=now - timedelta(hours=hours), device=pc,  # noqa: E731
+                                                     username=user, type="Logon", duration=took)
+        self.rows = [b(6, "PC-12", "sample05", 41.0), b(54, "PC-31", "sample05", 39.0), b(7, "VD-77", "sample02", 95.0),
+                     b(31, "VD-77", "sample02", 30.0), b(55, "VD-77", "sample02", 31.0), b(79, "VD-77", "sample02", 29.0)]
+
+    def boots(self, start, end, username=None, device=None, location=None):
+        return [r for r in self.rows if start <= r.timestamp < end and username in (None, r.username)
+                and device in (None, r.device)]
 
 
 def ask_records():
@@ -2228,11 +2249,12 @@ def _answers(client, add) -> None:
     from . import agent
     from .explain import odd, plain
     t, names, now = ask_records()
+    reach = agent.Reach(aternity_of=lambda: AskAternity(now), boot_unit="s")
     right, rows, times = 0, [], []
-    for question, must, never in AI_ASK:
+    for question, must, never, tool in AI_ASK:
         started = time.monotonic()
         try:
-            a = agent.ask(question, [], client, t, names, now)
+            a = agent.ask(question, [], client, t, names, now, reach)
         except ApiError as exc:
             rows.append(f"\"{question}\": the service did not answer ({exc.short()})")
             continue
@@ -2240,18 +2262,20 @@ def _answers(client, add) -> None:
         low = plain(a["answer"])  # a no-break hyphen or space is the same name
         missing = [m for m in must if plain(m) not in low]
         wrong = [w for w in never if plain(w) in low]
-        ok = not missing and not wrong and not a["flagged"] and a["answer"]
+        skipped = tool and not any(st["tool"] == tool for st in a["steps"])
+        ok = not missing and not wrong and not a["flagged"] and a["answer"] and not skipped
         right += bool(ok)
         rows.append(f"\"{question}\": {'right' if ok else 'wrong'} after {len(a['steps'])} look-up(s) "
                     f"({_cut(a['looked'], 120) or 'none'})" + (f"; missing {', '.join(missing)}" if missing else "")
                     + (f"; named {', '.join(wrong)}" if wrong else "")
+                    + (f"; it did not use {tool}" if skipped else "")
                     + (f"; numbers not in what it looked at: {', '.join(a['flagged'])}" if a["flagged"] else "")
                     + (f"; {a['note']}" if a["note"] else "")
                     + (f"; unusual characters: {odd(a['answer'])}" if odd(a["answer"]) else "")
                     + f"; its answer: {_cut(' '.join(a['answer'].split()), 160)}")
     add("answers open questions (Ask anything)", right == len(AI_ASK),
         f"Right for {right} of {len(AI_ASK)} open questions over made-up records: the right PCs, users or "
-        f"applications, every number from what it looked at"
+        f"applications, every number from what it looked at, Aternity read when the question needs it"
         + (f"; each took {min(times):.1f} to {max(times):.1f} s." if times else "."),
         "Ask anything would give wrong or made-up answers with this model. Tell Claude these lines.", rows)
 

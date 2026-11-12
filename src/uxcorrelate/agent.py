@@ -6,23 +6,35 @@ The AI looks things up with general tools, as many steps as it needs (`MAX_STEPS
 records themselves (rows, with a summary of the counts), and answers in its own words. Every
 step and its rows go back to the page ("What I looked at"); a number in the answer that is in
 none of them is marked, not hidden (`flagged`). The tools read only what this app already holds
-(the Today reader, the names, our meanings): no extra read of Aternity. Step 2 adds those that
-read Aternity now (a user's logons, a PC's software, an investigation).
+(the Today reader, the names, our meanings): no extra read of Aternity.
+
+Step 2 (the user, 2026-11-12: "build step 2"): look-ups that read Aternity now, given what they
+need in a `Reach` (web.py): a user's or PC's logons (chat.logins), start-ups and why they were
+slow (logons.logon_report), a PC's installed software and Windows, what changed on a PC (the
+change log as an investigation reads it, cause._updates), the Software tab's look-ups
+(software_chat's blocks, as they are) and a whole investigation (one per question). At most
+`MAX_READS` of them per question; the page runs a question as a job and shows each step.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
 import unicodedata
 from collections import Counter
-from datetime import datetime, timedelta
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from typing import Callable
 
 from .ai import AiClient
-from .chat import _kinds_named, _match, _singular, allowed, numbers
-from .config import TOP_STATUS
+from .chat import LOGIN_DAYS, _kinds_named, _match, _named, _singular, allowed, logins, numbers
+from .config import OS_COLUMNS, SOFTWARE_COLUMNS, SOFTWARE_OS_UPDATE, SOFTWARE_SOURCE, TOP_STATUS
+from .http import ApiError, short_error
 from .today import EVENT_PAD, HEALTH_DAYS, NO_APP, SLOW_PAD, Today
+
+log = logging.getLogger("uxcorrelate")
 
 MAX_STEPS = 8  # tool calls per question
 ROWS_MAX = 150  # rows of one step, given to the AI and shown
@@ -31,6 +43,25 @@ HISTORY = 6  # earlier questions and answers sent with a new one
 ANSWER_MAX = 4000
 KINDS_MAX = 80  # kinds of event named in the instructions, the most PCs first
 FIND_MAX = 20  # names of each sort a find returns
+MAX_READS = 5  # look-ups that read Aternity now, per question
+MAX_INVESTIGATIONS = 1  # whole investigations per question (the slowest look-up)
+INVESTIGATE_HOURS = 4  # an investigation's window when none is asked for (as Investigate ▸ on Today)
+INVESTIGATE_MAX_H = 24  # an investigation's window, at most: longer ones on the Investigate tab
+STARTUP_DAYS = 7  # start-ups looked at when no number of days is asked for (at most LOGIN_DAYS)
+CHANGE_DAYS = 14  # a PC's change log looked at, at most (as an investigation's "what changed")
+TEXT_CHARS = 12000  # an investigation's report as given to the AI, at most
+
+
+@dataclass
+class Reach:
+    """What the look-ups that read Aternity now are given (web.py). Without one, they say
+    it is not set: the Today reader's look-ups still answer."""
+    aternity_of: Callable | None = None  # -> an AternityClient, or None when Aternity is not set
+    cfg: object = None  # settings.aternity
+    software: object = None  # the Software tab's reader (software.Software)
+    known: list = field(default_factory=list)  # application names, for the Software tab's look-ups
+    investigate: Callable | None = None  # (username, device, application, start, end) -> the result
+    boot_unit: str = ""  # settings.boot_unit
 
 SYSTEM = (
     "You are the assistant in UX Correlator, a tool the organisation's IT staff use to see how its PCs, users "
@@ -49,12 +80,22 @@ SYSTEM = (
     "Plain text; a short list with \"- \" is fine; no tables, no headings.\n"
     "- Critical, Major and Minor are Aternity's own ratings. Say \"usual\" or \"unusual\" only as a result "
     "says it.\n"
-    "What the data holds: health events (crashes, hangs, hardware faults and more) today with user, PC and "
-    "application, and on the days before by PC and application (no user); today's actions Aternity measured "
+    "What the data holds, at once: health events (crashes, hangs, hardware faults and more) today with user, PC "
+    "and application, and on the days before by PC and application (no user); today's actions Aternity measured "
     "(each user's PCs and number of actions, and every action Aternity rated Major with its time, PC, user, "
     "application and activity); today's overview against the usual of the days before; what this app's words "
-    "mean. Not in reach yet: installed software, start-ups, logons, NetIM, investigations (the page's other "
-    "tabs have them: say so when asked)."
+    "mean.\n"
+    f"Read from Aternity when you ask, slower (at most {MAX_READS} per question): a user's or PC's logons "
+    "(logons); their start-ups, how long each took against their own usual and why (startups); a PC's installed "
+    "software and Windows (pc_software) and what was installed, updated or removed on it (pc_changes); "
+    "installed software and application versions across all PCs (flags, most, versions, version_problems, "
+    "compare, before_after, program_split, pcs, pcs_without_update); a whole investigation of a user or PC "
+    f"(investigate: at most {MAX_INVESTIGATIONS} per question and the slowest; use it when asked why someone "
+    "was slow or what went wrong for them, with the window asked about, else the last "
+    f"{INVESTIGATE_HOURS} hours; its answer is the app's own, tell it as written).\n"
+    "- \"Tell me about\" a user or PC: what they did today (activity) and their events first, then their "
+    "logons or software when that helps; an investigation only when asked why or what went wrong.\n"
+    "- NetIM (the network) is read only within an investigation."
 )
 
 # a worked-out comparison ("twice as many", "3 times worse"); "twice" alone is a count (Nemotron's
@@ -94,7 +135,58 @@ TOOLS = [
                       "health events with their PCs against usual, and how many users and PCs are active.", {}),
     _tool("meanings", "What a word on this app's pages means (as written by this app), e.g. Major, usual, "
                       "virtual desktop. With no term: the list of terms.", {"term": _S}),
+    # step 2: read from Aternity now
+    _tool("logons", f"Who logged in to a PC, or which PCs a user logged in to, from Aternity's start-up and logon "
+                    f"records, read now: the latest (the last {LOGIN_DAYS} days) or one day. current=true: where "
+                    "a user is working now, or who is on a PC now (the latest hour of today with an action Aternity "
+                    "measured; nothing is read).", {
+        "user": _S, "pc": _S, "date": {"type": "string", "description": "One day, as YYYY-MM-DD."},
+        "current": {"type": "boolean"}}),
+    _tool("startups", "A user's or a PC's start-ups (boots and logons), read now: how long each took against their "
+                      "own usual of the last 30 days, the slowest first, the parts that took the time, why (software "
+                      "changed just before, the same part slow on every PC) and since when they are slow.", {
+        "user": _S, "pc": _S,
+        "days": {"type": "integer", "description": f"How many days back (1 to {LOGIN_DAYS}; {STARTUP_DAYS} if not "
+                                                   "given)."}}),
+    _tool("pc_software", "One PC's installed software, read now: each program with its version, vendor, type "
+                         f"(Windows updates are type \"{SOFTWARE_OS_UPDATE}\"), whether it is for one user only, and "
+                         "the PC's Windows version.", {
+        "pc": _S, "program": {"type": "string", "description": "Only the programs named like this."}}),
+    _tool("pc_changes", "What was installed, updated or removed on one PC, from Aternity's change log, read now, "
+                        "newest first; an update is its removal and install together.", {
+        "pc": _S, "program": {"type": "string", "description": "Only the programs named like this."},
+        "days": {"type": "integer", "description": f"How many days back (1 to {CHANGE_DAYS}; {CHANGE_DAYS} if not "
+                                                   "given)."}}),
+    _tool("investigate", "A whole investigation of a user or a PC, as the Investigate tab runs it: what the user "
+                         "felt, what went wrong and why (PC, network, application, software changes, other users "
+                         "and PCs), and what to do. It takes up to a few minutes. Times are local, as YYYY-MM-DD "
+                         f"HH:MM; with none, the last {INVESTIGATE_HOURS} hours; at most {INVESTIGATE_MAX_H} hours.", {
+        "user": _S, "pc": _S, "app": {"type": "string", "description": "Only this application's actions."},
+        "start": _S, "end": _S,
+        "hours": {"type": "integer", "description": "Instead of start and end: this many hours back from now."}}),
 ]
+
+NOW = {"logons", "startups", "pc_software", "pc_changes", "investigate"}  # read Aternity now (logons: unless current)
+
+
+def _software_tools() -> list[dict]:
+    """The Software tab's look-ups (software_chat.TOOLS), as they are, said to be about software."""
+    from copy import deepcopy
+
+    from .software_chat import TOOLS as SW
+    out = []
+    for t in deepcopy(SW):
+        fn = t["function"]
+        fn["description"] = "Installed software and application versions (the Software tab). " + fn["description"]
+        out.append(t)
+    return out
+
+
+SOFTWARE_TOOLS = _software_tools()
+SOFTWARE = {t["function"]["name"] for t in SOFTWARE_TOOLS}
+# those that read Aternity now (the others answer from the Software tab's latest read)
+SOFTWARE_NOW = {"version_problems", "compare", "before_after", "program_split", "pcs", "pcs_without_update"}
+TOOLS += SOFTWARE_TOOLS
 
 
 # -- the tools ---------------------------------------------------------------------
@@ -388,6 +480,273 @@ def meanings(term: str | None = None) -> dict:
                  [[k, v] for k, v in hits], notes=[] if hits else [f"No term like \"{term}\"."])
 
 
+# -- step 2: read from Aternity now ----------------------------------------------------
+def _block(tool: str, args: dict, r: dict | None) -> dict:
+    """A block of the block chats (chat._result) as a step: its rows, total and our sentence."""
+    if r is None:
+        return _step(tool, args, "Not run", notes=["The settings could not be used."])
+    summary = {k: v for k, v in (("period", r.get("period")), ("total", r.get("total")),
+                                 ("in_short", r.get("say"))) if v}
+    return _step(tool, args, r["title"], r["columns"], r["rows"], summary or None, r["notes"], r.get("runs"))
+
+
+def _client(reach: Reach | None):
+    return reach.aternity_of() if reach and reach.aternity_of else None
+
+
+NOT_SET = "Aternity is not set here (aternity.base_url in config.yaml), so nothing can be read now."
+
+
+def _one(names, kind: str, value, tool: str, args: dict) -> tuple[str | None, list[str], dict | None]:
+    """A username or PC name as Aternity writes it (chat._named), or a step with the names to
+    choose from when several have it."""
+    name, said, choices = _named(names, kind, value)
+    if choices:
+        return None, said, _step(tool, args, f"Which {'user' if kind == 'username' else 'PC'}?", ["Name"],
+                                 [[n] for n in choices], notes=[f"No {kind} is \"{value}\"; several have it in "
+                                                                "their name: pick one, or ask which."])
+    return name, said, None
+
+
+def _days(v, default: int, most: int) -> int:
+    try:
+        return max(1, min(int(v or default), most))
+    except (TypeError, ValueError):
+        return default
+
+
+def _kind_of(today: Today, pc: str) -> str | None:
+    """A PC's kind (virtual / physical) from today's actions, when it had one."""
+    with today.lock:
+        return next((h.dev_kind[d] for h in today.hours.values() for d in h.dev_kind if d.lower() == pc.lower()),
+                    None)
+
+
+def startups(today: Today, names, now: datetime, reach: Reach | None, user: str | None = None,
+             pc: str | None = None, days=None) -> dict:
+    from .logons import logon_report
+    days = _days(days, STARTUP_DAYS, LOGIN_DAYS)
+    args = {"user": user, "pc": pc, "days": days}
+    if not user and not pc:
+        return _step("startups", args, "Whose start-ups?", notes=[
+            "Name a user or a PC: everyone's start-ups are on the Slow start-ups tab."])
+    picked, notes = {}, []
+    for kind, value in (("username", user), ("device", pc)):
+        name, said, ask_back = _one(names, kind, value, "startups", args)
+        if ask_back:
+            return ask_back
+        notes += said
+        picked[kind] = name
+    client = _client(reach)
+    if client is None:
+        return _step("startups", args, "Start-ups", notes=[NOT_SET])
+    start = now - timedelta(days=days)
+    lg = logon_report(client, start, now, username=picked["username"], device=picked["device"],
+                      unit=reach.boot_unit)
+    u = f" {lg['unit']}" if lg.get("unit") else ""
+    who = " on ".join(x for x in (picked["username"], picked["device"]) if x)
+    rows, runs = [], []
+    for st in lg["starts"]:
+        t = datetime.fromisoformat(st["time"].replace("Z", "+00:00"))
+        took = "; ".join(f"{k} {v['duration']}{u}" + (f" (usual {v['usual']}{u})" if v["usual"] is not None else "")
+                         for k, v in st["values"].items())
+        parts = "; ".join(f"{c['component']} {c['duration']}{u}" + (f", {c['degradation']}{u} longer than normal"
+                                                                    if c["degradation"] else "")
+                          for c in st["components"][:3])
+        rows.append([_when(today, t), st["username"], st["device"], took, parts or None,
+                     " ".join(st.get("why") or []) or None])
+        runs.append({"username": st["username"] or "", "device": st["device"], "start": _iso(t - EVENT_PAD),
+                     "end": _iso(min(t + EVENT_PAD, now))})
+    # "1 in 10 over" only from 10 measured: with fewer it is worked out past the slowest one
+    summary = {"start_ups": lg["total"],
+               "per_type": {t["type"]: f"typical {t['typical']}{u}" + (f", 1 in 10 over {t['p90']}{u}"
+                                                                      if t["count"] >= 10 else "")
+                            + f", {t['count']} measured" for t in lg["types"]}}
+    causes = [f"{c['component']}: longer than normal on {c['pcs']} PC(s), {c['times']} time(s)"
+              for c in lg.get("causes", [])[:5]]
+    if causes:
+        summary["main_causes"] = causes
+    notes += ["Slowest first. Usual: their own start-ups of the last 30 days (a user's virtual desktops "
+              "together, as one).", "Unit: " + (lg["unit"] if lg.get("unit") else "not given by Aternity") + "."]
+    notes += [f"Aternity: {w}" for w in lg.get("warnings", [])]
+    step = _step("startups", args, f"Start-ups of {who}, the last {days} day{'s' if days > 1 else ''}",
+                 ["When", "User", "PC", "Took", "Slow parts", "Why"], rows, summary, notes, runs)
+    step["open"] = {"tab": "log", "username": picked["username"] or "", "device": picked["device"] or "",
+                    "start": _iso(start), "end": _iso(now)}
+    return step
+
+
+def pc_software(today: Today, names, now: datetime, reach: Reach | None, pc: str | None = None,
+                program: str | None = None) -> dict:
+    from .aternity import odata_quote
+    from .models import parse_time
+    from .software import LIST_ROWS, _Reads, order, windows_of
+    args = {"pc": pc, "program": program}
+    if not pc:
+        return _step("pc_software", args, "Which PC?", notes=["Name a PC."])
+    name, notes, ask_back = _one(names, "device", pc, "pc_software", args)
+    if ask_back:
+        return ask_back
+    client = _client(reach)
+    if client is None:
+        return _step("pc_software", args, f"{name}'s software", notes=[NOT_SET])
+    S, c = SOFTWARE_SOURCE, SOFTWARE_COLUMNS
+    q = _Reads(client, notes)
+    keys = [k for k in ("name", "version", "vendor", "type", "scope", "changed") if q.has(S, c[k])]
+    got = q.rows(S, f"{name}'s installed software", filter=f"{c['device']} eq {odata_quote(name)}",
+                 select=[c[k] for k in keys], top=LIST_ROWS)
+    windows = {}
+    cfg = reach.cfg
+    inv = cfg.entities.get("inventory") if cfg else None
+    dev = cfg.fields.get("inventory", {}).get("device") if cfg else None
+    if inv and dev:
+        cols = [x for x in OS_COLUMNS.values() if q.has(inv, x)]
+        if cols:
+            w = q.rows(inv, "Its Windows", filter=f"{dev} eq {odata_quote(name)}", select=[dev] + cols, top=1)
+            if w:
+                windows = {"windows": windows_of(w[0])}
+                when = parse_time(w[0].get(OS_COLUMNS["updated"]))
+                if when:
+                    windows["windows_last_updated"] = f"{today.local(when):%a %b %d, %Y}"
+    if got is None:
+        return _step("pc_software", args, f"{name}'s software", summary=windows or None, notes=notes)
+    rows = []
+    for r in got:
+        v = {k: r.get(c[k]) for k in keys}
+        when = parse_time(v.get("changed")) if v.get("changed") else None
+        rows.append([v.get("name"), v.get("version"), v.get("vendor"), v.get("type"), v.get("scope"),
+                     f"{today.local(when):%b %d, %Y}" if when else None])
+    rows.sort(key=lambda r: (r[3] == SOFTWARE_OS_UPDATE, str(r[0] or "").lower(), order(r[1])))
+    every = len(rows)
+    if program:
+        like = set(_like([r[0] for r in rows if r[0]], program))
+        rows = [r for r in rows if r[0] in like]
+        if not rows:
+            notes.append(f"No program named like \"{program}\" on {name} ({every:,} listed).")
+    summary = {**windows, "programs": sum(1 for r in rows if r[3] != SOFTWARE_OS_UPDATE),
+               "windows_updates": [r[0] for r in rows if r[3] == SOFTWARE_OS_UPDATE][:40]}
+    if not got:
+        notes.append(f"Aternity lists no installed software for {name}: is the name right?")
+    notes.append("Aternity's installed list as it last read the PC; Last change is Aternity's own date.")
+    return _step("pc_software", args, f"{name}'s installed software" + (f": {program}" if program else ""),
+                 ["Program", "Version", "Vendor", "Type", "For", "Last change"], rows, summary, notes)
+
+
+def pc_changes(today: Today, names, now: datetime, reach: Reach | None, pc: str | None = None,
+               program: str | None = None, days=None) -> dict:
+    from .cause import _updates, batch_removals
+    days = _days(days, CHANGE_DAYS, CHANGE_DAYS)
+    args = {"pc": pc, "program": program, "days": days}
+    if not pc:
+        return _step("pc_changes", args, "Which PC?", notes=["Name a PC."])
+    name, notes, ask_back = _one(names, "device", pc, "pc_changes", args)
+    if ask_back:
+        return ask_back
+    client = _client(reach)
+    if client is None:
+        return _step("pc_changes", args, f"What changed on {name}", notes=[NOT_SET])
+    start = now - timedelta(days=days)
+    mark = len(client.warnings)
+    changes = _updates(client.software_changes(name, start, now), start, now)
+    if len(client.warnings) > mark:
+        notes.append(f"Aternity's change log could not be read in full ({client.warnings[-1]}).")
+    if program:
+        like = set(_like({c["name"] for c in changes if c["name"]}, program))
+        changes = [c for c in changes if c["name"] in like]
+    batch = batch_removals(changes)
+    minute = lambda c: c["time"].replace(second=0, microsecond=0)  # noqa: E731
+    rows, done = [], set()
+    for c in changes:
+        if id(c) in batch:  # one row, as an investigation's "What changed" (answer._changed)
+            if minute(c) not in done:
+                done.add(minute(c))
+                gone = [x["name"] for x in changes if id(x) in batch and minute(x) == minute(c)]
+                rows.append([_when(today, c["time"]), f"{len(gone)} programs: {', '.join(gone[:4])}"
+                             + (f" and {len(gone) - 4} more" if len(gone) > 4 else ""), c["change"], None, None,
+                             "logged in the same minute, with no install logged: not removals to look at one by one"])
+            continue
+        said = None
+        if c.get("back"):
+            said = ("comes and goes in Aternity's log" if c.get("flaps") else
+                    (f"until {_when(today, c['until'])}: " if c.get("until") else "") + "no change in the end")
+        rows.append([_when(today, c["time"]), c["name"], c["change"], c["version"], c.get("version_before"), said])
+    real = [c for c in changes if not c.get("back") and id(c) not in batch]
+    summary = {"changes": len(real), "by_change": dict(Counter(c["change"] for c in real).most_common()),
+               "put_back_or_coming_and_going": sum(1 for c in changes if c.get("back")),
+               "removed_in_a_batch": len(batch)}
+    notes.append("Newest first; a removal and an install of one program within minutes are one update. Rows put "
+                 "back later, and a batch of removals in one minute, are not changes to look at one by one.")
+    if _kind_of(today, name) == "virtual":
+        notes.append("A virtual desktop: Aternity's log time runs late there (usually by under a day).")
+    if not changes:
+        notes.append(f"Aternity logged no change on {name} in the last {days} days"
+                     + (f" for a program like \"{program}\"." if program else "."))
+    return _step("pc_changes", args, f"What changed on {name}, the last {days} days", ["When", "Program", "Change",
+                 "Version", "Version before", "Note"], rows, summary, notes)
+
+
+def _local_time(today: Today, text) -> datetime | None:
+    try:
+        t = datetime.strptime(" ".join(str(text).replace("T", " ").split())[:16], "%Y-%m-%d %H:%M")
+    except ValueError:
+        return None
+    return t.replace(tzinfo=today.zone).astimezone(timezone.utc)
+
+
+def investigate(today: Today, names, now: datetime, reach: Reach | None, user: str | None = None,
+                pc: str | None = None, app: str | None = None, start=None, end=None, hours=None) -> dict:
+    from .report import render_text
+    args = {"user": user, "pc": pc, "app": app, "start": start, "end": end, "hours": hours}
+    if not user and not pc:
+        return _step("investigate", args, "Whom to investigate?", notes=["Name a user or a PC."])
+    picked, notes = {}, []
+    for kind, value in (("username", user), ("device", pc)):
+        name, said, ask_back = _one(names, kind, value, "investigate", args)
+        if ask_back:
+            return ask_back
+        notes += said
+        picked[kind] = name
+    if not reach or not reach.investigate:
+        return _step("investigate", args, "Investigation", notes=["Investigations cannot be run from here."])
+    t1 = _local_time(today, end) if end else now
+    t0 = _local_time(today, start) if start else None
+    if (start and t0 is None) or (end and t1 is None):
+        notes.append("A time was not YYYY-MM-DD HH:MM: the window is the last hours instead.")
+        t0, t1 = None, now
+    t1 = min(t1, now)
+    if t0 is None:
+        t0 = t1 - timedelta(hours=_days(hours, INVESTIGATE_HOURS, INVESTIGATE_MAX_H))
+    if t1 - t0 > timedelta(hours=INVESTIGATE_MAX_H):
+        t0 = t1 - timedelta(hours=INVESTIGATE_MAX_H)
+        notes.append(f"Cut to the last {INVESTIGATE_MAX_H} hours of the window asked for (the Investigate tab runs "
+                     "longer ones).")
+    if t0 >= t1:
+        return _step("investigate", args, "Investigation", notes=notes + ["The window ends before it starts."])
+    result = reach.investigate(picked["username"], picked["device"], app, t0, t1)
+    a = result.get("answer") or {}
+    who = " on ".join(x for x in (picked["username"], picked["device"]) if x) + (f" / {app}" if app else "")
+    window = f"{today.local(t0):%a %b %d %H:%M} to {today.local(t1):%H:%M}"
+    text = render_text(result)
+    notes.append("The AI read the investigation's answer and problems as the report writes them"
+                 + (" (cut short)." if len(text) > TEXT_CHARS else "."))
+    step = _step("investigate", args, f"Investigation of {who}, {window}",
+                 summary={"headline": a.get("title"), "reason": a.get("reason")}, notes=notes)
+    step["text"] = text[:TEXT_CHARS]
+    step["open"] = {"tab": "inv", "username": picked["username"] or "", "device": picked["device"] or "",
+                    "application": app or "", "start": _iso(t0), "end": _iso(t1), "result": result}
+    return step
+
+
+def software(name: str, args: dict, reach: Reach | None, now: datetime) -> dict:
+    """One of the Software tab's look-ups, as its chat runs it (software_chat.run_block)."""
+    from .software_chat import run_block
+    sw = reach.software if reach else None
+    if sw is None or sw.snap is None:
+        return _step(name, args, "Not read yet", notes=["The installed software is still being read (a few minutes "
+                                                        "after a start): ask again soon."])
+    return _block(name, args, run_block(name, args, sw, sw.view(), reach.aternity_of, reach.cfg, reach.known, now))
+
+
 def _norm(v):
     """A name as the AI sent it, with Aternity's plain characters: no invisible ones, a dash
     of any kind as "-", an odd space as a space (a model may write "VD\u201177")."""
@@ -401,8 +760,31 @@ def _norm(v):
     return " ".join(v.split())
 
 
-def run(name: str, args: dict, today: Today, names, now: datetime) -> dict:
+def run(name: str, args: dict, today: Today, names, now: datetime, reach: Reach | None = None) -> dict:
     args = {k: _norm(v) for k, v in (args or {}).items() if v not in (None, "", [])}
+    take = lambda *keys: {k: args[k] for k in keys if k in args}  # noqa: E731
+    if name in NOW or name in SOFTWARE:
+        try:
+            if name == "logons":
+                return _block(name, args, logins(today, names, now, reach.aternity_of if reach else None,
+                                                 username=args.get("user"), device=args.get("pc"),
+                                                 date=args.get("date"), current=args.get("current", False)))
+            if name == "startups":
+                return startups(today, names, now, reach, **take("user", "pc", "days"))
+            if name == "pc_software":
+                return pc_software(today, names, now, reach, **take("pc", "program"))
+            if name == "pc_changes":
+                return pc_changes(today, names, now, reach, **take("pc", "program", "days"))
+            if name == "investigate":
+                return investigate(today, names, now, reach, **take("user", "pc", "app", "start", "end", "hours"))
+            return software(name, args, reach, now)
+        except ApiError as exc:  # one look-up that fails is said; the question goes on
+            log.warning("Ask anything: %s: Aternity did not answer (%s)", name, exc.short())
+            return _step(name, args, "Could not be read", notes=[f"Aternity did not answer ({exc.short()})."])
+        except Exception as exc:
+            log.exception("Ask anything: %s failed", name)
+            return _step(name, args, "Failed", notes=[f"This look-up failed ({type(exc).__name__}: "
+                                                      f"{short_error(exc)}); the app's log has the details."])
     try:
         if name == "find":
             return find(today, names, now, str(args.get("text", "")))
@@ -439,7 +821,7 @@ def _calls(message: dict) -> list[tuple[str, dict, str]]:
 
 def for_ai(step: dict) -> str:
     """One step as the AI is given it: no Investigate windows; cut to RESULT_CHARS."""
-    given = {k: v for k, v in step.items() if k not in ("runs", "tool", "args")}
+    given = {k: v for k, v in step.items() if k not in ("runs", "tool", "args", "open")}
     text = json.dumps(given, default=str)
     while len(text) > RESULT_CHARS and given.get("rows"):
         given["rows"] = given["rows"][: len(given["rows"]) // 2]
@@ -457,12 +839,24 @@ def system(today: Today, now: datetime) -> str:
     return f"{SYSTEM}{known}\nNow: {today.local(now):%A %b %d, %Y, %H:%M}, {today.zone_label}."
 
 
+def _call(name: str, args: dict) -> str:
+    return f"{name}({', '.join(f'{k}={v}' for k, v in (args or {}).items() if v not in (None, '', []))})"
+
+
 def looked(steps: list[dict]) -> str:
     """The steps in one line, for the next question's history."""
-    return "; ".join(f"{s['tool']}({', '.join(f'{k}={v}' for k, v in s['args'].items() if v)})" for s in steps)
+    return "; ".join(_call(s["tool"], s["args"]) for s in steps)
 
 
-def ask(question: str, history: list, client: AiClient, today: Today, names, now: datetime) -> dict:
+def _reads(name: str, args: dict) -> bool:
+    """Does this look-up read Aternity now?"""
+    if name == "logons":
+        return str(args.get("current", "")).strip().lower() not in ("true", "1", "yes", "now")
+    return name in NOW or name in SOFTWARE_NOW
+
+
+def ask(question: str, history: list, client: AiClient, today: Today, names, now: datetime,
+        reach: Reach | None = None) -> dict:
     started = time.monotonic()
     question = " ".join(str(question or "").split())[:500]
     sys_text = system(today, now)
@@ -476,6 +870,7 @@ def ask(question: str, history: list, client: AiClient, today: Today, names, now
     messages.append({"role": "user", "content": question})
     steps: list[dict] = []
     note, text, told = None, "", False
+    reads = ran = 0  # reads of Aternity now, investigations
     for turn in range(MAX_STEPS + 2):
         reply = client.chat(messages, TOOLS)
         calls = _calls(reply)
@@ -490,8 +885,17 @@ def ask(question: str, history: list, client: AiClient, today: Today, names, now
         for name, args, call_id in calls:
             if len(steps) >= MAX_STEPS:
                 content = json.dumps({"notes": [f"No more look-ups ({MAX_STEPS} done): answer with what you have."]})
+            elif _reads(name, args) and reads >= MAX_READS:
+                content = json.dumps({"notes": [f"No more reads of Aternity for this question ({MAX_READS} done): "
+                                                "answer with what you have, or say what to ask next."]})
+            elif name == "investigate" and ran >= MAX_INVESTIGATIONS:
+                content = json.dumps({"notes": [f"One investigation per question ({MAX_INVESTIGATIONS} done): "
+                                                "answer with it, or say to ask again for another."]})
             else:
-                step = run(name, args, today, names, now)
+                log.info("Ask anything: look-up %d, %s", len(steps) + 1, _call(name, args)[:300])
+                reads += _reads(name, args)
+                ran += name == "investigate"
+                step = run(name, args, today, names, now, reach)
                 steps.append(step)
                 content = for_ai(step)
             messages.append({"role": "tool", "tool_call_id": call_id, "content": content})

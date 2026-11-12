@@ -509,11 +509,26 @@ unset `<REQUIRED>` base URLs.
   (`flagged`), not replaced. Names the AI sends are read with plain
   dashes and spaces (`_norm`; `explain.plain` for verify: Nemotron
   writes no-break hyphens, stage, Nov 2026). History: the answers and a line of the
-  look-ups (`looked`). The tools read only what the Today reader and
-  the names hold. Step 2: tools that read Aternity now (logons, a PC's
-  software and start-ups, an investigation); step 3: it replaces both
-  block chats. `verify --ai`: "answers open questions" (`AI_ASK` over
-  `ask_records`, made-up).
+  look-ups (`looked`). Those five read only what the Today reader and
+  the names hold. Step 2 (2026-11-12, "build step 2"): look-ups that
+  read Aternity now, given a `Reach` by web.py (none: they say it is
+  not set): logons (`chat.logins`), startups (`logons.logon_report`,
+  "1 in 10 over" only from 10 measured), pc_software (one PC's
+  `INSTALLED_SOFTWARE` + its Windows, columns via `software._Reads`),
+  pc_changes (`cause._updates`, a batch of removals one row as
+  `answer._changed`), the Software tab's blocks as they are
+  (`software_chat.TOOLS`/`run_block`, `_block` makes a step), and
+  investigate (a whole investigation, `INVESTIGATE_HOURS` by default,
+  `INVESTIGATE_MAX_H` at most; the AI reads `render_text`, cut to
+  `TEXT_CHARS`; the page's "Open this investigation ▸" shows the result
+  without a re-run, "Open in Slow start-ups ▸" runs that tab). At most
+  `MAX_READS` reads and `MAX_INVESTIGATIONS` per question. `/api/ask`
+  is a job (`/api/jobs/{id}`): the page shows each look-up as it
+  starts. A failed look-up is a step that says so, never a lost
+  question. Step 3: it replaces both block chats. `verify --ai`:
+  "answers open questions" (`AI_ASK` over `ask_records`, made-up;
+  `AskAternity` made-up logons; the step 2 questions must use their
+  look-up).
 - `ai.py`: client for the self-hosted AI services (`ai.services` in
   config.yaml, key from the env var named in `key_env`). OpenAI-style API
   (`verify.verify_ai`, passed on prod for both services: key, reachable,

@@ -11,7 +11,9 @@ from uxcorrelate.verify import AI_ASK, AI_OUTSIDE, AI_SW_TRIES, AI_TRIES, render
 ASKED = {  # Ask anything: the stand-in's look-up for each open question
     AI_ASK[0][0]: ("events", {"kinds": ["HD Failure", "Faulty HD S.M.A.R.T. Status"], "days": 7}),
     AI_ASK[1][0]: ("activity", {"user": "sample02"}),
-    AI_ASK[2][0]: ("activity", {})}
+    AI_ASK[2][0]: ("activity", {}),
+    AI_ASK[3][0]: ("logons", {"user": "sample05"}),
+    AI_ASK[4][0]: ("startups", {"user": "sample02", "days": 7})}
 
 FULL = {"outlook": "Microsoft Outlook", "mossley": "MOSSLEY", "edge": "Microsoft Edge", "kb5126652": "KB5126652",
         "teams": "Microsoft Teams Meeting Add-in for Microsoft Office"}  # what a model sends
@@ -95,7 +97,7 @@ def test_a_good_service_passes_every_check_and_the_key_is_never_printed():
     seen = []
     checks, text = run(seen)
     assert [c.ok for c in checks.values()] == [None, True, True, True, True, True, True, True, True, True]
-    assert "Right for 3 of 3 open questions" in checks["answers open questions (Ask anything)"].message
+    assert "Right for 5 of 5 open questions" in checks["answers open questions (Ask anything)"].message
     assert "A verdict line, 2 points (2 with their label) and a next step" in checks["writes the assessment"].message
     assert "Right for 10 of 10 made-up panels" in checks["explains a panel"].message
     assert "right up to 40,000." in checks["explains a long page"].message

@@ -1,6 +1,7 @@
 """Ask anything (agent.py): the AI looks things up in several steps and answers in its own words."""
 
 import json
+import time
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -63,7 +64,9 @@ def test_a_name_with_a_no_break_hyphen_is_the_same_name():
     nb = agent.activity(t, now, pc="VD-77")["rows"]
     assert agent.run("activity", {"pc": "VD\u201177"}, t, names, now)["rows"] == nb != []
     asked = {verify.AI_ASK[0][0]: ("events", {"kinds": ["HD Failure", "Faulty HD S.M.A.R.T. Status"], "days": 7}),
-             verify.AI_ASK[1][0]: ("activity", {"user": "sample02"}), verify.AI_ASK[2][0]: ("activity", {})}
+             verify.AI_ASK[1][0]: ("activity", {"user": "sample02"}), verify.AI_ASK[2][0]: ("activity", {}),
+             verify.AI_ASK[3][0]: ("logons", {"user": "sample05"}),
+             verify.AI_ASK[4][0]: ("startups", {"user": "sample02"})}
 
     class Hyphens:  # answers with every hyphen a no-break one
         cfg = SimpleNamespace(name="nemotron")
@@ -75,7 +78,7 @@ def test_a_name_with_a_no_break_hyphen_is_the_same_name():
     checks = []
     verify._answers(Hyphens(), lambda item, ok, message, fix="", rows=(): checks.append((ok, message, list(rows))))
     ok, message, rows = checks[0]
-    assert ok is True and "Right for 3 of 3" in message and "unusual characters: U+2011" in rows[1]
+    assert ok is True and "Right for 5 of 5" in message and "unusual characters: U+2011" in rows[1]
 
 
 def test_it_stops_after_its_steps_and_is_asked_to_answer():
@@ -127,3 +130,138 @@ def test_a_follow_up_is_sent_with_the_answers_and_look_ups_before():
 def test_the_page_endpoint_needs_an_ai_service():
     r = TestClient(web.create_app()).post("/api/ask", json={"question": "hi"})
     assert r.status_code == 503 and "needs an AI service" in r.json()["detail"]
+
+
+# -- step 2: look-ups that read Aternity now ---------------------------------------
+from datetime import timedelta  # noqa: E402
+
+from synthetic import demo_sources  # noqa: E402
+from test_software import client as sw_client  # noqa: E402
+from test_software import tables as sw_tables  # noqa: E402
+
+from uxcorrelate import software as sw  # noqa: E402
+from uxcorrelate.config import Settings  # noqa: E402
+from uxcorrelate.correlate import InvestigationRequest  # noqa: E402
+from uxcorrelate.correlate import investigate as run_investigation  # noqa: E402
+from uxcorrelate.models import BootSample  # noqa: E402
+
+
+class Boots:
+    """A stand-in Aternity with sample02's logons on VD-77: today's took 95 s, the 3 before ~30 s."""
+    def __init__(self, now):
+        self.warnings = []
+        self.rows = [BootSample(timestamp=now - timedelta(hours=h), device="VD-77", username="sample02", type="Logon",
+                                duration=d) for h, d in ((2, 95.0), (26, 30.0), (50, 31.0), (74, 29.0))]
+
+    def boots(self, start, end, username=None, device=None, location=None):
+        return [r for r in self.rows if start <= r.timestamp < end and username in (None, r.username)
+                and device in (None, r.device)]
+
+
+def test_a_users_logons_and_start_ups_are_read_now():
+    t, names, now = ask_records()
+    reach = agent.Reach(aternity_of=lambda: Boots(now), boot_unit="s")
+    lg = agent.run("logons", {"user": "sample02"}, t, names, now, reach)
+    assert [r[2] for r in lg["rows"]] == ["VD-77"] * 4 and lg["summary"]["total"] == "4 logons"
+    assert "sample02 last logged in on VD-77" in lg["summary"]["in_short"] and lg["runs"][0]["device"] == "VD-77"
+    now_on = agent.run("logons", {"user": "sample02", "current": True}, t, names, now, reach)  # no read: today's actions
+    assert now_on["rows"][0][1] == "VD-77"
+    st = agent.run("startups", {"user": "sample02", "days": 7}, t, names, now, reach)
+    assert st["summary"]["start_ups"] == 4 and st["rows"][0][3].startswith("Logon 95.0 s")  # slowest first
+    assert st["open"] == {"tab": "log", "username": "sample02", "device": "", "start": st["open"]["start"],
+                          "end": agent._iso(now)}
+    assert "Unit: s." in st["notes"]
+    assert agent.run("startups", {}, t, names, now, reach)["title"] == "Whose start-ups?"
+    # several names have it: the names to choose from, nothing read
+    assert agent.run("startups", {"user": "sample0"}, t, names, now, reach)["title"] == "Which user?"
+    # without Aternity: said, not an error
+    assert agent.NOT_SET in agent.run("startups", {"pc": "VD-77"}, t, names, now, agent.Reach())["notes"]
+
+
+def test_a_pcs_software_and_what_changed_on_it_are_read_now():
+    t, names, now = ask_records()
+    data = sw_tables()
+    at = lambda m: (now - timedelta(minutes=m)).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
+    log_row = lambda m, name, change, version: {  # noqa: E731
+        "DEVICE_NAME": "PC-01", "INSTALLED_SW_CHANGE_TIMESTAMP": at(m), "INSTALLED_SW_NAME": name,
+        "INSTALLED_SW_CHANGE_TYPE": change, "INSTALLED_SW_VERSION": version}
+    data["INSTALLED_SOFTWARE_CHANGE_LOG"] = (
+        [log_row(3 * 1440, "Zoom", "Uninstalled", "5.0"), log_row(3 * 1440 - 2, "Zoom", "Installed", "5.1"),
+         log_row(1440, "Rare Tool", "Installed", "1.0")]
+        + [log_row(2 * 1440, f"Old Tool {i}", "Uninstalled", "1.0") for i in range(5)])  # one minute: a batch
+    c, s = sw_client(data=data)
+    reach = agent.Reach(aternity_of=lambda: c, cfg=s.aternity)
+    pc = agent.run("pc_software", {"pc": "PC-01"}, t, names, now, reach)
+    assert [r[:2] for r in pc["rows"]] == [["Java", "8.1"], ["Java", "11.0"], ["Microsoft Edge", "121.0"],
+                                           ["Zoom", "5.1"], ["KB1", None]]  # by name, oldest first; Windows updates last
+    assert pc["summary"]["windows"] == "Microsoft Windows 11 Enterprise 23H2" and pc["summary"]["programs"] == 4
+    assert pc["summary"]["windows_updates"] == ["KB1"] and pc["rows"][3][4] == "Specific User"
+    assert [r[0] for r in agent.run("pc_software", {"pc": "PC-01", "program": "java"}, t, names, now,
+                                    reach)["rows"]] == ["Java", "Java"]
+    ch = agent.run("pc_changes", {"pc": "PC-01"}, t, names, now, reach)
+    assert [r[1:5] for r in ch["rows"]] == [["Rare Tool", "Installed", "1.0", None],
+                                            ["5 programs: Old Tool 0, Old Tool 1, Old Tool 2, Old Tool 3 and 1 more",
+                                             "Uninstalled", None, None], ["Zoom", "updated", "5.1", "5.0"]]
+    assert ch["summary"]["changes"] == 2 and ch["summary"]["removed_in_a_batch"] == 5 and "one by one" in ch["rows"][1][5]
+
+
+def test_the_software_tabs_look_ups_and_an_investigation(tmp_path):
+    t, names, now = ask_records()
+    c, s = sw_client()
+    r = sw.Software("", tmp_path)
+    r.save(sw.read_snapshot(c, s.aternity, now, r))
+    reach = agent.Reach(aternity_of=lambda: c, cfg=s.aternity, software=r)
+    v = agent.run("versions", {"program": "Edge"}, t, names, now, reach)  # as the Software chat's block
+    assert v["title"].startswith("Microsoft Edge") and v["summary"]["in_short"]
+    assert agent.run("most", {"problem": "crash"}, t, names, now, agent.Reach())["title"] == "Not read yet"
+    settings = Settings()
+    at, net, start, end = demo_sources(settings, now=now)
+    asked = []
+
+    def inv(u, d, a, t0, t1):
+        asked.append((u, d, a, t0, t1))
+        return run_investigation(InvestigationRequest(start=t0, end=t1, username=u, device=d, application=a),
+                                 at, net, settings)
+    reach = agent.Reach(investigate=inv)
+    names.seen["username"]["jdoe"] = now
+    step = agent.run("investigate", {"user": "jdoe", "hours": 3}, t, names, now, reach)
+    assert asked == [("jdoe", None, None, now - timedelta(hours=3), now)]
+    assert step["summary"]["headline"] == step["open"]["result"]["answer"]["title"] and step["text"].startswith(
+        "User experience investigation: jdoe")
+    assert "open" not in agent.for_ai(step) and "User experience investigation" in agent.for_ai(step)
+    local = agent.run("investigate", {"user": "jdoe", "start": "2020-01-01 08:00", "end": "2020-01-03 08:00"}, t, names,
+                      now, agent.Reach(investigate=lambda *a: asked.append(a) or step["open"]["result"]))
+    assert asked[-1][4] - asked[-1][3] == timedelta(hours=agent.INVESTIGATE_MAX_H) and "Cut to the last" in \
+        local["notes"][0]
+
+
+def test_reads_of_aternity_are_limited_per_question():
+    t, names, now = ask_records()
+    reach = agent.Reach(aternity_of=lambda: Boots(now))
+    ai = Script(*[call("logons", user="sample02")] * (agent.MAX_READS + 1),
+                call("investigate", user="sample02"), call("investigate", user="sample02"),
+                {"content": "Done."})
+    ran = []
+    reach.investigate = lambda *a: ran.append(a) or {"answer": {"title": "x"}, "request": {}}
+    a = agent.ask("Tell me about sample02", [], ai, t, names, now, reach)
+    assert len(a["steps"]) == agent.MAX_READS  # the 6th read and both investigations: told to answer
+    told = [m["content"] for m in ai.seen[-1] if m["role"] == "tool"][agent.MAX_READS:]
+    assert "No more reads of Aternity" in told[0] and ran == []
+
+
+def test_the_page_runs_a_question_as_a_job(monkeypatch):
+    app = web.create_app()
+    t, names, now = ask_records()
+    app.state.today.__dict__.update(t.__dict__)
+    from uxcorrelate import ai as ai_mod
+    monkeypatch.setattr(web, "chat_service", lambda settings: SimpleNamespace(name="gpt", key_env=""), raising=False)
+    monkeypatch.setattr(ai_mod, "AiClient", lambda service, key: Script({"content": "Nothing to look up."}))
+    tc = TestClient(app)
+    r = tc.post("/api/ask", json={"question": "hi"})
+    assert r.status_code == 200 and set(r.json()) == {"id"}
+    for _ in range(100):
+        job = tc.get(f"/api/jobs/{r.json()['id']}").json()
+        if job["done"]:
+            break
+        time.sleep(0.05)
+    assert job["result"]["answer"] == "Nothing to look up." and any("asked of gpt" in x for x in job["lines"])

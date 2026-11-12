@@ -283,7 +283,7 @@
       <div class="todayHead"><h2>Ask anything</h2><span class="muted">new, being tried</span>
         <span class="muted" id="askWho"></span></div>
       <form id="askForm" class="chatForm" autocomplete="off">
-        <input name="q" id="askQ" maxlength="500" placeholder="e.g. What PCs had hard drive issues this week?">
+        <input name="q" id="askQ" maxlength="500" placeholder="e.g. Tell me about a user or PC, or why was a user slow this morning?">
         <button id="askGo">Ask</button>
       </form>
       <div class="chips" id="askChips"></div>
@@ -291,7 +291,9 @@
       <div id="askAnswers"></div>
       <p class="muted" style="font-size:12px;margin:10px 0 0">The AI looks things up in this app's data, as many
         steps as it needs, and answers in its own words; a follow-up question remembers the answers before.
-        Under each answer: what it looked at. A number not found there is marked.
+        It can also read Aternity now: logons, start-ups, a PC's software and changes, the Software tab, and
+        run an investigation (up to a few minutes). Under each answer: what it looked at. A number not found
+        there is marked.
         <button type="button" class="link" id="askClear" hidden>Clear the answers</button></p>
     </section>
     <section class="panel noExplain" id="tChat" style="margin-top:16px">
@@ -1103,7 +1105,7 @@ function makeChat(p, url, examples) {
 // ---- Ask anything (agent.py): the AI looks things up, as many steps as it needs, and answers in its
 // own words; what it looked at is under each answer, a number found in none of it is marked ----
 const ASK_EXAMPLES = ["What PCs had hard drive issues this week?", "How is today going so far?",
-  "Which applications are worst today, and on which PCs?"];
+  "Which applications are worst today, and on which PCs?", "Which software crashed the most this week?"];
 function mdHtml(text) {  // the AI's text: paragraphs, lists, bold; escaped first
   const inline = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`([^`]+)`/g, "<code>$1</code>");
   const out = []; let list = null;
@@ -1136,6 +1138,8 @@ function stepHtml(s, i, j) {
         + row.map((v) => `<td${typeof v === "number" ? ' class="num"' : ""}>${cell(v)}</td>`).join("") + "</tr>").join("") + "</table></div>";
     if (s.rows.length > shown.length) html += `<div class="muted">… and ${n(s.rows.length - shown.length)} more rows the AI was given.</div>`;
   }
+  // an investigation (already run: shown, not run again) or start-ups (run on their tab)
+  if (s.open) html += `<div><button type="button" class="link" data-oa="${i}" data-os="${j}">${s.open.tab === "inv" ? "Open this investigation ▸" : "Open in Slow start-ups ▸"}</button></div>`;
   return html + "</div>";
 }
 function askRender() {
@@ -1158,13 +1162,28 @@ $("askForm").addEventListener("submit", async (ev) => {
   if (!q || $("askGo").disabled) return;
   $("askGo").disabled = true;
   const started = Date.now();
-  const tick = () => { $("askBusy").textContent = `Looking it up… ${Math.round((Date.now() - started) / 1000)} s`; };
+  // a job: some look-ups read Aternity now, an investigation takes minutes; its latest step is shown
+  let doing = "";
+  const tick = () => { $("askBusy").textContent = `Looking it up… ${Math.round((Date.now() - started) / 1000)} s${doing ? " — " + doing : ""}`; };
   tick(); const timer = setInterval(tick, 1000);
   try {
     const r = await fetch("api/ask", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ question: q, history: askState.history.slice(-6) }) });
-    const a = await r.json();
-    if (!r.ok) throw new Error(detail(a));
+    const job = await r.json();
+    if (!r.ok) throw new Error(detail(job));
+    let a = null;
+    while (!a) {
+      await new Promise((ok) => setTimeout(ok, 1000));
+      const jr = await fetch(`api/jobs/${job.id}`);
+      const j = await jr.json();
+      if (!jr.ok) throw new Error(detail(j));
+      const last = j.lines[j.lines.length - 1];
+      doing = last ? last.slice(9).replace(/^Ask anything: /, "") : "";
+      if (j.done) {
+        if (j.error) throw new Error(typeof j.error === "string" ? j.error : JSON.stringify(j.error));
+        a = j.result;
+      }
+    }
     askState.history.push({ q: a.question, a: a.answer, looked: a.looked });
     askState.answers.unshift(a); askState.answers = askState.answers.slice(0, 10);
     $("askQ").value = ""; $("askBusy").textContent = "";
@@ -1174,6 +1193,24 @@ $("askForm").addEventListener("submit", async (ev) => {
 });
 $("askClear").addEventListener("click", () => { askState.history = []; askState.answers = []; askRender(); });
 $("askAnswers").addEventListener("click", (ev) => {
+  const o = ev.target.closest("button[data-oa]");
+  if (o) {
+    const p = askState.answers[Number(o.dataset.oa)].steps[Number(o.dataset.os)].open;
+    if (p.tab === "inv") {  // the investigation the AI read: shown as it ran, not run again
+      const f = $("f");
+      f.username.value = p.username; f.device.value = p.device; f.application.value = p.application;
+      f.start.value = toLocalInput(new Date(p.start)); f.end.value = toLocalInput(new Date(p.end));
+      mode("inv");
+      render(p.result);
+    } else {  // the same start-ups on their own tab, read again there
+      const f = $("lf");
+      f.username.value = p.username; f.device.value = p.device; f.location.value = "";
+      f.start.value = toLocalInput(new Date(p.start)); f.end.value = toLocalInput(new Date(p.end));
+      mode("log");
+      f.requestSubmit();
+    }
+    return;
+  }
   const b = ev.target.closest("button[data-a]");
   if (!b) return;
   investigateNow(askState.answers[Number(b.dataset.a)].steps[Number(b.dataset.s)].runs[Number(b.dataset.k)]);
