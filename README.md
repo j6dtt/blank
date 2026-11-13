@@ -364,7 +364,9 @@ has the install, code-fix and upgrade steps.
 
 `k8s/uxcorrelate.yaml` runs the same image as one pod, with `src/`, `data/`
 and `config.yaml` in the app folder on NFS, passwords in a Secret made from
-`.env`, and TLS at the ingress. The top of the file has the full steps:
+`.env`, and TLS at the ingress. Kubernetes checks the pod at `/api/health`
+(left out of the log), and the user's address in the log comes from the
+ingress (`FORWARDED_ALLOW_IPS`). The top of the file has the full steps:
 what to fill in, first time, day to day (code fix, passwords, certificate,
 logs, verify) and going back to compose. One pod only: a second would read
 Aternity twice.

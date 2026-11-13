@@ -512,6 +512,12 @@ def create_app(config_path: str | None = None) -> FastAPI:
         return (text.replace(f"<title>{BRAND}</title>", f"<title>{BRAND} | {t}</title>", 1)
                 .replace("<!--title-->", f"<i></i><h1>{t}</h1>", 1))
 
+    @app.get("/api/health")
+    def health():
+        """Kubernetes' checks that the app answers (k8s/uxcorrelate.yaml): no config read, no Riverbed call,
+        left out of the log (cli.QUIET). Docker's own check still asks for the page."""
+        return {"ok": True}
+
     @app.get("/api/info")
     def info():
         try:

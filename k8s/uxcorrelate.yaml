@@ -165,6 +165,12 @@ spec:
               value: /srv/app/config.yaml
             - name: UXCORRELATE_DATA
               value: /data
+            # every request comes through the ingress: take the
+            # user's address from its X-Forwarded-For header, so the
+            # Care list's change and PIN log lines name their PC
+            # (the pod is reached only through its Service)
+            - name: FORWARDED_ALLOW_IPS
+              value: "*"
           envFrom:
             - secretRef:
                 name: uxcorrelate-env  # the passwords and keys from .env
@@ -182,15 +188,16 @@ spec:
             - name: app
               mountPath: /data
               subPath: data
+          # /api/health: answers at once, left out of the log
           readinessProbe:
             httpGet:
-              path: /
+              path: /api/health
               port: http
             periodSeconds: 30
             timeoutSeconds: 5
           livenessProbe:
             httpGet:
-              path: /
+              path: /api/health
               port: http
             initialDelaySeconds: 60
             periodSeconds: 30

@@ -105,3 +105,20 @@ def test_the_page_shows_config_titles_after_the_brand(tmp_path):
     assert "<i></i><h1>Field &lt;Office&gt;</h1>" in page and "<!--title-->" not in page
     path.write_text("title: [broken\n")
     assert f"<title>{web.BRAND}</title>" in TestClient(web.create_app(str(path))).get("/").text
+
+
+def test_kubernetes_checks_have_their_own_quiet_address(tmp_path):
+    from uxcorrelate.cli import NoHealthCheck
+    path = tmp_path / "config.yaml"
+    path.write_text("{}\n")
+    assert TestClient(web.create_app(str(path))).get("/api/health").json() == {"ok": True}
+
+    def line(client, path):  # uvicorn's access line: (client, method, path, http version, status)
+        return logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d',
+                                 (client, "GET", path, "1.1", 200), None)
+    quiet = NoHealthCheck()
+    assert not quiet.filter(line("10.42.0.1:51234", "/api/health"))  # the kubelet, from the node
+    assert not quiet.filter(line("127.0.0.1:40000", "/"))  # Docker's own check: as before
+    assert not quiet.filter(line("10.1.2.3:5000", "/api/status"))
+    assert quiet.filter(line("10.1.2.3:5000", "/"))  # someone opening the page is still logged
+    assert quiet.filter(line("10.1.2.3:5000", "/api/today"))

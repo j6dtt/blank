@@ -707,7 +707,13 @@ unset `<REQUIRED>` base URLs.
   stages into `FROM scratch`, no pip; only pyproject dependencies.
 - Kubernetes: `k8s/uxcorrelate.yaml` (one pod, `Recreate`; code, data and
   config.yaml on an NFS volume as with compose; Secret from `.env`; TLS at
-  the ingress). Keep it in step with `compose.yaml`.
+  the ingress). Keep it in step with `compose.yaml`: stage runs on Docker
+  compose, prod on Kubernetes (the user, 2026-11-13); every change works
+  on both. Its checks ask `/api/health` (no config read, left out of the
+  log: `cli.QUIET`; Docker's HEALTHCHECK still asks for "/" from inside),
+  and `FORWARDED_ALLOW_IPS` "*" makes the caller the user's address from
+  the ingress's X-Forwarded-For (Care list change and PIN log lines);
+  compose leaves it unset (the direct caller, as before).
 - The bundle (`dist/uxcorrelate-<version>.tar`) must stay under 25 MB
   (prod transfer limit; the script refuses bigger). It is made only when
   every test passes. Adding a dependency means checking that size.

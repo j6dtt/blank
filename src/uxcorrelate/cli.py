@@ -77,16 +77,24 @@ def cmd_logons(args) -> int:
     return 0
 
 
+# left out of the access log: Kubernetes' checks, and every open page asking for the top bar's lights
+QUIET = ("/api/health", "/api/status")
+
+
+class NoHealthCheck(logging.Filter):
+    """Drops the access-log lines of the checks: the paths in QUIET, and Docker's own check of the
+    page (HEALTHCHECK in the Dockerfile: "/" from inside the container, every 30 s)."""
+    def filter(self, record):
+        a = record.args
+        if not (isinstance(a, tuple) and len(a) >= 3):
+            return True
+        return not (a[2] in QUIET or (str(a[0]).startswith("127.0.0.1") and a[2] == "/"))
+
+
 def cmd_serve(args) -> int:
     import uvicorn
     from .web import create_app
 
-    class NoHealthCheck(logging.Filter):  # the container's own check of the page, every 30 s,
-        def filter(self, record):         # and every open page asking for the top bar's lights
-            a = record.args
-            if not (isinstance(a, tuple) and len(a) >= 3):
-                return True
-            return not (a[2] == "/api/status" or (str(a[0]).startswith("127.0.0.1") and a[2] == "/"))
     logging.getLogger("uvicorn.access").addFilter(NoHealthCheck())
     app = create_app(args.config)
     configs = [uvicorn.Config(app, host=args.host, port=args.port)]
