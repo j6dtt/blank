@@ -401,6 +401,8 @@ def test_the_chat_service_is_the_named_one_or_the_first():
     assert chat_service(s).name == "gpt"
     s.ai.chat = "nemo"
     assert chat_service(s).name == "nemo"
+    s.ai.services[1].name = "Nemo"  # renamed with a capital for the top bar's light: still the one
+    assert chat_service(s).name == "Nemo"
 
 
 def test_the_endpoint(monkeypatch, tmp_path):

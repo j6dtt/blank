@@ -102,8 +102,9 @@ SYSTEM = (
     "installed software and application versions across all PCs (flags, most, versions, version_problems, "
     "compare, before_after, program_split, pcs, pcs_without_update); a whole investigation of a user or PC "
     f"(investigate: at most {MAX_INVESTIGATIONS} per question and the slowest; use it when asked why someone "
-    "was slow or what went wrong for them, with the window asked about, else the last "
-    f"{INVESTIGATE_HOURS} hours; its answer is the app's own, tell it as written).\n"
+    "was slow or what went wrong for them, with the window asked about; with none it starts 30 minutes before "
+    f"their first Critical or Major event or Major action today, the last {INVESTIGATE_HOURS} hours at least; "
+    "its answer is the app's own, tell it as written).\n"
     "- \"Tell me about\" a user or PC: what they did today (activity) and their events first, then their "
     "logons or software when that helps; an investigation only when asked why or what went wrong.\n"
     "- NetIM (the network) is read only within an investigation.\n"
@@ -182,7 +183,9 @@ TOOLS = [
     _tool("investigate", "A whole investigation of a user or a PC, as the Investigate tab runs it: what the user "
                          "felt, what went wrong and why (PC, network, application, software changes, other users "
                          "and PCs), and what to do. It takes up to a few minutes. Times are local, as YYYY-MM-DD "
-                         f"HH:MM; with none, the last {INVESTIGATE_HOURS} hours; at most {INVESTIGATE_MAX_H} hours.", {
+                         "HH:MM; with none, from 30 minutes before their first Critical or Major event or Major "
+                         f"action today (the last {INVESTIGATE_HOURS} hours at least); at most {INVESTIGATE_MAX_H} "
+                         "hours.", {
         "user": _S, "pc": _S, "app": {"type": "string", "description": "Only this application's actions."},
         "start": _S, "end": _S,
         "hours": {"type": "integer", "description": "Instead of start and end: this many hours back from now."}}),
@@ -570,7 +573,7 @@ def startups(today: Today, names, now: datetime, reach: Reach | None, user: str 
     args = {"user": user, "pc": pc, "days": days}
     if not user and not pc:
         return _step("startups", args, "Whose start-ups?", notes=[
-            "Name a user or a PC: everyone's start-ups are on the Slow start-ups tab."])
+            "Name a user or a PC: everyone's start-ups are on the Start-ups tab."])
     picked, notes = {}, []
     for kind, value in (("username", user), ("device", pc)):
         name, said, ask_back = _one(names, kind, value, "startups", args)
@@ -780,6 +783,22 @@ def _local_time(today: Today, text) -> datetime | None:
     return t.replace(tzinfo=today.zone).astimezone(timezone.utc)
 
 
+def _first_issue(today: Today, now: datetime, user: str | None, pc: str | None) -> datetime | None:
+    """Their first Critical or Major event or Major action today (the user's, the PC's, or both):
+    an investigation asked for with no time starts before it, as the Care list's do. With the
+    last 4 hours only, one asked for at 12:04 began at 08:04 and left out a 06:04 crash."""
+    from .config import TILE_SEVERITIES
+    u, d = (user or "").lower(), (pc or "").lower()
+    mine = lambda who, dev: (not u or (who or "").lower() == u) and (not d or (dev or "").lower() == d)  # noqa: E731
+    t = today.day(now)
+    with today.lock:
+        sev = {k: c.most_common(1)[0][0] for k, c in today.health_sev.items() if c}
+        times = [x[0] for x in today.health if today.day(x[0]) == t and mine(x[4], x[1])
+                 and sev.get(x[2], x[3]) in TILE_SEVERITIES]
+        times += [r[0] for h in today.hours.values() if h.day == t for r in h.top_rows if mine(r[2], r[1])]
+    return min(times, default=None)
+
+
 def investigate(today: Today, names, now: datetime, reach: Reach | None, user: str | None = None,
                 pc: str | None = None, app: str | None = None, start=None, end=None, hours=None) -> dict:
     from .report import render_text
@@ -802,7 +821,13 @@ def investigate(today: Today, names, now: datetime, reach: Reach | None, user: s
         t0, t1 = None, now
     t1 = min(t1, now)
     if t0 is None:
+        from .care import INV_PAD  # the Care list's: one rule for an investigation of someone's day
         t0 = t1 - timedelta(hours=_days(hours, INVESTIGATE_HOURS, INVESTIGATE_MAX_H))
+        first = _first_issue(today, now, picked["username"], picked["device"]) if not hours and not end else None
+        if first is not None and first - INV_PAD < t0:
+            t0 = first - INV_PAD
+            notes.append(f"From {INV_PAD.seconds // 60} minutes before their first Critical or Major event or Major "
+                         f"action today, at {today.local(first):%H:%M}.")
     if t1 - t0 > timedelta(hours=INVESTIGATE_MAX_H):
         t0 = t1 - timedelta(hours=INVESTIGATE_MAX_H)
         notes.append(f"Cut to the last {INVESTIGATE_MAX_H} hours of the window asked for (the Investigate tab runs "
@@ -847,9 +872,40 @@ def _norm(v):
     return " ".join(v.split())
 
 
+BOTH = {"events", "activity", "logons", "startups", "investigate"}  # the look-ups that take a user or a PC
+
+
+def _user_or_pc(names, args: dict) -> tuple[dict, list[str]]:
+    """A user's name sent as the PC, or a PC's as the user, taken as what it is: when the names
+    seen in Aternity have it exactly as that only (Nemotron sent startups(pc=sample02) and found
+    no start-ups; verify --ai on stage, Nov 2026)."""
+    if names is None:
+        return args, []
+    out, notes = dict(args), []
+    for given, other, kind, other_kind in (("pc", "user", "device", "username"), ("user", "pc", "username", "device")):
+        v = out.get(given)
+        if not isinstance(v, str) or other in out:
+            continue
+        with names.lock:
+            as_given = any(n.lower() == v.lower() for n in names.seen[kind])
+            as_other = any(n.lower() == v.lower() for n in names.seen[other_kind])
+        if as_other and not as_given:
+            out[other] = out.pop(given)
+            what, was = ("user", "PC") if other == "user" else ("PC", "user")
+            notes.append(f"\"{v}\" is a {what}, not a {was}: looked up as the {what}.")
+    return out, notes
+
+
 def run(name: str, args: dict, today: Today, names, now: datetime, reach: Reach | None = None,
         shown: dict | None = None) -> dict:
     args = {k: _norm(v) for k, v in (args or {}).items() if v not in (None, "", [])}
+    args, swapped = _user_or_pc(names, args) if name in BOTH else (args, [])
+    step = _run(name, args, today, names, now, reach, shown)
+    step["notes"] = swapped + step["notes"]
+    return step
+
+
+def _run(name: str, args: dict, today: Today, names, now: datetime, reach: Reach | None, shown: dict | None) -> dict:
     take = lambda *keys: {k: args[k] for k in keys if k in args}  # noqa: E731
     if name in NOW or name in SOFTWARE:
         try:

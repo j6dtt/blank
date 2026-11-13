@@ -268,7 +268,7 @@ def _startup_why(g: dict, started_up, logons: dict) -> dict:
     if slow:
         todo.append(f"On {g['object']}: look at {slow['component']}"
                     + (f" ({slow['type']})" if slow["type"] != slow["component"] else "") + ", the slowest part of "
-                    f"its start-up; the Slow start-ups tab shows it on every PC.")
+                    f"its start-up; the Start-ups tab shows it on every PC.")
     if st.get("changes_since"):
         todo.append(f"On {g['object']}: check what changed just before its start-ups got longer "
                     f"({', '.join(st['changes_since'][:4])}).")
@@ -276,7 +276,7 @@ def _startup_why(g: dict, started_up, logons: dict) -> dict:
         c = logons["causes"][st["cause"]]
         where = ", ".join(f"{k} {n}" for k, n in c["by_location"].items())
         text.append(f"{c['component']} was longer than normal on {c['pcs']} PC(s) in this window"
-                    + (f" ({where})" if where else "") + ": the Slow start-ups tab lists them.")
+                    + (f" ({where})" if where else "") + ": the Start-ups tab lists them.")
     if not text:
         text.append("Aternity recorded no breakdown for this start-up.")
     # only the timing links it to the slow actions: no part longer than normal, and

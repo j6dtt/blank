@@ -210,7 +210,7 @@ GLOSSARY: dict[str, dict[str, str]] = {
     },
 }
 
-TABS = {"today": "Today", "care": "Care list", "investigate": "Investigate", "startups": "Slow start-ups",
+TABS = {"today": "Today", "care": "Care list", "investigate": "Investigate", "startups": "Start-ups",
         "software": "Software"}
 
 SYSTEM = (f"You explain one panel of a web page to IT staff in plain English. The page shows the experience of "

@@ -95,7 +95,7 @@ def parse_odata_metadata(xml_text: str) -> dict[str, set[str]]:
 OPTIONAL = {
     "health_events": "crash/hang details (where an app failed, who else has the same failure)",
     "app_usage": "app crashes, hang time and UXI",
-    "boots": "the Slow start-ups tab",
+    "boots": "the Start-ups tab",
     "boot_components": "what took the time in a start-up, and its main causes",
     "software_changes": "what changed on the PC before a problem",
     "top_processes": "the busiest processes behind CPU, memory or disk problems",
@@ -1829,31 +1829,10 @@ def _overview(settings: Settings, client: AternityClient, schema: dict[str, set[
 
 
 AI = "AI service"
-# question, and the building block (tool) and settings a right pick has (words: in it, any case)
-AI_TRIES = (
-    # two right picks: by kind of event, or by application with only the crashes (stage, Nov 2026:
-    # Nemotron took it by application with no name, which counts every kind of event)
-    ("Which crashes hit the most PCs in the last 7 days?", ({"tool": "events", "group_by": "event", "days": 7},
-                                                            {"tool": "events", "group_by": "app", "name": "crash",
-                                                             "days": 7})),
-    ("Are virtual desktops slower than physical PCs today?", {"tool": "slow_actions", "group_by": "pc_kind"}),
-    ("Which users had the most slow actions in Microsoft Outlook today?",
-     {"tool": "who", "what": "slow", "app": "outlook"}),
-    ("Investigate the user mossley", {"tool": "investigate", "username": "mossley"}),
-    # stage, Nov 2026: an application named with a crash needs app (the count was every application's)
-    ("How many PCs had a Microsoft Outlook crash today?", {"tool": "events", "app": "outlook"}),
-    ("Who had a Microsoft Outlook crash today?", {"tool": "who", "what": "event", "app": "outlook"}),
-    ("How many users and PCs are active right now?", {"tool": "active"}),
-    # stage, Nov 2026: a list for the week got today's one PC, then counts per day
-    ("List the PCs with a System Crash this week", {"tool": "who", "what": "event", "days": 7}),
-    # stage, Nov 2026: "hard drive" is no kind's name; the AI is given Aternity's names (AI_KINDS)
-    ("What PCs had a hard drive issue this week?", {"tool": "who", "what": "event", "days": 7, "name": "hd"}),
-    # look-ups of who logged in where (the user's request, Nov 2026)
-    ("Who last logged into the PC WS-0042?", {"tool": "logins", "device": "ws-0042"}),
-    ("Which desktop did mossley log in to on 2026-11-03?", {"tool": "logins", "username": "mossley", "date": "2026-11-03"}),
-    ("Which desktop is mossley on right now?", {"tool": "logins", "username": "mossley", "current": "true"}),
-)
-AI_SW_TRIES = (  # the Software tab's chat (software_chat.TOOLS)
+# question, and the look-up (tool) and settings a right pick has (words: in it, any case). The old
+# Today chat's own tries and its "repeats the counts" are gone with it (step 3 of Ask anything: no page
+# has it; Nemotron failed "repeats the counts" on stage, Nov 13 2026, for a chat no one can use).
+AI_SW_TRIES = (  # the software look-ups Ask anything uses (software_chat.TOOLS, the Software tab's blocks)
     ("Which programs are most out of date?", {"tool": "flags", "kind": "behind"}),
     ("Does one Outlook version crash more than the others?", {"tool": "version_problems", "application": "outlook"}),
     ("Compare Outlook 16.0.19725 with 16.0.20430.", {"tool": "compare", "application": "outlook"}),
@@ -1871,11 +1850,7 @@ AI_SW_TRIES = (  # the Software tab's chat (software_chat.TOOLS)
     ("Which software crashed the most?", {"tool": "most"}),
     ("Which Teams version crashed the most?", {"tool": "version_problems", "application": "teams"}),
 )
-AI_KINDS = ["Application Crash", "Application Hang", "Low Memory Pagefaults", "System Crash",  # Aternity's names;
-            "Faulty HD S.M.A.R.T. Status", "HD Failure", "Application Crash (After Hang)"]  # the HD ones: prod
 AI_OUTSIDE = "What is the weather in Paris today?"  # not in the data: no pick is the right answer
-AI_COUNTS = {"period": "last 7 days", "partial": False,  # made-up counts, to see if they are repeated right
-             "rows": [{"failure": "Sample Agent crash", "pcs": 2885}, {"failure": "Sample Viewer crash", "pcs": 412}]}
 AI_SETUP = ("Chat is off: no AI service is set. Add to config.yaml, per service: ai: / services: / "
             "- name: <your label> / base_url: <its API address, up to and including /v1> / model: <the "
             "model's name there> / key_env: <the .env line that holds its key>. Layout: config.example.yaml.")
@@ -1916,15 +1891,12 @@ def _right(call, want) -> bool:
 
 def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
     """Each AI service in ai.services: key, reachable, a plain reply, picking the right
-    building block for a question, and repeating the counts it is given."""
-    import json
+    software look-up, then Explain, the assessment and Ask anything over made-up records."""
     import os
     import time
 
     from .ai import LOGINS, AiClient, reply_message, tool_call
     from . import software_chat
-    from .chat import SYSTEM as CHAT, TOOLS, kinds_text
-    SYSTEM = CHAT + kinds_text(AI_KINDS)  # as each question has it: the kinds of event Aternity recorded
     env = os.environ if env is None else env
     if not settings.ai.services:
         return [Check(AI, "services", None, AI_SETUP)]
@@ -2013,9 +1985,7 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
         add("plain reply", True, f"Replied \"{_cut(str(message.get('content') or '').strip(), 60)}\" in "
             f"{time.monotonic() - started:.1f} s.")
 
-        # picks the right building block: the Today tab's chat, then the Software tab's
-        said: dict = {}  # question -> (reply, call): each try's own reply
-
+        # picks the right look-up for a question
         def picks(label: str, system: str, tools: list, tries: tuple) -> tuple | None:
             """(question, reply, call) of the first right pick; None when none is right, False when
             the service refused tool calling."""
@@ -2030,7 +2000,6 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
                     break
                 times.append(time.monotonic() - started)
                 call = tool_call(reply)
-                said[question] = (reply, call)
                 if _right(call, want):
                     right += 1
                     first = first or (question, reply, call)
@@ -2055,45 +2024,15 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
                 "The chat would run the wrong counts with this model. Tell Claude these lines.", rows)
             return first
 
-        first = picks("picks the right question", SYSTEM, TOOLS, AI_TRIES)
-        if first is False:
+        # the software look-ups Ask anything uses, as the Software tab's chat had them; a service
+        # that refuses tool calling is said here, and the checks after need it
+        if picks("picks the right software look-up", software_chat.system({"as_of_local": "today",
+                                                                           "zone": "local time"}),
+                 software_chat.TOOLS, AI_SW_TRIES) is False:
             continue
-        picks("picks the right question (Software tab)", software_chat.system({"as_of_local": "today",
-                                                                               "zone": "local time"}),
-              software_chat.TOOLS, AI_SW_TRIES)
-        ask = lambda q: [{"role": "system", "content": SYSTEM}, {"role": "user", "content": q}]  # noqa: E731
         _explains(client, add)
         _assesses(client, add)
         _answers(client, add)
-
-        # repeats the counts it is given: always for the crash question they are of (stage, Nov
-        # 2026: with that one missed, they went to "Are virtual desktops slower …?" and Nemotron's
-        # answer had no words). Its own pick there when it took events, else that pick made for it.
-        question, want_call = AI_TRIES[0][0], _wants(AI_TRIES[0][1])[0]
-        reply, call = said.get(question, ({}, None))
-        if not call or call[0] != want_call["tool"]:
-            call = (want_call["tool"], {k: v for k, v in want_call.items() if k != "tool"}, "call_counts")
-            reply = {"content": "", "tool_calls": [{"id": call[2], "type": "function", "function": {
-                "name": call[0], "arguments": json.dumps(call[1])}}]}
-        try:
-            answer = client.chat(ask(question) + [
-                {"role": "assistant", "content": reply.get("content") or "", "tool_calls": reply["tool_calls"]},
-                {"role": "tool", "tool_call_id": call[2], "content": json.dumps(AI_COUNTS)}], TOOLS)
-        except ApiError as exc:
-            add("repeats the counts", False, f"The service refused the counts sent back to it: {exc.short()}.",
-                "Tell Claude this line.")
-            continue
-        text = str(answer.get("content") or "")
-        digits = "".join(ch for ch in text if ch not in ",.   ")
-        want = [str(r["pcs"]) for r in AI_COUNTS["rows"]]
-        found = [w for w in want if w in digits]
-        again = tool_call(answer)
-        add("repeats the counts", len(found) == len(want),
-            f"Given {' and '.join(want)}, its answer had {len(found)} of the {len(want)} counts.",
-            "The chat would show wrong numbers in its sentence. Tell Claude these lines.",
-            [f"its answer: {_cut(' '.join(text.split()), 220)}" if text.strip() else
-             f"its answer had no words: it {_picked(again)} again" if again else
-             f"its answer had no words; the reply's parts: {', '.join(sorted(answer)) or 'none'}"])
     return checks
 
 

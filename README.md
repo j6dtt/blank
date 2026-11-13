@@ -121,7 +121,7 @@ Other users of these apps:
    (`MACHINE_BOOT_COMPONENTS`). For the slowest, the cause is the part
    Aternity measured as most "longer than normal", plus what changed on
    the PC before; the main causes list every PC where that part was
-   longer than normal. The "Slow start-ups" tab and
+   longer than normal. The "Start-ups" tab and
    `uxcorrelate logons --last 24h [-l <location>]` search everyone.
 
 ## The web page
@@ -155,12 +155,14 @@ Aternity now, at most 5 times a question: a user's or PC's logons,
 their start-ups and why they were slow, a PC's installed software and
 Windows, what was installed, updated or removed on a PC, how many
 programs every PC has (the most or fewest first), the Software tab's
-look-ups, and one investigation of a user or PC (the last 4 hours
-unless a time is asked for, 24 at most; up to a few minutes). While it
+look-ups, and one investigation of a user or PC (from 30 minutes before
+their first Critical or Major event or Major action today, the last 4
+hours at least, unless a time is asked for; 24 at most; up to a few
+minutes). While it
 works, the line under the box says which look-up it is on. "What I
 looked at" under each answer shows every step with its rows
 (Investigate ▸ on each; "Open this investigation ▸" shows the one it
-ran on the Investigate tab, "Open in Slow start-ups ▸" runs that tab);
+ran on the Investigate tab, "Open in Start-ups ▸" runs that tab);
 a number found in none of them is marked, not hidden.
 The usual for actions builds up over the first week from the counts saved
 in `./data` each night (`mkdir -p data && chmod a+rwx data` before the
@@ -249,7 +251,7 @@ Investigate tab, top to bottom:
   "Show N problem(s) at other times" opens the rest.
 - **Details for IT**: the rules used, the PCs, the NetIM objects checked.
 
-Slow start-ups tab: searches the Start/End range in its form (last 24
+Start-ups tab: searches the Start/End range in its form (last 24
 hours by default; empty user, PC and location = everyone). One card per
 Aternity measurement type (typical, 1 in 10 slower than); **Main causes**:
 the parts behind the slowest start-ups and every PC where they were longer
@@ -319,7 +321,8 @@ code from `./src`. To fix code, edit `src/uxcorrelate/*.py` and run
 lists what to do before the first start. Healthy means the web server is up; it
 does not mean Aternity or NetIM are reachable (`verify` checks that).
 
-**Web UI** (titled "J6 Preservation Society"). Open `http://<docker-host>:8080`
+**Web UI** ("J6 Preservation Society", then `title` from config.yaml
+in the top bar and the browser tab). Open `http://<docker-host>:8080`
 or `https://<docker-host>:8444`. The `ports` setting in `compose.yaml`
 decides who can reach it: `"127.0.0.1:8080:8080"` is the Docker host only,
 `"8080:8080"` is the whole network. The UI has no login.

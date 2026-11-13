@@ -432,7 +432,7 @@ def test_a_normal_start_up_is_not_the_cause_nor_an_issue():
     # not a problem anywhere: not in the list, not on the timeline
     assert not any("starting up" in g["what"] for g in result["problems"])
     assert not any("starting up" in m[2] for m in result["timeline"]["marks"])
-    assert not any("Slow start-ups tab" in t for t in a["todo"])
+    assert not any("Start-ups tab" in t for t in a["todo"])
     assert a["todo"][-1].startswith("Nothing measured explains it")
 
 

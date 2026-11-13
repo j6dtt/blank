@@ -73,7 +73,7 @@ unset `<REQUIRED>` base URLs.
   that part longer than normal on every PC (`boot_component_everywhere`).
   No "slow" threshold, no assumed type names. Unit
   from `boot_unit` (inferred as seconds from live values, not documented).
-  Used by "What the user felt", the "Slow start-ups" tab
+  Used by "What the user felt", the "Start-ups" tab
   (`/api/logon-jobs`) and the `logons` CLI command.
 - `normal.py`: each slow app + activity next to its own normal (user's
   last 30 days at most, the days found are said: prod keeps about 8; other users at the same time), days where Aternity marked most
@@ -395,7 +395,8 @@ unset `<REQUIRED>` base URLs.
 - `software_chat.py`: the Software tab's look-ups. Ask anything uses its
   blocks as they are (`agent.SOFTWARE_TOOLS`); its own chat "Ask about
   software" (`/api/software/chat`, the same loop as `chat.converse`) is
-  no longer on the page (step 3), `verify --ai` still measures its picks. Blocks (`TOOLS`): flags (kind "all", first and
+  no longer on the page (step 3); `verify --ai` measures its blocks'
+  picks ("picks the right software look-up"). Blocks (`TOOLS`): flags (kind "all", first and
   required: offered only the kinds, GPT answered "the red flags" with
   crash alone on stage; or one kind's whole list; a question naming one
   application goes to version_problems, said in both descriptions, as
@@ -446,8 +447,9 @@ unset `<REQUIRED>` base URLs.
   `_app` (the name as typed when several have it; `_like` names them
   when Aternity has nothing).
 - `chat.py`: the block chat "Ask about today" (`/api/chat`; no longer on
-  the page since step 3 of Ask anything, the endpoint and `verify --ai`
-  kept; its helpers `logins`, `_match`, `numbers`/`allowed` serve Ask
+  the page since step 3 of Ask anything, the endpoint kept; `verify --ai`
+  no longer measures it: its picks and "repeats the counts" went, Nov 13,
+  after Nemotron failed the counts on stage; its helpers `logins`, `_match`, `numbers`/`allowed` serve Ask
   anything); its question loop `converse` is shared with `software_chat.py`. The AI
   (`ai.chat` by name, else the first of `ai.services`; GPT on prod) picks
   one building block of `TOOLS` (slow_actions, events, who, investigate),
@@ -541,7 +543,7 @@ unset `<REQUIRED>` base URLs.
   investigate (a whole investigation, `INVESTIGATE_HOURS` by default,
   `INVESTIGATE_MAX_H` at most; the AI reads `render_text`, cut to
   `TEXT_CHARS`; the page's "Open this investigation ▸" shows the result
-  without a re-run, "Open in Slow start-ups ▸" runs that tab). At most
+  without a re-run, "Open in Start-ups ▸" runs that tab). At most
   `MAX_READS` reads and `MAX_INVESTIGATIONS` per question. `/api/ask`
   is a job (`/api/jobs/{id}`): the page shows each look-up as it
   starts. A failed look-up is a step that says so, never a lost
@@ -557,14 +559,21 @@ unset `<REQUIRED>` base URLs.
   "answers open questions" (`AI_ASK` over `ask_records`, made-up;
   `AskAternity` made-up logons; the step 2 questions must use their
   look-up; step 3's asks about a made-up Care list tab, `ASK_PAGE`, and
-  must use page).
+  must use page). An investigation asked for with no time starts
+  `care.INV_PAD` before the person's first Critical or Major event or
+  Major action today, the last 4 hours at least (`_first_issue`; with
+  the last 4 hours only, one asked at 12:04 left out a 06:04 crash).
+  A name the names know exactly as a user only, sent as the PC (or a
+  PC's sent as the user), is looked up as what it is, said in a note
+  (`_user_or_pc`, the look-ups in `BOTH`; Nemotron sent
+  startups(pc=sample02) and found nothing: verify --ai, stage, Nov 13).
 - `ai.py`: client for the self-hosted AI services (`ai.services` in
   config.yaml, key from the env var named in `key_env`). OpenAI-style API
   (`verify.verify_ai`, passed on prod for both services: key, reachable,
-  login header, plain reply, the right block in 11 tries + no pick outside
-  the data, counts repeated right; it tests `chat.TOOLS` and `SYSTEM`,
-  then `software_chat.TOOLS` with `AI_SW_TRIES`, 12 tries covering every
-  block, not yet on prod).
+  login header, plain reply, then the right software look-up in 12 tries
+  covering every block (`software_chat.TOOLS`, `AI_SW_TRIES`) + no pick
+  outside the data, Explain, the assessment, Ask anything; the old Today
+  chat's checks went with it from the page).
 - `verify --overview` (`verify._overview`, also at the end of a full verify):
   what a "today's issues" overview could rest on: activity rows an hour,
   Aternity's own status and severity words with counts, and whether its
@@ -612,7 +621,7 @@ unset `<REQUIRED>` base URLs.
   box. A question about a whole tab is Ask anything's (`page`, which
   gives the AI `given` of the tab); "Ask about this page" was removed
   (step 3). Nothing saved. Steps 3-4 (2026-11-11): the link is added by
-  script to every panel of Software, Investigate and Slow start-ups; a
+  script to every panel of Software, Investigate and Start-ups; a
   button's text is sent only when it is a name shown as a link (an
   issue, a program).
 - `status.py`: the connection lights at the right of the top bar
@@ -635,8 +644,12 @@ unset `<REQUIRED>` base URLs.
   always (20 kept by count dropped running ones).
 - `static/index.html` is the single-page UI. It is dependency-free and draws
   its charts with inline SVG. Tabs, in order: Today, Care list,
-  Investigate, Slow start-ups, Software (`mode()`; each with a link,
-  `TAB_LINK`). Dialogs are in-page (`swDialog`), never `alert()`. A CSS
+  Investigate, Start-ups, Software (`mode()`; each with a link,
+  `TAB_LINK`). A tab opens where it was left (`scrollOf`), at its top when
+  a result is put in it (`mode(tab, true)`) or it is clicked when open.
+  Scrolled down to the tabs, the bar pins as one slim row (`pinBar`,
+  `#headWrap` keeps its height: nothing jumps) and "↑ Top" shows (the
+  user's request, 2026-11-13: long pages). Dialogs are in-page (`swDialog`), never `alert()`. A CSS
   `display` on an element with `hidden` needs its own `[hidden]` rule.
   Every "Investigate ▸" (Today lists, the chats, the Care list, the
   Software lists) goes through `investigateNow()`: fill the Investigate
@@ -706,8 +719,15 @@ unset `<REQUIRED>` base URLs.
   `serve --tls-port/--cert/--key`, both ports in one process with one
   stop for both; certs in `./certs`, gitignored; host 8444, as haproxy
   holds 8443.)
-- The page is titled "J6 Preservation Society" (parchment, archive green,
+- The brand is "J6 Preservation Society" (parchment, archive green,
   brass; colours only through the `:root` variables, serif from fonts
-  already on Windows: the live host has no internet).
+  already on Windows: the live host has no internet). The title after it
+  is `title` in config.yaml (the user's pick, 2026-11-13: the site's name
+  stays out of git), put in by `web.page()` at each load (`<!--title-->`,
+  `<title>`; empty: the brand alone). The top bar (proposal B + folder
+  tabs, the user's picks): crest, brand | title, lights at the right;
+  then the tabs in capitals, the open one parchment, joined to the page.
+  On a phone the tabs slide sideways. The lights show `ai.services`'
+  `name` as written; `ai.chat` matches it whatever the capitals.
 - The web UI has no authentication. Don't add features that assume it does.
 - Keep secrets out of `config.yaml` (it is gitignored). Pass them as env vars.

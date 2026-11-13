@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import logging
 import os
 import threading
@@ -13,7 +14,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from .assess import Assessments
@@ -33,6 +34,7 @@ from .status import Status, keep_checking
 from .today import NO_APP, Today, keep_reading
 
 STATIC = Path(__file__).parent / "static"
+BRAND = "J6 Preservation Society"  # index.html's <title>; config.yaml's title goes after it
 KEEP_DONE_MIN = 10  # a finished job is kept this long for its tab (it asks every second); a running one always
 _clock = time.monotonic  # the jobs' clock (a test moves it)
 NETIM_REFRESH_S = 3600  # rebuild the NetIM device/interface index this often
@@ -495,7 +497,20 @@ def create_app(config_path: str | None = None) -> FastAPI:
     @app.get("/")
     def index():
         # always asked for again: after new files are copied, a browser must not show the old page
-        return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+        return HTMLResponse(page(), headers={"Cache-Control": "no-cache"})
+
+    def page() -> str:
+        """index.html with config.yaml's title after the brand, in the top bar and the browser tab."""
+        text = (STATIC / "index.html").read_text(encoding="utf-8")
+        try:
+            title = load_settings(config_path).title
+        except Exception:  # a broken config.yaml: the page shows the brand alone, /api/info says what is wrong
+            title = ""
+        if not title:
+            return text
+        t = html.escape(title)
+        return (text.replace(f"<title>{BRAND}</title>", f"<title>{BRAND} | {t}</title>", 1)
+                .replace("<!--title-->", f"<i></i><h1>{t}</h1>", 1))
 
     @app.get("/api/info")
     def info():

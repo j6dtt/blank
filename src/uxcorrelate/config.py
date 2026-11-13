@@ -412,6 +412,8 @@ class Settings:
     timezone: str = ""
     # how often the Today tab, the name list and the Care list read Aternity (REFRESH_RANGE)
     refresh_minutes: int = 15
+    # the page's title, after the brand in the top bar and the browser tab; empty: the brand alone
+    title: str = ""
 
 
 def _merge_dataclass(obj: Any, data: dict[str, Any]) -> None:
@@ -445,6 +447,8 @@ def load_settings(path: str | os.PathLike | None = None) -> Settings:
             settings.boot_unit = str(raw["boot_unit"])
         if raw.get("timezone"):
             settings.timezone = str(raw["timezone"]).strip()
+        if raw.get("title"):
+            settings.title = " ".join(str(raw["title"]).split())
         if raw.get("refresh_minutes") not in (None, ""):
             low, high = REFRESH_RANGE
             settings.refresh_minutes = min(max(int(raw["refresh_minutes"]), low), high)

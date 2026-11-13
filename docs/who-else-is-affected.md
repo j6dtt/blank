@@ -64,7 +64,7 @@ days of the week before (working days with working days; activities are kept abo
 is named. A virtual desktop's address is the desktop's own, so those users
 are one group and never a network point.
 
-## Slow start-ups page: "Main causes"
+## Start-ups page: "Main causes"
 
 For the slowest start-ups:
 

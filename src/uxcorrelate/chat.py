@@ -167,9 +167,9 @@ def usual_wrong(text: str, given: dict) -> str | None:
 
 
 def chat_service(settings: Settings) -> AiService | None:
-    """The AI service the chat uses: ai.chat by name, else the first one set."""
+    """The AI service the chat uses: ai.chat by name (capitals or not: "gpt" is "GPT"), else the first one set."""
     usable = [s for s in settings.ai.services if s.base_url and s.model]
-    named = [s for s in usable if settings.ai.chat and s.name == settings.ai.chat]
+    named = [s for s in usable if settings.ai.chat and s.name.casefold() == settings.ai.chat.casefold()]
     return (named or usable or [None])[0]
 
 

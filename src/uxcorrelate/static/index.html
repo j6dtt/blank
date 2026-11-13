@@ -20,12 +20,15 @@
   }
   * { box-sizing: border-box; }
   body { margin: 0; font: 14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; background: var(--bg); color: var(--text); }
-  header { padding: 12px 20px; border-bottom: 3px solid var(--brass); background: var(--head); color: var(--head-text);
-           display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-  header h1 { font: 600 22px/1.1 var(--serif); margin: 0; letter-spacing: .03em; font-variant: small-caps; }
-  header span { color: var(--head-muted); font: italic 13px var(--serif); }
+  /* the top bar, two rows: the crest, the brand | the title (config.yaml), the lights; then the tabs */
+  header { padding: 12px 20px 0; border-bottom: 3px solid var(--brass); background: var(--head); color: var(--head-text); }
+  .top { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding-bottom: 12px; }
+  .brand { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .brand small { color: var(--head-muted); font: 600 16px/1.1 var(--serif); font-variant: small-caps; letter-spacing: .03em; }
+  .brand i { width: 2px; align-self: stretch; min-height: 24px; background: var(--brass); }
+  .brand h1 { font: 600 22px/1.1 var(--serif); margin: 0; }
   .crest { flex: none; }
-  main { max-width: 1200px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px 16px 64px; display: grid; gap: 16px; }  /* 64: clear of ↑ Top */
   .panel { background: var(--panel); border: 1px solid var(--border); border-top: 2px solid var(--brass); border-radius: 4px;
            padding: 16px; box-shadow: 0 1px 2px rgba(60, 45, 20, .06); }
   form { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; align-items: end; }
@@ -69,11 +72,32 @@
   .atitle { font: 700 24px/1.25 var(--serif); }
   .answer #aReason { margin-top: 4px; }
   button.link { background: none; color: var(--accent); padding: 4px 0; font-weight: 600; }
-  nav { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
-  nav button { background: transparent; color: var(--head-muted); border: 1px solid rgba(244, 234, 210, .3); padding: 5px 12px; }
-  nav button.on { background: var(--brass); color: #1b1a14; border-color: var(--brass); }
-  /* the connection lights, right of the tabs: one per API and AI model; down flashes red */
-  #conn { display: flex; gap: 4px; flex-wrap: wrap; }
+  /* the tabs: folder tabs on the brass rule; the open one is parchment and joins the page */
+  nav { display: flex; gap: 4px; align-items: flex-end; margin-bottom: -3px; }
+  nav button { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; background: rgba(244, 234, 210, .07);
+               color: var(--head-muted); border: 1px solid rgba(176, 141, 69, .5); border-bottom: 0; border-radius: 7px 7px 0 0;
+               padding: 9px 16px; margin-bottom: 3px; font: 600 12px/18px var(--serif); letter-spacing: .12em; text-transform: uppercase; }
+  nav button:hover, nav button:focus-visible { color: var(--head-text); background: rgba(244, 234, 210, .14); }
+  nav button.on { background: var(--bg); color: var(--accent); border: 1px solid var(--brass); border-top: 3px solid var(--brass);
+                  border-bottom: 0; padding: 9px 18px 12px; margin-bottom: 0; }
+  nav .badge { margin: 0; font: 700 11px/18px system-ui, sans-serif; letter-spacing: 0; }
+  .badge[hidden] { display: none; }
+  /* the connection lights, right of the title: one per API and AI model; down flashes red */
+  #conn { display: flex; gap: 4px; flex-wrap: wrap; margin-left: auto; }
+  /* scrolled down to the tabs: the bar stays at the top as one slim row (crest, tabs, lights); #headWrap keeps
+     its place in the page, so nothing jumps */
+  html { scroll-padding-top: 64px; }  /* what is scrolled to is not under the bar */
+  header.pinned { position: fixed; top: 0; left: 0; right: 0; z-index: 10; display: flex; align-items: flex-end; gap: 12px;
+                  padding-top: 6px; box-shadow: 0 2px 6px rgba(20, 16, 8, .25); }
+  header.pinned .top { display: contents; }
+  header.pinned .brand { display: none; }
+  header.pinned .crest { align-self: center; width: 22px; height: 25px; margin-bottom: 3px; }
+  header.pinned nav { order: 1; }
+  header.pinned #conn { order: 2; align-self: center; margin-bottom: 3px; min-width: 0; justify-content: flex-end; }
+  #toTop { position: fixed; z-index: 9; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+           background: var(--head); color: var(--head-text); border: 1px solid var(--brass); border-radius: 999px; padding: 9px 15px;
+           font: 600 12px/1 var(--serif); letter-spacing: .12em; text-transform: uppercase; box-shadow: 0 2px 8px rgba(20, 16, 8, .3); }
+  #toTop:hover, #toTop:focus-visible { background: var(--brass); color: #1b1a14; }
   #conn button { background: transparent; color: var(--head-text); border: 1px solid transparent; border-radius: 999px;
                  padding: 3px 9px; font: 12px system-ui, sans-serif; display: flex; align-items: center; gap: 5px; }
   #conn button:hover, #conn button:focus-visible { border-color: rgba(244, 234, 210, .4); }
@@ -179,6 +203,17 @@
   .swForm { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
   .swForm label { min-width: 150px; flex: 1; }
   .swForm select { padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+  @media (max-width: 640px) {  /* a phone: the brand over the title, the lights under them, the tabs slide sideways */
+    header { padding: 10px 16px 0; }
+    .brand { flex: 1 1 0; min-width: 0; gap: 2px; flex-direction: column; align-items: flex-start; }
+    .brand i { display: none; } .brand h1 { font-size: 19px; }
+    #conn { margin-left: 0; width: 100%; }
+    nav { overflow-x: auto; scrollbar-width: none; -webkit-mask-image: linear-gradient(to right, #000 80%, transparent);
+          mask-image: linear-gradient(to right, #000 80%, transparent); }
+    nav button { flex: none; padding-left: 12px; padding-right: 12px; font-size: 11px; letter-spacing: .08em; }
+    header.pinned .crest, header.pinned #conn { display: none; }  /* the slim row is the tabs alone */
+    header.pinned nav { flex: 1 1 auto; min-width: 0; }
+  }
   @media (max-width: 640px) {  /* a phone: each row's name and number, then its bar; wide charts scroll in place */
     .flag { grid-template-columns: 1fr auto; }
     .flag .kind { grid-column: 1 / -1; }
@@ -230,13 +265,14 @@
 </style>
 </head>
 <body>
-<header><svg class="crest" width="30" height="34" viewBox="0 0 30 34" aria-hidden="true">
+<div id="headWrap"><header><div class="top"><svg class="crest" width="30" height="34" viewBox="0 0 30 34" aria-hidden="true">
     <path d="M15 1 L28 5 V16 C28 25 22 30 15 33 C8 30 2 25 2 16 V5 Z" fill="none" stroke="var(--brass)" stroke-width="2"/>
     <text x="15" y="21" text-anchor="middle" font-family="Georgia, serif" font-size="11" font-weight="700"
       fill="var(--brass)" style="fill:var(--brass)">J6</text></svg>
-  <h1>J6 Preservation Society</h1><span>Aternity end-user experience × NetIM infrastructure</span>
-  <nav><button id="tabToday" class="on">Today</button><button id="tabCare">Care list<span class="badge" id="careCount" hidden></span></button><button id="tabInv">Investigate</button><button id="tabLog">Slow start-ups</button><button id="tabSoft">Software<span class="badge" id="softCount" hidden></span></button></nav>
-  <div id="conn" aria-label="Connections"></div></header>
+  <div class="brand"><small>J6 Preservation Society</small><!--title--></div>
+  <div id="conn" aria-label="Connections"></div></div>
+  <nav><button id="tabToday" class="on">Today</button><button id="tabCare">Care list<span class="badge" id="careCount" hidden></span></button><button id="tabInv">Investigate</button><button id="tabLog">Start-ups</button><button id="tabSoft">Software<span class="badge" id="softCount" hidden></span></button></nav>
+</header></div>
 <main>
   <div id="todayBox">
     <section class="panel" id="asBox" hidden style="margin-bottom:16px">
@@ -487,6 +523,7 @@
       <button type="button" class="link" id="askClear" hidden>Clear the answers</button></p>
   </section>
 </main>
+<button type="button" id="toTop" hidden title="Back to the top of this tab">↑ Top</button>
 <div class="dlgWrap" id="cDlg" hidden><form class="dlg panel" id="cForm" role="dialog" aria-modal="true" aria-labelledby="cDlgTitle"
     style="display:block;max-width:440px" autocomplete="off">
   <h2 id="cDlgTitle"></h2>
@@ -535,7 +572,11 @@ async function init() {
 // The tabs; switching keeps each tab's form and last result.
 const TAB_LINK = { today: "today", care: "care", inv: "investigate", log: "startups", soft: "software" };
 let tabNow = "today";  // the tab open (Ask anything sends what it shows)
-function mode(tab) {
+const scrollOf = {};  // where each tab was scrolled to: a tab opens where it was left
+// top: open the tab at its top (a result is put in it now); clicking the tab that is open goes to its top too
+function mode(tab, top = false) {
+  if (tab !== tabNow) scrollOf[tabNow] = scrollY;
+  const back = top || tab === tabNow ? 0 : scrollOf[tab] || 0;
   tabNow = tab;
   const inv = tab === "inv", logons = tab === "log", today = tab === "today", care = tab === "care", soft = tab === "soft";
   $("tabToday").classList.toggle("on", today); $("tabInv").classList.toggle("on", inv); $("tabLog").classList.toggle("on", logons);
@@ -549,7 +590,26 @@ function mode(tab) {
   if (today) loadToday();
   if (care) loadCare();
   if (soft) loadSoftware();
+  scrollTo(0, back);
+  pinBar();
 }
+// Scrolled down to the tabs, the bar pins to the top as one slim row and "↑ Top" shows. #headWrap keeps the
+// bar's height while it is pinned, so the page does not jump.
+function pinBar() {
+  const head = document.querySelector("header"), wrap = $("headWrap"), pinned = head.classList.contains("pinned");
+  const at = pinned ? Number(wrap.dataset.at) : head.querySelector("nav").offsetTop;
+  const pin = scrollY > at;
+  if (pin !== pinned) {
+    if (pin) { wrap.dataset.at = at; wrap.style.height = head.offsetHeight + "px"; } else wrap.style.height = "";
+    head.classList.toggle("pinned", pin);
+  }
+  $("toTop").hidden = !pin;
+}
+addEventListener("scroll", pinBar, { passive: true });
+addEventListener("resize", () => {  // the bar's height may change: measured again
+  document.querySelector("header").classList.remove("pinned"); $("headWrap").style.height = ""; pinBar();
+});
+$("toTop").addEventListener("click", () => scrollTo({ top: 0, behavior: "smooth" }));
 $("tabToday").addEventListener("click", () => mode("today"));
 $("tabCare").addEventListener("click", () => mode("care"));
 $("tabInv").addEventListener("click", () => mode("inv"));
@@ -700,7 +760,7 @@ function investigateNow(p) {
   f.application.value = p.application || "";
   f.start.value = toLocalInput(new Date(p.start));
   f.end.value = toLocalInput(new Date(p.end));
-  mode("inv");
+  mode("inv", true);
   f.requestSubmit();  // as the Investigate button would
 }
 $("tWhoList").addEventListener("click", (ev) => {
@@ -871,7 +931,7 @@ $("cDetailBody").addEventListener("click", (ev) => {
     const rep = careUser.report, f = $("f");
     f.username.value = rep.username; f.device.value = ""; f.application.value = "";
     f.start.value = toLocalInput(new Date(rep.start)); f.end.value = toLocalInput(new Date(rep.end));
-    mode("inv");
+    mode("inv", true);
     render(rep.result);
   } else if (ev.target.id === "cEdit") {
     careDialog(careUser, true);
@@ -1038,7 +1098,7 @@ function stepHtml(s, i, j) {
     if (s.rows.length > shown.length) html += `<div class="muted">… and ${n(s.rows.length - shown.length)} more rows the AI was given.</div>`;
   }
   // an investigation (already run: shown, not run again) or start-ups (run on their tab)
-  if (s.open) html += `<div><button type="button" class="link" data-oa="${i}" data-os="${j}">${s.open.tab === "inv" ? "Open this investigation ▸" : "Open in Slow start-ups ▸"}</button></div>`;
+  if (s.open) html += `<div><button type="button" class="link" data-oa="${i}" data-os="${j}">${s.open.tab === "inv" ? "Open this investigation ▸" : "Open in Start-ups ▸"}</button></div>`;
   return html + "</div>";
 }
 function askRender() {
@@ -1099,13 +1159,13 @@ $("askAnswers").addEventListener("click", (ev) => {
       const f = $("f");
       f.username.value = p.username; f.device.value = p.device; f.application.value = p.application;
       f.start.value = toLocalInput(new Date(p.start)); f.end.value = toLocalInput(new Date(p.end));
-      mode("inv");
+      mode("inv", true);
       render(p.result);
     } else {  // the same start-ups on their own tab, read again there
       const f = $("lf");
       f.username.value = p.username; f.device.value = p.device; f.location.value = "";
       f.start.value = toLocalInput(new Date(p.start)); f.end.value = toLocalInput(new Date(p.end));
-      mode("log");
+      mode("log", true);
       f.requestSubmit();
     }
     return;
@@ -1230,7 +1290,7 @@ $("lf").addEventListener("submit", (ev) => {
   runJob("api/logon-jobs", formBody(ev.target, ["username", "device", "location"]), $("lgo"), renderStarts);
 });
 
-// Slow start-ups: one sentence per Aternity type, then one row per start-up, slowest first.
+// Start-ups: one sentence per Aternity type, then one row per start-up, slowest first.
 function renderStarts(lg) {
   $("lout").dataset.has = "1"; $("lout").hidden = false;
   const u = lg.unit ? ` ${lg.unit}` : "";
@@ -1968,7 +2028,7 @@ $("dlgBody").addEventListener("submit", (ev) => {
   const q = $("exQ").value.trim();
   if (q && explaining) explainNow(explaining.tab, explaining.panel, explaining.lines, q);
 });
-// Software, Investigate and Slow start-ups: the same link at the bottom right of every panel that shows data
+// Software, Investigate and Start-ups: the same link at the bottom right of every panel that shows data
 for (const [box, tab] of [["softBox", "software"], ["out", "investigate"], ["lout", "startups"]]) {
   $(box).querySelectorAll("section.panel:not(.noExplain)").forEach((p) => p.insertAdjacentHTML("beforeend",
     `<div class="exRow noExplain"><button type="button" class="link explain" data-tab="${tab}">Explain ▸</button></div>`));

@@ -179,6 +179,16 @@ def test_a_users_logons_and_start_ups_are_read_now():
     assert agent.run("startups", {"user": "sample0"}, t, names, now, reach)["title"] == "Which user?"
     # without Aternity: said, not an error
     assert agent.NOT_SET in agent.run("startups", {"pc": "VD-77"}, t, names, now, agent.Reach())["notes"]
+    # a user's name sent as the PC is looked up as the user, and a PC's as the PC (Nemotron sent
+    # startups(pc=sample02) and found nothing: verify --ai on stage, Nov 2026)
+    as_pc = agent.run("startups", {"pc": "sample02", "days": 7}, t, names, now, reach)
+    assert as_pc["rows"] == st["rows"] and as_pc["args"]["user"] == "sample02" and not as_pc["args"].get("pc")
+    assert as_pc["notes"][0] == "\"sample02\" is a user, not a PC: looked up as the user."
+    as_user = agent.run("activity", {"user": "VD-77"}, t, names, now)
+    assert as_user["rows"] == agent.run("activity", {"pc": "VD-77"}, t, names, now)["rows"] != []
+    assert as_user["notes"][0] == "\"VD-77\" is a PC, not a user: looked up as the PC."
+    unknown = agent.run("startups", {"pc": "nobody7"}, t, names, now, reach)  # neither: as sent
+    assert unknown["args"]["pc"] == "nobody7" and not unknown["args"].get("user")
 
 
 def test_a_pcs_software_and_what_changed_on_it_are_read_now():
@@ -236,6 +246,32 @@ def test_the_software_tabs_look_ups_and_an_investigation(tmp_path):
                       now, agent.Reach(investigate=lambda *a: asked.append(a) or step["open"]["result"]))
     assert asked[-1][4] - asked[-1][3] == timedelta(hours=agent.INVESTIGATE_MAX_H) and "Cut to the last" in \
         local["notes"][0]
+
+
+def test_an_investigation_asked_with_no_time_starts_before_the_days_first_issue(monkeypatch):
+    """With the last 4 hours only, one asked for at 12:04 began at 08:04 and left out a 06:04
+    crash: it starts 30 min before their first Critical or Major event or Major action today."""
+    from uxcorrelate import report
+    monkeypatch.setattr(report, "render_text", lambda result: "User experience investigation")
+    t, names, now = ask_records()
+    later = now + timedelta(hours=3)  # sample04's HD Failure (Critical) was 6 hours before, PC-K1
+    asked = []
+    reach = agent.Reach(investigate=lambda *a: asked.append(a) or {"answer": {"title": "T"}})
+    step = agent.run("investigate", {"user": "sample04"}, t, names, later, reach)
+    assert asked[-1][3:] == (now - timedelta(hours=3, minutes=30), later)
+    assert any(x.startswith("From 30 minutes before their first Critical or Major event or Major action today, at ")
+               for x in step["notes"])
+    agent.run("investigate", {"pc": "PC-K1"}, t, names, later, reach)  # the PC's, as the user's
+    assert asked[-1][3] == now - timedelta(hours=3, minutes=30)
+    agent.run("investigate", {"user": "sample02"}, t, names, later, reach)  # Major actions, the first 2 h 9 min before
+    assert asked[-1][3] == now - timedelta(hours=2, minutes=39)
+    agent.run("investigate", {"user": "sample04", "hours": 2}, t, names, later, reach)  # a window asked for: kept
+    assert asked[-1][3] == later - timedelta(hours=2)
+    agent.run("investigate", {"user": "sample04"}, t, names, now, reach)  # within the last 4 hours: those
+    assert asked[-1][3] == now - timedelta(hours=agent.INVESTIGATE_HOURS)
+    names.seen["username"]["jdoe"] = now
+    agent.run("investigate", {"user": "jdoe"}, t, names, later, reach)  # nothing today
+    assert asked[-1][3] == later - timedelta(hours=agent.INVESTIGATE_HOURS)
 
 
 def test_reads_of_aternity_are_limited_per_question():

@@ -91,3 +91,17 @@ def test_logon_job_runs_the_logon_report(monkeypatch):
     body = {"location": "Denver", "start": BODY["start"], "end": BODY["end"]}
     job = wait(client, client.post("/api/logon-jobs", json=body).json()["id"])
     assert job["error"] is None and job["result"]["filters"]["location"] == "Denver"
+
+
+def test_the_page_shows_config_titles_after_the_brand(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("{}\n")
+    page = TestClient(web.create_app(str(path))).get("/")
+    assert page.status_code == 200 and page.headers["cache-control"] == "no-cache"
+    assert f"<title>{web.BRAND}</title>" in page.text and "<h1>" not in page.text.split("<main>")[0]  # the brand alone
+    path.write_text("title: \"  Field   <Office> \"\n")
+    page = TestClient(web.create_app(str(path))).get("/").text
+    assert f"<title>{web.BRAND} | Field &lt;Office&gt;</title>" in page  # spaces closed up, never markup
+    assert "<i></i><h1>Field &lt;Office&gt;</h1>" in page and "<!--title-->" not in page
+    path.write_text("title: [broken\n")
+    assert f"<title>{web.BRAND}</title>" in TestClient(web.create_app(str(path))).get("/").text

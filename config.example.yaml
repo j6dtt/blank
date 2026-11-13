@@ -52,6 +52,10 @@ timezone: ""
 # Aternity is read more often. Restart after a change.
 refresh_minutes: 15
 
+# the page's title, shown after "J6 Preservation Society" in the top bar
+# and the browser tab (read at each page load). Empty: the brand alone.
+title: ""
+
 # --- Only if `uxcorrelate verify` reports a wrong name ----------------
 # The Aternity data sources and columns, NetIM API paths and NetIM metrics
 # have built-in defaults (src/uxcorrelate/config.py). When verify says one
