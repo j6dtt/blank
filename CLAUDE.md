@@ -15,6 +15,7 @@ uxcorrelate -c config.yaml <command>    # -c goes BEFORE the sub-command
 docker compose up -d --build            # web UI on :8080 (needs config.yaml)
 scripts/make-bundle.sh                  # tests, then bundle for the live host
 scripts/snapshot.sh DIR                 # every test investigation's report + page data
+docker compose -f dev/compose.yaml up -d  # dev only: made-up Aternity + NetIM (then restart the app)
 ```
 
 Before and after any change to what an investigation says: run
@@ -25,8 +26,15 @@ render one on dev and look at the whole page before prod.
 
 Without installing: `PYTHONPATH=src python3 -m uxcorrelate.cli ...`.
 The dev host has no Riverbed and no pytest: tests run in the runtime
-image (`make-bundle.sh` shows how), and `verify` there only reports the
-unset `<REQUIRED>` base URLs.
+image (`make-bundle.sh` shows how). The dev app reads a made-up Riverbed,
+`dev/sample_riverbed.py` (README.md, "Sample data for the dev app"): a
+server outside the product, never bundled, answering the app's own clients
+with the real `$metadata` and NetIM layouts, so `verify` passes there and
+every tab has data. Its rows are worked out from their time (the same at
+every read), its story is set against today in its `ZONE`; at start it
+saves the past days' counts in `data/days`. Every column it sends must be
+in the real `$metadata` (`tests/test_sample_riverbed.py`). It is not a
+demo mode: nothing in `src/` knows about it.
 
 ## Layout
 
@@ -192,7 +200,9 @@ unset `<REQUIRED>` base URLs.
   are named ("Other things on VD-41"), never "these PCs". The question is
   what went wrong for the user, not only what was slow: with no slow action
   the title counts hangs, app crashes and system events (`level` "issues",
-  background crashes in the reason). Each problem has an `issue` kind
+  background crashes in the reason); a crash Aternity names no application
+  for (a System Crash: the PC itself) is told by its own name, first after
+  a failing disk, and still ranks as a crash in `_lead_rank` (`_issue_counts`). Each problem has an `issue` kind
   (`correlate._issue`); "found" is what the user felt first, then what spans
   many PCs, limits passed last (`ISSUE_ORDER`), each with "What we know"
   (`why`), `possible` causes and `who` (`others_text`, one shape: N other
@@ -309,7 +319,8 @@ unset `<REQUIRED>` base URLs.
   no row of numbers. The three charts (`charts`, `miniChart`) are a row
   of their own in Today's issues under the active strip (`#tMinis`):
   one point per hour of today so far, the lowest to highest of the same
-  hour on the `USUAL_DAYS` days before as a band when `MIN_USUAL` have
+  hour on the `USUAL_DAYS` days before (same kind: the caption says "5 working
+  days" or "weekend days", `kind`) as a band when `MIN_USUAL` have
   one: the share of actions rated Major (`MIN_ACTIONS` an hour, else no
   point: the one worked-out percentage on the page, the user's choice),
   the PCs with a crash so far today (each PC once, from `health_days`'
@@ -345,8 +356,11 @@ unset `<REQUIRED>` base URLs.
   this time of day than on any of their own days before with a PC in use
   (same kind of day, `USUAL_DAYS`, `MIN_USUAL`; their `HISTORY_DAYS` read
   by username once a day, spelled as Aternity writes it via `NameList`).
-  A new issue queues an investigation (`Care.work`, one at a time, one per
-  user per `RUN_EVERY`), `INV_PAD` before their first issue of the day (open or over) to
+  An investigation is queued (`Care.work`, one at a time, one per user
+  per `RUN_EVERY`) while one of today's issues is not covered by the
+  latest one (`_uncovered`: since outside its window, or `found` after it
+  ran: Aternity sent it late, or `RUN_EVERY` held it; the user's note of
+  Nov 13), `INV_PAD` before their first issue of the day (open or over) to
   now, and "Investigate again now" the same (`_inv_start`, the tile's
   `start`); its
   title is the tile's "Why", the page opens it without a re-run. Issues
@@ -356,13 +370,34 @@ unset `<REQUIRED>` base URLs.
   held it all day on stage) or back within their usual; a later spell is a
   new issue (key `slow <day> <n>`), a late row within `QUIET` rejoins it.
   Events of one kind are spells too (user's choice): over after `QUIET`
-  with no new one; matched to saved issues by kind and overlap; one first
-  seen when already over is kept as over, not investigated. An open
-  spell says when it ends if nothing new comes (`_clears`: "Clears after
-  HH:MM if no new Major action / HD Failure", its last + `QUIET`; the
-  user asked why a 16:00 issue was open at 16:55). Every user has a tile:
-  issue, then not seen in 8 days, then "✓ OK" (actions, Major, usual by
-  now, cleared spells). Slow start-ups and alerts: step 2.
+  with no new one; matched to saved issues by kind and overlap. A spell
+  is grouping only (one issue, one count, one investigation). The alert
+  (the tile's colour, the tab's count, `/api/MSS/care/status`; the user's
+  rule, 2026-11-14): `alert` is on while a read brought more of an issue
+  than it had seen (`seen`: events' `HEALTH_EVENT_VOLUME` added up, 1
+  when empty, as investigations; slow: the day's Major actions while the
+  spell is open) in the last `ALERT_READS` (3) x refresh_minutes
+  (`fresh`: that read's time), whatever the rows' own time (Aternity
+  sends rows late); a failing disk (`disk`: `DISK_PARTS` label on the
+  failing part, the Today reader's 7th field) all day. A restart does not
+  light again (`seen` saved; an issue saved before has no `seen`: what it
+  had is not new); at a user's first check (`checked`: added, or after a
+  restart) only an occurrence within the alert's time lights it. The tile:
+  `issues` (alert on, `_clears`: "Clears at HH:MM if no new Application
+  Hang" / "Stays on today: a failing disk is the PC's state"), the most
+  serious first (disk, Critical, Major, events before slow), then
+  `earlier` ("Earlier today: ..."). Every user has a tile: alert, then
+  not seen in 8 days, then "✓ OK". `view` is not ready until the first
+  check. `status` is `GET /api/MSS/care/status` (the user's request,
+  2026-11-14, for another platform that asks every 5 minutes): ready,
+  as_of (`Today.read_ok`: the last read with no failed read,
+  `Today.failures`), refresh_minutes, note, users in the tab's order with
+  username, label, status alert / ok / unknown, level, since (the alert's
+  issue; OK: when the last alert ended, `_alert_end`, else local
+  midnight), summary (`_said`, `_ok_words`, `_fit`: our words, never AI,
+  `_ascii`, `SUMMARY_MAX` 120, "+N more: ..."); all times UTC, no PC
+  field (PCs only in the summary). Slow start-ups and alerts out of the
+  app: step 2.
 - `software.py`: the "Software" tab, fifth (`/api/software`, `#software`;
   docs/software-tab.md, decisions of 2026-11-10). One background reader
   (`keep_reading`, every `READ_EVERY_H`, a few minutes) reads the
@@ -579,7 +614,9 @@ unset `<REQUIRED>` base URLs.
   Aternity's own status and severity words with counts, and whether its
   incidents and alerts (`OVERVIEW_SOURCES` in `config.py`) are published,
   and Aternity's label on each failing part over 7 days (`part_label`;
-  those in `DISK_PARTS` marked), so other hardware is added from it.
+  those in `DISK_PARTS` marked), so other hardware is added from it, and
+  from the same read whether one row holds several times
+  (`_times_in_a_row`: `HEALTH_EVENT_VOLUME` above 1, by event).
 - `verify --software` (`verify._software`, only on its own), short: what
   `INSTALLED_SOFTWARE` (`SOFTWARE_SOURCE`, `SOFTWARE_COLUMNS`) gives the
   Software tab: PCs, programs, installs and `SOFTWARE_USER_SCOPE`

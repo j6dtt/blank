@@ -201,6 +201,12 @@ def create_app(config_path: str | None = None) -> FastAPI:
             raise HTTPException(404, f"{username} is not on the Care list.")
         return got
 
+    @app.get("/api/MSS/care/status")
+    def care_status():
+        """Every Care list tile for another platform that asks every few minutes: username, label,
+        alert / ok / unknown, level, since and a short summary, all in UTC (care.status)."""
+        return care.status(datetime.now(timezone.utc))
+
     def care_check_now() -> None:
         """After a change on the page: the new tile's history and issues now, not at the next read."""
         if not today.ready:

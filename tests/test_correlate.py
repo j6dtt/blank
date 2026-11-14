@@ -859,3 +859,28 @@ def test_other_users_are_compared_with_earlier_working_days():
 
     amy(erp(lambda i: i == 4), source=Peers)
     assert len(days) == 6 and max(days) < 5  # the window and 5 of the 7 days before: no weekend
+
+
+class BlueScreen(StubAternity):
+    """A System Crash: Aternity names no application, the PC itself crashed."""
+    at = T0 + timedelta(minutes=30)
+
+    def health_events(self, device, start, end):
+        return [HealthEvent(self.at, device, None, "amy", "System", "System Crash", "filter.sys (Driver)",
+                            severity="Critical", error="0x0000003B")]
+
+
+def test_a_crash_with_no_application_is_told_by_its_name_and_still_leads():
+    """Found with the dev app's sample data, Nov 14 2026: a System Crash was titled "1 app crash"."""
+    calm = [UserSample(T0 + timedelta(minutes=i), "amy", "PC1", "ERP", response_time=1.0, status="Normal")
+            for i in range(5)]
+    a = amy(calm, source=BlueScreen)["answer"]
+    assert (a["level"], a["title"]) == ("issues", "1 System Crash (filter.sys (Driver)) event, no slow actions")
+    # with slow actions it still ranks as a crash: it is what the headline points at
+    slow = [UserSample(T0 + timedelta(minutes=10 * i), "amy", "PC1", "ERP", response_time=9.0 if i in (3, 4) else 1.0,
+                       client_time=8.0 if i in (3, 4) else 0.5, status="Major" if i in (3, 4) else "Normal")
+            for i in range(8)]
+    s = Settings()
+    s.thresholds.slow_status = ["Major"]
+    b = amy(slow, source=BlueScreen, settings=s)["answer"]
+    assert "Possibly: System Crash (filter.sys (Driver)) on PC1" in b["title"] and "app crash" not in b["title"]

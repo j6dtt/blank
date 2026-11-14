@@ -203,23 +203,52 @@ has no login, so anyone who can open it can change the list; each change
 is logged with the address it came from.
 An issue is an event Aternity rates Critical or Major, or more Major slow
 actions by this time of day than on any of the user's own days before.
-Either is over after an hour with no new one (slow actions also once the
-user is back within their usual by that time of day); a later one is a new
-issue. An open issue says when it ends if nothing new comes ("Clears
-after 17:00 if no new Major action"; it shows as over at the first check
-after that time). The tile keeps a line saying when it was and how it ended. Every user has a tile:
-those with an issue first (Critical first), then names not seen in 8 days,
-then green "✓ OK" tiles (actions today, how many Major, their usual by
-now, and any slow spell that cleared). A new issue runs an investigation
-by itself (at most one an hour per user) and its headline is the tile's
-"Why". Click a tile: today's issues, the investigation ("Open the
-investigation ▸" shows it on the Investigate tab without running it again;
-"Investigate again now ▸" runs a new one) and the issues of the 7 days
-before. The tab's
-red count is the users with an issue now; `…/#care` opens the tab.
+What lights the tile (its alert): a read of Aternity that brings something
+new of an issue (Aternity sends rows late, so "new" is what that read saw
+first, whatever its time). The alert stays on for 3 reads after the last
+read that brought a new one ("Clears at 14:20 if no new Application Hang";
+15 minutes at a 5-minute refresh); a repeat, or another event, keeps the
+tile on. A failing disk (Aternity's "(Disk)" or "(Drive)" label on the
+failing part, as HD Failure) stays on all day: "Stays on today". Then the
+issue is an "Earlier today" line on the tile. Repeats of one kind less than
+an hour apart are one issue (one count, one investigation); after an hour
+with none it is over (slow actions also once the user is back within their
+usual), and a later one is a new issue. A restart does not light again what
+was already seen; a user just added is lit only by what happened within the
+alert's time. Every user has a tile: those with an alert on first (a failing
+disk, then Critical, then Major), then names not seen in 8 days, then green
+"✓ OK" tiles (actions today, how many Major, their usual by now, and what
+was earlier today). An investigation runs by itself (at most one an hour per
+user) whenever one of today's issues is not covered by the latest one: a new
+issue, or one Aternity sent late; its headline is the tile's "Why". Click a
+tile: today's issues, the investigation ("Open the investigation ▸" shows it
+on the Investigate tab without running it again; "Investigate again now ▸"
+runs a new one) and the issues of the 7 days before. The tab's red count is
+the users with an alert on now; `…/#care` opens the tab.
 Issues are kept 8 days in `./data/care` (with usernames).
 Every change of the list (add, "Change label…", remove) asks for a PIN; your
 administrator has it. A wrong PIN changes nothing and is logged.
+
+For another platform (a wall screen, a service desk tool), every tile's
+status is JSON at `GET /api/MSS/care/status`, to ask every few minutes. All
+times are UTC; there is no PC field (PC names can be in the summary):
+
+```json
+{"ready": true, "as_of": "2026-11-14T15:40:12Z", "refresh_minutes": 5, "note": null,
+ "users": [{"username": "jdoe", "label": "Front desk", "status": "alert", "level": "Major",
+            "since": "2026-11-14T14:50:00Z",
+            "summary": "Application Crash - Outlook, 3 times 14:50-15:20 UTC, on VD-41"}]}
+```
+
+`status` is `alert`, `ok` or `unknown` (the name was not seen in Aternity in
+8 days); `level` is Aternity's (Critical, Major) on an alert, else null;
+`since` is when the alert's issue began, or when the user has been OK since
+(midnight in config.yaml's time zone when nothing happened today). The
+summary is our own words, plain ASCII, at most 120 characters, the most
+serious thing first. Users are in the tab's order. `as_of` is the last read
+in which every read of Aternity worked: older than 2 reads, the statuses are
+out of date (`note` then says why). `ready` is false until the first read
+and check are done.
 
 Investigate tab, top to bottom:
 
@@ -370,6 +399,50 @@ ingress (`FORWARDED_ALLOW_IPS`). The top of the file has the full steps:
 what to fill in, first time, day to day (code fix, passwords, certificate,
 logs, verify) and going back to compose. One pod only: a second would read
 Aternity twice.
+
+### Sample data for the dev app
+
+The dev host has no Riverbed. `dev/sample_riverbed.py` is a made-up Aternity
+and NetIM the dev app reads through its own clients, exactly as a real
+tenant: the real Aternity `$metadata` (`tests/fixtures`), its filters,
+paging and added-up rows, and NetIM in Riverbed's layouts. It is not part
+of the product (there is no demo mode) and the bundle leaves `dev/` out.
+
+```
+docker compose -f dev/compose.yaml up -d    # the made-up Riverbed
+docker compose restart                      # the app reads it from now on
+```
+
+How it fits together:
+
+```
+dev/compose.yaml --> sample-riverbed:8000 (on the app's network)
+   at start: past 21 days' counts --> data/days (the Today usual)
+app (config.yaml) --> /aternity.odata/v2.0  and  /netim
+```
+
+The dev `config.yaml` points at it (both base URLs
+`http://sample-riverbed:8000/...`, `timezone: America/New_York`, the
+made-up NetIM names under `topology`, a `care_list` of made-up users).
+Users, PCs, programs and addresses are all made up (sample01..50,
+PC-001..036, VD-01..16, TEST-NET addresses). The same rows come back at
+every read; the story is set against today:
+
+- sample07 / PC-007: a failing disk (Faulty HD S.M.A.R.T. Status since
+  3 days ago, HD Failure today).
+- Sample Mail updated last night on PC-001..014; crashes in mailcore.dll
+  on the new version today.
+- Sample Branch South: Sample ERP slow 10:30-11:15, the branch's WAN
+  link (south-br-rtr1 Gi0/1) over 90% in NetIM.
+- PC-019: CPU 88-98% 11:00-13:00 (sampleindexer.exe).
+- sample12 / PC-012: a System Crash at 14:05, then a start-up.
+- sample23 / PC-023: Sample Chat hangs every 20 minutes, every second
+  one a crash (the Care list's alert stays on).
+- Virtual desktops: slow logons this morning (User Profile).
+
+The settings block at the top of `dev/sample_riverbed.py` holds the time
+zone, how long each kind of data is kept (activity 8 days, as prod) and
+the seed; `uxcorrelate verify` passes against it.
 
 ## Connect to Riverbed
 
@@ -545,6 +618,7 @@ src/uxcorrelate/
   web.py         FastAPI app;  static/index.html  UI
 tests/           pytest suite (HTTP mocked with httpx.MockTransport;
                  synthetic.py is a fake Aternity/NetIM for engine tests)
+dev/             made-up Aternity + NetIM for the dev app (not bundled)
 ```
 
 Run the tests with `pytest`.

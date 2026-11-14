@@ -209,6 +209,7 @@ def test_one_is_written_when_due_and_kept(tmp_path):
     a.tick(NOW, lambda: (ai, "gpt"))
     v = a.view(NOW)
     assert len(v["periods"]) == 1 and v["next"] == "15:00" and v["yesterday"] is None
+    assert (v["days"], v["kind"]) == (5, "working days")  # the charts' caption: "the 5 working days before"
     p = v["periods"][0]
     assert (p["label"], p["slot"], p["since"], p["verdict"], p["service"]) == ("14:30", 12, None, A.UNKNOWN, "gpt")
     assert p["text"].startswith("No usual to compare with yet.") and "snap" not in p and p["today"][0].startswith("Active: 4 users")
@@ -324,3 +325,27 @@ def test_the_charts_are_today_up_to_the_hour_against_the_days_before():
                                             "now": {"h": 10, "v": 5.0, "lo": 2.0, "hi": 6.0}}
     assert "PCs with a crash so far are within their usual range" in p["meaning"]
     assert "kpis" not in a.view(NOW)  # Proposal 1: no row of numbers; the charts carry them, in Today's issues
+
+
+def test_a_saturday_keeps_the_weekend_days_its_start_ups_are_compared_with(tmp_path):
+    """Found with the dev app's sample data, Nov 14 2026 (a Saturday): the weekend days before reach
+    14 days back, past the 8 days kept, so each was deleted before it was saved (KeyError: no chart)."""
+    from uxcorrelate.models import BootSample
+    t = filled()
+    sat = NOW + timedelta(days=5)  # Saturday Nov 14
+
+    class Client:
+        warnings: list = []
+
+        def boots(self, start, end):
+            return [BootSample(start + 8 * HOUR + timedelta(minutes=k), f"PC{k}", type="User Logon",
+                               duration=30.0 + k) for k in range(6)]
+
+    a = A.Assessments(t, store=tmp_path, aternity_of=Client)
+    a._boots(sat)
+    assert a.boots_note is None
+    days = [d.isoformat() for d in a._same_days(t.day(sat))]
+    assert days[-1] == "2026-10-31"  # 14 days back
+    assert all(a.days[d]["boots"]["User Logon"]["n"] == 6 for d in days)
+    assert {p.stem for p in (tmp_path / "assess").glob("*.json")} >= set(days)
+    assert a.boots_view(sat)["types"]["User Logon"]["usual"]["days"] == 4

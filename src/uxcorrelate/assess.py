@@ -36,7 +36,9 @@ from .models import plural
 from .today import MIN_USUAL, USUAL_DAYS, kind_of
 
 HOURS = (6, 9, 12, 15, 18)  # local time: an assessment at each; the first read after it writes it
-KEEP_DAYS = 8
+# today and the 14 days _same_days looks back in: a weekend's weekend days before reach 14 days back
+# (with 8, a Saturday's usual start-ups were deleted before being saved: KeyError, no logon chart)
+KEEP_DAYS = 15
 TOP = 3  # events, applications named in one assessment
 MIN_ACTIONS = 50  # an hour with fewer measured actions has no share (one slow action would move it a lot)
 MIN_STARTS = 5  # an hour, or a type, with fewer start-ups has no typical time
@@ -150,7 +152,7 @@ def snapshot(today_view: dict, care_view: dict | None, status_view: dict | None,
         "slow": {"pcs": s["pcs"], "actions": s["actions"], "users": s["users"], "usual": _usual(s.get("usual"))},
         "apps": {a["application"]: a["actions"] for a in today_view.get("applications", [])},
         "care": {"listed": len(users), "with_issue": sum(1 for u in users if u.get("status") == "issue"),
-                 "issues": sum(len(u.get("issues", [])) + len(u.get("cleared", [])) for u in users)},
+                 "issues": sum(len(u.get("issues", [])) + len(u.get("earlier", [])) for u in users)},
         "down": sorted(i["name"] for i in (status_view or {}).get("items", []) if i.get("state") == "down"),
         # start-ups today, per Aternity type: how many, the typical time, the days before (boots_view)
         "boots": boots,
@@ -401,7 +403,7 @@ def today_lines(snap: dict) -> list[str]:
     c = snap["care"]
     if c["listed"]:
         out.append(f"Care list: {c['with_issue']:,} of the {plural(c['listed'], 'user')} watched "
-                   f"{'has' if c['with_issue'] == 1 else 'have'} an open issue.")
+                   f"{'has' if c['with_issue'] == 1 else 'have'} an alert on now.")
     return out
 
 
@@ -780,7 +782,7 @@ class Assessments:
                 "next": f"{nxt:02d}:00" if nxt is not None else None, "note": self.note,
                 # the charts are as of the Today reader's last read, not of the text's hour
                 "now": self.today.local(self.today.as_of or now).strftime("%H:%M"), "charts": charts,
-                "days": len(self._same_days(t))}
+                "days": len(self._same_days(t)), "kind": kind_of(t)}
 
 
 # -- what `verify --ai` measures with (made-up names and numbers) --------------------------------

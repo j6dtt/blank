@@ -107,17 +107,18 @@ GLOSSARY: dict[str, dict[str, str]] = {
         "their usual by now": f"The fewest and the most {TOP_STATUS} slow actions that user had by this time "
                               f"of day on their own days before with a PC in use (same kind of day, up to "
                               f"{care.USUAL_DAYS}; {care.MIN_USUAL} needed).",
-        "over": f"An issue ends after {_QUIET_H} hour with no new one. A slow-actions issue also ends when the "
-                "user is back within their usual. A later one is a new issue.",
-        "Clears after": f"An open issue ends {_QUIET_H} hour after its last one if no new one comes. The "
-                        "Care list is checked after every read of Aternity, so it shows as over at the first "
-                        "check after that time.",
-        "✓ OK": "No open issue for that user now. The tile says how many actions were measured today and how "
+        "alert": "",  # set_refresh
+        "Clears at": "",  # set_refresh
+        "Earlier today": f"Today's issues of that user whose alert is off: no read of Aternity brought anything new "
+                         f"of them in the last {care.ALERT_READS} reads.",
+        "over": f"An issue (one count, one investigation) ends after {_QUIET_H} hour with no new one. A "
+                "slow-actions issue also ends when the user is back within their usual. A later one is a new issue.",
+        "✓ OK": "No alert on for that user now. The tile says how many actions were measured today and how "
                 f"many were rated {TOP_STATUS}.",
         "not found": f"The name was not seen in Aternity's activity in {care.HISTORY_DAYS} days: it may be "
                      "misspelled.",
-        "Why": "The headline of the investigation that ran by itself when the issue came (at most one an hour "
-               "per user).",
+        "Why": "The headline of the investigation that ran by itself for that user's issues of today (at most one "
+               "an hour per user; it runs again for an issue it did not cover, such as one Aternity sent late).",
         "Issues per day": f"Small bars: that user's issues on each of the last {care.KEEP_DAYS} days.",
     },
     "investigate": {
@@ -237,6 +238,13 @@ def set_refresh(minutes: int) -> None:
                                   f"{minutes} minutes.")
     GLOSSARY["care"]["Care list"] = (f"Named users checked after every read of Aternity ({minutes} minutes), up to "
                                      f"{care.CARE_MAX}. Every user has a tile.")
+    GLOSSARY["care"]["alert"] = (f"A tile is lit when a read of Aternity brings something new of an issue (Aternity "
+                                 f"sends rows late: new is what that read saw first). It stays on for "
+                                 f"{care.ALERT_READS} reads ({care.ALERT_READS * minutes} minutes) after the last read "
+                                 "that brought a new one. A failing disk (Aternity's (Disk) or (Drive) label on the "
+                                 "failing part) stays on all day.")
+    GLOSSARY["care"]["Clears at"] = (f"When the alert goes off if no read brings a new one: {care.ALERT_READS} reads "
+                                     f"({care.ALERT_READS * minutes} minutes) after the last read that brought one.")
 
 
 set_refresh(today.REFRESH_MIN)  # the default; web.py sets config.yaml's
@@ -400,10 +408,11 @@ SAMPLES = (
     ], "Why does this user have an issue?", ("14", "0 to 3", "usual")),
     ("care", "Tile: Shift lead (cd5678)", [
         "✓ OK", "Shift lead", "cd5678", "PC-204 (physical)",
-        "No issue: 212 actions today, 2 rated Major (usual by now: 0 to 4).",
-        "More Major slow actions than usual from 08:10; over: back within their usual at 09:35.",
-        "No issue in the last 8 days.",
-    ], "What does over mean on this tile?", ("usual", "09:35", "ended", "over")),
+        "No alert now: 212 actions today, 2 rated Major (usual by now: 0 to 4).",
+        "Earlier today: more Major slow actions than usual from 08:10, the last at 09:05. Over: back within their "
+        "usual at 09:35.",
+        "Issues per day, last 8 days: 0 0 0 0 0 0 0 1",
+    ], "What does Earlier today mean on this tile?", ("earlier", "alert", "08:10", "09:05", "09:35")),
     ("investigate", "Headline and What to do", [
         "Sample Mail Launch took 89.2 s on PC-77 (Major). Likely: PC-77's disk is failing (Aternity recorded "
         "Faulty HD S.M.A.R.T. Status and HD Failure)",

@@ -244,7 +244,7 @@ def test_explain_the_pages_answer_is_the_ais_when_its_numbers_are_the_panels_els
     a = explain.explain(Stand(), "today", "P", lines, "", "gpt")
     assert a["ours"] and "did not answer" in a["note"] and a["answer"]
     a = explain.explain(None, "care", "Care list", ["✓ OK"], "")
-    assert a["ours"] and "No AI service is set" in a["note"] and "\n✓ OK: No open issue" in a["answer"]
+    assert a["ours"] and "No AI service is set" in a["note"] and "\n✓ OK: No alert on" in a["answer"]
     assert explain.our_words("care", "P", ["nothing known here"]) == explain.NO_ANSWER
     assert explain.our_words("care", "P", ["an overview to prevent it"]) == explain.NO_ANSWER  # whole words
     kept, cut = explain.trim(["a" * 30_000, "b" * 9_000, "c" * 2_000, " "])

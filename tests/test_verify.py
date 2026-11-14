@@ -503,10 +503,10 @@ def test_verify_overview_shows_aternitys_own_status_severity_and_incidents():
                 {"SLA_STATUS": "Normal", "DEVICE_NAME": "PC1"}, {"SLA_STATUS": "Normal", "DEVICE_NAME": "PC2"},
                 {"SLA_STATUS": "Major", "DEVICE_NAME": "PC2"}]})
         if path.endswith("/DEVICE_HEALTH_RAW"):
-            ev = lambda d, sev, name, part="OUTLOOK.EXE (Process)": {  # noqa: E731
+            ev = lambda d, sev, name, part="OUTLOOK.EXE (Process)", n=1: {  # noqa: E731
                 "DEVICE_NAME": d, "HEALTH_EVENT_SEVERITY": sev, "HEALTH_EVENT_CATEGORY": "Application",
-                "HEALTH_EVENT_NAME": name, "HEALTH_EVENT_COMPONENT": part}
-            return httpx.Response(200, json={"value": [ev("PC1", "High", "App Crash"), ev("PC2", "High", "App Crash"),
+                "HEALTH_EVENT_NAME": name, "HEALTH_EVENT_COMPONENT": part, "HEALTH_EVENT_VOLUME": n}
+            return httpx.Response(200, json={"value": [ev("PC1", "High", "App Crash"), ev("PC2", "High", "App Crash", n=3),
                                                        ev("PC2", "Low", "App Hang"),
                                                        ev("PC3", "Low", "HD Failure", "\\Device\\Harddisk0\\DR0 (Drive)")]})
         if path.endswith("/INCIDENTS"):
@@ -531,6 +531,9 @@ def test_verify_overview_shows_aternitys_own_status_severity_and_incidents():
     assert "by Aternity's label on the failing part (HEALTH_EVENT_COMPONENT). Read as a failing disk: Disk, Drive." in flat
     assert "Process: 2 PCs, events 'App Crash' 2, 'App Hang' 1" in flat
     assert "Drive: 1 PCs, events 'HD Failure' 1 (read as a failing disk)" in flat
+    # can one row be several events? (the Care list and investigations add the column up)
+    assert "1 of 4 health event rows in the last 7 days say more than 1 time (HEALTH_EVENT_VOLUME)" in flat
+    assert "App Crash: 1 rows, up to 3 times" in flat
 
 
 def test_overview_sources_are_riverbeds_own_names():

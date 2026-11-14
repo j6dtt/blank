@@ -1,0 +1,32 @@
+# Made-up Aternity and NetIM for the dev app (the dev host has no Riverbed).
+# Not part of the product or the bundle: dev/sample_riverbed.py says what
+# the made-up data holds. It joins the dev app's network, so config.yaml
+# reaches it by name (README.md, "Sample data for the dev app"):
+#   docker compose -f dev/compose.yaml up -d     then restart the app once
+# At start it saves the past days' counts in the app's data/days (only the
+# days missing), so the Today tab has a usual from the first read.
+
+# ================================ SETTINGS ==================================
+x-image: &image uxcorrelate-runtime:3     # the app's own runtime image (compose.yaml x-image)
+x-network: &network riverbed_default      # the dev app's network (its compose project's default)
+# ============================================================================
+
+name: sample-riverbed
+services:
+  sample-riverbed:
+    image: *image
+    container_name: sample-riverbed
+    user: "1000:1000"
+    entrypoint: ["python", "/repo/dev/sample_riverbed.py", "serve", "--port", "8000", "--data", "/data"]
+    environment:
+      PYTHONPATH: /repo/src
+    volumes:
+      - ..:/repo:ro          # this file, the real Aternity $metadata (tests/fixtures), src for the saved days
+      - ../data:/data        # the app's data folder
+    networks: [app]
+    restart: unless-stopped
+
+networks:
+  app:
+    name: *network
+    external: true

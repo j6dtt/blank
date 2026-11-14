@@ -1777,12 +1777,23 @@ def _overview(settings: Settings, client: AternityClient, schema: dict[str, set[
             checks.append(Check("Aternity", "overview: health events", None, f"error: {exc.short()}"))
 
     # Aternity's label on each failing part ("OUTLOOK.EXE (Process)", "<model> (Disk)"): the ones
-    # read as the PC's disk failing (DISK_PARTS), and every other, so other hardware is added from them
-    if ev in schema and h.get("component") in schema[ev]:
+    # read as the PC's disk failing (DISK_PARTS), and every other, so other hardware is added from them;
+    # and whether one row holds several times (its count column, HEALTH_EVENT_VOLUME), from the same read
+    labels = ev in schema and h.get("component") in schema[ev]
+    times = ev in schema and h.get("count") in schema[ev]
+    if labels or times:
         try:
             mark = len(client.warnings)
             rows = client.query(ev, _between(h["timestamp"], now - timedelta(days=7), now),
-                                select=[h[k] for k in ("device", "name", "component")], raw=True)
+                                select=[h[k] for k in ("device", "name", "component", "count")
+                                        if h.get(k) in schema[ev]], raw=True)
+            cut = _cut_short(client, mark)
+        except ApiError as exc:
+            rows, cut = None, []
+            for item, on in (("overview: failing-part labels", labels), ("overview: times in one event row", times)):
+                if on:
+                    checks.append(Check("Aternity", item, None, f"error: {exc.short()}"))
+        if rows is not None and labels:
             by: dict = {}
             for r in rows:
                 by.setdefault(part_label(r.get(h["component"])) or "(no label)", []).append(r)
@@ -1794,11 +1805,9 @@ def _overview(settings: Settings, client: AternityClient, schema: dict[str, set[
                                 rows=[f"{label}: {len({r.get(h['device']) for r in rs})} PCs, events "
                                       f"{_values(rs, h['name'], 3)}" + (" (read as a failing disk)"
                                                                         if label.lower() in disk else "")
-                                      for label, rs in sorted(by.items(), key=lambda kv: -len(kv[1]))]
-                                + _cut_short(client, mark)))
-        except ApiError as exc:
-            checks.append(Check("Aternity", "overview: failing-part labels", None, f"error: {exc.short()}"))
-
+                                      for label, rs in sorted(by.items(), key=lambda kv: -len(kv[1]))] + cut))
+        if rows is not None and times:
+            checks.append(_times_in_a_row(rows, h, cut))
     # Aternity's own incidents and alerts: published? what do they say?
     for entity, spec in OVERVIEW_SOURCES.items():
         item = f"overview: {entity}"
@@ -1826,6 +1835,28 @@ def _overview(settings: Settings, client: AternityClient, schema: dict[str, set[
                             + (f" Not published: {', '.join(missing)}." if missing else ""),
                             rows=[f"{c}: {_values(rows, c, 6)}" for c in have] if rows else []))
     return checks
+
+
+def _times_in_a_row(rows: list[dict], h: dict, cut: list[str]) -> Check:
+    """Can one health event row stand for several times (its count column above 1)? The Care list
+    and investigations add the column up (1 when empty), so a row with 3 is 3 crashes."""
+    many: dict = {}
+    empty = 0
+    for r in rows:
+        n = to_float(r.get(h["count"]))
+        if n is None:
+            empty += 1
+        elif n > 1:
+            many.setdefault(r.get(h["name"]) or "(no name)", []).append(int(n))
+    held = sum(len(v) for v in many.values())
+    text = (f"{held} of {len(rows)} health event rows in the last 7 days say more than 1 time ({h['count']}): "
+            "one row can be several events, added up as such by the Care list and investigations. By event:"
+            if held else
+            f"None of {len(rows)} health event rows in the last 7 days says more than 1 time ({h['count']}): "
+            "one row is one event.") + (f" {empty} rows have no value there (read as 1)." if empty else "")
+    return Check("Aternity", "overview: times in one event row", None, text,
+                 rows=[f"{name}: {len(ns)} rows, up to {max(ns)} times"
+                       for name, ns in sorted(many.items(), key=lambda kv: -len(kv[1]))[:8]] + cut)
 
 
 AI = "AI service"
@@ -2131,16 +2162,18 @@ AI_ASK = (  # question, names the answer must have, names it must not, the look-
     # stage, Nov 2026: "which PC has the most software installed?" was "I can't tell" (no look-up had it)
     ("Which PC has the most software installed?", ("PC-11",), (), "programs_per_pc"),
     # step 3: the one chat on every tab sees the tab open (ASK_PAGE); VD-48 and 15:50 are on it only
-    ("Why is Front desk flagged on this page, and when does it clear?", ("VD-48", "15:50"), (), "page"),
+    ("Why is Front desk flagged on this page, and when does it clear?", ("VD-48", "15:10"), (), "page"),
 )
 ASK_PAGE = {  # a made-up Care list tab, as the page sends it with a question (index.html's shown())
     "Why is Front desk flagged on this page, and when does it clear?": {"tab": "care", "lines": [
-        "Care list", "as of 15:05 · 2 users checked every 5 min",
-        "Critical since 14:35 · Front desk · sample07 · VD-48 (virtual desktop) · HD Failure (System) 2 times, "
-        "first at 14:35, the last at 14:50 on VD-48. Clears after 15:50 if no new HD Failure. · Show more ▸",
-        "✓ OK · Payroll lead · sample08 · PC-52 · 40 actions today, none rated Major; their usual by now: 0 to 2.",
+        "Care list", "as of 14:55 · 2 users checked every 5 min",
+        "Major since 14:35 · Front desk · sample07 · VD-48 (virtual desktop) · Application Crash (Application) 2 "
+        "times in Outlook, first at 14:35, the last at 14:50 on VD-48. Clears at 15:10 if no new Application Crash. "
+        "· Show more ▸",
+        "✓ OK · Payroll lead · sample08 · PC-52 · No issue: 40 actions today, 0 rated Major (usual by now: 0 to 2).",
         "An issue: an event Aternity rates Critical or Major, or more Major slow actions by this time of day than "
-        "on any of their own days before. It is over after an hour with no new one."]},
+        "on any of their own days before. A tile is lit while reads of Aternity bring something new of it, until 3 "
+        "reads (15 min) after the last one that did (a failing disk all day); then it is \"Earlier today\"."]},
 }
 
 

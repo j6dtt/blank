@@ -20,12 +20,23 @@ of the Today reader, from rows already read:
   day. A Major action after that, still above their usual, starts a new
   spell; a late row less than QUIET after the last one joins it again.
   Events of one kind (category + name) are spells the same way: over after
-  QUIET with no new one (user's choice, 2026-11-09); one seen only after it
-  was over is kept as over, with no investigation;
-- a new issue runs an investigation of the user (one at a time, at most one
-  per user each RUN_EVERY), from INV_PAD before their first issue today to
-  now. Its headline is the tile's "Why"; the page opens the whole of it.
-Every user has a tile: issues first, then names not seen, then the rest.
+  QUIET with no new one (user's choice, 2026-11-09). A spell is one issue, with
+  one count and one investigation; it is not what lights the tile;
+- the alert (the tile's colour, /api/MSS/care/status; the user's rule,
+  2026-11-14): on when a read brings an occurrence not seen before (a row
+  first seen at that read: Aternity sends rows late), on for ALERT_READS
+  reads (refresh_minutes each) after the last one that brought a new one,
+  then the issue is "Earlier today". A failing disk (Aternity's "(Disk)" /
+  "(Drive)" label on the failing part, DISK_PARTS) is the PC's state: on all
+  day. What each issue has seen is saved ("seen"), so a restart does not
+  light it again; at a user's first check (just added, or after a restart)
+  only what happened within the alert's time lights it;
+- an investigation of the user runs (one at a time, at most one per user each
+  RUN_EVERY) while one of today's issues is not covered by the latest one:
+  new since, before its window, or first seen after it ran (Aternity sent it
+  late). From INV_PAD before their first issue today to now. Its headline is
+  the tile's "Why"; the page opens the whole of it.
+Every user has a tile: alerts first, then names not seen, then the rest.
 Each user's issues (KEEP_DAYS) and latest investigation are saved in
 <data>/care/<user>.json: usernames on disk (agreed 2026-11-09).
 """
@@ -38,6 +49,7 @@ import logging
 import os
 import re
 import threading
+import unicodedata
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -56,6 +68,8 @@ RUN_EVERY = HOUR  # at most one investigation per user in this time
 INV_PAD = timedelta(minutes=30)
 QUIET = HOUR  # a slow spell is over after this long with no Major action
 QUIET_WORDS = "the hour"  # QUIET in words: "none in the hour after 09:45"
+ALERT_READS = 3  # an alert stays on this many reads after the last read that brought a new occurrence
+SUMMARY_MAX = 120  # characters in /api/MSS/care/status's summary
 WAIT_S = 10  # the investigation worker looks for work this often
 LIST_FILE = "care_list.json"  # in the data folder: [{"username": ..., "label": ...}]
 NAME_MAX, LABEL_MAX = 100, 60
@@ -75,6 +89,40 @@ def _inv_start(issues: list) -> datetime | None:
     which took the most serious open one: a 06:04 crash, over, was left out on stage, Nov 2026)."""
     first = min((_when(i["since"]) for i in issues), default=None)
     return first - INV_PAD if first else None
+
+
+def _name(i: dict) -> str:
+    """An event issue's name, as Aternity writes it ("Application Crash")."""
+    what = i.get("what") or re.sub(r" \d{4}-\d\d-\d\dT\S+$", "", i["key"].split(" ", 2)[2]
+                                   if i["key"].count(" ") >= 2 else "")  # "event <day> Cat/Name <time>"
+    return what.split("/", 1)[1] if "/" in what else what or "event"
+
+
+def _ascii(text: str) -> str:
+    """Plain ASCII for another platform: dashes and quotes as "-" and "'", accents dropped."""
+    text = text.translate({0x2013: "-", 0x2014: "-", 0x2212: "-", 0x2011: "-", 0x2010: "-", 0x2018: "'",
+                           0x2019: "'", 0x201C: '"', 0x201D: '"', 0x2026: "...", 0xA0: " ", 0x2192: "->"})
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+
+
+def _utc(t: str) -> str:
+    return f"{_when(t):%H:%M}"
+
+
+def _fit(head: str, more: list[str]) -> str:
+    """The most serious first, then "+N more: ..." as far as SUMMARY_MAX allows."""
+    if more:
+        names = list(dict.fromkeys(more))
+        full = f"{head}; +{len(more)} more: {', '.join(names)}"
+        text = full if len(full) <= SUMMARY_MAX else f"{head}; +{len(more)} more"
+    else:
+        text = head
+    return text if len(text) <= SUMMARY_MAX else text[:SUMMARY_MAX - 3].rstrip(" ,;") + "..."
+
+
+def _times(x: tuple) -> int:
+    """How many times one health event row says it happened (1 when Aternity does not say)."""
+    return x[7] if len(x) > 7 and x[7] else 1
 
 
 def _file_name(username: str) -> str:
@@ -99,6 +147,7 @@ class Care:
         self.names: dict[str, str] = {}  # user (lower case) -> the name as Aternity writes it
         self.pending: list[str] = []
         self.running: str | None = None
+        self.checked: set[str] = set()  # users checked since the start (or since they were added)
         self.notes: dict[str, str] = {}
         self.as_of: datetime | None = None
         self.started = False
@@ -263,6 +312,7 @@ class Care:
                 self.issues.pop(user, None)
                 self.reports.pop(user, None)
                 self.history.pop(user, None)
+                self.checked.discard(user)
                 if user in self.pending:
                     self.pending.remove(user)
             if self.store:
@@ -297,19 +347,53 @@ class Care:
             if client is not None and (h is None or h["for"] != t):
                 self._read_history(client, u, now)
             found = self.issues_now(u, now)
-            new, cleared = self._merge(user, found, t, now)
+            new, again, cleared = self._merge(user, found, t, now, first=user not in self.checked)
+            self.checked.add(user)
             for issue in new:
-                log.info("Care list: new issue for %s: %s", self._who(u), issue["text"])
+                log.info("Care list: new issue for %s: %s%s", self._who(u), issue["text"],
+                         " It was already over when Aternity sent it." if issue.get("cleared") else "")
+                if self.alert(issue, now):
+                    log.info("Care list: %s: alert on. %s", self._who(u), self._clears(issue))
+            for issue in again:
+                log.info("Care list: %s: more of \"%s\" since the last read: alert on again. %s", self._who(u),
+                         issue["text"], self._clears(issue))
             for issue in cleared:
                 log.info("Care list: %s: \"%s\" is over (%s)", self._who(u), issue["text"], self._over(issue))
-            if new:
+            if self._uncovered(user, t) and user not in self.pending and self.running != user:
                 last = self.reports.get(user)
-                if user not in self.pending and self.running != user and (
-                        last is None or now - _when(last["at"]) >= RUN_EVERY):
+                if last is None or now - _when(last["at"]) >= RUN_EVERY:
                     self.pending.append(user)
             if new or found or cleared:
                 self.save(user)
         self.as_of = now
+
+    def _uncovered(self, user: str, t: date) -> list[dict]:
+        """Today's issues the latest investigation of today does not cover: since after it ran or
+        before its window, or first seen after it ran (Aternity sent it late: a 06:04 crash first
+        seen at 08:00 was left out of an 08:04 one, stage, Nov 2026)."""
+        day = t.isoformat()
+        with self.lock:
+            mine = [i for i in self.issues.get(user, []) if i["day"] == day]
+            report = self.reports.get(user)
+        if not report or self.today.day(_when(report["at"])) != t:
+            return mine
+        start, end, at = _when(report["start"]), _when(report["end"]), _when(report["at"])
+        return [i for i in mine if not start <= _when(i["since"]) <= end
+                or (i.get("found") and _when(i["found"]) > at)]
+
+    # -- the alert ------------------------------------------------------------------
+    def _window(self) -> timedelta:
+        return timedelta(minutes=ALERT_READS * self.today.refresh_min)
+
+    def alert(self, i: dict, now: datetime) -> bool:
+        """Is this issue's alert on: a failing disk today, or a new occurrence in the last ALERT_READS reads."""
+        if i.get("disk") and i["day"] == self.today.day(now).isoformat():
+            return True
+        return bool(i.get("fresh")) and now - _when(i["fresh"]) < self._window()
+
+    def _alert_end(self, i: dict) -> datetime:
+        """When its alert went off (an issue of the build before, or never lit: its last occurrence)."""
+        return _when(i["fresh"]) + self._window() if i.get("fresh") else _when(i.get("last") or i["since"])
 
     def _over(self, i: dict) -> str:
         """How a slow spell ended, in words."""
@@ -318,12 +402,12 @@ class Care:
         return f"none in {QUIET_WORDS} after {self.today.local(_when(i.get('last') or i['since'])):%H:%M}"
 
     def _clears(self, i: dict) -> str:
-        """When an open spell ends if nothing new comes (checked after each read, so at the first check after)."""
-        at = self.today.local(_when(i.get("last") or i["since"]) + QUIET)
-        what = i.get("what") or ""
-        new = f"new {TOP_STATUS} action" if i["kind"] == "slow" else \
-            f"new {what.split('/', 1)[1]}" if "/" in what else "new one"
-        return f"Clears after {at:%H:%M} if no {new}."
+        """When its alert goes off if no read brings a new one."""
+        if i.get("disk"):
+            return "Stays on today: a failing disk is the PC's state."
+        at = self.today.local(_when(i["fresh"]) + self._window()) if i.get("fresh") else None
+        new = f"new {TOP_STATUS} action" if i["kind"] == "slow" else f"new {_name(i)}"
+        return f"Clears at {at:%H:%M} if no {new}." if at else ""
 
     def _who(self, u: CareUser) -> str:
         return f"{u.label} ({u.username})" if u.label else u.username
@@ -403,6 +487,7 @@ class Care:
             apps = Counter(r[3] for r in major).most_common(2)
             found.append({"key": f"slow {t}", "kind": "slow", "level": TOP_STATUS, "since": _iso(since),
                           "last": _iso(last), "quiet": now - last >= QUIET, "day": t.isoformat(),
+                          "count": len(major), "apps": [a for a, _ in apps],
                           "text": f"{len(major)} {TOP_STATUS} slow actions by {today.local(now):%H:%M}, the last "
                                   f"at {today.local(last):%H:%M}; on the "
                                   f"{u_['days']} {u_['kind']} before that they used a PC: {u_['low']} to "
@@ -421,10 +506,14 @@ class Care:
                     spells.append([x])
             for xs in spells:
                 apps = sorted({x[5] for x in xs if x[5] and x[5] != "(no application)"})
+                times = sum(_times(x) for x in xs)  # HEALTH_EVENT_VOLUME added up, as investigations do
                 found.append({"key": f"event {t} {k[0]}/{k[1]} {_iso(xs[0][0])}", "kind": "event",
                               "what": f"{k[0]}/{k[1]}", "level": sev.get(k, xs[0][3]), "since": _iso(xs[0][0]),
                               "last": _iso(xs[-1][0]), "quiet": now - xs[-1][0] >= QUIET, "day": t.isoformat(),
-                              "text": f"{k[1]} ({k[0]})" + (f" {len(xs)} times" if len(xs) > 1 else "")
+                              "count": times, "disk": any(len(x) > 6 and x[6] for x in xs),
+                              "pcs": sorted({x[1] for x in xs}),
+                              "apps": [a for a, _ in Counter(x[5] for x in xs if x[5] in apps).most_common()],
+                              "text": f"{k[1]} ({k[0]})" + (f" {times} times" if times > 1 else "")
                                       + (f" in {', '.join(apps[:3])}" if apps else "")
                                       + f", first at {today.local(xs[0][0]):%H:%M}"
                                       + (f", the last at {today.local(xs[-1][0]):%H:%M}" if len(xs) > 1 else "")
@@ -435,12 +524,37 @@ class Care:
             self.names.setdefault(user, major[0][2])
         return found
 
-    def _merge(self, user: str, found: list[dict], t: date, now: datetime) -> tuple[list, list]:
-        """Today's issues into the user's list: (the new ones, the slow ones that cleared)."""
+    def _merge(self, user: str, found: list[dict], t: date, now: datetime,
+               first: bool = False) -> tuple[list, list, list]:
+        """Today's issues into the user's list: (the new ones, those a read brought more of, the
+        spells that ended). first: the user's first check since the start or since they were
+        added; then only an occurrence within the alert's time lights the alert."""
         cut = (t - timedelta(days=KEEP_DAYS)).isoformat()
+        window = self._window()
+
+        def seen(i: dict, f: dict) -> bool:
+            """More of it than seen before: the alert comes on (again) from this read."""
+            count = f["count"]
+            if "seen" not in i:  # saved by the build before: what it had is not new
+                i["seen"] = count
+                return False
+            if count <= i["seen"]:
+                return False
+            i["seen"] = count
+            if first and now - _when(f["last"]) >= window:
+                return False  # it happened before the user was checked: not lit now
+            i["fresh"] = _iso(now)
+            return True
+
+        def start(f: dict) -> dict:
+            f.update(found=_iso(now), seen=0)
+            seen(f, f)
+            f.pop("count", None)
+            return f
+
         with self.lock:
             mine = [i for i in self.issues.get(user, []) if i["day"] > cut]
-            new, cleared = [], []
+            new, again, cleared = [], [], []
             slow = [i for i in mine if i["kind"] == "slow" and i["day"] == t.isoformat()]
             last = slow[-1] if slow else None
             over = next((dict(f) for f in found if f["kind"] == "slow"), None)  # above their usual today
@@ -454,10 +568,12 @@ class Care:
             if now_slow and last is not None and now_slow["since"] <= last.get("last", last["since"]):
                 for k in ("cleared", "ended"):  # the same spell: a late row joined it again
                     last.pop(k, None)
-                last.update(text=now_slow["text"], last=now_slow["last"])
+                last.update(text=now_slow["text"], last=now_slow["last"], apps=now_slow["apps"])
+                if seen(last, now_slow):
+                    again.append(last)
             elif now_slow:  # the first today, or a new spell
                 now_slow["key"] = f"slow {t} {len(slow) + 1}"
-                mine.append(now_slow)
+                mine.append(start(now_slow))
                 new.append(now_slow)
             for f in found:
                 if f["kind"] != "event":
@@ -470,21 +586,23 @@ class Care:
                           and f["since"] <= i.get("last", i["since"]) and f["last"] >= i["since"]), None)
                 if i is not None:
                     i.update(text=f["text"], level=f["level"], last=f["last"], what=f["what"],
-                             since=min(i["since"], f["since"]))
+                             since=min(i["since"], f["since"]), pcs=f["pcs"], apps=f["apps"],
+                             disk=bool(i.get("disk") or f["disk"]))
+                    if seen(i, f):
+                        again.append(i)
                     if quiet and not i.get("cleared"):
                         i.update(cleared=_iso(now), ended="quiet")
                         cleared.append(i)
                     elif not quiet and i.get("cleared"):
                         for k in ("cleared", "ended"):  # a late row joined it again
                             i.pop(k, None)
-                elif quiet:  # first seen when it was already over: kept, not investigated
-                    f.update(cleared=_iso(now), ended="quiet")
-                    mine.append(f)
                 else:
-                    mine.append(f)
+                    if quiet:  # first seen when it was already over: Aternity sent it late
+                        f.update(cleared=_iso(now), ended="quiet")
+                    mine.append(start(f))
                     new.append(f)
             self.issues[user] = mine
-        return new, cleared
+        return new, again, cleared
 
     # -- investigations ---------------------------------------------------------
     def run_next(self, investigate, now: datetime) -> str | None:
@@ -529,8 +647,10 @@ class Care:
     # -- the page -----------------------------------------------------------------
     def view(self, now: datetime) -> dict:
         today = self.today
-        if not today.ready:
-            return {"ready": False, "status": today.off or today.status, "users": [], "count": 0}
+        if not today.ready or self.as_of is None:
+            return {"ready": False, "status": today.off or (today.status if not today.ready else
+                                                            "Checking the Care list's users for the first time"),
+                    "users": [], "count": 0}
         t = today.day(now)
         rank = {s: i for i, s in enumerate(SEVERITY_ORDER)}
         tiles = []
@@ -549,7 +669,8 @@ class Care:
         return {"ready": True, "as_of": _iso(self.as_of or now),
                 "as_of_local": today.local(self.as_of or now).strftime("%H:%M"), "zone": today.zone_label,
                 "date": t.isoformat(), "count": len(issue), "users": issue + other, "notes": notes,
-                "checked": len(self.users), "max": CARE_MAX, "refresh_minutes": today.refresh_min}
+                "checked": len(self.users), "max": CARE_MAX, "refresh_minutes": today.refresh_min,
+                "alert_reads": ALERT_READS}
 
     def tile(self, u: CareUser, now: datetime) -> dict:
         user, today = u.username.lower(), self.today
@@ -564,10 +685,11 @@ class Care:
             issues = [dict(i) for i in self.issues.get(user, [])]
             report = self.reports.get(user)
         today_all = [i for i in issues if i["day"] == t.isoformat()]
-        mine = [dict(i, clears=self._clears(i)) for i in today_all if not i.get("cleared")]
-        cleared = [dict(i, cleared_local=today.local(_when(i["cleared"])).strftime("%H:%M"),
-                        since_local=today.local(_when(i["since"])).strftime("%H:%M"), over=self._over(i))
-                   for i in today_all if i.get("cleared")]
+        mine = [dict(i, clears=self._clears(i)) for i in today_all if self.alert(i, now)]
+        local = lambda k, i: today.local(_when(i[k])).strftime("%H:%M")  # noqa: E731
+        earlier = sorted((dict(i, since_local=local("since", i), last_local=local("last", i) if i.get("last") else
+                               local("since", i), over=self._over(i) if i.get("cleared") else None)
+                          for i in today_all if not self.alert(i, now)), key=lambda i: i["since"])
         rank = {s: i for i, s in enumerate(SEVERITY_ORDER)}
         h = self.history.get(user)
         status = "issue" if mine else "ok"
@@ -592,9 +714,11 @@ class Care:
                 "start": _iso(_inv_start(today_all)) if today_all else None,  # "Investigate again now"
                 "pcs": [{"device": d, "kind": kinds.get(d)} for d in pcs], "actions": actions, "major": major,
                 "usual": self.usual(user, now),
-                # the most serious first (the tile shows the first two): Critical, then Major, then by time
-                "issues": sorted(mine, key=lambda i: (rank.get(i["level"], 9), i["kind"] == "slow", i["since"])),
-                "cleared": cleared,
+                # the most serious first (the tile shows the first two): a failing disk, then Critical,
+                # then Major, events before slow actions, then by time
+                "issues": sorted(mine, key=lambda i: (not i.get("disk"), rank.get(i["level"], 9), i["kind"] == "slow",
+                                                      i["since"])),
+                "earlier": earlier,
                 "days": days, "why": why, "investigating": "now" if self.running == user else
                 "waiting" if waiting else None}
 
@@ -617,3 +741,81 @@ class Care:
             report = dict(report, at_local=local("at").strftime("%b %d %H:%M"),
                           span_local=f"{local('start'):%H:%M} to {local('end'):%H:%M} {self.today.zone_label}")
         return {**tile, "history": issues, "report": report}
+
+    # -- /api/MSS/care/status: every tile for another platform ------------------------------
+    def status(self, now: datetime) -> dict:
+        """Each user's status as the tile shows it, for another platform that asks every few
+        minutes (the user's request, 2026-11-14): all times UTC, a summary in our own words in
+        plain ASCII under SUMMARY_MAX characters, no PC field. as_of is the last read in which
+        every read of Aternity worked: older than 2 reads, the statuses are out of date."""
+        today = self.today
+        out = {"ready": False, "as_of": None, "refresh_minutes": today.refresh_min, "note": None, "users": []}
+        v = self.view(now)
+        if not v["ready"]:
+            out["note"] = _ascii(v.get("status") or "Starting")
+            return out
+        if today.read_ok is None:
+            out["note"] = "Aternity could not be read yet: no status until it is."
+            return out
+        out.update(ready=True, as_of=_iso(today.read_ok))
+        if today.as_of and today.read_ok < today.as_of:
+            out["note"] = (f"Aternity could not be read in full at {today.as_of:%H:%M} UTC: the statuses rest on "
+                           f"the read of {today.read_ok:%H:%M} UTC.")
+        midnight = _iso(today.midnight(today.day(now)))
+        for u in v["users"]:
+            row = {"username": u["username"], "label": u["label"] or "", "status": "ok", "level": None,
+                   "since": None, "summary": ""}
+            if u["status"] == "issue":
+                row.update(status="alert", level=u["level"], since=u["since"],
+                           summary=_fit(self._said(u["issues"][0], u), [self._short(i) for i in u["issues"][1:]]))
+            elif u["status"] == "unknown":
+                row.update(status="unknown",
+                           summary=f"Not seen in Aternity in {HISTORY_DAYS} days: check the username")
+            else:
+                ends = [self._alert_end(i) for i in u["earlier"]]
+                row["since"] = _iso(max(ends)) if ends else midnight
+                row["summary"] = _fit(self._ok_words(u, ends), [])
+            row["summary"] = _ascii(row["summary"])
+            out["users"].append(row)
+        return out
+
+    def _short(self, i: dict) -> str:
+        return f"{TOP_STATUS} slow actions" if i["kind"] == "slow" else _name(i)
+
+    def _said(self, i: dict, u: dict) -> str:
+        """The most serious alert in one line: what, where, when (UTC)."""
+        if i["kind"] == "slow":
+            usual = u.get("usual") or {}
+            return (f"{u['major']} {TOP_STATUS} slow actions today"
+                    + (f" (usual by now {usual['low']}-{usual['high']})" if usual.get("enough") else "")
+                    + f", the last at {_utc(i.get('last') or i['since'])} UTC"
+                    + (f", most in {i['apps'][0]}" if i.get("apps") else ""))
+        apps, pcs, n = i.get("apps") or [], i.get("pcs") or [], i.get("seen") or 1
+        what = _name(i) + (" - " + ", ".join(apps[:2]) + (f" +{len(apps) - 2}" if len(apps) > 2 else "")
+                           if apps else "")
+        on = ("on " + ", ".join(pcs) if len(pcs) <= 2 else f"on {len(pcs)} PCs") if pcs else ""
+        if i.get("disk"):
+            return f"{what} {on} since {_utc(i['since'])} UTC (stays on today)".replace("  ", " ")
+        if n > 1:
+            return f"{what}, {n} times {_utc(i['since'])}-{_utc(i.get('last') or i['since'])} UTC" \
+                   + (f", {on}" if on else "")
+        return f"{what} at {_utc(i['since'])} UTC" + (f" {on}" if on else "")
+
+    def _ok_words(self, u: dict, ends: list[datetime]) -> str:
+        if ends:
+            since = f"OK since {max(ends):%H:%M} UTC."
+            e = u["earlier"]
+            if len(e) == 1:
+                i = e[0]
+                span = (f"{_utc(i['since'])}-{_utc(i['last'])} UTC" if i.get("last") and i["last"] != i["since"]
+                        else f"at {_utc(i['since'])} UTC")
+                what = self._short(i) + (" - " + i["apps"][0] if i["kind"] == "event" and i.get("apps") else "")
+                return f"{since} Earlier today: {what} {span}"
+            i = max(e, key=lambda i: i.get("last") or i["since"])
+            what = self._short(i) + (" - " + i["apps"][0] if i["kind"] == "event" and i.get("apps") else "")
+            return f"{since} Earlier today: {len(e)} issues, the last {what} at {_utc(i.get('last') or i['since'])} UTC"
+        if not u["actions"]:
+            return "OK: no activity today yet"
+        usual = u.get("usual") or {}
+        return (f"OK: {u['actions']:,} action{'' if u['actions'] == 1 else 's'} today, {u['major']:,} {TOP_STATUS}"
+                + (f" (usual by now {usual['low']}-{usual['high']})" if usual.get("enough") else ""))

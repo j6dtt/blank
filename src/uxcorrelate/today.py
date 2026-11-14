@@ -37,9 +37,9 @@ from statistics import median
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .aternity import is_virtual, odata_time
-from .config import SEVERITY_ORDER, TILE_SEVERITIES, TOP_STATUS
+from .config import DISK_PARTS, SEVERITY_ORDER, TILE_SEVERITIES, TOP_STATUS
 from .http import short_error
-from .models import parse_time, to_float
+from .models import parse_time, part_label, to_float
 
 log = logging.getLogger("uxcorrelate")
 REFRESH_MIN = 15  # minutes between reads unless config.yaml has refresh_minutes (Today.refresh_min)
@@ -125,7 +125,8 @@ class Today:
         self.store = Path(store) / "days" if store else None
         self.hours: dict[datetime, Hour] = {}
         self.saved: dict[date, dict] = {}  # summaries of past days, from the files
-        self.health: list[tuple] = []  # today's: (time, device, kind, severity, user, application)
+        # today's: (time, device, kind, severity, user, application, failing disk?, how many times)
+        self.health: list[tuple] = []
         self.health_days: dict[date, dict] = {}  # day -> kind -> {device: first second of the day}
         self.health_apps: dict[date, dict] = {}  # day before -> (kind, application) -> devices
         self.health_sev: dict = {}  # kind -> Aternity's severity
@@ -137,6 +138,8 @@ class Today:
         self.off: str | None = None
         self.started = False  # the background reader (one per process)
         self.as_of: datetime | None = None
+        self.read_ok: datetime | None = None  # the last read in which every read of Aternity worked
+        self.failures = 0  # reads of Aternity that failed, since the start
         self.lock = threading.Lock()
         self.load()
 
@@ -325,7 +328,10 @@ class Today:
             if sev:
                 sevs.setdefault(kind, Counter())[sev] += 1
             app = (r.get(f["application"]) if f.get("application") else None) or NO_APP
-            parsed.append((t, dev, kind, sev, r.get(f["username"]) if f.get("username") else None, app))
+            label = part_label(r.get(f["component"])) if f.get("component") else None  # "... (Disk)"
+            disk = bool(label) and label.lower() in {p.lower() for p in DISK_PARTS}
+            times = int(to_float(r.get(f["count"])) or 1) if f.get("count") else 1  # as investigations count
+            parsed.append((t, dev, kind, sev, r.get(f["username"]) if f.get("username") else None, app, disk, times))
             secs = (t - self.midnight(self.day(t))).total_seconds()
             first = days.setdefault(self.day(t), {}).setdefault(kind, {})
             first[dev] = min(first.get(dev, secs), secs)
@@ -508,6 +514,7 @@ def _read_hour(today: Today, names, client, start: datetime, now: datetime) -> N
                             select=[f[k] for k in ("timestamp", "username", "device", "application", "status",
                                                    "activity", "response_time", "virtualization") if f.get(k)])
     except Exception as exc:  # Aternity down: the next read tries again
+        today.failures += 1
         today.note("activity", f"Aternity activity could not be read ({short_error(exc)}); trying again in "
                                f"{today.refresh_min} min.")
         return
@@ -529,7 +536,7 @@ def _read_hour(today: Today, names, client, start: datetime, now: datetime) -> N
 def _read_health(today: Today, client, now: datetime) -> None:
     entity, f = client.cfg.entities["health_events"], client.cfg.fields["health_events"]
     ts, cols = f["timestamp"], [f[k] for k in ("timestamp", "device", "category", "name", "severity", "username",
-                                               "application") if f.get(k)]
+                                               "application", "component", "count") if f.get(k)]
     t = today.day(now)
     spans = []
     if today.health_for != t:  # the days before, once a day
@@ -542,6 +549,7 @@ def _read_health(today: Today, client, now: datetime) -> None:
         try:
             rows = client.query(entity, f"{ts} ge {odata_time(start)} and {ts} lt {odata_time(end)}", select=cols)
         except Exception as exc:
+            today.failures += 1
             today.note("health", f"Aternity health events could not be read ({short_error(exc)}); trying again "
                                  f"in {today.refresh_min} min.")
             return
@@ -572,12 +580,15 @@ def keep_reading(today: Today, names, make_client, sleep, clock=lambda: datetime
     now = clock()
     cur = today.hour_of(now)
     starts = [cur - HOUR * k for k in range(START_HOURS + 1)]  # newest first: the name list fills from now back
+    mark = today.failures
     for i, start in enumerate(starts):
         today.status = f"Reading Aternity's activity: {i} of {len(starts)} hours read"
         _read_hour(today, names, client, start, clock())
     today.status = "Reading Aternity's health events"
     _read_health(today, client, clock())
     today.as_of = clock()
+    if today.failures == mark:
+        today.read_ok = today.as_of
     today.ready = True
     log.info("Today ready: %d hours of activity read; %d usernames and %d devices known",
              len(starts), len(names.seen["username"]) if names else 0, len(names.seen["device"]) if names else 0)
@@ -591,12 +602,14 @@ def keep_reading(today: Today, names, make_client, sleep, clock=lambda: datetime
             client = make_client() or client  # a new client: its list of cut-short reads starts empty
         except Exception:
             pass
-        now = clock()
+        now, mark = clock(), today.failures
         for start in today.hours_due(now):
             _read_hour(today, names, client, start, now)
         today.finish(now)
         _read_health(today, client, now)
         today.as_of = now
+        if today.failures == mark:
+            today.read_ok = now
         if care is not None:
             care.check(client, clock())
         if after is not None:

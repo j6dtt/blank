@@ -325,9 +325,10 @@
       <div class="tiles" id="cTiles"></div>
       <ul class="muted notes" id="cNotes"></ul>
       <p class="muted" style="font-size:12px;margin:8px 0 0">An issue: an event Aternity rates Critical or Major, or more
-        Major slow actions by this time of day than on any of their own days before. It is over after an hour with no new
-        one (slow actions also when they are back within their usual). A new issue runs an investigation by itself (one an hour per user). Click
-        a tile for more.</p>
+        Major slow actions by this time of day than on any of their own days before. A tile is lit while reads of Aternity
+        bring something new of it, until <span id="cAlertFor">3 reads</span> after the last one that did (a failing disk
+        all day); then it is "Earlier today". An investigation runs by itself for issues the latest one did not cover (one
+        an hour per user). Click a tile for more.</p>
       <div class="exRow noExplain"><button type="button" class="link explain" data-tab="care">Explain ▸</button></div>
     </section>
     <section class="panel" id="cDetail" hidden style="margin-top:16px">
@@ -787,9 +788,14 @@ async function loadCare() {
 const pcText = (u) => u.pcs.length ? u.pcs.map((p) => p.device + (p.kind && p.kind !== "not known" ? ` (${p.kind})` : "")).join(", ")
   : "No PC in use today";
 // An OK tile's one line: what was measured today against their own usual
-const okText = (u) => !u.actions ? "No issue: not seen using a PC today."
-  : `No issue: ${n(u.actions)} action${u.actions === 1 ? "" : "s"} today, ${n(u.major)} rated Major`
-    + (u.usual && u.usual.enough ? ` (usual by now: ${u.usual.low} to ${u.usual.high}).` : ".");
+const okText = (u) => (u.earlier.length ? "No alert now: " : "No issue: ") + (!u.actions ? "not seen using a PC today."
+  : `${n(u.actions)} action${u.actions === 1 ? "" : "s"} today, ${n(u.major)} rated Major`
+    + (u.usual && u.usual.enough ? ` (usual by now: ${u.usual.low} to ${u.usual.high}).` : "."));
+// An issue of today whose alert is off (nothing new of it in the last reads)
+const earlierText = (i) => i.kind === "slow"
+  ? `Earlier today: more Major slow actions than usual from ${i.since_local}, the last at ${i.last_local}.`
+    + (i.ended === "usual" ? ` Over: ${i.over}.` : "")
+  : `Earlier today: ${i.text}`;
 const usualWords = (u) => !u ? "" : u.enough ? `their usual by this time: ${u.low} to ${u.high} (${u.days} ${u.kind} before)`
   : `their usual: ${u.days} of the 3 ${u.kind} needed so far`;
 function whyText(u) {
@@ -799,7 +805,8 @@ function whyText(u) {
   return u.why.error ? `Investigation failed: ${u.why.error}` : `Why: ${u.why.title}`;
 }
 function renderCare(c) {
-  $("cStatus").textContent = c.ready ? "" : `Waiting for Today's first read of Aternity (${c.status || "starting"}).`;
+  $("cStatus").textContent = c.ready ? "" : `Not ready yet: ${c.status || "starting"}.`;
+  if (c.ready) $("cAlertFor").textContent = `${c.alert_reads} reads (${c.alert_reads * c.refresh_minutes} min)`;
   $("cWhen").textContent = c.ready ? `${new Date(c.date + "T12:00:00Z").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}`
     + ` · as of ${c.as_of_local} · ${c.checked} ${c.checked === 1 ? "user" : "users"} checked every ${c.refresh_minutes} min` : "";
   $("cTiles").innerHTML = c.users.map((u) => {
@@ -809,10 +816,9 @@ function renderCare(c) {
       : `<div>${sevTag(u.level)} <span class="muted" style="font-size:12px">since ${esc(u.since_local)}</span></div>`;
     const lines = u.status === "unknown" ? [u.note] : ok ? [okText(u)] : u.issues.slice(0, 2).map((i) => [i.text, i.clears]);
     const more = u.issues.length > 2 ? `<div class="u">+${u.issues.length - 2} more</div>` : "";
-    const gone = u.cleared.map((i) => `<div class="u">${i.kind === "slow"
-      ? `More Major slow actions than usual from ${esc(i.since_local)}; over: ${esc(i.over)}.`
-      : `${esc(i.text)} Over: ${esc(i.over)}.`}</div>`).join("");
-    const why = ok ? (u.why && u.why.title ? `Earlier today: ${u.why.title}` : "") : whyText(u);
+    const gone = u.earlier.slice(-2).map((i) => `<div class="u">${esc(earlierText(i))}</div>`).join("")
+      + (u.earlier.length > 2 ? `<div class="u">+${u.earlier.length - 2} more earlier today</div>` : "");
+    const why = ok ? (u.why && u.why.title ? `Why (earlier today): ${u.why.title}` : "") : whyText(u);
     const days = u.days.map((d, k) => ({ day: d.date, pcs: d.issues, window: k === u.days.length - 1 }));
     return `<div class="tile click" role="button" tabindex="0" data-user="${esc(u.username)}">${head}`
       + `<div class="name">${esc(u.title)}</div>${u.label ? `<div class="u">${esc(u.username)}</div>` : ""}`
@@ -840,7 +846,8 @@ async function openCare(username) {
     const rep = d.report;
     let html = `<p>${esc(pcText(d))}. Today: ${n(d.actions)} actions measured, ${n(d.major)} rated Major; ${esc(usualWords(d.usual))}.</p>`;
     const today = d.issues.map((i) => `<li>${sevTag(i.level)} ${esc(i.text)}${i.clears ? ` <span class="muted">${esc(i.clears)}</span>` : ""}</li>`)
-      .concat(d.cleared.map((i) => `<li>${sevTag(i.level)} ${esc(i.text)} <span class="muted">Over: ${esc(i.over)}.</span></li>`));
+      .concat(d.earlier.map((i) => `<li>${sevTag(i.level)} ${esc(i.text)} <span class="muted">No alert now`
+        + `${i.over ? `; over: ${esc(i.over)}` : ""}.</span></li>`));
     html += `<h3>Today</h3>` + (today.length ? `<ul>${today.join("")}</ul>` : `<p class="muted">No issue today.</p>`);
     html += `<h3>Investigation</h3>`;
     if (rep && rep.result) html += `<p><b>${esc(rep.title)}</b> ${esc(rep.reason || "")}<br><span class="muted">Ran by itself ${esc(rep.at_local)}, over ${esc(rep.span_local)}.</span></p>`
@@ -1005,7 +1012,7 @@ function renderAssess(a) {
   const charts = a.charts || [];
   $("tMinis").innerHTML = charts.map(miniChart).join("");
   $("tMinisLeg").textContent = charts.length
-    ? `Line: today, up to ${a.now || "now"}. Shaded: the same hour on the ${a.days ? `${a.days} ` : ""}days before, lowest to highest.` : "";
+    ? `Line: today, up to ${a.now || "now"}. Shaded: the same hour on the ${a.days ? `${a.days} ` : ""}${a.kind || "days"} before, lowest to highest.` : "";
 }
 async function loadAssess() {
   try {

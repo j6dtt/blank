@@ -200,10 +200,16 @@ def _issue_counts(problems: list[dict]) -> tuple[list[str], list[dict]]:
     rows = [g for g in problems if not (g.get("why") or {}).get("same_as_above")]
     total = lambda kind: sum(g["times"] for g in rows if g["issue"] == kind)  # noqa: E731
     felt = [_disk_phrase(g) for g in rows if g["issue"] == "disk"]
+    # a crash is an "app crash" only when Aternity names its application; one without (a System
+    # Crash: the PC itself) is told by its own name, first after the disk (it leads as a crash too)
+    named = lambda g: g["issue"] == "crash" and not g.get("app")  # noqa: E731
+    for what in dict.fromkeys(g["what"] for g in rows if named(g)):
+        felt.append(plural(sum(g["times"] for g in rows if named(g) and g["what"] == what), f"{what} event"))
     if total("hang"):
         felt.append(plural(total("hang"), "hang"))
-    if total("crash"):
-        felt.append(plural(total("crash"), "app crash", "app crashes"))
+    app_crashes = sum(g["times"] for g in rows if g["issue"] == "crash" and g.get("app"))
+    if app_crashes:
+        felt.append(plural(app_crashes, "app crash", "app crashes"))
     for what in dict.fromkeys(g["what"] for g in rows if g["issue"] == "system"):
         felt.append(plural(sum(g["times"] for g in rows if g["issue"] == "system" and g["what"] == what),
                            f"{what} event"))

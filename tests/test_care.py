@@ -152,17 +152,17 @@ def test_an_event_is_over_after_an_hour_with_no_new_one_and_a_later_one_is_a_new
     crash = lambda h, m: ev(at(h, m), "MQ2208", "VD-7", "Application Crash", "Major", "Application", "Mail")  # noqa
     care = Care(today_with(0, [crash(9, 0), crash(14, 0), crash(14, 40)]), lambda: USERS[:1])
     care.check(client(), at(14, 50))
-    issues = care.issues["mq2208"]  # 09:00 was over before it was first seen: kept, not investigated
+    issues = care.issues["mq2208"]  # 09:00 was over before the user's first check: kept, not lit
     assert [i["clears"] for i in care.view(at(14, 50))["users"][0]["issues"]] == [
-        "Clears after 15:40 if no new Application Crash."]  # the hour after 14:40
+        "Clears at 15:35 if no new Application Crash."]  # 3 reads of 15 min after the read at 14:50
     assert [(i["since"][11:16], "cleared" in i) for i in issues] == [("15:00", True), ("20:00", False)]
     assert care.pending == ["mq2208"]
     care.run_next(lambda u, s, e: {"answer": {"title": "Mail crashed on VD-7"}}, at(14, 50))
     care.check(client(), at(15, 45))  # 65 min after 14:40
     mq = care.view(at(15, 45))["users"][0]
     assert (mq["status"], mq["issues"]) == ("ok", [])
-    assert [i["over"] for i in mq["cleared"]] == ["none in the hour after 09:00", "none in the hour after 14:40"]
-    assert mq["cleared"][1]["text"] == "Application Crash (Application) 2 times in Mail, first at 14:00, " \
+    assert [i["over"] for i in mq["earlier"]] == ["none in the hour after 09:00", "none in the hour after 14:40"]
+    assert mq["earlier"][1]["text"] == "Application Crash (Application) 2 times in Mail, first at 14:00, " \
                                        "the last at 14:40 on VD-7."
     # 17:00: a new crash, a new issue and a new investigation
     care.today.set_health([crash(9, 0), crash(14, 0), crash(14, 40), crash(17, 0)], H, today=True)
@@ -183,8 +183,12 @@ def test_an_open_event_saved_by_the_build_before_is_the_same_issue():
     care = Care(today_with(0, [ev(t0, "MQ2208", "VD-7", "System Crash", "Critical")]), lambda: USERS[:1])
     care.issues["mq2208"] = [{"key": "event 2026-11-09 System/System Crash", "kind": "event", "level": "Critical",
                               "since": "2026-11-09T20:05:00Z", "day": "2026-11-09", "text": "System Crash"}]
+    care.reports["mq2208"] = {"at": "2026-11-09T20:10:00Z", "start": "2026-11-09T19:35:00Z",
+                              "end": "2026-11-09T20:10:00Z", "username": "MQ2208", "title": "T"}
     care.check(client(), NOW)
     assert len(care.issues["mq2208"]) == 1 and care.pending == []
+    # what it had is not new: a restart onto this build does not light it again
+    assert care.issues["mq2208"][0]["seen"] == 1 and care.view(NOW)["users"][0]["status"] == "ok"
     care.check(client(), NOW + HOUR)
     assert care.issues["mq2208"][0]["ended"] == "quiet" and care.issues["mq2208"][0]["last"] == "2026-11-09T20:05:00Z"
 
@@ -221,13 +225,13 @@ def test_a_slow_spell_is_over_after_an_hour_with_no_major_action_and_a_later_one
     at = lambda h, m: datetime(2026, 11, 9, h + 6, m, tzinfo=timezone.utc)  # noqa: E731  (Chicago time)
     care.check(client(), at(15, 10))
     mq = care.view(at(15, 10))["users"][0]
-    assert mq["status"] == "issue"  # 50 min after the last
-    assert mq["issues"][0]["clears"] == "Clears after 15:20 if no new Major action."  # the hour after 14:20
+    assert mq["status"] == "issue"  # the 3rd read after 14:30
+    assert mq["issues"][0]["clears"] == "Clears at 15:15 if no new Major action."  # 3 reads after 14:30
     assert care.detail("mq2208", at(15, 10))["issues"][0]["clears"] == mq["issues"][0]["clears"]
     care.check(client(), at(15, 25))  # 65 min: over, though 3 is still more than their usual 0 to 2
     mq = care.view(at(15, 25))["users"][0]
     assert (mq["status"], mq["issues"], mq["level"]) == ("ok", [], None)
-    assert [(i["since_local"], i["over"]) for i in mq["cleared"]] == [("14:20", "none in the hour after 14:20")]
+    assert [(i["since_local"], i["over"]) for i in mq["earlier"]] == [("14:20", "none in the hour after 14:20")]
     assert mq["why"]["title"] == "Mail was slow on VD-7"  # the investigation of the day stays
     assert care.detail("mq2208", at(15, 25))["history"][0]["over"] == "none in the hour after 14:20"
     care.check(client(), at(15, 25))
@@ -238,7 +242,8 @@ def test_a_slow_spell_is_over_after_an_hour_with_no_major_action_and_a_later_one
     care.check(client(), at(15, 40))
     slow = care.issues["mq2208"]
     assert len(slow) == 1 and "cleared" not in slow[0] and slow[0]["last"] == "2026-11-09T21:15:00Z"
-    assert care.pending == []  # not a new issue
+    assert care.pending == []  # not a new issue: the investigation covers its start
+    assert care.view(at(15, 40))["users"][0]["status"] == "issue"  # but a row this read saw first: lit
     care.check(client(), at(16, 20))
     assert care.issues["mq2208"][0]["cleared"] == "2026-11-09T22:20:00Z"
     # 17:00, still more than their usual: a new spell, a new issue, a new investigation (over an hour on)
@@ -259,7 +264,7 @@ def test_an_open_slow_issue_saved_by_the_build_before_ends_at_its_last_major_act
                               "since": "2026-11-09T20:00:00Z", "text": "3 Major slow actions by 14:30"}]  # no "last"
     care.check(client(), datetime(2026, 11, 9, 21, 25, tzinfo=timezone.utc))
     assert care.issues["mq2208"][0]["last"] == "2026-11-09T20:20:00Z"
-    assert care.view(NOW + HOUR)["users"][0]["cleared"][0]["over"] == "none in the hour after 14:20"
+    assert care.view(NOW + HOUR)["users"][0]["earlier"][0]["over"] == "none in the hour after 14:20"
 
 
 def test_a_slow_spell_is_over_when_they_are_back_within_their_usual():
@@ -268,7 +273,7 @@ def test_a_slow_spell_is_over_when_they_are_back_within_their_usual():
     late = NOW + 8 * HOUR  # 22:30: their days before had one more Major at 22:00, so 3 is within 1 to 3
     care.check(client(), late)
     mq = care.view(late)["users"][0]
-    assert mq["status"] == "ok" and [i["over"] for i in mq["cleared"]] == ["back within their usual at 22:30"]
+    assert mq["status"] == "ok" and [i["over"] for i in mq["earlier"]] == ["back within their usual at 22:30"]
 
 
 def test_every_user_has_a_tile_ok_with_what_was_checked():
@@ -278,7 +283,7 @@ def test_every_user_has_a_tile_ok_with_what_was_checked():
     assert [(u["title"], u["status"]) for u in v["users"]] == [("Payroll lead", "ok"), ("tz9013", "ok")]
     mq = v["users"][0]
     assert (mq["actions"], mq["major"], mq["usual"]["low"], mq["usual"]["high"]) == (3, 2, 0, 2)
-    assert mq["cleared"] == [] and mq["pcs"] == [{"device": "VD-7", "kind": "virtual"}]
+    assert mq["earlier"] == [] and mq["pcs"] == [{"device": "VD-7", "kind": "virtual"}]
 
 
 def test_a_failed_investigation_is_said():
@@ -470,3 +475,193 @@ def test_the_add_and_remove_endpoints(tmp_path, monkeypatch):
     (tmp_path / "care_list.json").write_text("{broken")
     bad = http.post("/api/care/users", json={"username": "new1", "pin": pin})
     assert bad.status_code == 500 and "could not be changed" in bad.json()["detail"]
+
+
+# -- the alert (the user's rule, 2026-11-14) and /api/MSS/care/status ----------------------------------
+AT = lambda h, m: datetime(2026, 11, 9, h + 6, m, tzinfo=timezone.utc)  # noqa: E731  (Chicago time, Monday)
+H2 = dict(H, component="HEALTH_EVENT_COMPONENT", count="HEALTH_EVENT_VOLUME")
+
+
+def event(h, m, name="Application Hang", sev="Major", cat="Application", app="Mail", pc="VD-7", part=None, n=None,
+          user="MQ2208"):
+    row = ev(AT(h, m), user, pc, name, sev, cat, app)
+    row.update(HEALTH_EVENT_COMPONENT=part, HEALTH_EVENT_VOLUME=n)
+    return row
+
+
+def care_at(rows, refresh=5, users=USERS[:1], store=None) -> Care:
+    t = today_with(0)
+    t.refresh_min = refresh
+    t.set_health(rows, H2, today=True)
+    return Care(t, lambda: users, store)
+
+
+def test_an_alert_is_on_for_3_reads_after_a_read_that_brought_something_new_then_it_is_earlier_today():
+    care = care_at([])
+    care.check(client(), AT(14, 0))
+    care.today.set_health([event(14, 2)], H2, today=True)
+    care.check(client(), AT(14, 5))  # the read that saw the 14:02 hang first
+    mq = care.view(AT(14, 5))["users"][0]
+    assert (mq["status"], mq["level"], mq["since_local"]) == ("issue", "Major", "14:02")
+    assert mq["issues"][0]["clears"] == "Clears at 14:20 if no new Application Hang."  # 3 reads of 5 min
+    for m in (10, 15):  # nothing new: still on
+        care.check(client(), AT(14, m))
+        assert care.view(AT(14, m))["users"][0]["status"] == "issue"
+    care.check(client(), AT(14, 20))
+    mq = care.view(AT(14, 20))["users"][0]
+    assert (mq["status"], mq["issues"], [i["text"] for i in mq["earlier"]]) == (
+        "ok", [], ["Application Hang (Application) in Mail, first at 14:02 on VD-7."])
+    assert mq["earlier"][0]["over"] is None  # the hour after it is not over: one issue, one count
+    # the same hang again within the hour: the same issue, its alert on again
+    care.today.set_health([event(14, 2), event(14, 23)], H2, today=True)
+    care.check(client(), AT(14, 25))
+    mq = care.view(AT(14, 25))["users"][0]
+    assert len(care.issues["mq2208"]) == 1 and mq["status"] == "issue"
+    assert mq["issues"][0]["text"].startswith("Application Hang (Application) 2 times in Mail")
+    # another event while it is on: the tile stays on, the most serious first
+    care.today.set_health([event(14, 2), event(14, 23), event(14, 28, "System Crash", "Critical", "System", None)],
+                          H2, today=True)
+    care.check(client(), AT(14, 30))
+    mq = care.view(AT(14, 30))["users"][0]
+    assert mq["level"] == "Critical" and [i["what"] for i in mq["issues"]] == [
+        "System/System Crash", "Application/Application Hang"]
+
+
+def test_a_row_aternity_sends_late_lights_the_tile_and_its_day_is_investigated_again():
+    care = care_at([event(9, 0, "Application Crash")], refresh=15)
+    care.check(client(), AT(9, 5))
+    calls = []
+    run = lambda u, s, e: calls.append((s, e)) or {"answer": {"title": "Mail crashed"}}  # noqa: E731
+    care.run_next(run, AT(9, 5))
+    assert calls == [(AT(8, 30), AT(9, 5))]
+    # 09:30, another kind: lit, but no second investigation within the hour ...
+    care.today.set_health([event(9, 0, "Application Crash"), event(9, 30, "System Crash", "Critical", "System", None)],
+                          H2, today=True)
+    care.check(client(), AT(9, 35))
+    assert care.view(AT(9, 35))["users"][0]["level"] == "Critical" and care.pending == []
+    care.check(client(), AT(10, 5))  # ... until the hour is up (before, it was never investigated)
+    assert care.pending == ["mq2208"]
+    care.run_next(run, AT(10, 5))
+    # 11:00: a 06:04 crash Aternity sent late, over when first seen: lit, and the day is investigated again
+    late = [event(9, 0, "Application Crash"), event(9, 30, "System Crash", "Critical", "System", None),
+            event(6, 4, "Application Crash", app="ERP", pc="VD-7")]
+    care.today.set_health(late, H2, today=True)
+    care.check(client(), AT(11, 10))
+    mq = care.view(AT(11, 10))["users"][0]
+    first = next(i for i in care.issues["mq2208"] if i["since"] == "2026-11-09T12:04:00Z")
+    assert first["ended"] == "quiet" and mq["status"] == "issue" and care.pending == ["mq2208"]
+    care.run_next(run, AT(11, 10))
+    assert calls[-1] == (AT(5, 34), AT(11, 10))  # 30 min before 06:04
+    care.check(client(), AT(11, 25))
+    assert care.pending == []  # covered now
+
+
+def test_a_failing_disk_stays_on_all_day():
+    disk = event(8, 0, "Faulty HD S.M.A.R.T. Status", "Major", "System", None, part="WDC WD10EZEX (Disk)")
+    care = care_at([disk, event(15, 0, "System Crash", "Critical", "System", None)], refresh=5)
+    care.check(client(), AT(15, 2))
+    for at in (AT(15, 2), AT(17, 55)):
+        care.check(client(), at)
+        mq = care.view(at)["users"][0]
+        assert mq["status"] == "issue" and mq["issues"][0]["what"] == "System/Faulty HD S.M.A.R.T. Status"
+    assert mq["issues"][0]["clears"] == "Stays on today: a failing disk is the PC's state."
+    assert [i["what"] for i in mq["earlier"]] == ["System/System Crash"]  # its 3 reads are over
+    tomorrow = AT(8, 0) + timedelta(days=1)
+    assert care.view(tomorrow)["users"][0]["status"] != "issue"
+
+
+def test_a_restart_does_not_light_again_what_was_seen(tmp_path):
+    care = care_at([event(14, 2)], store=tmp_path)
+    care.check(client(), AT(14, 0))
+    care.check(client(), AT(14, 5))
+    assert care.view(AT(14, 5))["users"][0]["status"] == "issue"
+    # restarted at 14:40 (Today reads it all again): seen before, so not lit; one that came while it was
+    # down, at 14:10, is past its alert's time: not lit either; one within it is
+    again = care_at([event(14, 2), event(14, 10, "System Crash", "Critical", "System", None)], store=tmp_path)
+    again.check(client(), AT(14, 40))
+    mq = again.view(AT(14, 40))["users"][0]
+    assert mq["status"] == "ok" and len(mq["earlier"]) == 2
+    third = care_at([event(14, 2), event(14, 10, "System Crash", "Critical", "System", None),
+                     event(14, 50, "System Crash", "Critical", "System", None)], store=tmp_path)
+    third.check(client(), AT(14, 55))
+    assert third.view(AT(14, 55))["users"][0]["status"] == "issue"
+
+
+def test_a_user_just_added_is_lit_only_by_what_is_recent_and_their_day_is_investigated(tmp_path):
+    care = care_at([event(9, 0, "Application Crash"), event(14, 28)], refresh=15, store=tmp_path)
+    care.check(client(), AT(14, 30))
+    mq = care.view(AT(14, 30))["users"][0]
+    assert [i["what"] for i in mq["issues"]] == ["Application/Application Hang"]  # 2 min ago
+    assert [i["what"] for i in mq["earlier"]] == ["Application/Application Crash"]  # 09:00
+    assert care.pending == ["mq2208"]
+
+
+def test_times_in_one_event_row_are_added_up_and_a_row_that_grows_lights_again():
+    care = care_at([event(14, 2, n=3)])
+    care.check(client(), AT(14, 0))
+    care.check(client(), AT(14, 5))
+    assert care.issues["mq2208"][0]["text"].startswith("Application Hang (Application) 3 times in Mail")
+    care.check(client(), AT(14, 20))
+    assert care.view(AT(14, 20))["users"][0]["status"] == "ok"
+    care.today.set_health([event(14, 2, n=4)], H2, today=True)  # the same row, one more time
+    care.check(client(), AT(14, 25))
+    assert care.view(AT(14, 25))["users"][0]["status"] == "issue" and care.issues["mq2208"][0]["seen"] == 4
+
+
+def test_the_status_for_another_platform(tmp_path):
+    """GET /api/MSS/care/status (the user's request, 2026-11-14): every tile, all times UTC, a short
+    summary in our own words in plain ASCII, no PC field."""
+    path = tmp_path / "config.yaml"
+    path.write_text("care_list:\n  - username: mq2208\n    label: Payroll lead\n  - tz9013\n  - ghost1\n")
+    app = web.create_app(str(path))
+    http = TestClient(app)
+    got = http.get("/api/MSS/care/status").json()
+    assert (got["ready"], got["users"], got["refresh_minutes"]) == (False, [], 15) and got["note"]
+    care = app.state.care
+    care.today.__dict__.update(today_with(3).__dict__)  # Major at 14:00, 14:10, 14:20 (20:00 UTC on)
+    care.today.set_health([
+        ev(AT(14, 5), "MQ2208", "VD-7", "Application Crash", "Major", "Application", "Mail"),
+        ev(AT(14, 25), "MQ2208", "VD-7", "Application Crash", "Major", "Application", "Mail"),
+        dict(ev(AT(8, 0), "tz9013", "PC-3", "Faulty HD S.M.A.R.T. Status", "Major"),
+             HEALTH_EVENT_COMPONENT="WDC WD10EZEX (Disk)")], H2, today=True)
+    care.check(client(), NOW)
+    assert care.status(NOW)["ready"] is False  # no read of Aternity has worked yet
+    care.today.read_ok = care.today.as_of = NOW
+    got = care.status(NOW)
+    assert (got["ready"], got["as_of"], got["note"]) == (True, "2026-11-09T20:30:00Z", None)
+    assert http.get("/api/MSS/care/status").json()["ready"] is True  # the route (it asks at the real time)
+    rows = {u["username"]: u for u in got["users"]}
+    assert [u["username"] for u in got["users"]] == ["MQ2208", "tz9013", "ghost1"]  # as the tab: alerts first
+    assert rows["MQ2208"] == {
+        "username": "MQ2208", "label": "Payroll lead", "status": "alert", "level": "Major",
+        "since": "2026-11-09T20:05:00Z",
+        "summary": "Application Crash - Mail, 2 times 20:05-20:25 UTC, on VD-7; +1 more: Major slow actions"}
+    assert rows["tz9013"] == {
+        "username": "tz9013", "label": "", "status": "alert", "level": "Major", "since": "2026-11-09T14:00:00Z",
+        "summary": "Faulty HD S.M.A.R.T. Status on PC-3 since 14:00 UTC (stays on today)"}
+    assert rows["ghost1"] == {"username": "ghost1", "label": "", "status": "unknown", "level": None, "since": None,
+                              "summary": "Not seen in Aternity in 8 days: check the username"}
+    # two hours on: the crashes and slow actions are earlier today, the disk is still on
+    later = care.status(NOW + 2 * HOUR)
+    mq = next(u for u in later["users"] if u["username"] == "MQ2208")
+    assert (mq["status"], mq["level"], mq["since"]) == ("ok", None, "2026-11-09T21:15:00Z")  # 3 reads after 20:30
+    assert mq["summary"] == "OK since 21:15 UTC. Earlier today: 2 issues, the last Application Crash - Mail at 20:25 UTC"
+    # a read that failed in part: as_of stays at the last good one, and the note says so
+    care.today.as_of = NOW + HOUR
+    assert care.status(NOW + HOUR)["as_of"] == "2026-11-09T20:30:00Z" and "21:30 UTC" in care.status(NOW + HOUR)["note"]
+    assert all(len(u["summary"]) <= 120 and u["summary"].isascii() and "pcs" not in u for u in got["users"])
+
+
+def test_status_summaries_ok_one_earlier_and_plain_ascii():
+    care = Care(today_with(0), lambda: USERS[:1])
+    one = [{"kind": "event", "what": "Application/Application Crash", "since": "2026-11-09T19:50:00Z",
+            "last": "2026-11-09T20:20:00Z", "apps": ["Outlook"], "key": "k"}]
+    assert care._ok_words({"earlier": one}, [AT(14, 35)]) == \
+        "OK since 20:35 UTC. Earlier today: Application Crash - Outlook 19:50-20:20 UTC"
+    assert care._ok_words({"earlier": [], "actions": 214, "major": 1, "usual": {"enough": True, "low": 0, "high": 3}},
+                          []) == "OK: 214 actions today, 1 Major (usual by now 0-3)"
+    assert care._ok_words({"earlier": [], "actions": 0, "major": 0, "usual": None}, []) == "OK: no activity today yet"
+    from uxcorrelate.care import _ascii, _fit
+    assert _ascii("Microsoft® Outlook – Mail…") == "Microsoft Outlook - Mail..."
+    long = _fit("System Crash at 15:02 UTC on VD-41", ["Application Crash"] * 3 + ["x" * 120])
+    assert long == "System Crash at 15:02 UTC on VD-41; +4 more"
