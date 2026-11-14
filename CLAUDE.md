@@ -386,9 +386,13 @@ demo mode: nothing in `src/` knows about it.
   `issues` (alert on, `_clears`: "Clears at HH:MM if no new Application
   Hang" / "Stays on today: a failing disk is the PC's state"), the most
   serious first (disk, Critical, Major, events before slow), then
-  `earlier` ("Earlier today: ..."). Every user has a tile: alert, then
-  not seen in 8 days, then "✓ OK". `view` is not ready until the first
-  check. `status` is `GET /api/MSS/care/status` (the user's request,
+  `earlier` ("Earlier today: ..."). Every user has a tile: alert (a
+  failing disk, Critical, Major: as a tile's own issues), then not seen
+  in 8 days, then "✓ OK"; inside each, the list's own order (`place`),
+  set by "⠿ Arrange tiles" (the user's request, 2026-11-14: drag by ⠿,
+  ↑ ↓, arrow keys; `PUT /api/care/order`, `Care.reorder`, PIN, 409 when
+  the list changed meanwhile; the 5-minute refresh does not draw over
+  it). `view` is not ready until the first check. `status` is `GET /api/MSS/care/status` (the user's request,
   2026-11-14, for another platform that asks every 5 minutes): ready,
   as_of (`Today.read_ok`: the last read with no failed read,
   `Today.failures`), refresh_minutes, note, users in the tab's order with

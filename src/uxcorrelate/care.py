@@ -36,7 +36,9 @@ of the Today reader, from rows already read:
   new since, before its window, or first seen after it ran (Aternity sent it
   late). From INV_PAD before their first issue today to now. Its headline is
   the tile's "Why"; the page opens the whole of it.
-Every user has a tile: alerts first, then names not seen, then the rest.
+Every user has a tile: alerts first (a failing disk, then Critical, then Major),
+then names not seen, then the rest; inside each, the list's own order, set by
+the page's "Arrange tiles" (`reorder`: the list file rewritten in that order).
 Each user's issues (KEEP_DAYS) and latest investigation are saved in
 <data>/care/<user>.json: usernames on disk (agreed 2026-11-09).
 """
@@ -272,6 +274,33 @@ class Care:
         log.info("Care list: %s added on the page%s; %d users now", self._who(user), f" from {by}" if by else "",
                  len(self.users))
         return user
+
+    def reorder(self, usernames: list[str], by: str = "") -> bool:
+        """The list's own order, from the page's "Arrange tiles": the tiles' order inside each group
+        (a lit tile still goes first while it is lit) and /api/MSS/care/status's. ValueError: not
+        exactly the users on the list now (it was changed while the page arranged it). False: the
+        same order as before, nothing written."""
+        want = [" ".join(str(n).split()).lower() for n in usernames]
+        with self.checking:
+            users = self._to_change()
+            self._set_users(users)
+            shown = [u.username.lower() for u in self.users]
+            if sorted(want) != sorted(shown):
+                raise ValueError("The Care list was changed while it was arranged (a user added or removed): "
+                                 "cancel, then arrange it again.")
+            if want == shown:
+                return False
+            first: dict[str, CareUser] = {}
+            for u in users:
+                first.setdefault(u.username.lower(), u)
+            moved = [first[n] for n in want]
+            taken = {id(u) for u in moved}
+            users = moved + [u for u in users if id(u) not in taken]  # those past CARE_MAX stay after them
+            self._write_list(users)
+            self._set_users(users)
+        log.info("Care list: the order of the tiles was changed on the page%s; now: %s", f" from {by}" if by else "",
+                 ", ".join(f"{k}. {self._who(u)}" for k, u in enumerate(self.users, 1)))
+        return True
 
     def pin(self, now: datetime) -> str:
         """The PIN a change on the page needs: today's date, YYYYMMDD, in the page's time zone
@@ -653,13 +682,14 @@ class Care:
                     "users": [], "count": 0}
         t = today.day(now)
         rank = {s: i for i, s in enumerate(SEVERITY_ORDER)}
-        tiles = []
-        for u in self.users:
-            tiles.append(self.tile(u, now))
-        issue = sorted((x for x in tiles if x["status"] == "issue"),
-                       key=lambda x: (rank.get(x["level"], 9), -_when(x["since"]).timestamp()))
-        other = sorted((x for x in tiles if x["status"] != "issue"),
-                       key=lambda x: (x["status"] != "unknown", x["title"].lower()))  # names not seen first
+        # lit first (a failing disk, then Critical, then Major: as a tile's own issues), then names not
+        # seen, then the rest; inside each, the list's own order ("place", set by the page's Arrange
+        # tiles: the user's choice, 2026-11-14)
+        group = {"issue": 0, "unknown": 1}
+        lit = lambda x: (not x["issues"][0].get("disk"), rank.get(x["level"], 9)) if x["status"] == "issue" else ()  # noqa: E731
+        tiles = sorted((dict(self.tile(u, now), place=k) for k, u in enumerate(self.users)),
+                       key=lambda x: (group.get(x["status"], 2), lit(x), x["place"]))
+        issue = [x for x in tiles if x["status"] == "issue"]
         notes = list(self.notes.values())
         if self.skipped:
             notes.append(f"The Care list has {len(self.users) + self.skipped} users: the first {CARE_MAX} are "
@@ -668,7 +698,7 @@ class Care:
             notes.append("No one is on the Care list: use \"Add a user\" above.")
         return {"ready": True, "as_of": _iso(self.as_of or now),
                 "as_of_local": today.local(self.as_of or now).strftime("%H:%M"), "zone": today.zone_label,
-                "date": t.isoformat(), "count": len(issue), "users": issue + other, "notes": notes,
+                "date": t.isoformat(), "count": len(issue), "users": tiles, "notes": notes,
                 "checked": len(self.users), "max": CARE_MAX, "refresh_minutes": today.refresh_min,
                 "alert_reads": ALERT_READS}
 

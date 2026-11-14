@@ -82,6 +82,11 @@ class CareBody(BaseModel):
     pin: str = ""
 
 
+class CareOrder(BaseModel):
+    usernames: list[str]  # every user on the Care list, in the new order
+    pin: str = ""
+
+
 class LogonBody(BaseModel):
     username: str | None = None
     device: str | None = None
@@ -263,6 +268,20 @@ def create_app(config_path: str | None = None) -> FastAPI:
         if gone is None:
             raise HTTPException(404, f"{username} is not on the Care list.")
         return {"username": gone.username, "label": gone.label}
+
+    @app.put("/api/care/order")
+    def care_order(body: CareOrder, request: Request):
+        """The order of the tiles (the page's Arrange tiles): the list file in that order. 409: the
+        list was changed while it was arranged."""
+        care_pin(body.pin, request, "change the order of the tiles")
+        try:
+            changed = care.reorder(body.usernames, request.client.host if request.client else "")
+        except ValueError as exc:
+            raise HTTPException(409, str(exc))
+        except OSError as exc:
+            raise HTTPException(500, f"The Care list could not be changed ({short_error(exc)}). Its file is "
+                                     "care_list.json in the data folder, writable by the container (uid 1000).")
+        return {"changed": changed}
 
     @app.get("/api/software")
     def software_view(brief: bool = False):

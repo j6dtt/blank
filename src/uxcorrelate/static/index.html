@@ -131,6 +131,19 @@
   .hbar { height: 10px; border-radius: 0 3px 3px 0; min-width: 2px; }
   .notes { margin: 10px 0 0; padding-left: 18px; font-size: 12px; }
   .tile.click { cursor: pointer; }
+  .cHeadBtns { margin-left: auto; display: flex; gap: 14px; align-items: center; }
+  .arrBar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-top: 10px; padding: 8px 12px;
+    border: 1px dashed var(--brass); border-radius: 6px; font-size: 13px; }
+  .arrBar[hidden] { display: none; }
+  .tile.arr { grid-template-columns: 2ch auto minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px 10px;
+    user-select: none; -webkit-user-select: none; cursor: grab; }
+  .tile.arr.dragging { border-color: var(--brass); opacity: .55; cursor: grabbing; }
+  .tile.arr .grip { font-size: 18px; color: var(--muted); padding: 2px 4px; touch-action: none; cursor: grab; }
+  .tile.arr .arrNo { color: var(--muted); font-size: 12px; text-align: right; }
+  .tile.arr .arrName { display: grid; min-width: 0; }
+  .tile.arr .arrName > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tile.arr .arrMove { display: flex; gap: 2px; }
+  .tile.arr .arrMove button { padding: 2px 6px; font-size: 15px; }
   .tile.click:hover, .tile.click:focus-visible { border-color: var(--brass); }
   .tile .more { font-size: 12px; color: var(--accent); font-weight: 600; }
   #tWho .todayHead { justify-content: space-between; }
@@ -320,8 +333,14 @@
   <div id="careBox" hidden>
     <section class="panel">
       <div class="todayHead"><h2>Care list</h2><span class="muted" id="cWhen"></span>
-        <button type="button" id="cAdd" style="margin-left:auto">+ Add a user</button></div>
+        <span class="cHeadBtns"><button type="button" class="link" id="cArrange" hidden>⠿ Arrange tiles</button>
+        <button type="button" id="cAdd">+ Add a user</button></span></div>
       <div class="muted" id="cStatus"></div>
+      <div class="arrBar noExplain" id="cArrBar" hidden>
+        <span>Drag a tile by ⠿ (or use ↑ ↓), then Save order. The tiles keep this order, but lit ones go first while
+          they are lit (then any name not found).</span>
+        <span class="cHeadBtns"><button type="button" id="cArrSave">Save order</button>
+          <button type="button" class="link" id="cArrCancel">Cancel</button></span></div>
       <div class="tiles" id="cTiles"></div>
       <ul class="muted notes" id="cNotes"></ul>
       <p class="muted" style="font-size:12px;margin:8px 0 0">An issue: an event Aternity rates Critical or Major, or more
@@ -772,7 +791,7 @@ $("tWhoList").addEventListener("click", (ev) => {
 });
 
 // ---- Care list: named users, checked every 15 min; a tile per user with an issue today ----
-let careTimer = null, careData = null;
+let careTimer = null, careData = null, arranging = null;  // arranging: the tiles in the list's own order, while Arrange is open
 async function loadCare() {
   clearTimeout(careTimer);
   try {
@@ -781,7 +800,7 @@ async function loadCare() {
     if (!r.ok) throw new Error(detail(c));
     careData = c;
     $("careCount").hidden = !c.count; $("careCount").textContent = c.count || "";
-    if (!$("careBox").hidden) renderCare(c);
+    if (!$("careBox").hidden && !arranging) renderCare(c);
   } catch (e) { if (!$("careBox").hidden) $("cStatus").textContent = "Could not load the Care list: " + e.message; }
   careTimer = setTimeout(loadCare, (careData && !careData.ready ? 5 : 300) * 1000);
 }
@@ -809,6 +828,7 @@ function renderCare(c) {
   if (c.ready) $("cAlertFor").textContent = `${c.alert_reads} reads (${c.alert_reads * c.refresh_minutes} min)`;
   $("cWhen").textContent = c.ready ? `${new Date(c.date + "T12:00:00Z").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" })}`
     + ` · as of ${c.as_of_local} · ${c.checked} ${c.checked === 1 ? "user" : "users"} checked every ${c.refresh_minutes} min` : "";
+  $("cArrange").hidden = !c.ready || c.users.length < 2;
   $("cTiles").innerHTML = c.users.map((u) => {
     const ok = u.status === "ok";
     const head = u.status === "unknown" ? `<span class="sev" style="background:var(--muted)">not found</span>`
@@ -872,31 +892,115 @@ for (const id of ["cTiles"]) {
   });
 }
 $("cDetailClose").addEventListener("click", () => { $("cDetail").hidden = true; });
+// Arrange tiles: one small tile per user in the list's own order ("place"), dragged by ⠿ (a mouse
+// anywhere on it) or moved with ↑ ↓ / the arrow keys; Save asks for the PIN (PUT api/care/order).
+// The 5-minute refresh does not draw over it; Cancel or Save puts the tiles back.
+let drag = null, arrScrolling = false;
+function renderArrange() {
+  $("cTiles").innerHTML = arranging.map((u, k) => `<div class="tile arr" data-arr="${esc(u.username)}" tabindex="0" `
+    + `title="Drag to move, or use the arrow keys"><span class="arrNo">${k + 1}</span><span class="grip">⠿</span>`
+    + `<span class="arrName"><b>${esc(u.title)}</b><span class="u">${u.label ? esc(u.username) : "&nbsp;"}</span></span>`
+    + `<span class="arrMove"><button type="button" class="link" data-move="-1" aria-label="Move ${esc(u.title)} earlier">↑</button>`
+    + `<button type="button" class="link" data-move="1" aria-label="Move ${esc(u.title)} later">↓</button></span></div>`).join("");
+}
+const arrTiles = () => [...$("cTiles").querySelectorAll("[data-arr]")];
+const arrOrder = () => arrTiles().map((el) => el.dataset.arr);
+const arrNumber = () => arrTiles().forEach((el, k) => { el.querySelector(".arrNo").textContent = k + 1; });
+function arrMove(el, by) {
+  const next = by < 0 ? el.previousElementSibling : el.nextElementSibling;
+  if (!next) return;
+  if (by < 0) next.before(el); else next.after(el);
+  arrNumber();
+}
+function arrStart() {
+  if (!careData || !careData.ready) return;
+  arranging = careData.users.slice().sort((a, b) => a.place - b.place);
+  $("cArrBar").hidden = false; $("cArrange").hidden = true; $("cAdd").hidden = true; $("cDetail").hidden = true;
+  renderArrange();
+}
+function arrDone() {
+  arranging = null; drag = null;
+  $("cArrBar").hidden = true; $("cAdd").hidden = false;
+  if (careData) renderCare(careData);
+}
+$("cArrange").addEventListener("click", arrStart);
+$("cArrCancel").addEventListener("click", arrDone);
+$("cArrSave").addEventListener("click", () => {
+  const order = arrOrder();
+  if (order.join("\n") === arranging.map((u) => u.username).join("\n")) { arrDone(); return; }  // nothing moved: no PIN
+  careDialog(null, false, order);
+});
+$("cTiles").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-move]");
+  if (b && arranging) { arrMove(b.closest("[data-arr]"), Number(b.dataset.move)); b.focus(); }
+});
+$("cTiles").addEventListener("keydown", (ev) => {
+  const el = ev.target.closest("[data-arr]");
+  if (!el || ev.target !== el) return;
+  const by = { ArrowUp: -1, ArrowLeft: -1, ArrowDown: 1, ArrowRight: 1 }[ev.key];
+  if (by) { ev.preventDefault(); arrMove(el, by); el.focus(); }
+});
+// the container holds the pointer (a tile moved in the page would lose it); a finger drags by ⠿ only, so
+// the page still scrolls under a finger on the tile
+$("cTiles").addEventListener("pointerdown", (ev) => {
+  const el = arranging && ev.target.closest("[data-arr]");
+  if (!el || ev.target.closest("button") || ev.button !== 0) return;
+  if (ev.pointerType !== "mouse" && !ev.target.closest(".grip")) return;
+  ev.preventDefault();
+  drag = { el, id: ev.pointerId, x: ev.clientX, y: ev.clientY };
+  $("cTiles").setPointerCapture(ev.pointerId);
+  el.classList.add("dragging");
+  if (!arrScrolling) { arrScrolling = true; requestAnimationFrame(arrScroll); }
+});
+function arrOver() {  // the tile under the pointer: the dragged one takes its place
+  const at = document.elementFromPoint(drag.x, drag.y), to = at && at.closest("[data-arr]");
+  if (!to || to === drag.el) return;
+  const tiles = arrTiles();
+  if (tiles.indexOf(to) > tiles.indexOf(drag.el)) to.after(drag.el); else to.before(drag.el);
+  arrNumber();
+}
+function arrScroll() {  // held near the top or bottom of the window: the page scrolls
+  if (!drag) { arrScrolling = false; return; }
+  const by = drag.y < 80 ? -12 : drag.y > window.innerHeight - 60 ? 12 : 0;
+  if (by) { scrollBy(0, by); arrOver(); }
+  requestAnimationFrame(arrScroll);
+}
+$("cTiles").addEventListener("pointermove", (ev) => {
+  if (!drag || ev.pointerId !== drag.id) return;
+  drag.x = ev.clientX; drag.y = ev.clientY;
+  arrOver();
+});
+const arrEnd = (ev) => { if (drag && ev.pointerId === drag.id) { drag.el.classList.remove("dragging"); drag = null; } };
+$("cTiles").addEventListener("pointerup", arrEnd);
+$("cTiles").addEventListener("pointercancel", arrEnd);
 // Add a user / remove one: one in-page dialog; the list is care_list.json in the data folder
 let cDlgRemove = null;
 // One dialog for the three changes: add (no user), change a label (edit), remove. Each needs the PIN.
-function careDialog(user, edit) {
+// order: the usernames in a new order, from Arrange tiles (only the PIN is asked).
+function careDialog(user, edit, order) {
   const remove = user && !edit ? user : null;
-  cDlgRemove = remove; cDlgEdit = user && edit ? user : null;
-  const f = $("cForm"), full = !user && careData && careData.checked >= careData.max;
+  cDlgRemove = remove; cDlgEdit = user && edit ? user : null; cDlgOrder = order || null;
+  const f = $("cForm"), full = !user && !order && careData && careData.checked >= careData.max;
   const who = user ? (user.label ? `${user.label} (${user.username})` : user.username) : "";
-  $("cDlgTitle").textContent = remove ? "Remove from the Care list" : cDlgEdit ? `Change the label of ${user.username}`
-    : "Add a user to the Care list";
-  $("cAddFields").hidden = !!remove || full; $("cUserField").hidden = !!cDlgEdit;
-  f.username.required = !user && !full;
-  $("cDlgText").hidden = !remove && !full;
-  $("cDlgText").textContent = full ? `The Care list is full (${careData.max} users): remove one first.` : remove
+  $("cDlgTitle").textContent = order ? "Save the order of the tiles" : remove ? "Remove from the Care list"
+    : cDlgEdit ? `Change the label of ${user.username}` : "Add a user to the Care list";
+  $("cAddFields").hidden = !!remove || full || !!order; $("cUserField").hidden = !!cDlgEdit;
+  f.username.required = !user && !full && !order;
+  $("cDlgText").hidden = !remove && !full && !order;
+  $("cDlgText").textContent = order ? "The tiles keep this order from now on, for everyone who opens the page and in "
+    + "the status for other platforms; lit ones still go first while they are lit."
+    : full ? `The Care list is full (${careData.max} users): remove one first.` : remove
     ? `${who} will no longer be checked. Their tile, their saved issues of the last 8 days and their latest `
       + "investigation are deleted." : "";
   $("cPinField").hidden = full; f.pin.required = !full;
-  $("cDlgOk").textContent = remove ? "Remove" : cDlgEdit ? "Save" : "Add"; $("cDlgOk").hidden = full; $("cDlgOk").disabled = false;
+  $("cDlgOk").textContent = remove ? "Remove" : cDlgEdit || order ? "Save" : "Add"; $("cDlgOk").hidden = full; $("cDlgOk").disabled = false;
   $("cDlgOk").style.background = remove ? "var(--bad)" : "";
   $("cDlgError").hidden = true; f.reset(); $("cNames").innerHTML = "";
   if (cDlgEdit) f.label.value = user.label || "";
   $("cDlg").hidden = false;
-  (full ? $("cDlgCancel") : remove ? f.pin : cDlgEdit ? f.label : f.username).focus();
+  (full ? $("cDlgCancel") : remove || order ? f.pin : cDlgEdit ? f.label : f.username).focus();
 }
-let cDlgEdit = null;
+let cDlgEdit = null, cDlgOrder = null;
 $("cAdd").addEventListener("click", () => careDialog());
 $("cDlgCancel").addEventListener("click", () => { $("cDlg").hidden = true; });
 $("cDlg").addEventListener("click", (ev) => { if (ev.target === $("cDlg")) $("cDlg").hidden = true; });
@@ -916,20 +1020,23 @@ $("cForm").username.addEventListener("input", (ev) => {  // usernames seen in At
 });
 $("cForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
-  const f = $("cForm"), gone = cDlgRemove;
+  const f = $("cForm"), gone = cDlgRemove, order = cDlgOrder;
   $("cDlgOk").disabled = true; $("cDlgError").hidden = true;
   try {
     const pin = f.pin.value.trim(), edit = cDlgEdit;
-    const r = gone ? await fetch(`api/care/users?${new URLSearchParams({ username: gone.username, pin })}`, { method: "DELETE" })
+    const r = order ? await fetch("api/care/order", { method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ usernames: order, pin }) })
+      : gone ? await fetch(`api/care/users?${new URLSearchParams({ username: gone.username, pin })}`, { method: "DELETE" })
       : await fetch("api/care/users", { method: edit ? "PUT" : "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: edit ? edit.username : f.username.value, label: f.label.value, pin }) });
     const d = await r.json();
     if (!r.ok) throw new Error(detail(d));
     $("cDlg").hidden = true;
     if (gone) $("cDetail").hidden = true;
+    if (order) { arranging = null; drag = null; $("cArrBar").hidden = true; $("cAdd").hidden = false; }  // loadCare draws it
     await loadCare();
     if (edit) openCare(edit.username);  // the open detail shows the new label
-    if (!gone && !edit) setTimeout(loadCare, 4000);  // their history of the days before is read now: the tile fills in
+    if (!gone && !edit && !order) setTimeout(loadCare, 4000);  // their history of the days before is read now: the tile fills in
   } catch (e) { $("cDlgError").textContent = e.message; $("cDlgError").hidden = false; $("cDlgOk").disabled = false; }
 });
 $("cDetailBody").addEventListener("click", (ev) => {

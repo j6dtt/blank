@@ -5,6 +5,7 @@ import json
 from datetime import date, datetime, timedelta, timezone
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from uxcorrelate import web
@@ -477,6 +478,74 @@ def test_the_add_and_remove_endpoints(tmp_path, monkeypatch):
     assert bad.status_code == 500 and "could not be changed" in bad.json()["detail"]
 
 
+def test_the_tiles_keep_the_lists_own_order_inside_each_group(tmp_path, caplog):
+    """Arrange tiles (the user's choice, 2026-11-14): lit first, then names not found, then the rest;
+    inside each, the list's own order, which the page sets (reorder)."""
+    care = Care(today_with(3), lambda: USERS + [CareUser("ghost2", "Night desk")], tmp_path)
+    care.check(client(), NOW)
+    order = lambda: [(u["title"], u["status"], u["place"]) for u in care.view(NOW)["users"]]  # noqa: E731
+    assert order() == [("Payroll lead", "issue", 0), ("ghost1", "unknown", 2), ("Night desk", "unknown", 3),
+                       ("tz9013", "ok", 1)]
+    with caplog.at_level("INFO", logger="uxcorrelate"):
+        assert care.reorder(["ghost2", " tz9013 ", "GHOST1", "MQ2208"], "198.51.100.7") is True
+    assert [u["username"] for u in json.loads((tmp_path / "care_list.json").read_text())] == [
+        "ghost2", "tz9013", "ghost1", "mq2208"]
+    assert order() == [("Payroll lead", "issue", 3), ("Night desk", "unknown", 0), ("ghost1", "unknown", 2),
+                       ("tz9013", "ok", 1)]  # the lit tile still first
+    assert ("Care list: the order of the tiles was changed on the page from 198.51.100.7; now: 1. Night desk "
+            "(ghost2), 2. tz9013, 3. ghost1, 4. Payroll lead (mq2208)") in caplog.text
+    assert care.reorder(["ghost2", "tz9013", "ghost1", "mq2208"]) is False  # the same order: nothing written
+    for wrong in (["ghost2", "tz9013", "ghost1"], ["ghost2", "tz9013", "ghost1", "mq2208", "new1"],
+                  ["ghost2", "ghost2", "ghost1", "mq2208"]):  # the list was changed meanwhile
+        with pytest.raises(ValueError, match="changed while it was arranged"):
+            care.reorder(wrong)
+    assert [u.username for u in Care(today_with(0), lambda: [], tmp_path).listed()] == [
+        "ghost2", "tz9013", "ghost1", "mq2208"]  # kept over a restart
+    # past CARE_MAX: not on the page, kept after the users it shows
+    many = [CareUser(f"user{k}") for k in range(CARE_MAX + 2)]
+    care = Care(today_with(0), lambda: many)
+    care.check(None, NOW)
+    shown = [f"user{k}" for k in range(CARE_MAX)]
+    assert care.reorder(shown[::-1]) is True
+    assert [u.username for u in care.listed()] == shown[::-1] + [f"user{CARE_MAX}", f"user{CARE_MAX + 1}"]
+
+
+def test_the_order_endpoint(tmp_path, monkeypatch):
+    monkeypatch.setenv("UXCORRELATE_DATA", str(tmp_path))
+    path = tmp_path / "config.yaml"
+    path.write_text("care_list:\n  - username: mq2208\n    label: Payroll lead\n  - tz9013\n  - ghost1\n")
+    app = web.create_app(str(path))
+    http = TestClient(app)
+    care = app.state.care
+    care.today.__dict__.update(today_with(2).__dict__)  # 2 Major, as on a day before: OK
+    care.check(client(), NOW)
+    care.today.read_ok = NOW
+    listed = lambda: [u["username"] for u in json.loads((tmp_path / "care_list.json").read_text())]  # noqa: E731
+    new = ["tz9013", "ghost1", "MQ2208"]
+    no = http.put("/api/care/order", json={"usernames": new, "pin": "20200101"})
+    assert no.status_code == 403 and no.json()["detail"] == "Wrong PIN: the Care list was not changed."
+    assert listed() == ["mq2208", "tz9013", "ghost1"]
+    pin = care.pin(datetime.now(timezone.utc))
+    assert http.put("/api/care/order", json={"usernames": new, "pin": pin}).json() == {"changed": True}
+    assert listed() == ["tz9013", "ghost1", "mq2208"]
+    assert [u["username"] for u in care.view(NOW)["users"]] == ["ghost1", "tz9013", "MQ2208"]  # not found first
+    assert [u["username"] for u in care.status(NOW)["users"]] == ["ghost1", "tz9013", "MQ2208"]  # the status too
+    # lit: a failing disk first, then Critical, then Major, whatever the list's order
+    care.today.set_health([ev(AT(14, 0), "MQ2208", "VD-7", "Application Crash", "Major", "Application", "Mail"),
+                           ev(AT(14, 1), "ghost1", "VD-9", "System Crash", "Critical"),
+                           dict(ev(AT(14, 2), "tz9013", "PC-3", "Faulty HD S.M.A.R.T. Status", "Major"),
+                                HEALTH_EVENT_COMPONENT="WDC WD10EZEX (Disk)")], H2, today=True)
+    care.check(client(), NOW)
+    assert [(u["username"], u["level"]) for u in care.view(NOW)["users"]] == [
+        ("tz9013", "Major"), ("ghost1", "Critical"), ("MQ2208", "Major")]
+    assert http.put("/api/care/order", json={"usernames": new, "pin": pin}).json() == {"changed": False}
+    gone = http.put("/api/care/order", json={"usernames": new[:2], "pin": pin})
+    assert gone.status_code == 409 and "changed while it was arranged" in gone.json()["detail"]
+    (tmp_path / "care_list.json").write_text("{broken")
+    bad = http.put("/api/care/order", json={"usernames": new, "pin": pin})
+    assert bad.status_code == 500 and "could not be changed" in bad.json()["detail"]
+
+
 # -- the alert (the user's rule, 2026-11-14) and /api/MSS/care/status ----------------------------------
 AT = lambda h, m: datetime(2026, 11, 9, h + 6, m, tzinfo=timezone.utc)  # noqa: E731  (Chicago time, Monday)
 H2 = dict(H, component="HEALTH_EVENT_COMPONENT", count="HEALTH_EVENT_VOLUME")
@@ -631,7 +700,7 @@ def test_the_status_for_another_platform(tmp_path):
     assert (got["ready"], got["as_of"], got["note"]) == (True, "2026-11-09T20:30:00Z", None)
     assert http.get("/api/MSS/care/status").json()["ready"] is True  # the route (it asks at the real time)
     rows = {u["username"]: u for u in got["users"]}
-    assert [u["username"] for u in got["users"]] == ["MQ2208", "tz9013", "ghost1"]  # as the tab: alerts first
+    assert [u["username"] for u in got["users"]] == ["tz9013", "MQ2208", "ghost1"]  # as the tab: a failing disk first
     assert rows["MQ2208"] == {
         "username": "MQ2208", "label": "Payroll lead", "status": "alert", "level": "Major",
         "since": "2026-11-09T20:05:00Z",

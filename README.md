@@ -218,7 +218,12 @@ was already seen; a user just added is lit only by what happened within the
 alert's time. Every user has a tile: those with an alert on first (a failing
 disk, then Critical, then Major), then names not seen in 8 days, then green
 "✓ OK" tiles (actions today, how many Major, their usual by now, and what
-was earlier today). An investigation runs by itself (at most one an hour per
+was earlier today). Inside each of those, the tiles keep the list's own
+order: "⠿ Arrange tiles" shows a small tile per user in that order; drag one
+by ⠿ (a mouse can take it anywhere, a finger only by ⠿ so the page still
+scrolls) or move it with ↑ ↓ or the arrow keys, then "Save order" (PIN);
+Cancel leaves the order as it was. The status below follows the same
+order. An investigation runs by itself (at most one an hour per
 user) whenever one of today's issues is not covered by the latest one: a new
 issue, or one Aternity sent late; its headline is the tile's "Why". Click a
 tile: today's issues, the investigation ("Open the investigation ▸" shows it
@@ -226,7 +231,7 @@ on the Investigate tab without running it again; "Investigate again now ▸"
 runs a new one) and the issues of the 7 days before. The tab's red count is
 the users with an alert on now; `…/#care` opens the tab.
 Issues are kept 8 days in `./data/care` (with usernames).
-Every change of the list (add, "Change label…", remove) asks for a PIN; your
+Every change of the list (add, "Change label…", remove, the order) asks for a PIN; your
 administrator has it. A wrong PIN changes nothing and is logged.
 
 For another platform (a wall screen, a service desk tool), every tile's
