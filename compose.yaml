@@ -4,7 +4,7 @@
 # live host loads it from the bundle made by
 # scripts/make-bundle.sh and never builds. Bump the tag
 # only when pyproject.toml dependencies change.
-x-image: &image uxcorrelate-runtime:3
+x-image: &image uxcorrelate-runtime:4
 
 x-settings:
   # Host address:port for the web UI. The UI has no
@@ -30,7 +30,8 @@ x-settings:
 # Before the first start:
 #   1. cp config.example.yaml config.yaml, fill <REQUIRED>
 #   2. put ATERNITY_PASSWORD / NETIM_PASSWORD in ./.env
-#      (ADMIN_PASSWORD too, for the admin page /admin)
+#      (ADMIN_PASSWORD too, for the admin page /admin;
+#      AD_USERNAME / AD_PASSWORD for Active Directory, optional)
 #      and: mkdir -p data && chmod a+rwx data
 #   3. docker compose up -d, then check the connection:
 #      docker compose exec uxcorrelate uxcorrelate verify

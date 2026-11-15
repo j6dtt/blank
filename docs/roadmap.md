@@ -21,6 +21,14 @@ version, limits, later ideas, the discussion so far).
 
 ## Waiting on you
 
+- **Image 4 on prod**: `dist/uxcorrelate-0.1.0.tar` (16 MB):
+  load the image, `x-image` to `uxcorrelate-runtime:4`,
+  `docker compose up -d`.
+- **`verify --ad` on prod** (needs image 4): part 1 with no
+  account (domain, DCs, ports, the DC's header); then
+  `AD_USERNAME` / `AD_PASSWORD` from the AD team in `.env` for
+  the login and the "N of 50" counts.
+
 - **Admin page fix on prod**: "waiting for Aternity" instead
   of an early "not known"; unnamed addresses not counted as
   people (`usage.py`, `static/admin.html`).
@@ -33,6 +41,12 @@ version, limits, later ideas, the discussion so far).
 - **`verify --ai` on stage**: the Care list samples changed.
 
 ## Agreed
+
+- **AD lookup of users and computers** (2026-11-15, the user:
+  "next step in roadmap"): image 4 has the libraries (ldap3,
+  dnspython, pycryptodome); `verify --ad` built on dev
+  (2026-11-15). Next, after prod's answers: names on the admin
+  page. See `docs/admin-roadmap.md`.
 
 - **Care list step 2**: slow start-ups as an issue; alerts out
   of the app (needs a mail relay or chat webhook: not known
@@ -53,11 +67,6 @@ version, limits, later ideas, the discussion so far).
   them in step, "Meaning checks" in verify.
 - **Ask anything**: hangs per app and software changes as
   look-ups (measure their row counts with verify first).
-- **AD lookup** (2026-11-15, proposed): names, title,
-  department and office for Aternity's usernames, on the admin
-  page first; then the Care list (add by name, labels, accounts
-  disabled in AD) and who else is affected by department. See
-  `docs/admin-roadmap.md`.
 - **Software tab**, to confirm with data: version spread,
   one-user installs, programs on few PCs.
 

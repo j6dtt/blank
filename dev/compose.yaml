@@ -1,4 +1,4 @@
-# Made-up Aternity and NetIM for the dev app (the dev host has no Riverbed).
+# Made-up Aternity, NetIM and Active Directory for the dev app (the dev host has no Riverbed, no AD).
 # Not part of the product or the bundle: dev/sample_riverbed.py says what
 # the made-up data holds. It joins the dev app's network, so config.yaml
 # reaches it by name (README.md, "Sample data for the dev app"):
@@ -7,7 +7,8 @@
 # days missing), so the Today tab has a usual from the first read.
 
 # ================================ SETTINGS ==================================
-x-image: &image uxcorrelate-runtime:3     # the app's own runtime image (compose.yaml x-image)
+x-image: &image uxcorrelate-runtime:4     # the app's own runtime image (compose.yaml x-image)
+x-ad-image: &ad_image diegogslomp/samba-ad-dc@sha256:9606e448ddd6d63a5707275e802bdc4f27e5eff1e3abbca2876f87001d1dcf40  # Samba 4.25.1
 x-network: &network riverbed_default      # the dev app's network (its compose project's default)
 # ============================================================================
 
@@ -23,6 +24,23 @@ services:
     volumes:
       - ..:/repo:ro          # this file, the real Aternity $metadata (tests/fixtures), src for the saved days
       - ../data:/data        # the app's data folder
+    networks: [app]
+    restart: unless-stopped
+
+  # A made-up Active Directory (dev/sample_ad.sh says what it holds): a real Samba domain
+  # controller, so verify --ad meets real DNS SRV records, LDAPS, StartTLS and logins (not NTLM: Samba has
+  # no Microsoft NTLM bind for LDAP). The app's
+  # config.yaml: ad.domain ad.sample.test, ad.dns [sample-ad]; its .env: AD_USERNAME, AD_PASSWORD
+  # (this container makes that account).
+  sample-ad:
+    image: *ad_image
+    container_name: sample-ad
+    hostname: dc1
+    env_file: ../.env
+    entrypoint: ["bash", "/sample_ad.sh"]
+    volumes:
+      - ./sample_ad.sh:/sample_ad.sh:ro
+    cap_add: [SYS_ADMIN]   # Samba keeps its files' rights in extended attributes
     networks: [app]
     restart: unless-stopped
 

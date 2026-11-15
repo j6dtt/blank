@@ -2004,6 +2004,234 @@ def _right(call, want) -> bool:
     return True
 
 
+# ---------------------------------------------------------------- Active Directory
+AD = "Active Directory"
+AD_DCS = 3  # domain controllers whose ports are checked
+AD_SAMPLE = 50  # Aternity's most active usernames and PCs of the last hour, looked up in AD
+AD_ROWS = 5000  # activity rows read for them (the check's limit)
+
+
+def _ad_names(settings: Settings, client, now: datetime) -> tuple[list[str], list[str], str]:
+    """Aternity's AD_SAMPLE most active usernames and PCs of the last hour, and a note (partial
+    or not read)."""
+    ent, f = settings.aternity.entities.get("activities"), settings.aternity.fields.get("activities", {})
+    try:
+        rows = client.query(ent, f"{f['timestamp']} ge {odata_time(now - timedelta(hours=1))}",
+                            select=[f["username"], f["device"]], top=AD_ROWS)
+    except ApiError as exc:
+        return [], [], f"Aternity's activity could not be read ({exc.short()})"
+    users = Counter(r.get(f["username"]) for r in rows if r.get(f["username"]))
+    pcs = Counter(r.get(f["device"]) for r in rows if r.get(f["device"]))
+    note = f"from {len(rows):,} actions of the last hour{_first(rows, AD_ROWS)}"
+    return [u for u, _ in users.most_common(AD_SAMPLE)], [p for p, _ in pcs.most_common(AD_SAMPLE)], note
+
+
+def _ad_user_text(e: dict) -> str:
+    from .ad import _one, disabled
+    parts = [_one(e.get(k)) for k in ("displayName", "title", "department", "physicalDeliveryOfficeName")]
+    said = " · ".join(str(x) for x in parts if x) or "no name, title, department or office in AD"
+    return f"{said} · {'DISABLED in AD' if disabled(e) else 'enabled'} (sAMAccountName {_one(e.get('sAMAccountName'))})"
+
+
+def _ad_pc_text(e: dict) -> str:
+    from .ad import _one, disabled, filetime, ou_of
+    last = filetime(e.get("lastLogonTimestamp"))
+    parts = [_one(e.get("operatingSystem")), f"in {ou_of(e.get('dn', ''))}", _one(e.get("description")),
+             "DISABLED in AD" if disabled(e) else "enabled",
+             f"last logon {last.date().isoformat()} (AD keeps it within about 2 weeks)" if last else None]
+    return " · ".join(str(x) for x in parts if x)
+
+
+def _tls_said(d, target: str, how: str, words: str) -> str | None:
+    """None when TLS works on this DC (ldaps or starttls), else why not."""
+    conn, why, code = d.open(target, how)
+    if conn is not None:
+        conn.unbind()
+        return None
+    return None if code is not None else f"{words} ({why})"
+
+
+def _is(n: int) -> str:
+    return "is" if n == 1 else "are"
+
+
+def _ad_match(kind: str, names: list[str], found: dict, style, note: str) -> Check:
+    """How many of Aternity's names are in AD, with how Aternity writes them; no names shown."""
+    from .ad import disabled
+    hit = [n for n in names if found.get(n)]
+    off = sum(1 for n in hit if disabled(found[n]))
+    styles = Counter(style(n) for n in names)
+    words = "usernames" if kind == "users" else "PC names"
+    msg = (f"{len(hit)} of {len(names)} of Aternity's most active {words} are in AD"
+           f"{f'; {len(names) - len(hit)} {_is(len(names) - len(hit))} not' if len(hit) < len(names) else ''}"
+           f"{f'; {off} disabled in AD' if off else ''} ({note}).")
+    rows = [f"Aternity writes {words} as {s}: {n}" for s, n in styles.most_common()]
+    ok = True if len(hit) == len(names) else None if hit else False
+    one = (f"To see one: uxcorrelate verify --ad {'--user' if kind == 'users' else '--pc'} <a name as Aternity "
+           "writes it> (its details in AD, or the names close to it)")
+    if ok is None:
+        rows.append(one)  # a check's fix is printed only with a FAIL
+    return Check(AD, kind, ok, msg, one + ".", rows=rows)
+
+
+def verify_ad(settings: Settings, aternity=None, user: str | None = None, pc: str | None = None,
+              directory=None, now: datetime | None = None) -> list[Check]:
+    """Active Directory, read only (ad.py): the domain, its DCs (DNS), their ports, a DC's own
+    header with no login, the service account's login, then Aternity's most active usernames
+    and PCs of the last hour looked up in AD (counts only: names only when typed, --user, --pc).
+    Each step says what to change."""
+    from . import ad
+    cfg = settings.ad
+    d = directory or ad.Directory(cfg.timeout)
+    now = now or datetime.now(timezone.utc)
+    checks: list[Check] = []
+    paste = lambda key, value: "ad:\n  " + f"{key}: {value}"  # noqa: E731
+
+    # the domain
+    domain, where = (cfg.domain, "ad.domain in config.yaml") if cfg.domain else ("", "")
+    host = ad.host_domains()
+    if not domain and host:
+        domain, where = host[0], ("this host's DNS search domain" if len(host) == 1 else
+                                  f"the first of this host's DNS search domains: {', '.join(host)}")
+    if domain:
+        checks.append(Check(AD, "domain", True, f"{domain} ({where})."))
+    elif not cfg.servers:
+        return [Check(AD, "domain", False, "No domain: ad.domain is empty and this host's DNS has no search domain.",
+                      "Put the AD domain in config.yaml.", paste=paste("domain", "<your AD domain, e.g. corp.example>"))]
+    else:
+        checks.append(Check(AD, "domain", None, "Not known (ad.domain is empty): a login by name alone needs it."))
+
+    # its domain controllers
+    if cfg.servers:
+        dcs = [ad.Dc(h, addr=ad.address_of(h, cfg.dns, cfg.timeout)) for h in cfg.servers]
+        checks.append(Check(AD, "domain controllers", True, f"{len(dcs)} in ad.servers: {', '.join(cfg.servers)}."))
+    else:
+        dcs, record, tried = [], "", []
+        # every search domain and those above it (on Kubernetes the first ones are the cluster's own)
+        names = [domain] if cfg.domain else list(dict.fromkeys(n for h in host for n in ad.candidates(h)))
+        for name in names:
+            dcs, record, t = ad.srv_dcs(name, cfg.dns, cfg.timeout)
+            tried += t
+            if dcs:
+                if name != domain:
+                    checks.append(Check(AD, "domain", None, f"The DCs are those of {name}, found through this "
+                                        f"host's DNS search list. Set ad.domain to it to say so.",
+                                        paste=paste("domain", name)))
+                    domain = name
+                break
+        asked = f"asked of {', '.join(cfg.dns)} (ad.dns)" if cfg.dns else "asked of this host's DNS"
+        if not dcs:
+            checks.append(Check(AD, "domain controllers", False, f"None found in DNS ({asked}).",
+                                "Set ad.dns to a DNS server that knows the AD (a DC's address often is one), "
+                                "or ad.servers to the DCs' names.", rows=tried))
+            return checks
+        shown = [x.host for x in dcs[:AD_DCS]]
+        checks.append(Check(AD, "domain controllers", True,
+                            f"{len(dcs)} found in DNS ({record}, {asked}): {', '.join(shown)}"
+                            f"{f' and {len(dcs) - AD_DCS} more' if len(dcs) > AD_DCS else ''}."))
+
+    # their ports, StartTLS, and a DC's own header (no login)
+    usable: list[tuple[ad.Dc, dict]] = []
+    for dc in dcs[:AD_DCS]:
+        target = dc.addr or dc.host  # its address from ad.dns, else its name for this host's DNS
+        ports = {ad.LDAPS_PORT: ad.reachable(target, ad.LDAPS_PORT, cfg.timeout),
+                 ad.LDAP_PORT: ad.reachable(target, ad.LDAP_PORT, cfg.timeout)}
+        # TLS itself, with no login: a DC with no certificate takes the connection on 636 and fails
+        # TLS. An answer of AD's (a result code, a refused anonymous bind) means TLS worked.
+        if ports[ad.LDAPS_PORT] is None:
+            ports[ad.LDAPS_PORT] = _tls_said(d, target, "ldaps", "the port answers, its TLS does not")
+        ports["starttls"] = _tls_said(d, target, "starttls", "StartTLS fails") if ports[ad.LDAP_PORT] is None \
+            else "389 does not answer"
+        said = [f"LDAPS (636) {'works' if ports[ad.LDAPS_PORT] is None else ports[ad.LDAPS_PORT]}",
+                f"389 {'answers' if ports[ad.LDAP_PORT] is None else ports[ad.LDAP_PORT]}"]
+        if ports[ad.LDAP_PORT] is None:
+            said.append("StartTLS works" if ports["starttls"] is None else ports["starttls"])
+        tls = ports[ad.LDAPS_PORT] is None or ports["starttls"] is None
+        ok = True if tls else None if ports[ad.LDAP_PORT] is None else False
+        checks.append(Check(AD, dc.host + (f" ({dc.addr})" if dc.addr else ""), ok, "; ".join(said) + "." + (
+            "" if tls else " With no TLS only an NTLM login can be tried (a password never goes over plain LDAP)."
+            if ok is None else ""), "Nothing answers from this host: a firewall between it and the DC? "
+                                    "The AD team can say which ports are open to this host."))
+        if ports[ad.LDAPS_PORT] is None or ports[ad.LDAP_PORT] is None:
+            usable.append((dc, ports))
+    if any("its TLS does not" in str(p[ad.LDAPS_PORT]) for _, p in usable):
+        checks.append(Check(AD, "TLS", None, "A DC takes the connection on 636 but its TLS fails: often a DC with no "
+                            "certificate (the AD team gives DCs one with AD Certificate Services). StartTLS needs the "
+                            "same certificate."))
+    if not usable:
+        return checks
+    dc, ports = usable[0]
+    target = dc.addr or dc.host
+    how = "ldaps" if ports[ad.LDAPS_PORT] is None else "starttls" if ports["starttls"] is None else "ldap"
+    root, why = d.root(target, how)
+    base = cfg.base_dn or root.get("defaultNamingContext") or (ad.base_of(domain) if domain else "")
+    if not domain and root.get("defaultNamingContext"):  # ad.servers with no domain: the DC's own
+        domain = ad.domain_of(root["defaultNamingContext"])
+    if root:
+        level = ad.LEVELS.get(str(root.get("domainFunctionality")), root.get("domainFunctionality"))
+        checks.append(Check(AD, "directory", True,
+                            f"{root.get('dnsHostName') or dc.host} answers with no login: the domain's base is "
+                            f"{root.get('defaultNamingContext') or 'not given'}"
+                            f"{f', its level Windows Server {level}' if level else ''}."
+                            + (f" Users and PCs are looked for under {cfg.base_dn} (ad.base_dn)." if cfg.base_dn else "")))
+    else:
+        checks.append(Check(AD, "directory", None, f"{dc.host}'s header could not be read with no login ({why}): "
+                            "some DCs refuse that. The login below does not need it."))
+
+    # the service account's login
+    if not (cfg.username and cfg.password):
+        checks.append(Check(AD, "login", None, "Not set: AD_USERNAME and AD_PASSWORD in .env (a read-only "
+                            "service account), then docker compose up -d. The steps above need no login; the "
+                            "look-ups of users and PCs run once they are set."))
+        return checks
+    conn, words, failed = d.login(target, cfg.username, cfg.password, domain, ports)
+    if conn is None:
+        wrong = any("login refused" in f for f in failed)
+        checks.append(Check(AD, "login", False, "Could not log in as AD_USERNAME." + (
+            " The tries stopped at the refused password: each wrong one counts towards AD's lockout." if wrong else ""),
+            "Check AD_USERNAME and AD_PASSWORD in .env (then docker compose up -d)." if wrong else
+            "Ask the AD team which login the DCs allow from this host (LDAPS on 636 is the usual).",
+            rows=failed or ["no way to log in was open (see the ports above)"]))
+        return checks
+    checks.append(Check(AD, "login", True, f"Logged in as AD_USERNAME over {words}.", rows=failed))
+    try:
+        if not base:
+            checks.append(Check(AD, "look-ups", False, "No base to look under.", "Set ad.domain or ad.base_dn.",
+                                paste=paste("base_dn", "<DC=corp,DC=example>")))
+            return checks
+        if user or pc:
+            if user:
+                e, sam = ad.users(d, conn, base, [user])[user], ad.user_parts(user)[0]
+                near = [] if e else ad.similar(d, conn, base, sam)
+                checks.append(Check(AD, f"user {user}", True, _ad_user_text(e)) if e else Check(
+                    AD, f"user {user}", None, f"Not in AD as {sam} (sAMAccountName"
+                    f"{' or userPrincipalName' if '@' in user else ''}) under {base}."
+                    + (f" Names with \"{sam}\" in them: {', '.join(near)}." if near else "")))
+            if pc:
+                e, short = ad.computers(d, conn, base, [pc])[pc], ad.pc_parts(pc)[0]
+                near = [] if e else ad.similar(d, conn, base, short, computer=True)
+                checks.append(Check(AD, f"PC {pc}", True, _ad_pc_text(e)) if e else Check(
+                    AD, f"PC {pc}", None, f"Not in AD as a computer named {short} under {base}."
+                    + (f" Computers with \"{short}\" in their name: {', '.join(near)}." if near else "")))
+            return checks
+        if aternity is None:
+            checks.append(Check(AD, "users and PCs", None, "Aternity is not set: no names to look up. "
+                                "One name: verify --ad --user NAME or --pc NAME."))
+            return checks
+        users, pcs, note = _ad_names(settings, aternity, now)
+        if not users and not pcs:
+            checks.append(Check(AD, "users and PCs", None, f"Nothing to look up: {note}."))
+            return checks
+        checks.append(_ad_match("users", users, ad.users(d, conn, base, users), ad.user_style, note))
+        checks.append(_ad_match("computers", pcs, ad.computers(d, conn, base, pcs), ad.pc_style, note))
+    except LookupError as exc:
+        checks.append(Check(AD, "look-ups", False, f"Logged in, but {exc}.",
+                            "Set ad.base_dn to where users and PCs are, or ask the AD team what this account may read."))
+    finally:
+        conn.unbind()
+    return checks
+
+
 def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
     """Each AI service in ai.services: key, reachable, a plain reply, picking the right
     software look-up, then Explain, the assessment and Ask anything over made-up records."""

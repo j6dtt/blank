@@ -153,7 +153,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: uxcorrelate
-          image: "<REGISTRY>/uxcorrelate-runtime:3"
+          image: "<REGISTRY>/uxcorrelate-runtime:4"
           imagePullPolicy: IfNotPresent
           # http only: TLS ends at the ingress
           args: ["serve", "--host", "0.0.0.0", "--port", "8080"]

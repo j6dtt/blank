@@ -15,7 +15,7 @@ uxcorrelate -c config.yaml <command>    # -c goes BEFORE the sub-command
 docker compose up -d --build            # web UI on :8080 (needs config.yaml)
 scripts/make-bundle.sh                  # tests, then bundle for the live host
 scripts/snapshot.sh DIR                 # every test investigation's report + page data
-docker compose -f dev/compose.yaml up -d  # dev only: made-up Aternity + NetIM (then restart the app)
+docker compose -f dev/compose.yaml up -d  # dev only: made-up Aternity + NetIM + AD (then restart the app)
 ```
 
 Before and after any change to what an investigation says: run
@@ -674,6 +674,35 @@ demo mode: nothing in `src/` knows about it.
   waits for that evidence), so other hardware is added from it, and
   from the same read whether one row holds several times
   (`_times_in_a_row`: `HEALTH_EVENT_VOLUME` above 1, by event).
+- `ad.py` + `verify --ad` (`verify.verify_ad`, the user's "build it",
+  2026-11-15; docs/admin-roadmap.md): Active Directory, read only, not
+  yet used by the app. Domain: `ad.domain` (config.yaml `ad:`,
+  `AdConfig`), else the host's resolv.conf search domain and those
+  above it (`candidates`); DCs: `ad.servers`, else DNS SRV
+  (`SRV_NAMES`: `_ldap._tcp.dc._msdcs.<domain>`, then `_ldap._tcp`),
+  asked of `ad.dns` (names allowed: a DC's address from it, `Dc.addr`)
+  or the host's; up to `AD_DCS` DCs' 636 / 389 / StartTLS; the RootDSE
+  with no login. The account is `AD_USERNAME` / `AD_PASSWORD` in .env
+  only (in config.yaml it is a ValueError). Login (`Directory.login`):
+  LDAPS simple (UPN `name@domain`, AD's implicit UPN), StartTLS
+  simple, LDAPS NTLM, 389 NTLM (`DOMAIN\name` as given, else the DNS
+  domain: the NetBIOS name is not known before a login); `open`
+  refuses a simple bind over plain LDAP; a 49 stops the tries (each
+  wrong one counts towards AD's lockout); AD's data codes in plain
+  words (`WHY`; 52e is "the name or password is wrong": Samba and AD
+  send it for a name they do not know too). Certificates not checked
+  (as `http.py`). Look-ups in OR batches of `BATCH`, values escaped:
+  users by sAMAccountName / userPrincipalName (`USER_ATTRS`), PCs by
+  sAMAccountName `NAME$` (15 characters), cn, dNSHostName
+  (`COMPUTER_ATTRS`; lastLogonTimestamp is FILETIME, kept by AD within
+  about 2 weeks). Then `AD_SAMPLE` (50) most active usernames and PCs of
+  the last hour (`AD_ROWS`): "N of 50 … are in AD", disabled, and how
+  Aternity writes them; counts only, names only when typed (`--user`,
+  `--pc`: details, or `similar` names). Runs in the full verify once
+  `ad:` or `AD_USERNAME` is set. Dev: `sample-ad` (dev/compose.yaml), a
+  real Samba DC filled by `dev/sample_ad.sh`; Samba has no Microsoft
+  "Sicily" NTLM bind, so NTLM is not proven on dev. Tests: ldap3's
+  MOCK_SYNC with `OFFLINE_AD_2012_R2` (`tests/test_ad.py`).
 - `verify --software` (`verify._software`, only on its own), short: what
   `INSTALLED_SOFTWARE` (`SOFTWARE_SOURCE`, `SOFTWARE_COLUMNS`) gives the
   Software tab: PCs, programs, installs and `SOFTWARE_USER_SCOPE`
@@ -882,7 +911,14 @@ demo mode: nothing in `src/` knows about it.
   out of the image. The live host is air-gapped: it loads the image from the
   bundle and never builds; bump `x-image` in `compose.yaml` when
   dependencies change. Base is the official `python:3.13-alpine`, two
-  stages into `FROM scratch`, no pip; only pyproject dependencies.
+  stages into `FROM scratch`, no pip; only pyproject dependencies, every
+  version pinned in `constraints.txt` (a rebuild once pulled whatever was
+  newest). Image 4 (2026-11-15, the user: "a new image with AD
+  users/computers lookup tools") = image 3's libraries + ldap3, pyasn1,
+  dnspython (domain controllers from DNS SRV records) and pycryptodome
+  (MD4 for ldap3's NTLM login: OpenSSL 3 has none; its SelfTest folder
+  is deleted); bundle 16 MB. `ad.py` (verify --ad) uses ldap3 and
+  dnspython; pycryptodome is ldap3's MD4 for NTLM.
 - Kubernetes: `k8s/uxcorrelate.yaml` (one pod, `Recreate`; code, data and
   config.yaml on an NFS volume as with compose; Secret from `.env`; TLS at
   the ingress). Keep it in step with `compose.yaml`: stage runs on Docker

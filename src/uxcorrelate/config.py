@@ -5,6 +5,7 @@ with environment variables for secrets:
 
     ATERNITY_URL, ATERNITY_USERNAME, ATERNITY_PASSWORD
     NETIM_URL, NETIM_USERNAME, NETIM_PASSWORD
+    AD_USERNAME, AD_PASSWORD (Active Directory's read-only service account)
 
 Aternity column names and NetIM endpoint paths / metric names differ between
 product versions and tenants, so every one of them is configurable. Run
@@ -397,12 +398,27 @@ class Topology:
 
 
 @dataclass
+class AdConfig:
+    """Active Directory, read only (ad.py, verify --ad; docs/admin-roadmap.md). Every key may stay
+    empty: it is found. The service account is AD_USERNAME and AD_PASSWORD in .env, never here."""
+
+    domain: str = ""  # the AD domain (corp.example); empty: this host's DNS search domain
+    servers: list[str] = field(default_factory=list)  # domain controllers; empty: found in DNS
+    dns: list[str] = field(default_factory=list)  # DNS servers to ask for them; empty: this host's
+    base_dn: str = ""  # where users and computers are looked for; empty: the domain's own
+    timeout: float = 5.0  # seconds for each answer (DNS, a port, LDAP)
+    username: str = ""  # AD_USERNAME
+    password: str = ""  # AD_PASSWORD
+
+
+@dataclass
 class Settings:
     aternity: AternityConfig = field(default_factory=AternityConfig)
     netim: NetimConfig = field(default_factory=NetimConfig)
     thresholds: Thresholds = field(default_factory=Thresholds)
     topology: Topology = field(default_factory=Topology)
     ai: AiConfig = field(default_factory=AiConfig)
+    ad: AdConfig = field(default_factory=AdConfig)
     care_list: list[CareUser] = field(default_factory=list)
     # a problem counts for a slow action recorded up to this many minutes before or after it
     bucket_minutes: int = 5
@@ -431,7 +447,7 @@ def _merge_dataclass(obj: Any, data: dict[str, Any]) -> None:
             setattr(obj, key, value)
 
 
-TOP_KEYS = ("aternity", "netim", "thresholds", "topology", "ai", "care_list", "bucket_minutes", "boot_unit",
+TOP_KEYS = ("aternity", "netim", "thresholds", "topology", "ai", "ad", "care_list", "bucket_minutes", "boot_unit",
             "timezone", "refresh_minutes", "title")
 
 
@@ -481,6 +497,15 @@ def load_settings(path: str | os.PathLike | None = None) -> Settings:
         _merge_dataclass(settings.netim, raw.get("netim"))
         _merge_dataclass(settings.thresholds, raw.get("thresholds"))
         _merge_dataclass(settings.topology, raw.get("topology"))
+        ad = dict(raw.get("ad") or {})
+        for key in ("username", "password"):  # secrets: .env only
+            if ad.pop(key, None) not in (None, ""):
+                raise ValueError(f"ad.{key} does not go in config.yaml: put AD_{key.upper()}=... in .env")
+        for key in ("servers", "dns"):  # one name, or a list
+            if isinstance(ad.get(key), str):
+                ad[key] = [ad[key]] if ad[key].strip() else []
+        _merge_dataclass(settings.ad, ad)
+        settings.ad.domain = settings.ad.domain.strip().strip(".")
         if "bucket_minutes" in raw:
             settings.bucket_minutes = int(raw["bucket_minutes"])
         if "boot_unit" in raw:
@@ -513,4 +538,6 @@ def load_settings(path: str | os.PathLike | None = None) -> Settings:
     settings.netim.base_url = env.get("NETIM_URL", settings.netim.base_url)
     settings.netim.username = env.get("NETIM_USERNAME", settings.netim.username)
     settings.netim.password = env.get("NETIM_PASSWORD", settings.netim.password)
+    settings.ad.username = env.get("AD_USERNAME", "").strip()
+    settings.ad.password = env.get("AD_PASSWORD", "")
     return settings

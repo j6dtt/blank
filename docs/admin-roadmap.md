@@ -109,16 +109,42 @@ Known limits of the first version:
 - **App health**: version, uptime, restarts, unexpected errors
   (the last 20), running and queued jobs, size of each `data/`
   folder, HTTPS certificate expiry, config.yaml notes.
-- **AD lookup for names** (asked 2026-11-15, proposed): each
-  username looked up in Active Directory (LDAP, a read-only
-  service account) for name, title, department and office, kept
-  a day. On the admin page first ("Pat Lee, Finance" beside
+- **AD lookup of users and computers** (asked 2026-11-15; next
+  step, the user: "Create a new image with AD users/computers
+  lookup tools"): each username looked up in Active Directory
+  (LDAP, a read-only service account) for name, title,
+  department and office; each desktop's computer object for its
+  description, OU, operating system and whether it is enabled;
+  kept a day. On the admin page first ("Pat Lee, Finance" beside
   sample40); later the Care list's Add a user by name, its
   labels and accounts disabled in AD, and who else is affected
-  grouped by department. Needs: a domain controller reachable
-  from the app's host, the account's password in `.env`, one
-  small library (ldap3, pure Python), and a `verify --ad` on
-  stage first (does Aternity's username match AD's?).
+  grouped by department.
+  - Image 4 (built 2026-11-15): ldap3 (LDAP),
+    dnspython (finds the domain controllers from DNS SRV
+    records), pycryptodome (MD4, for ldap3's NTLM login: this
+    Python's OpenSSL 3 has none). Bundle 16 MB (limit 25).
+    Image 3's libraries unchanged (pinned in `constraints.txt`).
+  - Login, recommended: the service account over LDAPS (636), or
+    StartTLS on 389. NTLM is there too, but ldap3's NTLM cannot
+    sign, so a domain that requires LDAP signing refuses it.
+    Kerberos is not in the image (C libraries and a keytab).
+  - `verify --ad` built on dev (2026-11-15, the user: "build
+    it"), tested against a real Samba DC (dev/compose.yaml
+    `sample-ad`): the domain, its DCs (DNS SRV), 636 / 389 /
+    StartTLS on up to 3 DCs, a DC's header with no login, the
+    login (LDAPS, StartTLS, then NTLM; a password never over
+    plain LDAP; a refused password stops: AD's lockout), then
+    "N of 50" of Aternity's most active usernames and PCs of the
+    last hour in AD, and how Aternity writes them. Counts only;
+    `--user` / `--pc` for one. NTLM not proven on dev (Samba has
+    no Microsoft NTLM bind for LDAP).
+  - To find out on prod with it: the answers to the points
+    above, first with no account (part 1 needs none), then with
+    the service account.
+  - Next, once prod's answers are in: the look-up on the admin
+    page (name and department beside each person), kept a day.
+  - Needs from the AD team: a read-only service account (its
+    password in `.env`), the domain name or a DC address.
 - **Tools for prod** (no paste there): run `verify` (or
   `--overview`, `--ai`) from the page; the app's log for the
   last hours and config.yaml as loaded, secrets filtered out.
@@ -189,3 +215,7 @@ Known limits of the first version:
 8. User: "What's SPN?" Answered (the name the AD team registers
    for the app's address, so Windows can issue tickets for it).
 9. User: "Build it". Built the first version above.
+10. User: "Create a new image with AD users/computers lookup
+    tools". Image 4 (ldap3, dnspython, pycryptodome).
+11. User: "should we start on verify --ad?", then "build it".
+    Built on dev (AD lookup, above).

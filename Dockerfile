@@ -1,20 +1,22 @@
 # Runtime only: Python + the libraries from pyproject.toml. The app code is
 # NOT in the image; compose.yaml mounts ./src at /app/src, so a code fix is
 # "edit the file, docker compose restart". Rebuild only when dependencies
-# in pyproject.toml change (then bump the image tag in compose.yaml).
+# in pyproject.toml change (then bump the image tag in compose.yaml). Every
+# library's version is pinned in constraints.txt, so a rebuild changes only
+# what was changed there on purpose.
 #
 # Kept small for the air-gapped bundle (limit 25 MB): the libraries are
 # installed in a build stage, then pip, compiled caches and Python's desktop
 # extras are deleted and the result is copied into one fresh layer.
 FROM python:3.13-alpine AS build
 
-COPY pyproject.toml /tmp/pyproject.toml
+COPY pyproject.toml constraints.txt /tmp/
 RUN python -c "import tomllib; print('\n'.join(tomllib.load(open('/tmp/pyproject.toml', 'rb'))['project']['dependencies']))" \
       > /tmp/requirements.txt \
- && pip install --no-cache-dir --root-user-action=ignore -r /tmp/requirements.txt \
+ && pip install --no-cache-dir --root-user-action=ignore -c /tmp/constraints.txt -r /tmp/requirements.txt \
  && pip uninstall -y --root-user-action=ignore pip \
  && cd /usr/local/lib/python3.13 \
- && rm -rf ensurepip idlelib tkinter turtledemo turtle.py pydoc_data \
+ && rm -rf ensurepip idlelib tkinter turtledemo turtle.py pydoc_data site-packages/Crypto/SelfTest \
  && find / -xdev -name __pycache__ -type d -prune -exec rm -rf {} + \
  && rm -rf /tmp/* /root/.cache \
  && printf '#!/bin/sh\nexec python -m uxcorrelate.cli "$@"\n' > /usr/local/bin/uxcorrelate \

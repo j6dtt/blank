@@ -13,6 +13,11 @@ dependencies = [
     "pyyaml>=6.0",
     "fastapi>=0.110",
     "uvicorn>=0.29",
+    # Active Directory look-ups of users and computers (docs/admin-roadmap.md): LDAP, the domain
+    # controllers from DNS (SRV records), and MD4 for ldap3's NTLM login (OpenSSL 3 has none)
+    "ldap3>=2.9",
+    "dnspython>=2.6",
+    "pycryptodome>=3.20",
 ]
 
 [project.optional-dependencies]

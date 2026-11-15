@@ -181,6 +181,12 @@ def cmd_verify(args) -> int:
         checks += part(item, run, client=client)
         print(render_checks(checks))
         return 1 if any(c.ok is False for c in checks) else 0
+    if args.ad:  # only Active Directory (read only): the domain, its DCs, the login, names looked up
+        from .verify import AD, verify_ad
+        client = AternityClient(settings.aternity) if settings.aternity.base_url else None
+        checks += part(AD, lambda: verify_ad(settings, client, user=args.user, pc=args.pc), client=client, system=AD)
+        print(render_checks(checks))
+        return 1 if any(c.ok is False for c in checks) else 0
     if args.ai:  # only the AI services: seconds, not the minutes the Riverbed checks take
         checks += part("AI services", verify_ai, settings, system="AI service")
         print(render_checks(checks))
@@ -199,6 +205,10 @@ def cmd_verify(args) -> int:
                        AternityClient(settings.aternity), NetimClient(settings.netim), system="NetIM")
     if settings.ai.services:
         checks += part("AI services", verify_ai, settings, system="AI service")
+    if settings.ad.domain or settings.ad.servers or settings.ad.username:  # set up: checked too
+        from .verify import AD, verify_ad
+        client = AternityClient(settings.aternity) if settings.aternity.base_url else None
+        checks += part(AD, lambda: verify_ad(settings, client), client=client, system=AD)
     print(render_checks(checks))
     return 1 if any(c.ok is False for c in checks) else 0
 
@@ -256,7 +266,11 @@ def main(argv: list[str] | None = None) -> int:
     ver.add_argument("--ai", action="store_true", help="only the AI services (ai.services in config.yaml)")
     ver.add_argument("--software", action="store_true",
                      help="only what Aternity's installed software list holds (no PC names shown)")
-    ver.add_argument("--pc", help="with --software: only this PC's list, to compare with its Settings > Apps")
+    ver.add_argument("--pc", help="with --software: only this PC's list, to compare with its Settings > Apps; "
+                                  "with --ad: this PC's computer object in AD")
+    ver.add_argument("--ad", action="store_true",
+                     help="only Active Directory (read only): its domain controllers, the login, users and PCs")
+    ver.add_argument("--user", help="with --ad: this user in AD, as Aternity writes the username")
     ver.add_argument("--versions", action="store_true",
                      help="only each application's version on crashes, hangs and actions (no PC names shown)")
     ver.set_defaults(func=cmd_verify)

@@ -97,3 +97,14 @@ ai:
   #   base_url: ""    # the service's API address, up to and including /v1
   #   model: ""       # the model's name on that service (verify lists them)
   #   key_env: ""     # the .env line that holds its key, e.g. AI_KEY_1
+
+# Optional: Active Directory, read only (users and computers). Every key
+# may stay empty: the domain is this host's DNS search domain, its domain
+# controllers come from DNS. The read-only service account goes in .env:
+# AD_USERNAME=... and AD_PASSWORD=... (never here).
+# `uxcorrelate verify --ad` checks each step and says what to change.
+ad:
+  domain: ""          # the AD domain; empty: this host's DNS search domain
+  servers: []         # domain controllers; empty: found in DNS
+  dns: []             # DNS servers that know the AD; empty: this host's
+  base_dn: ""         # where to look for users and PCs; empty: the whole domain

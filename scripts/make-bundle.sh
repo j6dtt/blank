@@ -45,7 +45,7 @@ First install:
   docker load < image.tar.xz            # loads $image
   cp config.example.yaml config.yaml    # fill every <REQUIRED> value
   chmod -R o+rX src config.yaml         # the container user (uid 1000) must read them
-  vi .env                               # ATERNITY_PASSWORD=...  NETIM_PASSWORD=...  ADMIN_PASSWORD=...
+  vi .env                               # ATERNITY_PASSWORD=...  NETIM_PASSWORD=...  ADMIN_PASSWORD=...  (AD_USERNAME= AD_PASSWORD=)
   chmod 600 .env
   docker compose up -d
   docker compose exec uxcorrelate uxcorrelate verify

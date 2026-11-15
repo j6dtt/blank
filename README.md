@@ -444,7 +444,8 @@ docker compose ps                 # STATUS shows "(healthy)" after ~30 s
 The image holds only Python and the libraries; `compose.yaml` mounts the
 code from `./src`. To fix code, edit `src/uxcorrelate/*.py` and run
 `docker compose restart`; rebuild only when dependencies in
-`pyproject.toml` change. The settings block at the top of `compose.yaml`
+`pyproject.toml` change (every library's version is pinned in
+`constraints.txt`; bump `x-image` with it). The settings block at the top of `compose.yaml`
 lists what to do before the first start. Healthy means the web server is up; it
 does not mean Aternity or NetIM are reachable (`verify` checks that).
 
@@ -542,6 +543,16 @@ The settings block at the top of `dev/sample_riverbed.py` holds the time
 zone, how long each kind of data is kept (activity 8 days, as prod) and
 the seed; `uxcorrelate verify` passes against it.
 
+The same compose file starts a made-up Active Directory for
+`verify --ad`: `sample-ad`, a real Samba domain controller, so DNS SRV
+records, LDAPS, StartTLS and logins are real. `dev/sample_ad.sh` fills
+it: domain `ad.sample.test`, sample01..47 (sample48 disabled; sample49
+and 50 not in AD), PC-001..034 and VD-01..16 (PC-034 disabled; PC-035
+and 036 not in AD), and the service account named by `AD_USERNAME` /
+`AD_PASSWORD` in the repo's `.env`. Dev's `config.yaml` has
+`ad: {domain: ad.sample.test, dns: [sample-ad]}`. Samba has no
+Microsoft NTLM bind for LDAP, so the NTLM tries are not run on dev.
+
 ## Connect to Riverbed
 
 ### What you need
@@ -632,6 +643,22 @@ back to dev.
   other PCs have change-log rows in the same minute.
 - **Process data:** every published data source with a process column,
   whether it has rows, and its CPU/memory/IO columns.
+- **Active Directory** (`verify --ad`, read only; also at the end of a
+  full `verify` once an `ad:` block or `AD_USERNAME` is set): the
+  domain (`ad.domain`, else this host's DNS search domain and those
+  above it), its domain controllers from DNS SRV records (`ad.servers`
+  to name them, `ad.dns` to ask another DNS server), on up to 3 of them
+  whether LDAPS (636), 389 and StartTLS answer, and a DC's own header
+  with no login (its name, the domain's base, its level). With
+  `AD_USERNAME` / `AD_PASSWORD` in `.env` (a read-only service
+  account): the login, over LDAPS, then StartTLS, then NTLM. A password
+  never goes over plain LDAP, and a refused password stops the tries
+  (each wrong one counts towards AD's lockout). Then: how many of
+  Aternity's 50 most active usernames and PCs of the last hour are in
+  AD, and how Aternity writes them (`DOMAIN\name`, `name@domain`, the
+  name alone). Counts only. `--user NAME` / `--pc NAME` show that one
+  user's or PC's AD details (name, title, department, office, enabled;
+  OS, OU, description, last logon), or the names close to it.
 - **A reply it cannot read** (device addresses, interface addresses, metric
   data): it prints the reply's key names, never values, and which function
   in `./src/uxcorrelate/netim.py` to fix. Edit it there and run
