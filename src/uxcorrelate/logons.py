@@ -39,10 +39,14 @@ def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat().replace("+00:00", "Z") if dt else None
 
 
+P90_MIN = 10  # "1 in 10 over" only from this many measured: from 2 of 10 s and 20 s it said "over 27 s"
+
+
 def _stats(values: list[float]) -> dict:
-    p90 = quantiles(values, n=10)[-1] if len(values) >= 2 else values[0]
+    """Typical (the middle value), 1 in 10 over (None under P90_MIN: worked out past the slowest), slowest."""
+    p90 = quantiles(values, n=10)[-1] if len(values) >= P90_MIN else None
     return {"count": len(values), "typical": round(median(values), 1),
-            "p90": round(p90, 1), "max": round(max(values), 1)}
+            "p90": None if p90 is None else round(p90, 1), "max": round(max(values), 1)}
 
 
 def _when(b: BootSample) -> datetime:
@@ -105,7 +109,7 @@ def logon_report(aternity, start: datetime, end: datetime, username: str | None 
     each other, not with one desktop's history of many users."""
     empty = {"start": _iso(start), "end": _iso(end), "unit": unit, "total": 0, "types": [], "starts": [],
              "by_location": [], "causes": [], "filters": {"username": username, "device": device, "location": location},
-             "warnings": list(getattr(aternity, "warnings", []))}
+             "warnings": list(dict.fromkeys(getattr(aternity, "warnings", [])))}
     if not hasattr(aternity, "boots"):
         return empty
     scope = ", ".join(f"{k} {v}" for k, v in (("user", username), ("device", device),
@@ -114,7 +118,7 @@ def logon_report(aternity, start: datetime, end: datetime, username: str | None 
     samples = [b for b in aternity.boots(start, end, username=username, device=device, location=location)
                if b.duration is not None]
     if not samples:
-        empty["warnings"] = list(getattr(aternity, "warnings", []))
+        empty["warnings"] = list(dict.fromkeys(getattr(aternity, "warnings", [])))
         return empty
 
     per_type: dict[str, list[float]] = defaultdict(list)
@@ -132,8 +136,13 @@ def logon_report(aternity, start: datetime, end: datetime, username: str | None 
             virtual = aternity.virtual_devices(start - timedelta(days=BASELINE_DAYS), end, username=username)
         pooled = virtual or set()
     hkey = lambda b: (POOLED if b.device in pooled else b.device, _type(b))  # noqa: E731
+    hist_unread = False
     if username or device:  # one person: compare with their own last 30 days
-        for b in aternity.boots(start - timedelta(days=BASELINE_DAYS), start, username=username, device=device):
+        mark = _said(aternity)
+        before = aternity.boots(start - timedelta(days=BASELINE_DAYS), start, username=username, device=device)
+        # failed or cut short: not compared (it read "only 0 earlier ...: too few")
+        hist_unread = _said(aternity) != mark
+        for b in [] if hist_unread else before:
             if b.duration is not None:
                 hist[hkey(b)].append((_when(b), b.duration, b.device))
         usual = {k: median(r[1] for r in v) for k, v in hist.items()}
@@ -147,10 +156,13 @@ def logon_report(aternity, start: datetime, end: datetime, username: str | None 
     starts = sorted(group_starts(samples), key=key)
     shown = starts[:top]
     comps: list[BootComponent] = []
+    parts_unread = False
     if shown and hasattr(aternity, "boot_components"):
         devices = list(dict.fromkeys(st[0].device for st in shown[:COMPONENTS_FOR]))
         log.info("Aternity: reading what slowed the %d slowest start-ups", min(len(shown), COMPONENTS_FOR))
+        mark = _said(aternity)
         comps = aternity.boot_components(devices, start - SAME_START, end + SAME_START)
+        parts_unread = _said(aternity) != mark  # not "no breakdown recorded"
 
     parts = parts_of(starts, comps)
     items = []
@@ -165,13 +177,19 @@ def logon_report(aternity, start: datetime, end: datetime, username: str | None 
             "device": first.device, "location": next((b.location for b in st if b.location), None),
             "values": values, "components": _components_of(parts.get(i, [])) if i < COMPONENTS_FOR else [],
             "why": [], "cause": None, "unusual": None, "changes_since": [],
-            "pooled": first.device in pooled,
+            "pooled": first.device in pooled, "parts_unread": parts_unread and i < COMPONENTS_FOR,
         })
     if username or device:
         for st in items[:WHY_FOR]:
+            if hist_unread:
+                st["why"].append(f"Aternity's read of {'their' if st['pooled'] else 'its'} earlier start-ups failed "
+                                 "or was cut short: not compared with what is normal.")
+                continue
             _against_history(aternity, st, hist, unit)
 
     causes = _causes(aternity, items[:WHY_FOR], start, end, unit)
+    for st in items:
+        st.pop("parts_unread", None)
 
     groups: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
     for b in samples:
@@ -187,8 +205,13 @@ def logon_report(aternity, start: datetime, end: datetime, username: str | None 
         "types": [{"type": t, **_stats(per_type[t])} for t in types],
         "sort_type": sort_type, "starts": items, "by_location": by_location[:20], "causes": causes,
         "baseline_days": BASELINE_DAYS if (username or device) else None,
-        "warnings": list(getattr(aternity, "warnings", [])),
+        "warnings": list(dict.fromkeys(getattr(aternity, "warnings", []))),
     }
+
+
+def _said(aternity) -> int:
+    """Warnings the source has said: a read that fails or is cut short adds one."""
+    return len(getattr(aternity, "warnings", None) or [])
 
 
 def _p90(values: list[float]) -> float:
@@ -246,7 +269,9 @@ def _causes(aternity, starts: list[dict], start: datetime, end: datetime, unit: 
     keys: Counter = Counter()
     for st in starts:
         slow = next((c for c in st["components"] if c["degradation"]), None)
-        if not st["components"]:
+        if not st["components"] and st.pop("parts_unread", False):
+            st["why"].append("Aternity's read of what took the time failed or was cut short.")
+        elif not st["components"]:
             st["why"].append("Aternity recorded no breakdown for this start-up.")
         elif slow is None:
             c = max(st["components"], key=lambda c: c["duration"] or 0)
@@ -271,7 +296,10 @@ def _causes(aternity, starts: list[dict], start: datetime, end: datetime, unit: 
             break
         log.info("Aternity: who else had %s slower than normal", comp)
         named = None if comp == typ else comp  # a part without a component name goes by its type
+        mark = _said(aternity)
         rows = [c for c in aternity.boot_component_everywhere(named, typ, start, end) if c.degradation]
+        if _said(aternity) != mark:  # who else is not known: no main cause ("longer than normal on 0 PCs")
+            continue
         pcs: dict[str, dict] = {}
         for c in sorted(rows, key=lambda c: c.timestamp):
             p = pcs.setdefault(c.device, {"device": c.device, "username": None, "location": None, "times": 0,

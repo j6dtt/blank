@@ -283,3 +283,15 @@ def test_which_crashed_the_most_is_a_plain_ranking_not_the_red_flags(tmp_path):
     assert run("most", {"problem": "hang"}, r, v)["rows"] == []
     tool = next(t["function"] for t in sc.TOOLS if t["function"]["name"] == "most")
     assert "crashed" in tool["description"] and "Not for which application crashed the most" in sc.TOOLS[0]["function"]["description"]
+
+
+def test_a_daily_read_cut_short_is_said_with_its_versions(tmp_path):
+    """version_problems gave a cut-short daily read's counts as whole; "No PC …" of a cut-short read
+    is of what Aternity sent."""
+    r, v, _, _ = reader(tmp_path)
+    for a in v["versions"]:
+        if a["application"] == "Outlook":
+            a["partial"] = True
+    p = run("version_problems", {"application": "outlook"}, r, v)
+    assert p["notes"][0] == sw.CUT
+    assert sc._of_read([sw.CUT]) == " in what could be read" and sc._of_read(["Read now."]) == ""

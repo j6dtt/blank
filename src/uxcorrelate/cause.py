@@ -115,6 +115,7 @@ def explain(aternity, groups: list[dict], events: list, window: timedelta, start
                                       or g["what"].startswith("Network round trip"))]  # NetIM and "who else"
     todo.sort(key=lambda g: (not g["slow_actions"], ISSUE_ORDER.get(g["issue"], 9)))
     todo = todo[:MAX_EXPLAIN]
+    # None: the PC's change log could not be read in full (answer._changed says so)
     changed = {dev: _pc_changes(aternity, dev, start, end) for dev in dict.fromkeys(g["object"] for g in todo)}
     virtual = set()
     if hasattr(aternity, "virtual_devices"):
@@ -136,7 +137,10 @@ def explain(aternity, groups: list[dict], events: list, window: timedelta, start
             _processes(aternity, g, times, window, why, "Memory %")
         elif not (g["app"] or g["source"] == EVENT):
             _processes(aternity, g, times, window, why, g["what"])
-        _changes(changed[g["object"]], g, min(a for a, _ in times), why, g["object"] in virtual)
+        if changed[g["object"]] is None:
+            why["text"].append(f"The change log of {g['object']} could not be read in full: a change before it is "
+                               "not known.")
+        _changes(changed[g["object"]] or [], g, min(a for a, _ in times), why, g["object"] in virtual)
         why["text"] += g.get("notes", [])
         g["why"] = why
         if g["app"]:
@@ -152,6 +156,9 @@ class _Once:
 
     def __init__(self, source):
         self._source, self._seen = source, {}
+        # the last question's read failed or was cut short (a warning was added): kept with the
+        # answer, so asked again it is still partial (it read as whole the second time)
+        self.last_short = False
 
     def __getattr__(self, name):
         fn = getattr(self._source, name)
@@ -160,9 +167,25 @@ class _Once:
 
         def once(*args):
             if (name, args) not in self._seen:
-                self._seen[(name, args)] = fn(*args)
-            return self._seen[(name, args)]
+                mark = len(getattr(self._source, "warnings", []))
+                got = fn(*args)
+                self._seen[(name, args)] = (got, len(getattr(self._source, "warnings", [])) != mark)
+            got, self.last_short = self._seen[(name, args)]
+            return got
         return once
+
+
+def _short(aternity) -> bool:
+    """The read just made failed or was cut short: its rows say nothing of who else."""
+    return bool(getattr(aternity, "last_short", False))
+
+def _read_changes(aternity, device: str, start, end) -> tuple[list, bool]:
+    """The PC's change log rows, and whether the read failed or was cut short (a warning was
+    added): then what changed is not known, never "nothing was installed"."""
+    mark = len(getattr(aternity, "warnings", None) or [])
+    rows = aternity.software_changes(device, start, end)
+    return rows, len(getattr(aternity, "warnings", None) or []) != mark or _short(aternity)
+
 
 
 def _event_what(e) -> str:
@@ -185,7 +208,7 @@ def _audience(aternity, app, dev, start, end) -> tuple:
     every PC in the inventory."""
     if app and hasattr(aternity, "app_usage_everywhere"):
         using = {u.device for u in aternity.app_usage_everywhere(app, start, end)} - {dev}
-        if using:
+        if using and not _short(aternity):  # part of them is not "of N"
             return len(using), f"PCs using {app}"
     if not app and hasattr(aternity, "known_pcs"):
         return aternity.known_pcs(), "PCs in Aternity's inventory"
@@ -218,9 +241,8 @@ def _since(aternity, read, dev, where, kind, error, start) -> dict | None:
     """Since when other PCs fail the same way: their events in the 14 days before the
     window. {"since": first day seen, or None when none of those days had it; PCs per
     day (the 13 whole days) and the trend}."""
-    warned = len(getattr(aternity, "warnings", []))
     rows = _same_failure(read(start - CHANGES_BEFORE, start), dev, where, kind, error)
-    if len(getattr(aternity, "warnings", [])) != warned:
+    if _short(aternity):
         return None  # a partial read cannot say when it started
     first = min((e.timestamp for e in rows), default=None)
     per_day = _pcs_per_day(((e.timestamp, e.device) for e in rows), local_date(start) - timedelta(days=13),
@@ -237,7 +259,7 @@ def _usage_days_before(aternity, app, dev, hang, start) -> dict | None:
         return None
     warned = len(getattr(aternity, "warnings", []))
     rows = aternity.app_failures_everywhere(app, start - CHANGES_BEFORE, start)
-    if len(getattr(aternity, "warnings", [])) != warned:
+    if len(getattr(aternity, "warnings", [])) != warned or _short(aternity):
         return None  # a partial read says nothing
     rows = [u for u in rows if u.device != dev and (u.hang_time if hang else u.crashes)]
     first = min((u.timestamp for u in rows), default=None)
@@ -257,6 +279,7 @@ def _usage_others(aternity, g, start, end, why, history) -> None:
     dev, app = g["object"], g["app"]
     hang = g["issue"] == "hang"
     rows = aternity.app_usage_everywhere(app, start, end)
+    short = _short(aternity)
     pcs: dict[str, dict] = {}
     for u in sorted(rows, key=lambda u: u.timestamp):
         if u.device != dev and (u.hang_time if hang else u.crashes):
@@ -265,12 +288,13 @@ def _usage_others(aternity, g, start, end, why, history) -> None:
             p["times"] += 1
             p["last"] = _iso(u.timestamp)
     using = {u.device for u in rows} - {dev}
-    if using:
-        wide = pcs and (app in history or len(history) < MAX_HISTORY)
+    if using or short:
+        wide = pcs and not short and (app in history or len(history) < MAX_HISTORY)
         if wide:
             history.add(app)
         why["others"] = {"app": app, "what": f"{app} {'not responding' if hang else 'crashed'}", "pcs": len(pcs),
-                         "users": None, "of": len(using), "of_what": f"PCs using {app}", "versions": {},
+                         "short": short, "users": None, "of": None if short else len(using),
+                         "of_what": f"PCs using {app}", "versions": {},
                          "this_version": None,
                          "window_days": _pcs_per_day(((u.timestamp, u.device) for u in rows if u.device != dev
                                                       and (u.hang_time if hang else u.crashes)), local_date(start),
@@ -341,6 +365,7 @@ def _failure(aternity, g, events, times, window, start, end, why, history) -> No
         why["todo"] += [step] if step else []
         return
     same = _same_failure(read(start, end), dev, where, kind, error)
+    short = _short(aternity)  # the other PCs' events failed or were cut short: at least, never "only this PC"
     version = lambda e: plain(e.sub_component_version if where[2] else e.component_version) or UNKNOWN_VERSION  # noqa: E731
     pcs: dict[str, dict] = {}
     for e in sorted(same, key=lambda e: e.timestamp):
@@ -352,13 +377,14 @@ def _failure(aternity, g, events, times, window, start, end, why, history) -> No
         p["last"] = _iso(e.timestamp)
     versions = Counter(p["version"] for p in pcs.values())
     of, of_what = _audience(aternity, app, dev, start, end)
-    wide = len(pcs) >= 2 and (key := app or where[0] or kind[1]) and (key in history or len(history) < MAX_HISTORY)
+    wide = len(pcs) >= 2 and not short and (key := app or where[0] or kind[1]) and \
+        (key in history or len(history) < MAX_HISTORY)
     if wide:
         history.add(key)
     # said once, on the issue ("Who else")
     named = f"{app} {what}" if app else what
     why["others"] = {"app": app, "what": f"{named}{place}" + (f", error {plain(error)}" if error else ""), "pcs": len(pcs),
-                     "users": len({e.username for e in same if e.username}) or None, "of": of, "of_what": of_what,
+                     "short": short, "users": len({e.username for e in same if e.username}) or None, "of": of, "of_what": of_what,
                      "this_version": plain(where[3] if where[2] else where[1]) or UNKNOWN_VERSION,
                      "versions": dict(versions.most_common(5)),
                      "window_days": _pcs_per_day(((e.timestamp, e.device) for e in same), local_date(start),
@@ -400,7 +426,10 @@ def _disk(aternity, g, events, start, end, why) -> None:
     pcs: dict[str, dict] = {}
     same = []
     if names and hasattr(aternity, "named_health_events"):
-        same = [e for n in names for e in aternity.named_health_events(n, start, end) if e.device != dev and is_disk(e)]
+        same, short = [], False
+        for n in names:
+            same += [e for e in aternity.named_health_events(n, start, end) if e.device != dev and is_disk(e)]
+            short = short or _short(aternity)
         for e in sorted(same, key=lambda e: e.timestamp):
             p = pcs.setdefault(e.device, {"device": e.device, "username": None, "version": "", "times": 0,
                                           "first": _iso(e.timestamp)})
@@ -409,7 +438,7 @@ def _disk(aternity, g, events, start, end, why) -> None:
             p["last"] = _iso(e.timestamp)
         of, of_what = _audience(aternity, None, dev, start, end)
         why["others"] = {"app": None, "what": f"the disk failing ({', '.join(names)})", "pcs": len(pcs),
-                         "users": len({e.username for e in same if e.username}) or None, "of": of,
+                         "short": short, "users": len({e.username for e in same if e.username}) or None, "of": of,
                          "of_what": of_what, "this_version": UNKNOWN_VERSION, "versions": {},
                          "window_days": _pcs_per_day(((e.timestamp, e.device) for e in same), local_date(start),
                                                      local_date(end)),
@@ -479,8 +508,12 @@ def changes_before(aternity, device: str, when, names, part: str, event: str) ->
     if not hasattr(aternity, "software_changes"):
         return out
     # read past `when` too: a removal put back later is not a change (see _updates)
-    rows = _updates(aternity.software_changes(device, when - CHANGES_BEFORE, when + CHANGES_BEFORE),
-                    when - CHANGES_BEFORE, when)
+    got, unread = _read_changes(aternity, device, when - CHANGES_BEFORE, when + CHANGES_BEFORE)
+    if unread:
+        out.update(unread=True, text=f"The change log of {device} could not be read in full: what changed in the "
+                                     f"{CHANGES_BEFORE.days} days before {_day(when)} is not known.")
+        return out
+    rows = _updates(got, when - CHANGES_BEFORE, when)
     parts = _parts(names)
     for c in rows[:8]:
         related = bool(c["name"]) and not c.get("back") and any(same_name(p, c["name"]) for p in parts)
@@ -522,9 +555,12 @@ def changes_between(aternity, device: str, after, before) -> dict:
     {"changes": [...], "text": sentence}."""
     if not hasattr(aternity, "software_changes"):
         return {"changes": [], "count": 0, "text": None}
-    rows = _updates(aternity.software_changes(device, after - CHANGES_BEFORE, before + CHANGES_BEFORE),
-                    after, before)
+    got, unread = _read_changes(aternity, device, after - CHANGES_BEFORE, before + CHANGES_BEFORE)
     span = f"between {_day(after)} and {_day(before)}" if _day(after) != _day(before) else f"on {_day(after)}"
+    if unread:
+        return {"changes": [], "count": 0, "unread": True,
+                "text": f"The change log of {device} could not be read in full: what changed {span} is not known."}
+    rows = _updates(got, after, before)
     if not rows:
         return {"changes": [], "count": 0, "text": f"Nothing was installed, updated or removed on {device} {span}."}
     # many removals with no install in one minute: one line, never a change to check
@@ -618,8 +654,8 @@ def _pc_changes(aternity, device: str, start, end) -> list[dict]:
     if not hasattr(aternity, "software_changes"):
         return []
     # read past the end too: a removal put back later is not a change (see _updates)
-    return _updates(aternity.software_changes(device, start - CHANGES_BEFORE, end + CHANGES_BEFORE),
-                    start - CHANGES_BEFORE, end)
+    got, unread = _read_changes(aternity, device, start - CHANGES_BEFORE, end + CHANGES_BEFORE)
+    return None if unread else _updates(got, start - CHANGES_BEFORE, end)
 
 
 def _matches(c: dict, parts: list[tuple[str, ...]], versions: set[str]) -> str | None:

@@ -431,6 +431,46 @@ def _merge_dataclass(obj: Any, data: dict[str, Any]) -> None:
             setattr(obj, key, value)
 
 
+TOP_KEYS = ("aternity", "netim", "thresholds", "topology", "ai", "care_list", "bucket_minutes", "boot_unit",
+            "timezone", "refresh_minutes", "title")
+
+
+def config_notes(path: str | os.PathLike | None = None, zone: bool = True) -> list[str]:
+    """What config.yaml has that is not used, in plain words: a key at the top that is no setting
+    (a typo was ignored with no word: "timezon" left the page on UTC), a time zone Python does not
+    know (UTC was used silently in sentences), refresh_minutes outside its range. Shown in the
+    Connections dialog and by verify; zone=False leaves the time zone out (the Today tab says it)."""
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    path = path or os.environ.get("UXCORRELATE_CONFIG")
+    if not path:
+        return []
+    try:
+        raw = yaml.safe_load(Path(path).read_text()) or {}
+    except Exception:  # load_settings says it
+        return []
+    if not isinstance(raw, dict):
+        return []
+    notes = [f"config.yaml: \"{k}\" is not a setting, so it is not used (the settings at the top are "
+             f"{', '.join(TOP_KEYS)})." for k in raw if k not in TOP_KEYS]
+    want_zone, zone = zone, str(raw.get("timezone") or "").strip()
+    if zone and want_zone:
+        try:
+            ZoneInfo(zone)
+        except (ZoneInfoNotFoundError, ValueError):
+            notes.append(f"config.yaml: timezone \"{zone}\" is not a time zone this host knows, so UTC is used "
+                         "for Today's midnight and the days and times in sentences (write it as America/New_York).")
+    minutes = raw.get("refresh_minutes")
+    if minutes not in (None, ""):
+        low, high = REFRESH_RANGE
+        try:
+            if not low <= int(minutes) <= high:
+                notes.append(f"config.yaml: refresh_minutes {minutes} is outside {low} to {high}, so "
+                             f"{min(max(int(minutes), low), high)} is used.")
+        except (TypeError, ValueError):
+            pass  # load_settings stops on it
+    return notes
+
+
 def load_settings(path: str | os.PathLike | None = None) -> Settings:
     settings = Settings()
     path = path or os.environ.get("UXCORRELATE_CONFIG")

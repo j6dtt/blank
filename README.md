@@ -49,7 +49,9 @@ Other users of these apps:
    - `app-server-network`: an L3 interface whose subnet holds the server
    - `always`: devices in `topology.always_include`
 
-   If nothing maps, the answer says the network was **not checked**.
+   If nothing maps, the answer says the network was **not checked**; if
+   NetIM could not be read, it says so ("not checked" / "not fully
+   checked", see Warnings), never that nothing was wrong.
 4. **Problems on the network or servers (NetIM).** Interface utilization
    and device CPU of those objects (add metrics in the config; `verify`
    lists what NetIM has); a value over its limit is a problem, and so is
@@ -202,12 +204,16 @@ the list was before; config.yaml's list is not read after that. The page
 has no login, so anyone who can open it can change the list; each change
 is logged with the address it came from.
 An issue is an event Aternity rates Critical or Major, or more Major slow
-actions by this time of day than on any of the user's own days before.
+actions by this time of day than on any of the user's own latest 5 days
+with a PC in use, any day of the week (people on the list often work
+weekends).
 What lights the tile (its alert): a read of Aternity that brings something
 new of an issue (Aternity sends rows late, so "new" is what that read saw
-first, whatever its time). The alert stays on for 3 reads after the last
-read that brought a new one ("Clears at 14:20 if no new Application Hang";
-15 minutes at a 5-minute refresh); a repeat, or another event, keeps the
+first, whatever its time: the tile then says "Aternity sent it at 18:10."
+when that was more than a read after it happened). The alert goes off at
+the 3rd read after the last read that brought a new one ("Clears at the
+14:20 read if no new Application Hang"; reads start every refresh_minutes,
+so 15 minutes at a 5-minute refresh); a repeat, or another event, keeps the
 tile on. A failing disk (Aternity's "(Disk)" or "(Drive)" label on the
 failing part, as HD Failure) stays on all day: "Stays on today". Then the
 issue is an "Earlier today" line on the tile. Repeats of one kind less than
@@ -217,8 +223,11 @@ usual), and a later one is a new issue. A restart does not light again what
 was already seen; a user just added is lit only by what happened within the
 alert's time. Every user has a tile: those with an alert on first (a failing
 disk, then Critical, then Major), then names not seen in 8 days, then green
-"✓ OK" tiles (actions today, how many Major, their usual by now, and what
-was earlier today). Inside each of those, the tiles keep the list's own
+"✓ OK" tiles (actions today, how many Major, their usual by now, or "not
+compared" when there are too few days with a PC in the 8 days Aternity
+keeps to know it (3 needed);
+what was earlier today, and the latest issue before today under the small
+bars). Inside each of those, the tiles keep the list's own
 order: "⠿ Arrange tiles" shows a small tile per user in that order; drag one
 by ⠿ (a mouse can take it anywhere, a finger only by ⠿ so the page still
 scrolls) or move it with ↑ ↓ or the arrow keys, then "Save order" (PIN);
@@ -277,7 +286,18 @@ Investigate tab, top to bottom:
   memory and disk queue at those actions next to their usual.
 - **What was checked**: what else was looked at, with counts (PC values
   and their limits, health events, crashes and hangs, start-ups, network),
-  so "nothing found" says what is ruled out.
+  so "nothing found" says what is ruled out. A read of Aternity or NetIM
+  that failed or was cut short is never "nothing found": who else is "not
+  known" or "at least N", a change log "could not be read in full", other
+  users are not compared with other days, a source not read in full says
+  "not read in full (see Warnings)" here, the answer adds "Not all of it
+  could be read", and the Warnings in Details for IT say which read. Up to
+  8 of the user's PCs are read (those with a slow action first); a warning
+  names any left out. The same holds on every tab and in the chat: a day
+  of health events Aternity cut short is left out of the usual (said on
+  Today), a look-up says the hours or days it could not read, and
+  `uxcorrelate verify` marks each check whose reads were cut short
+  ("…: not read in full") and goes on when one check fails.
 - **What to do**: steps from those causes.
 - **Timeline**: every action (red = slow) and every problem (faded = not
   near a slow action). Hover for date, time and value.
@@ -287,7 +307,8 @@ Investigate tab, top to bottom:
 
 Start-ups tab: searches the Start/End range in its form (last 24
 hours by default; empty user, PC and location = everyone). One card per
-Aternity measurement type (typical, 1 in 10 slower than); **Main causes**:
+Aternity measurement type (typical, 1 in 10 slower than; with fewer than
+10 measured, the slowest one instead); **Main causes**:
 the parts behind the slowest start-ups and every PC where they were longer
 than normal ("Show who"); one row per start-up with a column per type
 (click a row for what took the time and why); a table by location.
@@ -295,10 +316,13 @@ than normal ("Show who"); one row per start-up with a column per type
 Connection lights (right of the tabs, on every tab): one per API and AI
 model: Aternity, NetIM and each AI service in `ai.services`. Green =
 connected, a flashing red "… down" = no answer or the login was refused,
-amber = the service answers but does not list the model set, grey = not
-set. Checked every minute with one small read each. Click any light for
-the "Connections" panel: since when, the reply time, and which model the
-chats use. Changes are written to the log ("Connection to NetIM: down.").
+amber = the service answers but does not list the model set (or lists
+none), grey = not set. Checked every minute with one small read each. Click
+any light for the "Connections" panel: since when, the reply time, which
+model Ask anything, Explain and the summaries use, and anything in
+config.yaml that is not used (a misspelt setting, refresh_minutes out of
+range; `uxcorrelate verify` prints these first, with a time zone this host
+does not know). Changes are written to the log ("Connection to NetIM: down.").
 
 Software tab (fifth, `…/#software`): red flags on installed software and
 application versions, as Aternity lists them, read once a day (and at

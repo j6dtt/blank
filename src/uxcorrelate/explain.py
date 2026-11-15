@@ -105,8 +105,8 @@ GLOSSARY: dict[str, dict[str, str]] = {
         "issue": f"Either an event Aternity rated {_SEV} with that user's name today, or more {TOP_STATUS} slow "
                  "actions by this time of day than on any of their own days before.",
         "their usual by now": f"The fewest and the most {TOP_STATUS} slow actions that user had by this time "
-                              f"of day on their own days before with a PC in use (same kind of day, up to "
-                              f"{care.USUAL_DAYS}; {care.MIN_USUAL} needed).",
+                              f"of day on their own latest {care.USUAL_DAYS} days with a PC in use, any day of "
+                              f"the week ({care.MIN_USUAL} needed).",
         "alert": "",  # set_refresh
         "Clears at": "",  # set_refresh
         "Earlier today": f"Today's issues of that user whose alert is off: no read of Aternity brought anything new "
@@ -119,7 +119,15 @@ GLOSSARY: dict[str, dict[str, str]] = {
                      "misspelled.",
         "Why": "The headline of the investigation that ran by itself for that user's issues of today (at most one "
                "an hour per user; it runs again for an issue it did not cover, such as one Aternity sent late).",
-        "Issues per day": f"Small bars: that user's issues on each of the last {care.KEEP_DAYS} days.",
+        "Issues per day": f"Small bars: that user's issues on each of the last {care.KEEP_DAYS} days, today last. "
+                          "An issue is an event or more slow actions than usual, so a day with bars can have 0 "
+                          f"rated {TOP_STATUS}.",
+        "Last before today": "The latest issue of that user before today, with its day: what the bars were.",
+        "not compared with their usual": (
+            f"Today's {TOP_STATUS} actions could not be compared: their usual needs {care.MIN_USUAL} days with "
+            f"a PC in use among the {care.HISTORY_DAYS} days of activity read (Aternity keeps about 8), as "
+            "for someone new or seldom on a PC. Slow actions alone do not light their tile until then; events "
+            "still do."),
     },
     "investigate": {
         "headline": "Two sentences: what the user felt (the action, how long it took, on which PC), then one "
@@ -167,7 +175,8 @@ GLOSSARY: dict[str, dict[str, str]] = {
         "start-up": "A start of Windows or a logon as Aternity measured it. Rows of one PC within an hour are "
                     "one start-up; each column is one of Aternity's measurements.",
         "typical": "The middle value: half the start-ups took less, half took more.",
-        "1 in 10 over": "One start-up in ten took longer than this; nine in ten (90%) took less.",
+        "1 in 10 over": "One start-up in ten took longer than this; nine in ten (90%) took less. Given from 10 "
+                        "start-ups of a type; with fewer, the slowest one is shown instead.",
         "usual for this PC": f"That PC's own middle value over its last {logons.BASELINE_DAYS} days; "
                              f"{logons.MIN_HISTORY} earlier start-ups are needed. For a user on virtual "
                              "desktops, their start-ups on all their desktops are compared with each other.",
@@ -239,12 +248,21 @@ def set_refresh(minutes: int) -> None:
     GLOSSARY["care"]["Care list"] = (f"Named users checked after every read of Aternity ({minutes} minutes), up to "
                                      f"{care.CARE_MAX}. Every user has a tile.")
     GLOSSARY["care"]["alert"] = (f"A tile is lit when a read of Aternity brings something new of an issue (Aternity "
-                                 f"sends rows late: new is what that read saw first). It stays on for "
-                                 f"{care.ALERT_READS} reads ({care.ALERT_READS * minutes} minutes) after the last read "
+                                 f"sends rows late: new is what that read saw first). It goes off at the "
+                                 f"{_nth(care.ALERT_READS)} read ({care.ALERT_READS * minutes} minutes) after the last read "
                                  "that brought a new one. A failing disk (Aternity's (Disk) or (Drive) label on the "
                                  "failing part) stays on all day.")
-    GLOSSARY["care"]["Clears at"] = (f"When the alert goes off if no read brings a new one: {care.ALERT_READS} reads "
-                                     f"({care.ALERT_READS * minutes} minutes) after the last read that brought one.")
+    GLOSSARY["care"]["Clears at"] = (f"The read at which the alert goes off if no read brings a new one: the "
+                                     f"{_nth(care.ALERT_READS)} read ({care.ALERT_READS * minutes} minutes) after the last "
+                                     "read that brought one. Reads start every "
+                                     f"{minutes} minutes.")
+    GLOSSARY["care"]["Aternity sent it at"] = ("When a read of Aternity first had the row: Aternity sends rows late, "
+                                               "sometimes most of an hour after it happened. The alert counts its "
+                                               "reads from then.")
+
+
+def _nth(n: int) -> str:
+    return {1: "1st", 2: "2nd", 3: "3rd"}.get(n, f"{n}th")
 
 
 set_refresh(today.REFRESH_MIN)  # the default; web.py sets config.yaml's

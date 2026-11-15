@@ -377,6 +377,8 @@ def test_verify_shows_how_virtual_desktops_are_filled():
 
 
 def test_verify_reads_the_whole_fleet():
+    from uxcorrelate.models import set_zone
+    set_zone("")  # days and times in UTC here: an investigation test before leaves its zone set
     from pathlib import Path
     from uxcorrelate.verify import _fleet
 
@@ -419,7 +421,7 @@ def test_verify_reads_the_whole_fleet():
     assert "Background Process Crash: tagger.exe (Process): 2 PCs" in failures.rows
     assert "  PCs per day: Nov 03 1, Nov 04 1" in failures.rows
     assert any(r.startswith("  2 PCs, 1 users in 14 days") for r in failures.rows)
-    assert any(r.startswith("Tagger 26.0: 2 PCs, Nov 03 10:00 to Nov 03 10:00") for r in software.rows)
+    assert any(r.startswith("Tagger 26.0: 2 PCs, Nov 3, 10:00 AM to Nov 3, 10:00 AM") for r in software.rows)
     # one crash ran 26.0 before the log shows it on that PC, one after
     assert "  virtual: {'before: under a day': 1}" in software.rows
     assert "  not known: {'after it': 1}" in software.rows
@@ -508,7 +510,9 @@ def test_verify_overview_shows_aternitys_own_status_severity_and_incidents():
                 "HEALTH_EVENT_NAME": name, "HEALTH_EVENT_COMPONENT": part, "HEALTH_EVENT_VOLUME": n}
             return httpx.Response(200, json={"value": [ev("PC1", "High", "App Crash"), ev("PC2", "High", "App Crash", n=3),
                                                        ev("PC2", "Low", "App Hang"),
-                                                       ev("PC3", "Low", "HD Failure", "\\Device\\Harddisk0\\DR0 (Drive)")]})
+                                                       ev("PC3", "Low", "HD Failure", "\\Device\\Harddisk0\\DR0 (Drive)"),
+                                                       dict(ev("PC4", "Medium", "Low Disk Space", "C: (Drive)"),
+                                                            HEALTH_EVENT_CATEGORY="System")]})
         if path.endswith("/INCIDENTS"):
             return httpx.Response(200, json={"value": [
                 {"INCIDENT_CREATION_TIMESTAMP": "2026-11-08T09:00:00Z", "INCIDENT_STATE": "Open",
@@ -528,11 +532,16 @@ def test_verify_overview_shows_aternitys_own_status_severity_and_incidents():
     assert "SERVICE_DESK_ALERTS_RAW Published. 0 rows in the last 7 days: nothing to show from it." in flat
     assert "ANOMALY_DETECTION_INCIDENTS Not published by this Aternity" in flat
     # Aternity's label on each failing part: the disk ones are read as a failing disk
-    assert "by Aternity's label on the failing part (HEALTH_EVENT_COMPONENT). Read as a failing disk: Disk, Drive." in flat
+    assert ("by Aternity's label on the failing part (HEALTH_EVENT_COMPONENT). Read as a failing disk: Disk, Drive, "
+            "each event under them with its category and severity.") in flat
     assert "Process: 2 PCs, events 'App Crash' 2, 'App Hang' 1" in flat
-    assert "Drive: 1 PCs, events 'HD Failure' 1 (read as a failing disk)" in flat
+    # every event under a disk label with Aternity's category and severity: the evidence for which is a
+    # failing disk (stage, Nov 14 2026: Low Disk Space and Corrupted FS were under "(Drive)")
+    assert "Drive: 2 PCs, events 'HD Failure' 1, 'Low Disk Space' 1 (read as a failing disk)" in flat
+    assert ("· ↳ Application / HD Failure: 1 PCs, severity 'Low' 1 · ↳ System / Low Disk Space: 1 PCs, "
+            "severity 'Medium' 1") in flat
     # can one row be several events? (the Care list and investigations add the column up)
-    assert "1 of 4 health event rows in the last 7 days say more than 1 time (HEALTH_EVENT_VOLUME)" in flat
+    assert "1 of 5 health event rows in the last 7 days say more than 1 time (HEALTH_EVENT_VOLUME)" in flat
     assert "App Crash: 1 rows, up to 3 times" in flat
 
 
@@ -668,3 +677,28 @@ def test_verify_versions_shows_the_application_version_on_what_users_feel():
             and "Application Crash · Outlook · OUTLOOK.EXE 16.1: 2" in flat)
     assert "Changes per type, with the version before filled: Installed 40 (40), Uninstalled 38 (0)" in flat
     assert "Teams Add-in: 1.26.08901 to 1.26.18801: 40 PCs" in flat
+
+
+def test_every_check_group_is_printed_and_one_failed_part_stops_only_itself():
+    """config.yaml's notes were counted in "problem(s) found" but never printed; one error in a
+    part stopped the whole verify, which prints only at the end; a read cut short was not said."""
+    from uxcorrelate.http import ApiError
+    from uxcorrelate.verify import Check, _limit, part, render_checks
+    text = render_checks([Check("config.yaml", "settings", False, "refresh_minutes 2 is out of range")])
+    assert "refresh_minutes 2 is out of range" in text and "1 problem(s) found." in text
+
+    def broken():
+        raise ApiError("Aternity: HTTP 500", 500)
+    assert part("fleet", broken)[0].message.startswith("Not checked: Aternity gave an error")
+    assert part("fleet", lambda: 1 / 0)[0].ok is False  # a fault of ours: said, the others run
+
+    class Client:
+        warnings: list = []
+    c = Client()
+
+    def cut():
+        c.warnings.append("Aternity X: stopped after 50 pages (100 rows); the result is partial.")
+        return [Check("Aternity", "fleet", None, "100 rows")]
+    got = part("fleet", cut, client=c)
+    assert got[-1].item == "fleet: not read in full" and got[-1].rows[0].startswith("PARTIAL: Aternity X")
+    assert _limit([{}] * 5, 5) and not _limit([{}] * 4, 5)

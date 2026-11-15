@@ -26,7 +26,7 @@ from datetime import datetime, timedelta, timezone
 from .chat import ROWS, SHAPE, _n, _result, _tool, converse
 from .config import NO_PROGRAM, SOFTWARE_OS_UPDATE, TOP_STATUS
 from .http import ApiError
-from .software import (DAYS, FEW_PCS, KIND, MIN_PCS, MIN_PROBLEM, RATIO, UPDATE_DAYS, Software, app_now, before_after,
+from .software import (CUT, DAYS, FEW_PCS, KIND, MIN_PCS, MIN_PROBLEM, RATIO, UPDATE_DAYS, Software, app_now, before_after,
                        crashes_by_version, named_like, words,
                        compare, missing_on, order, pcs_with_problem, pcs_with_program, pcs_without_update,
                        program_view, shown, split_by_program, starts_with, version_of)
@@ -67,13 +67,18 @@ TOOLS = [
     _tool("version_problems", f"One application's versions with the PCs that ran each and the PCs with a crash, hang "
                               f"time or Major slow actions, over the last {DAYS} days, and which version is raised. "
                               "Use it when the question names an application and asks whether one of its versions "
-                              "crashes, hangs or is slower than the others. With no application, the applications "
-                              "with the most.", {"application": APP}),
+                              "crashes, hangs or is slower than the others, all versions over the same days. Not for "
+                              "whether it got worse or better after an update: that is before_after. With no "
+                              "application, the applications with the most.", {"application": APP}),
     _tool("compare", "Two versions of an application side by side on every kind of issue (crashes, hang time, health "
                      "events, Major slow actions, its busiest activities), read now.",
           {"application": APP, "a": VER, "b": VER}, ("application",)),
+    # Nemotron took "Did Outlook get worse after its last update?" to version_problems, whose
+    # description said when to use it and this one did not (verify --ai, stage, Nov 14 2026)
     _tool("before_after", f"The same PCs before and after an update of an application (its version changed once in "
-                          f"the last {UPDATE_DAYS} days): days with a crash or hang time on each side, read now.",
+                          f"the last {UPDATE_DAYS} days): days with a crash or hang time on each side, read now. Use "
+                          "it when the question asks whether an application got worse or better after an update, "
+                          "its last update, or since its version changed.",
           {"application": APP}, ("application",)),
     _tool("program_split", "An application's crashes, hang time or Major slow actions split by the version of "
                            "another installed program on the same PCs (for example Outlook crashes by Teams Meeting "
@@ -438,6 +443,8 @@ def _by_version(args: dict, a: dict, period: str, first: list[str]) -> dict:
              v["actions"] if acts else None, v["major"] if acts else None, ", ".join(KIND[k] for k in v["raised"])]
             for v in sorted(a["versions"], key=lambda v: (-max(v["pcs"], v["action_pcs"]), order(v["version"])))[:ROWS]]
     notes = first + [RULES]
+    if a.get("partial") and not any("cut short" in n for n in notes):  # the daily read's own: it was not said
+        notes.insert(0, CUT)
     if a["only"]:
         notes.append(f"Every PC listed for {name} had a crash or hang time: app usage holds it only where it failed, "
                      "so no share is compared and no version is raised for either.")
@@ -450,10 +457,15 @@ def _by_version(args: dict, a: dict, period: str, first: list[str]) -> dict:
         notes.append(f"The most PCs with a crash: version {most[0]}, {most[2]:,} of the {most[1]:,} PCs that ran it "
                      "(by count; a version on more PCs has more crashes by that alone).")
     elif usage:
-        notes.append(f"No PC had a crash of {name} on any version in the last {DAYS} days.")
+        notes.append(f"No PC had a crash of {name} on any version in the last {DAYS} days{_of_read(notes)}.")
     return _result("version_problems", args, f"{name} by version", period,
                    ["Version", "PCs that ran it", "with a crash", "with hang time", "Actions", f"rated {TOP_STATUS}",
                     "Raised"], rows, notes, total=_n(len(a["versions"]), "version"), say=say)
+
+
+def _of_read(notes: list[str]) -> str:
+    """ "No PC …" of a read Aternity cut short is of what it sent, not of every PC."""
+    return " in what could be read" if any("cut short" in n or "partial" in n for n in notes) else ""
 
 
 def _app(view: dict, known, asked) -> tuple[str | None, list[str]]:
@@ -518,7 +530,7 @@ def before_after_block(client, now: datetime, view: dict, known, args: dict, app
                f"crash on {p['before'][1]:,} of {p['before'][0]:,} PC-days; after: {p['after'][1]:,} of "
                f"{p['after'][0]:,}.")
     else:
-        say = f"No PC changed its version of {name} once in the last {UPDATE_DAYS} days."
+        say = f"No PC changed its version of {name} once in the last {UPDATE_DAYS} days{_of_read(notes)}."
         notes += _like(name, names)
     return _result("before_after", args, f"{name}: before and after an update", _live(UPDATE_DAYS),
                    ["From", "To", "PCs", "PC-days before", "with a crash", "with hang time", "PC-days after",
@@ -547,7 +559,7 @@ def program_split(client, now: datetime, sw: Software, view: dict, known, args: 
     unit = "actions rated " + TOP_STATUS if slow else "PCs with " + PROBLEM[r["problem"]]
     say = (f"{name} on the PCs of each {prog} version, last {DAYS} days: " + "; ".join(
         f"{x[0]}: {x[3] if slow else x[2]:,} {unit}, of {x[2] if slow else x[1]:,} {'actions' if slow else 'PCs'}"
-        for x in rows[:3]) + ".") if rows else f"No PC ran {name} in the last {DAYS} days."
+        for x in rows[:3]) + ".") if rows else f"No PC ran {name} in the last {DAYS} days{_of_read(notes)}."
     if not r["pcs"]:
         notes = _like(name, names) + notes
     return _result("program_split", args, f"{name}: {PROBLEM[r['problem']]} by {prog} version", _live(), cols, rows,

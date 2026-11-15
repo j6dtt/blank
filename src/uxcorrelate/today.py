@@ -13,7 +13,8 @@ Counts only; the status and severity words are Aternity's.
 Reading, by one background thread (`keep_reading`):
 - activity an hour at a time: at start the last START_HOURS (also the name
   list's history), then every refresh_min (config.yaml refresh_minutes, else
-  REFRESH_MIN) the current hour, and each hour
+  REFRESH_MIN; a read starts refresh_min after the one before started, so the
+  reads keep their times whatever a read takes: `next_read`) the current hour, and each hour
   once more LATE_MIN after it ends, for rows Aternity sends late (the log
   says how many came late);
 - health events: today's every refresh_min (about 1,400 rows a day on the
@@ -62,7 +63,7 @@ def zone_of(name: str):
     """(time zone, its name, a note when the setting is missing or wrong)."""
     if not name:
         return timezone.utc, "UTC", ("The day runs from midnight UTC: set timezone in config.yaml "
-                                     "(e.g. America/Chicago) for your own.")
+                                     "(e.g. America/New_York) for your own.")
     try:
         return ZoneInfo(name), name, None
     except (ZoneInfoNotFoundError, ValueError):
@@ -87,7 +88,7 @@ def kind_of(d: date) -> str:
 def usual(values: list[int], now: int) -> dict:
     """Today's count against the same kind of day before: the range and the verdict."""
     if len(values) < MIN_USUAL:
-        return {"enough": False, "days": len(values)}
+        return {"enough": False, "days": len(values), "need": MIN_USUAL}  # the page said "3" by itself
     low, high = min(values), max(values)
     verdict = "more" if now > high else "fewer" if now < low else "usual"
     return {"enough": True, "days": len(values), "low": low, "high": high, "verdict": verdict}
@@ -131,6 +132,7 @@ class Today:
         self.health_apps: dict[date, dict] = {}  # day before -> (kind, application) -> devices
         self.health_sev: dict = {}  # kind -> Aternity's severity
         self.health_for: date | None = None  # the day the days before were read for
+        self.health_cut: set[date] = set()  # days before whose read was cut short: left out of the usual
         self.health_read: set[date] = set()  # days before that were read (some may have no event)
         self.notes: dict[str, str] = {}  # what went wrong while reading, by source
         self.status = "Starting"
@@ -138,8 +140,9 @@ class Today:
         self.off: str | None = None
         self.started = False  # the background reader (one per process)
         self.as_of: datetime | None = None
-        self.read_ok: datetime | None = None  # the last read in which every read of Aternity worked
-        self.failures = 0  # reads of Aternity that failed, since the start
+        self.read_ok: datetime | None = None  # the last read in which every read of Aternity worked in full
+        self.failures = 0  # reads of Aternity that failed or were cut short, since the start
+        self.next_read: datetime | None = None  # when the next read starts (the reader's schedule)
         self.lock = threading.Lock()
         self.load()
 
@@ -152,6 +155,13 @@ class Today:
 
     def midnight(self, d: date) -> datetime:
         return datetime(d.year, d.month, d.day, tzinfo=self.zone).astimezone(timezone.utc)
+
+    def clock_secs(self, t: datetime) -> float:
+        """The time of day on the local clock, in seconds from midnight. Days are compared by the
+        clock ("by 14:00"); seconds elapsed since midnight were an hour off it after 02:00 on a
+        clock-change day (Nov 1 2026 had 25 hours in New York)."""
+        lt = self.local(t)
+        return lt.hour * 3600 + lt.minute * 60 + lt.second + lt.microsecond / 1e6
 
     def hour_starts(self, d: date) -> list[datetime]:
         """The local hours of a day, as UTC starts (23 or 25 on a clock change)."""
@@ -277,19 +287,25 @@ class Today:
     def load(self) -> None:
         if not self.store:
             return
+        bad = []
         try:
             self.store.mkdir(parents=True, exist_ok=True)
             cut = date.today() - timedelta(days=KEEP_FILES_DAYS)
             for path in sorted(self.store.glob("*.json")):
-                d = date.fromisoformat(path.stem)
-                if d < cut:
-                    path.unlink()
-                    continue
-                self.saved[d] = json.loads(path.read_text())
-        except (OSError, ValueError) as exc:
-            self.note("files", f"The saved daily counts in {self.store} could not be read ({short_error(exc)}): "
-                               "the usual for actions cannot build up. The folder must be writable by the "
-                               "container (uid 1000).")
+                try:  # one unreadable day no longer stops the days after it loading (the usual lost them)
+                    d = date.fromisoformat(path.stem)
+                    if d < cut:
+                        path.unlink()
+                        continue
+                    self.saved[d] = json.loads(path.read_text())
+                except (OSError, ValueError) as exc:
+                    bad.append(f"{path.name} ({short_error(exc)})")
+        except OSError as exc:
+            bad.append(f"the folder ({short_error(exc)})")
+        if bad:
+            self.note("files", f"Saved daily counts in {self.store} could not be read: {', '.join(bad[:3])}; the "
+                               "usual leaves those days out. The folder must be writable by the container "
+                               "(uid 1000).")
 
     def save(self, d: date, summary: dict) -> None:
         with self.lock:
@@ -332,26 +348,50 @@ class Today:
             disk = bool(label) and label.lower() in {p.lower() for p in DISK_PARTS}
             times = int(to_float(r.get(f["count"])) or 1) if f.get("count") else 1  # as investigations count
             parsed.append((t, dev, kind, sev, r.get(f["username"]) if f.get("username") else None, app, disk, times))
-            secs = (t - self.midnight(self.day(t))).total_seconds()
+            secs = self.clock_secs(t)
             first = days.setdefault(self.day(t), {}).setdefault(kind, {})
             first[dev] = min(first.get(dev, secs), secs)
             apps.setdefault(self.day(t), {}).setdefault((kind, app), set()).add(dev)
         with self.lock:
             for kind, c in sevs.items():
                 self.health_sev[kind] = c  # Aternity gives one severity per event kind (Nov 2026)
-            if today:
+            if today and partial:  # a cut-short reply: today's rows it left out are kept, not lost
+                rows_ = {(x[0], x[1], x[2], x[5]): x for x in self.health}  # a row sent again replaces its copy
+                rows_.update({(x[0], x[1], x[2], x[5]): x for x in parsed})
+                self.health = sorted(rows_.values(), key=lambda x: x[0])
+            elif today:
                 self.health = parsed
+            elif partial:  # a day before cut short counted as a quiet day: "more than usual" today
+                self.health_cut.update(days_read)
+                for d in days_read:
+                    self.health_days.pop(d, None)
+                    self.health_apps.pop(d, None)
+                    self.health_read.discard(d)  # the chats: not a day read
             else:
+                self.health_cut.difference_update(days_read)
                 self.health_days.update(days)
                 self.health_apps.update(apps)
                 for d in days_read:
                     self.health_days.setdefault(d, {})
                     self.health_apps.setdefault(d, {})
                     self.health_read.add(d)
-        if partial:
-            self.note("health", "Aternity's reply for health events was cut short: some may be missing.")
+        if partial and today:  # a day before cut short has its own note, kept until it is read whole
+            self.note("health", "Aternity's reply for today's health events was cut short: some may be missing.")
         return days
 
+
+    def activity_gaps(self, now: datetime) -> list[str]:
+        """What today's activity counts leave out, for a look-up of a user, PC or application:
+        hours Aternity cut short and a read that failed (no hour then). Without it "no measured
+        action today" was said of a user whose hour was not read."""
+        t = self.day(now)
+        with self.lock:
+            cut = sorted(h.start for h in self.hours.values() if h.day == t and h.partial)
+            failed = self.notes.get("activity")
+        out = [f"Aternity's reply for today's hour{'s' if len(cut) > 1 else ''} "
+               + ", ".join(f"{self.local(s):%H}:00" for s in cut) + " was cut short: the counts are at least these."
+               ] if cut else []
+        return out + ([failed] if failed else [])
 
     # -- the page ------------------------------------------------------------
     def view(self, now: datetime) -> dict:
@@ -360,7 +400,7 @@ class Today:
             return {"ready": False, "off": self.off, "status": self.status, "zone": self.zone_label}
         t = self.day(now)
         midnight = self.midnight(t)
-        secs = (now - midnight).total_seconds()
+        secs = self.clock_secs(now)
         with self.lock:
             hours = sorted((h for h in self.hours.values() if h.day == t), key=lambda h: h.start)
             by_start = {h.start: h for h in hours}
@@ -431,6 +471,10 @@ class Today:
                          "so far (Aternity keeps activity only about 8 days, so the counts are saved each day).")
         if any(h.partial for h in hours):
             notes.append("Aternity's reply for some hours of activity was cut short: some actions may be missing.")
+        cut_days = sorted(d for d in self.health_cut if t - timedelta(days=HEALTH_DAYS) <= d < t)
+        if cut_days:
+            notes.append("Aternity's health events of " + ", ".join(f"{d:%b %d}".replace(" 0", " ") for d in cut_days)
+                         + " were cut short: left out of the usual and shown as not read in the small bars.")
         return {"ready": True, "as_of": (self.as_of or now).isoformat().replace("+00:00", "Z"),
                 "as_of_local": self.local(self.as_of or now).strftime("%H:%M"),
                 "zone": self.zone_label, "date": t.isoformat(), "kind": kind, "slow": slow, "tiles": tiles,
@@ -520,6 +564,8 @@ def _read_hour(today: Today, names, client, start: datetime, now: datetime) -> N
         return
     today.notes.pop("activity", None)
     partial = len(client.warnings) > mark
+    if partial:  # not read in full: the Care list's status says so (read_ok)
+        today.failures += 1
     if names is not None:
         names.add(rows, f, start, min(start + HOUR, now), partial)
     span = f"{today.local(start):%b %d %H:%M}-{today.local(start + HOUR):%H:%M}"
@@ -554,7 +600,10 @@ def _read_health(today: Today, client, now: datetime) -> None:
                                  f"in {today.refresh_min} min.")
             return
         today.notes.pop("health", None)
-        today.set_health(rows, f, is_today, len(client.warnings) > mark, () if is_today else (d,))
+        partial = len(client.warnings) > mark
+        if partial:  # not read in full: the Care list's status says so (read_ok)
+            today.failures += 1
+        today.set_health(rows, f, is_today, partial, () if is_today else (d,))
         if not is_today:
             log.info("Today: read %d health event rows for %s", len(rows), d.strftime("%b %d"))
     if spans[0][1] is False:
@@ -592,25 +641,50 @@ def keep_reading(today: Today, names, make_client, sleep, clock=lambda: datetime
     today.ready = True
     log.info("Today ready: %d hours of activity read; %d usernames and %d devices known",
              len(starts), len(names.seen["username"]) if names else 0, len(names.seen["device"]) if names else 0)
+    step = timedelta(minutes=today.refresh_min)
+    today.next_read = clock() + step
     if care is not None:
-        care.check(client, clock())
+        _guarded("the Care list's check", lambda: care.check(client, clock()))
     if after is not None:
         after(clock())
     while True:
-        sleep(today.refresh_min * 60)
-        try:
-            client = make_client() or client  # a new client: its list of cut-short reads starts empty
-        except Exception:
-            pass
-        now, mark = clock(), today.failures
-        for start in today.hours_due(now):
-            _read_hour(today, names, client, start, now)
-        today.finish(now)
-        _read_health(today, client, now)
-        today.as_of = now
-        if today.failures == mark:
-            today.read_ok = now
-        if care is not None:
-            care.check(client, clock())
-        if after is not None:
-            after(clock())
+        # every refresh_min from the start of the read before, whatever a read takes (a read
+        # that overran starts at once): the reads keep their times, and the Care list's
+        # "Clears at the 18:25 read" is the read at 18:25
+        wait = (today.next_read - clock()).total_seconds()
+        if wait > 0:
+            sleep(wait)
+        now = clock()
+        today.next_read += step
+        if today.next_read <= now:  # behind by a whole read or more: from now on
+            today.next_read = now + step
+        _guarded("a read", lambda: _read_all(today, names, make_client, client, care, after, now, clock))
+
+
+def _guarded(what: str, run) -> None:
+    """One step of the reader: an error it did not expect is logged, and the reader goes on
+    (it once had no guard: one error there would stop the Today tab, the names, the Care list
+    and the assessments until a restart, with nothing on the page)."""
+    try:
+        run()
+    except Exception:
+        log.exception("Today: %s failed with an error the code did not expect; the next read tries again", what)
+
+
+def _read_all(today: Today, names, make_client, client, care, after, now: datetime, clock) -> None:
+    try:
+        client = make_client() or client  # a new client: its list of cut-short reads starts empty
+    except Exception:
+        pass
+    mark = today.failures
+    for start in today.hours_due(now):
+        _read_hour(today, names, client, start, now)
+    today.finish(now)
+    _read_health(today, client, now)
+    today.as_of = now
+    if today.failures == mark:
+        today.read_ok = now
+    if care is not None:
+        _guarded("the Care list's check", lambda: care.check(client, clock()))
+    if after is not None:
+        after(clock())

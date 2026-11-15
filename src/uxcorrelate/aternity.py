@@ -323,7 +323,10 @@ class AternityClient:
                 msg = f"{what.capitalize()} not checked: Aternity {entity} gave an error ({exc.short()})."
             if msg not in self.warnings:
                 log.warning("Aternity: %s", msg)
-                self.warnings.append(msg)
+            # every failed read is added, said once where shown: callers tell a failed read by
+            # the list growing (said only once, a second failure of the same source read as a
+            # read with nothing in it: "Only this PC" for who else)
+            self.warnings.append(msg)
             return []
 
     def _events(self, flt: str, what: str, logical: list[str] | None = None) -> list[HealthEvent]:

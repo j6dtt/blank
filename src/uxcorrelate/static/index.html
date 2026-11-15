@@ -570,11 +570,38 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const toLocalInput = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+// A reply as JSON. One that is not (the proxy's HTML page for a 502 or 504 on Kubernetes, a plain 500)
+// is said in our words: the page showed the parser's ("Unexpected token '<'").
+async function readJson(r) {
+  const text = await r.text();
+  try { return JSON.parse(text); } catch (e) {
+    if (r.ok) throw new Error("UX Correlator's reply could not be read; try again.");
+    const why = { 502: ": no answer through the proxy, the app may be restarting", 503: ": not available, the app may be restarting",
+      504: ": it took too long through the proxy" }[r.status] || "";
+    return { detail: `UX Correlator answered HTTP ${r.status}${why}.` };
+  }
+}
+// One look at a running job. A dropped connection or the proxy's 502/503/504 is tried again, up to
+// JOB_TRIES a second apart: one blip ended the wait with an error while the job ran on.
+const JOB_TRIES = 5;
+async function jobNow(id) {
+  for (let tries = 1; ; tries++) {
+    let r = null, lost = "";
+    try { r = await fetch(`api/jobs/${id}`, { cache: "no-store" }); } catch (e) { lost = e.message || String(e); }
+    if (r && ![502, 503, 504].includes(r.status)) {
+      const j = await readJson(r);
+      if (!r.ok) throw new Error(detail(j));
+      return j;
+    }
+    if (tries >= JOB_TRIES) throw new Error(r ? detail(await readJson(r)) : `No answer from UX Correlator (${lost}).`);
+    await new Promise((ok) => setTimeout(ok, 1000));
+  }
+}
 
 async function init() {
   try {
     const res = await fetch("api/info");
-    const info = await res.json();
+    const info = await readJson(res);
     if (!res.ok) { $("error").textContent = info.detail || `HTTP ${res.status}`; return; }
     const f = $("f");
     const end = new Date();
@@ -646,7 +673,7 @@ let todayTimer = null;
 // "by 14:00: 192; the 5 working days before had 101 to 126" (value: today's, when the tile's big number is not it)
 function usualText(u, kind, by, value) {
   const when = (by ? `by ${by}` : "by this time") + (value !== undefined ? `: ${n(value)}` : "");
-  if (!u || !u.enough) return `Usual: not known yet (${u?.days ?? 0} of the 3 ${esc(kind)} needed)`;
+  if (!u || !u.enough) return `Usual: not known yet (${u?.days ?? 0} of the ${u?.need ?? 3} ${esc(kind)} needed)`;
   const had = `the ${u.days} ${esc(kind)} before had ${u.low === u.high ? n(u.low) : `${n(u.low)} to ${n(u.high)}`}`;
   if (u.verdict === "more") return `<b>▲ More than usual</b> ${when}; ${had}`;
   if (u.verdict === "fewer") return `▼ Fewer than usual ${when}; ${had}`;
@@ -662,7 +689,7 @@ async function loadToday() {
   let t;
   try {
     const r = await fetch("api/today");
-    t = await r.json();
+    t = await readJson(r);
     if (!r.ok) throw new Error(t.detail || `HTTP ${r.status}`);
   } catch (e) {
     $("tStatus").textContent = "Could not load today's issues: " + e.message;
@@ -745,7 +772,7 @@ async function openTodayWho(el) {
   box.scrollIntoView({ behavior: "smooth", block: "nearest" });
   try {
     const r = await fetch(`api/today/who?${new URLSearchParams(q)}`);
-    const w = await r.json();
+    const w = await readJson(r);
     if (!r.ok) throw new Error(w.detail || `HTTP ${r.status}`);
     todayWho = w;
     renderTodayWho(w);
@@ -796,7 +823,7 @@ async function loadCare() {
   clearTimeout(careTimer);
   try {
     const r = await fetch("api/care");
-    const c = await r.json();
+    const c = await readJson(r);
     if (!r.ok) throw new Error(detail(c));
     careData = c;
     $("careCount").hidden = !c.count; $("careCount").textContent = c.count || "";
@@ -807,16 +834,20 @@ async function loadCare() {
 const pcText = (u) => u.pcs.length ? u.pcs.map((p) => p.device + (p.kind && p.kind !== "not known" ? ` (${p.kind})` : "")).join(", ")
   : "No PC in use today";
 // An OK tile's one line: what was measured today against their own usual
+// (Major actions not compared is said: too few days with a PC in the 8 days read)
 const okText = (u) => (u.earlier.length ? "No alert now: " : "No issue: ") + (!u.actions ? "not seen using a PC today."
   : `${n(u.actions)} action${u.actions === 1 ? "" : "s"} today, ${n(u.major)} rated Major`
-    + (u.usual && u.usual.enough ? ` (usual by now: ${u.usual.low} to ${u.usual.high}).` : "."));
+    + (u.usual && u.usual.enough ? ` (usual by now: ${u.usual.low} to ${u.usual.high}).`
+      : !u.major ? "."
+      : u.usual ? ` (not compared with their usual: ${u.usual.days} ${u.usual.days === 1 ? u.usual.kind.replace(/s$/, "") : u.usual.kind} with a PC in the ${u.usual.read} days read, ${u.usual.need} needed).`
+      : " (not compared: their days before are not read yet)."));
 // An issue of today whose alert is off (nothing new of it in the last reads)
 const earlierText = (i) => i.kind === "slow"
   ? `Earlier today: more Major slow actions than usual from ${i.since_local}, the last at ${i.last_local}.`
     + (i.ended === "usual" ? ` Over: ${i.over}.` : "")
   : `Earlier today: ${i.text}`;
 const usualWords = (u) => !u ? "" : u.enough ? `their usual by this time: ${u.low} to ${u.high} (${u.days} ${u.kind} before)`
-  : `their usual: ${u.days} of the 3 ${u.kind} needed so far`;
+  : `their usual: ${u.days} of the ${u.need || 3} ${u.kind} needed so far`;
 function whyText(u) {
   if (u.investigating === "now") return "Investigating now…";
   if (u.investigating === "waiting") return "Investigation waiting its turn.";
@@ -847,7 +878,8 @@ function renderCare(c) {
         : `<div class="u"><b>${esc(x)}</b></div>`).join("") + more + gone
       + (why ? `<div class="u">${esc(why)}</div>` : "")
       + (u.status === "unknown" ? "" : !days.some((d) => d.pcs) ? `<div class="u">No issue in the last ${days.length} days.</div>`
-        : `<div class="u">Issues per day, last ${days.length} days:</div>` + spark(days, "issues", "Issues per day"))
+        : `<div class="u">Issues per day, last ${days.length} days (today last):</div>` + spark(days, "issues", "Issues per day")
+          + (u.before ? `<div class="u muted">Last before today: ${esc(u.before)}</div>` : ""))
       + `<div class="more">Show more ▸</div></div>`;
   }).join("");
   $("cNotes").innerHTML = (c.notes || []).map((x) => `<li>${esc(x)}</li>`).join("");
@@ -859,7 +891,7 @@ async function openCare(username) {
   $("cDetail").scrollIntoView({ behavior: "smooth", block: "nearest" });
   try {
     const r = await fetch(`api/care/user?${new URLSearchParams({ username })}`);
-    const d = await r.json();
+    const d = await readJson(r);
     if (!r.ok) throw new Error(detail(d));
     careUser = d;
     $("cDetailTitle").textContent = d.label ? `${d.label} (${d.username})` : d.username;
@@ -1012,7 +1044,7 @@ $("cForm").username.addEventListener("input", (ev) => {  // usernames seen in At
   cNamesTimer = setTimeout(async () => {
     try {
       const r = await fetch(`api/names?kind=username&q=${encodeURIComponent(q)}`);
-      const got = await r.json();
+      const got = await readJson(r);
       const list = Array.isArray(got) ? got : got.names || got.matches || [];
       $("cNames").innerHTML = list.map((x) => `<option value="${esc(typeof x === "string" ? x : x.name)}">`).join("");
     } catch (e) { /* any name can still be typed */ }
@@ -1029,7 +1061,7 @@ $("cForm").addEventListener("submit", async (ev) => {
       : gone ? await fetch(`api/care/users?${new URLSearchParams({ username: gone.username, pin })}`, { method: "DELETE" })
       : await fetch("api/care/users", { method: edit ? "PUT" : "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username: edit ? edit.username : f.username.value, label: f.label.value, pin }) });
-    const d = await r.json();
+    const d = await readJson(r);
     if (!r.ok) throw new Error(detail(d));
     $("cDlg").hidden = true;
     if (gone) $("cDetail").hidden = true;
@@ -1124,7 +1156,7 @@ function renderAssess(a) {
 async function loadAssess() {
   try {
     const r = await fetch("api/assess");
-    const a = await r.json();
+    const a = await readJson(r);
     if (r.ok) renderAssess(a);
   } catch (e) { /* the Today tab stays as it is */ }
 }
@@ -1242,14 +1274,12 @@ $("askForm").addEventListener("submit", async (ev) => {
   try {
     const r = await fetch("api/ask", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ question: q, history: askState.history.slice(-6), page: tabShown() }) });
-    const job = await r.json();
+    const job = await readJson(r);
     if (!r.ok) throw new Error(detail(job));
     let a = null;
     while (!a) {
       await new Promise((ok) => setTimeout(ok, 1000));
-      const jr = await fetch(`api/jobs/${job.id}`);
-      const j = await jr.json();
-      if (!jr.ok) throw new Error(detail(j));
+      const j = await jobNow(job.id);
       const last = j.lines[j.lines.length - 1];
       doing = last ? last.slice(9).replace(/^Ask anything: /, "") : "";
       if (j.done) {
@@ -1338,7 +1368,7 @@ async function runJob(url, body, button, show) {
   $("progress").hidden = false; $("pNow").textContent = "Starting…"; $("pLines").innerHTML = "";
   try {
     const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    const job = await r.json();
+    const job = await readJson(r);
     if (!r.ok) throw new Error(detail(job));
     show(await waitFor(job.id, started));
   } catch (e) { $("error").textContent = e.message; }
@@ -1363,7 +1393,7 @@ for (const box of document.querySelectorAll("input[data-names]")) {
     if (!q) return close();
     try {
       const r = await fetch(`api/names?kind=${kind}&q=${encodeURIComponent(q)}`);
-      const m = await r.json();
+      const m = await readJson(r);
       if (!r.ok || box.value.trim() !== q) return;
       const since = m.since ? new Date(m.since).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
       const note = !m.count ? "Still reading Aternity's activity: type the full name, or try again in a minute"
@@ -1408,15 +1438,18 @@ $("lf").addEventListener("submit", (ev) => {
 function renderStarts(lg) {
   $("lout").dataset.has = "1"; $("lout").hidden = false;
   const u = lg.unit ? ` ${lg.unit}` : "";
+  // what Aternity could not read or cut short: a failed read is never "no boots or logons" (it was)
+  const warn = (lg.warnings || []).length ? `<ul class="muted notes">${lg.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>` : "";
   if (!lg.total) {
-    $("lHead").innerHTML = `<p class="muted">No boots or logons in this window.</p>`;
-    $("lStarts").innerHTML = ""; $("lLocPanel").hidden = true; return;
+    $("lHead").innerHTML = warn ? `<p>No boots or logons could be read in this window:</p>${warn}`
+      : `<p class="muted">No boots or logons in this window.</p>`;
+    $("lStarts").innerHTML = $("lCauses").innerHTML = ""; $("lLocPanel").hidden = true; return;
   }
   const top = lg.starts[0], v = top.values[lg.sort_type];
   $("lHead").innerHTML = `<div class="atitle" style="font-size:18px">Slowest: ${esc(top.username || top.device)} on ${esc(top.device)},
     ${hm(top.time)}: ${esc(lg.sort_type)} ${v ? v.duration + u : ""}</div>
     <p class="muted">${lg.total} start-ups. For each Aternity measurement: the typical time, and the time 1 in 10 start-ups are slower than.</p>
-    <div class="types">${lg.types.map((t) => `<div><b>${esc(t.type)}</b><br>typical <b>${t.typical}${u}</b> · 1 in 10 over ${t.p90}${u}</div>`).join("")}</div>`;
+    <div class="types">${lg.types.map((t) => `<div><b>${esc(t.type)}</b><br>typical <b>${t.typical}${u}</b> · ${t.p90 == null ? `slowest ${t.max}${u} (${t.count} measured: 1 in 10 needs 10)` : `1 in 10 over ${t.p90}${u}`}</div>`).join("")}</div>${warn}`;
   const types = lg.types.map((t) => t.type);
   const cell = (x) => !x ? `<td class="muted">–</td>` : `<td class="num"><b>${x.duration}${u}</b>`
     + (x.usual != null ? `<div class="muted">usual ${x.usual}${u}</div>` : "") + "</td>";
@@ -1458,14 +1491,12 @@ $("lStarts").addEventListener("click", (ev) => {
   row.cells[0].textContent = c.hidden ? "▸" : "▾";
 });
 
-const detail = (d) => typeof d.detail === "string" ? d.detail : JSON.stringify(d.detail);
+const detail = (d) => typeof d?.detail === "string" ? d.detail : d?.detail ? JSON.stringify(d.detail) : "No reason was given.";
 
 // Poll the job once a second; show elapsed time, the latest step and all steps so far.
 async function waitFor(id, started) {
   for (;;) {
-    const r = await fetch(`api/jobs/${id}`);
-    const job = await r.json();
-    if (!r.ok) throw new Error(detail(job));
+    const job = await jobNow(id);
     const secs = Math.round((Date.now() - started) / 1000);
     const last = job.lines[job.lines.length - 1];
     $("pNow").textContent = `Working… ${secs} s — ${last ? last.slice(9) : "starting"}`;
@@ -1553,7 +1584,9 @@ function render(d) {
   const devs = changes.map((c) => c.device);
   $("changesTitle").textContent = "What changed on " + (devs.length > 2 ? `the ${devs.length} PCs`
     : devs.join(" and ") || "these PCs");
-  $("aChanges").innerHTML = changes.map((c) => `<p><b>${esc(c.device)}</b>${c.changes.length ? "" : ": nothing changed."}</p>`
+  $("aChanges").innerHTML = changes.map((c) => `<p><b>${esc(c.device)}</b>${c.unread
+    ? ": its change log could not be read in full (Aternity's read failed or was cut short)."
+    : c.changes.length ? "" : ": nothing changed."}</p>`
     + (c.changes.length ? `<ul>${c.changes.map((x) => `<li>${hm(x.time)}: ${esc(x.text)}</li>`).join("")}`
       + `${c.more ? `<li class="muted">… and ${c.more} more</li>` : ""}</ul>` : "")).join("");
   // each slow app + activity next to its own normal: first line, then the details
@@ -1627,7 +1660,7 @@ function renderWho(im, sentence, req, rule) {
   $("whoBox").hidden = true; $("whoBtn").textContent = "Show who";
   if (!im) return;
   $("whoBtn").hidden = false;
-  const dayKind = [0, 6].includes(new Date(im.start).getUTCDay()) ? "weekend" : "working";
+  const dayKind = im.day_kind || "working";  // the server's, in config.yaml's timezone (not the UTC day)
   $("aJust").innerHTML = `<p>${esc(sentence)}</p><p class="muted" style="font-size:12px">Slow action: ${esc(rule)}. Time checked: ${span(im.start, im.end)}, when this user had them.`
     + `${im.baseline_days ? ` Other days: the same time on the last ${im.baseline_days === 1 ? `${dayKind} day` : `${im.baseline_days} ${dayKind} days`}.` : ""}`
     + `${statuses(im.by_status) ? ` Aternity marked their slow actions: ${statuses(im.by_status)}.` : ""}`
@@ -1715,7 +1748,7 @@ async function loadSoftware() {
   let v = null;
   try {
     const r = await fetch(on ? "api/software" : "api/software?brief=1");
-    v = await r.json();
+    v = await readJson(r);
     if (!r.ok) throw new Error(detail(v));
     const count = v.ready ? (on ? v.flags.length : v.flags) : 0;
     $("softCount").hidden = !count; $("softCount").textContent = count || "";
@@ -1908,7 +1941,7 @@ async function openSwProgram(name) {
   swFlash($("sProgBox"));
   try {
     const r = await fetch(`api/software/program?${new URLSearchParams({ name })}`);
-    const p = await r.json();
+    const p = await readJson(r);
     if (!r.ok) throw new Error(detail(p));
     const top = Math.max(1, ...p.versions.map(([, k]) => k));
     const facts = [`${pcs(p.pcs)}, ${n(p.installs)} installs`, p.type ? `type ${p.type}` : null,
@@ -1939,7 +1972,7 @@ async function openSwPcs(q, el) {
   box.scrollIntoView({ behavior: "smooth", block: "nearest" });
   try {
     const r = await fetch(`api/software/pcs?${new URLSearchParams(q)}`);
-    const w = await r.json();
+    const w = await readJson(r);
     if (!r.ok) throw new Error(detail(w));
     swPcsData = w;
     const more = w.total > w.rows.length ? ` (the first ${n(w.rows.length)} shown)` : "";
@@ -1999,7 +2032,7 @@ async function runSwCompare(application, a = "", b = "") {
   $("sCompare").innerHTML = `<p class="muted">Reading ${esc(application)} from Aternity…</p>`;
   try {
     const r = await fetch(`api/software/compare?${new URLSearchParams({ application, a, b })}`);
-    const c = await r.json();
+    const c = await readJson(r);
     if (!r.ok) throw new Error(detail(c));
     swCompareData = c;
     for (const k of ["a", "b"]) {
@@ -2028,7 +2061,7 @@ $("sUpdateBtn").addEventListener("click", async () => {
   $("sCompare").innerHTML = `<p class="muted">Reading ${esc(app)}'s last 14 days from Aternity, day by day…</p>`;
   try {
     const r = await fetch(`api/software/update?${new URLSearchParams({ application: app })}`);
-    const u = await r.json();
+    const u = await readJson(r);
     if (!r.ok) throw new Error(detail(u));
     const day = (d) => new Date(d + "T12:00:00Z").toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
     const pairs = u.pairs.map((p) => `<h3 style="font-size:14px;margin:12px 0 2px">${esc(p.from)} to ${esc(p.to)}: ${pcs(p.pcs)} updated, ${esc(day(p.first))}`
@@ -2108,7 +2141,7 @@ async function explainNow(tab, panel, lines, question) {
   try {
     const r = await fetch("api/explain", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tab, panel, lines, question: question || "" }) });
-    const a = await r.json();
+    const a = await readJson(r);
     if (!r.ok) throw new Error(detail(a));
     if (explaining.lines !== lines || $("dlg").hidden) return;  // another panel was asked about, or it was closed
     const notes = [a.note || (a.ours ? "" : `Written by the AI (${a.service}) from this panel; every number checked against it.`),
@@ -2151,7 +2184,7 @@ $("sSummaryBtn").addEventListener("click", async () => {
   const b = $("sSummaryBtn"); b.disabled = true; b.textContent = "Writing the summary…";
   try {
     const r = await fetch("api/software/summary", { method: "POST" });
-    const s = await r.json();
+    const s = await readJson(r);
     if (!r.ok) throw new Error(detail(s));
     const head = `Installed software and application versions, as Aternity lists them (read ${softData ? softData.as_of_local : ""}).`;
     swDialog("Summary for management", `<p style="font-size:15px">${esc(s.text)}</p>`
@@ -2190,7 +2223,7 @@ function connHtml() {
   if (!d || !d.checked) return "<p>The first check is still running: a few seconds after a start.</p>";
   const rows = d.items.map((i) => `<div class="${i.state}"><b>${esc(i.name)}</b>: ${CONN_WORD[i.state]}`
     + (i.state === "off" ? "" : ` since ${connTime(i.since)}`)
-    + `<small>${i.kind === "model" ? `AI model ${esc(i.model || "")}${i.chat ? ", the one both chats and the summary use" : ", not used by the chats"}. ` : ""}${esc(i.text)}</small></div>`).join("");
+    + `<small>${i.kind === "model" ? `AI model ${esc(i.model || "")}${i.chat ? ", the one Ask anything, Explain and the summaries use" : ", not used by the page"}. ` : ""}${esc(i.text)}</small></div>`).join("");
   return (d.note ? `<p>${esc(d.note)}</p>` : "") + `<div class="connList">${rows}</div>`
     + `<p class="muted" style="margin-bottom:0">Checked at ${connTime(d.checked)}, every ${d.every_s} seconds: one small read of each. `
     + "It shows the connection and the login; <code>uxcorrelate verify --ai</code> checks the models' answers.</p>";
@@ -2206,7 +2239,7 @@ async function loadConn() {
   try {
     const r = await fetch("api/status", { cache: "no-store" });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    connData = await r.json(); connLost = "";
+    connData = await readJson(r); connLost = "";
   } catch (e) { connLost = String(e.message || e); }
   renderConn();
   setTimeout(loadConn, connData && !connData.checked ? 3000 : 20000);
@@ -2215,6 +2248,11 @@ $("conn").addEventListener("click", () => swDialog("Connections", connHtml()));
 loadConn();
 init();
 mode(Object.keys(TAB_LINK).find((k) => "#" + TAB_LINK[k] === location.hash) || "today");
+// a tab's link typed or pasted on an open page: that tab (it changed nothing until a reload)
+addEventListener("hashchange", () => {
+  const k = Object.keys(TAB_LINK).find((t) => "#" + TAB_LINK[t] === location.hash);
+  if (k && k !== tabNow) mode(k, true);
+});
 if ($("careBox").hidden) loadCare();  // the tab's count shows from any tab
 if ($("softBox").hidden) loadSoftware();  // the red flags' count on the tab, from any tab
 </script>

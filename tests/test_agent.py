@@ -246,6 +246,7 @@ def test_the_software_tabs_look_ups_and_an_investigation(tmp_path):
                       now, agent.Reach(investigate=lambda *a: asked.append(a) or step["open"]["result"]))
     assert asked[-1][4] - asked[-1][3] == timedelta(hours=agent.INVESTIGATE_MAX_H) and "Cut to the last" in \
         local["notes"][0]
+    assert local["title"].endswith("Thu Jan 02 08:00 to Fri Jan 03 08:00")  # over midnight: the end's day said
 
 
 def test_an_investigation_asked_with_no_time_starts_before_the_days_first_issue(monkeypatch):

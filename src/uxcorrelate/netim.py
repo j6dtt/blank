@@ -27,6 +27,7 @@ from .models import (
 )
 
 log = logging.getLogger("uxcorrelate")
+MAX_PAGES = 400  # of NetIM's lists (page_size 500: 200,000 rows)
 
 
 def _first(d: dict, *keys, default=None):
@@ -102,11 +103,16 @@ def _parse_riverbed_metric_data(data: dict, metric: NetimMetric, object_type: st
     names = md.get("metricNames") or []
     id_map = data.get("elementIdToObjectInfoMap") or {}
     samples = []
+    id_map = id_map if isinstance(id_map, dict) else {}
     for el in md.get("metricElementDataList") or []:
+        if not isinstance(el, dict):  # tolerant of what we do not know, as the other layouts
+            continue
         info = id_map.get(str(el.get("elementId"))) or {}
+        info = info if isinstance(info, dict) else {}
         obj_id = info.get("objectId", el.get("elementId"))
-        for ts, values in (el.get("timestampToValuesMap") or {}).items():
-            for name, value in zip(names, values or []):
+        values_at = el.get("timestampToValuesMap")
+        for ts, values in (values_at.items() if isinstance(values_at, dict) else ()):
+            for name, value in zip(names, values if isinstance(values, list) else []):
                 t, v = parse_time(ts), to_float(value)
                 if name == metric.metric and obj_id is not None and t is not None and v is not None:
                     samples.append(MetricSample(object_type, str(obj_id), metric.key, t, v))
@@ -125,6 +131,8 @@ def parse_metric_response(data: Any, metric: NetimMetric, object_type: str) -> l
             samples.append(MetricSample(object_type, str(obj_id), metric.key, t, v))
 
     for item in _items(data):
+        if not isinstance(item, dict):
+            continue
         obj = item.get("object") if isinstance(item.get("object"), dict) else {}
         obj_id = _first(item, "objectId", "deviceId", "interfaceId", "id", default=obj.get("id"))
         name = _first(item, "metric", "metricName", "name")
@@ -156,24 +164,36 @@ class NetimClient:
         self.warnings: list[str] = []
 
     def _paged(self, path: str, params: dict | None = None) -> list[dict]:
-        """Follow meta.next_offset like steelscript-netim; fall back to short pages."""
+        """Follow meta.next_offset like steelscript-netim; fall back to short pages. It stops
+        when NetIM does not move on (a next_offset that is not past this one, or the same page
+        again: a NetIM that ignores offset) and after MAX_PAGES, said as a warning: either had
+        read for ever, and the investigation never ended."""
         out: list[dict] = []
-        offset = 0
-        while True:
+        offset, before = 0, None
+        for _ in range(MAX_PAGES):
             q = dict(params or {}, offset=offset, limit=self.cfg.page_size)
             data = self.http.get_json(path, params=q)
-            batch = _items(data)
+            batch = [b for b in _items(data) if isinstance(b, dict)]  # a row that is no object is skipped
+            page = [b.get("id") for b in batch]
+            if batch and page == before:  # the same page again
+                return out
             out.extend(batch)
+            before = page
             meta = data.get("meta") if isinstance(data, dict) else None
             if isinstance(meta, dict) and "next_offset" in meta:
                 nxt, total = meta.get("next_offset"), meta.get("total")
-                if nxt is None or (total is not None and nxt >= total) or not batch:
+                if not isinstance(nxt, int) or nxt <= offset or (isinstance(total, int) and nxt >= total) or not batch:
                     return out
                 offset = nxt
             elif len(batch) < self.cfg.page_size:
                 return out
             else:
                 offset += len(batch)
+        msg = f"NetIM {path}: stopped after {MAX_PAGES} pages ({len(out)} rows); the list is partial."
+        if msg not in self.warnings:
+            log.warning("%s", msg)
+        self.warnings.append(msg)
+        return out
 
     def devices(self) -> list[NetimDevice]:
         if self._devices is None:
@@ -259,6 +279,8 @@ class NetimClient:
             return []
         alerts = []
         for r in _items(data):
+            if not isinstance(r, dict):
+                continue
             started = parse_time(_first(r, "startTime", "creationTime", "timestamp"))
             if started is None:
                 continue

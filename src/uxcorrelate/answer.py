@@ -83,10 +83,12 @@ def _todo(g: dict) -> str:
 
 def others_text(o: dict) -> str:
     """Who else has this issue, in one shape: how many, out of how many, on what, since when."""
-    if not o["pcs"]:
+    if not o["pcs"] and o.get("short"):
+        out = "Other PCs not known: Aternity's read of them failed or was cut short."
+    elif not o["pcs"]:
         out = "Only this PC in this window" + (f", of {o['of']:,} {o['of_what']}" if o.get("of") else "") + "."
     else:
-        out = f"{plural(o['pcs'], 'other PC')}" + (f" ({plural(o['users'], 'user')})" if o.get("users") else "")
+        out = ("At least " if o.get("short") else "") + f"{plural(o['pcs'], 'other PC')}" + (f" ({plural(o['users'], 'user')})" if o.get("users") else "")
         out += f" of {o['of']:,} {o['of_what']}" if o.get("of") else ""
         versions = {v: k for v, k in (o.get("versions") or {}).items() if v != UNKNOWN_VERSION}
         if len(versions) == 1:
@@ -111,7 +113,7 @@ def verdict(o: dict | None) -> str | None:
         return None
     h = o.get("history") or {}
     if not o["pcs"]:
-        return "Only this PC"
+        return None if o.get("short") else "Only this PC"  # a read that failed is not "only this PC"
     if h and h["since"] is None:
         return "New"
     if o["pcs"] == 1:
@@ -133,13 +135,15 @@ def _rollup(found: list[dict]) -> list[dict]:
     for i, x in enumerate(found):
         if not x.get("what"):
             continue
-        r = rows.setdefault(x["what"], {"issue": x["what"], "times": 0, "others": None, "others_pcs": -1,
+        r = rows.setdefault(x["what"], {"issue": x["what"], "times": 0, "others": None, "others_pcs": (-1, False),
                                         "verdict": None, "days": [], "first": i})
         r["times"] += x["times"]
         o = x.pop("_others")
-        if o and o["pcs"] > r["others_pcs"]:
-            r.update(others_pcs=o["pcs"], verdict=verdict(o), days=_days(o),
-                     others=f"{o['pcs']:,}" + (f" of {o['of']:,}" if o.get("of") else ""))
+        # the widest, and of two as wide the one read in full (a short read came first and stayed)
+        if o and (o["pcs"], not o.get("short")) > r["others_pcs"]:
+            r.update(others_pcs=(o["pcs"], not o.get("short")), verdict=verdict(o), days=_days(o),
+                     others="not known" if o.get("short") and not o["pcs"] else
+                     ("at least " if o.get("short") else "") + f"{o['pcs']:,}" + (f" of {o['of']:,}" if o.get("of") else ""))
     for r in rows.values():
         del r["others_pcs"]
     return list(rows.values())
@@ -192,6 +196,8 @@ def _slow_actions(slow: list) -> str:
 
 
 def _join(items: list[str]) -> str:
+    if not items:
+        return ""
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " and " + items[-1]
 
 
@@ -276,8 +282,10 @@ def _lead_verdict(g: dict) -> str:
     if g.get("disk"):
         return "Back up the user's data and replace the disk"
     if o and o["pcs"]:
-        return (f"The same failure is on {plural(o['pcs'], 'other PC')}"
+        return (f"The same failure is on {'at least ' if o.get('short') else ''}{plural(o['pcs'], 'other PC')}"
                 + (f" of {o['of']:,} {o['of_what']}" if o.get("of") else "") + ": not only this PC")
+    if o and o.get("short"):
+        return "Other PCs could not be read in full; no change on it matches the failing part"
     if o:
         return "Only this PC had it in this window; no change on it matches the failing part"
     return "No cause found for it"
@@ -339,14 +347,22 @@ def _changes_phrase(c: dict) -> str:
     if pcs:
         told = [f"{plural(p['changed'] or len(p['changes']), 'change')} on {p['device']} {_when(p['changes'])}"
                 for p in pcs if p["changes"]]
-        quiet = [p["device"] for p in pcs if not p["changes"]]
-        return _join(told) + (f", none on {_join(quiet)}: they do not explain it alone" if quiet
-                              else ": possibly one of them")
+        # a log that could not be read is not "none" (it was said so)
+        quiet = [p["device"] for p in pcs if not p["changes"] and not p.get("unread")]
+        unread = [p["device"] for p in pcs if not p["changes"] and p.get("unread")]
+        return (_join(told) + (f", none on {_join(quiet)}: they do not explain it alone" if quiet
+                               else ": possibly one of them")
+                + (f"; the change log of {_join(unread)} could not be read in full" if unread else ""))
     ch, k = c["changes"], c.get("changed") or len(c["changes"])
     if k == 1:
         x = ch[0]
         return f"Possibly: {x['name']} {x['change'] or 'changed'} on {_day(x['time'])}"
     return f"{plural(k, 'change')} logged there {_when(ch)}: possibly one of them"
+
+
+def _log_unread(c: dict) -> bool:
+    """The change log of the PC (or of one of the PCs) it was slow on could not be read in full."""
+    return bool(c.get("changes_unread") or any(p.get("unread") for p in _several(c)))
 
 
 def _counted(c: dict) -> str:
@@ -477,7 +493,9 @@ def _pick_headline(at_slow: list[dict], slow: list, normal: list[dict], after_st
                         _changes_phrase(nm) if _several(nm) else
                         f"after {plural(nm.get('changed') or len(nm['changes']), 'change')} there")
                         if nm["since"] and _changed_anywhere(nm)
-                        else f"usually {nm['usual']} s, {counted}, no change to check logged"
+                        else f"usually {nm['usual']} s, {counted}, its change log could not be read in full"
+                        if nm["since"] and _log_unread(nm) else
+                        f"usually {nm['usual']} s, {counted}, no change to check logged"
                         if nm["since"] else
                         "slow on most runs every day it was used, not new"
                         if nm.get("enough") and nm["days_used"] and nm["slow_days"] == nm["days_used"] else
@@ -561,9 +579,15 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         put.append({"text": f"{plural(other, 'other problem')} happened only at other times, not near a slow action.",
                       "count": None, "when": None, "kind": None, "why": [], "possible": [], "who": None, "list": []})
     checks = _checked(checked, minutes) if n else []
+    net_unread = [w for w in unread or [] if w.startswith("NetIM") or "NetIM gave an error" in w]
     if n and not any(g["kind"] == "network" for g in at_slow):
         if not netim_on:
             checks.append("Network: not checked, NetIM is not configured.")
+        elif net_unread and not mapped:  # not "the address is not in any NetIM subnet"
+            checks.append("Network: not checked, NetIM could not be read (see Warnings).")
+        elif net_unread:  # not "nothing wrong on the path"
+            checks.append(f"Network: {len(mapped)} NetIM objects on the path, but "
+                          f"{plural(len(net_unread), 'NetIM read')} failed (see Warnings): not fully checked.")
         elif not mapped:
             # every PC the user worked on, each with its own address
             pcs = addresses or [(ip_device or "the PC", user_ip)]
@@ -598,7 +622,10 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         lead = _slow_actions(slow)
         too = (f"{lead} At the same time, {k} of the {users} other people using {apps} also had a slow action "
                f"({_pct(impact['rate'])}).")
-        if not users:
+        if impact.get("partial"):
+            who_else = (f"{too} Aternity's reply was cut short, so these counts are partial and not compared with "
+                        "other days.")
+        elif not users:
             who_else = f"{lead} Nobody else was using {apps} at the same time."
         elif not k:
             who_else = f"{lead} None of the {users} other people using {apps} had a slow action at the same time."
@@ -606,6 +633,8 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
             who_else = f"{too} That is more than normal: at this time on other days, at most {_pct(impact['usual_rate'])} had one."
         elif impact["unusual"] is False:
             who_else = f"{too} That is normal: at this time on other days, up to {_pct(impact['usual_rate'])} had one."
+        elif impact.get("days_unread") and not impact.get("baseline_days"):
+            who_else = f"{too} The days before could not be read, so this is not compared with other days."
         else:
             who_else = f"{too} There are no other days to compare with."
         cp = impact["common_point"]
@@ -632,6 +661,8 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
     if any(g.get("near_reading") for g in problems):
         nothing = (f"No problem was recorded within {minutes} min of {near}, other than a PC reading over "
                    f"its limit taken with another action (see Other things on {pcs_label}).")
+    # "No problem was recorded" of a read that failed: said (class H's title says it already)
+    not_all = f" Not all of it could be read: {plural(len(unread), 'warning')} (see Warnings)." if unread else ""
     for g in calm or []:
         nothing += (f" {g['object']} was starting up near {'it' if n == 1 else 'a slow action'}: "
                     f"{g['what'].split(': ', 1)[-1]}. "
@@ -683,16 +714,20 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
             f"{cp['name']}, more than on other days" if cp else
             f"{impact['slow']} of the {impact['users']} other {apps} users were slow at the same time, "
             "more than on other days")
-        reason = f"{nothing} See Other users."
+        reason = f"{nothing}{not_all} See Other users."
     elif cls in ("C", "D"):
         # slow on a PC with no change too: the changes do not explain it alone
-        level = "possible" if cls == "C" and not any(not p["changes"] for p in _several(c)) else "unsure"
+        # (a PC whose log could not be read does not count as one with no change)
+        level = ("possible" if cls == "C" and not any(not p["changes"] and not p.get("unread") for p in _several(c))
+                 else "unsure")
         title = _since_phrase(c) + " "
+        log_unread = _log_unread(c)
         title += _changes_phrase(c) if cls == "C" else (
+            "Its change log could not be read in full, so a change before it is not known" if log_unread else
             ("No change to check was logged on any of them before it" if _several(c)
              else "No change to check was logged there before it")
             + (" (on a virtual desktop the log can run late)" if c["virtual"] else ""))
-        reason = f"{nothing} {_usual_from(c)}"
+        reason = f"{nothing}{not_all} {_usual_from(c)}"
         if cls == "C":
             on = _join([p["device"] for p in _several(c)]) if _several(c) else c["device"]
             reason += f" What changed on {on} is listed under What changed."
@@ -702,7 +737,7 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
         title = (f"{_start_name(c)} took {c['seconds']:.1f} s on {c['device']}" + _status_of(c, slow)
                  + f", {_after_when(c)} a start-up. On {c['kind']} {c['after']['share']:.0%} are slow then, "
                  f"{c['later']['share']:.0%} later")
-        with_it = nothing if top is None else f"Also with it: {top['text']} (see What went wrong)."
+        with_it = nothing + not_all if top is None else f"Also with it: {top['text']} (see What went wrong)."
         reason = f"{after_start_sentence(c)} {with_it}{usual_line}"
     elif cls == "F":
         level = "unsure"
@@ -710,12 +745,12 @@ def build_answer(problems: list[dict], samples: list, slow: list, who: str, impa
                  + (f", usually {c['usual']} s" if c.get("usual") is not None else "")
                  + ". Aternity marked most runs slow on each of the "
                  f"{c['days_used']} days {who} used it: not new")
-        reason = f"{nothing} {_usual_from(c)}{usual_line}"
+        reason = f"{nothing}{not_all} {_usual_from(c)}{usual_line}"
     elif cls == "G":
         level = "unsure"
         title = (f"{_felt_all(slow, worst)}{_occasional_tail(head['occasional'])}. Other "
                  f"{_join(impact['applications'])} users were as slow as usual at this time")
-        reason = nothing + usual_line
+        reason = nothing + not_all + usual_line
     else:
         level = "unsure"
         title = f"{_felt_all(slow, worst)}{_occasional_tail(head['occasional'])}. No cause found" + (
@@ -820,6 +855,9 @@ def _changed(changed: dict | None) -> list[dict]:
     iso = lambda t: t.isoformat().replace("+00:00", "Z")  # noqa: E731
     out = []
     for d, rows in (changed or {}).items():
+        if rows is None:  # the change log could not be read in full: not "nothing changed"
+            out.append({"device": d, "changes": [], "more": 0, "unread": True})
+            continue
         batch = batch_removals(rows)
         minute = lambda c: c["time"].replace(second=0, microsecond=0)  # noqa: E731
         items, done = [], set()
@@ -854,8 +892,13 @@ def _checked(c: dict | None, minutes: int) -> list[str]:
                    + ", ".join(vals) + ".")
     else:
         out.append("PC: Aternity gave no CPU, memory or disk queue for the slow actions.")
+    failed = c.get("failed") or {}
     for key, what in (("events", "Health events"), ("crashes_hangs", "App crashes and hangs"),
                       ("start_ups", "Start-ups")):
         total, near = c[key]
+        if failed.get(key):  # "0 in the window" was said of a read that had failed
+            out.append(f"{what} on {devs}: not read in full (see Warnings); {total} in what was read, {near} "
+                       f"within {minutes} min of a slow action.")
+            continue
         out.append(f"{what} on {devs}: {total} in the window, {near} within {minutes} min of a slow action.")
     return out

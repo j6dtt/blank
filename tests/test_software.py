@@ -359,3 +359,53 @@ def test_aternity_down_is_tried_again_soon_and_never_saved_as_a_day(tmp_path, mo
     assert waits == [15 * 60, 24 * 3600, 15 * 60]  # down, read, down again a day later
     assert len(reader.view()["flags"]) == 7 and len(list(tmp_path.rglob("*.json"))) == 1  # the good read is kept
     assert "trying again in 15 minutes" in reader.status
+
+
+def test_a_broken_config_is_tried_again_not_the_end_of_the_reader():
+    """A broken config.yaml stopped the software reader until a restart (Nov 14 2026 review)."""
+    reader = sw.Software("", None)
+    waits, tries = [], []
+
+    class Stop(BaseException):
+        pass
+
+    def make():
+        tries.append(1)
+        if len(tries) == 1:
+            raise ValueError("config.yaml: line 3")
+        return None  # fixed, but Aternity is not set: the reader stops, saying so
+
+    sw.keep_reading(reader, make, lambda: None, lambda s: waits.append(s), clock=lambda: NOW)
+    assert waits == [15 * 60] and len(tries) == 2 and "not set" in reader.off
+
+
+def test_a_read_cut_short_says_its_counts_are_partial(tmp_path, monkeypatch):
+    """Aternity's reply stopped at the page limit or at $top: a flag or a click's counts from it
+    say so (PCs past the cut seemed to have no update, an application's PCs seemed fewer)."""
+    monkeypatch.setattr(sw, "LIST_ROWS", 30)  # Outlook's 60 PCs reach the 60 rows asked for
+    c, s = client()
+    snap = sw.read_snapshot(c, s.aternity, NOW, sw.Software("", tmp_path))
+    crash = next(f for f in snap["flags"] if f["kind"] == "crash")
+    assert crash["text"].endswith(" " + sw.CUT) and snap["versions"]["Outlook"]["partial"] is True
+    assert snap["windows"]["partial"] is True  # 30 of 60 PCs read
+    assert any("cut short" in n for n in snap["notes"])
+    win = {"windows": {"partial": True, "versions": [{"windows": "W", "pcs": 9, "missing": [
+        {"update": "KB1", "on": 6, "without": 3, "none": 3, "instead": []}]}]}}
+    assert sw._flags(win)[0]["text"].endswith("PCs on W. " + sw.CUT)
+    monkeypatch.setattr(sw, "LIST_ROWS", 10)
+    assert sw.before_after(c, NOW, "Outlook")["notes"][0].startswith(sw.CUT)
+    assert sw.split_by_program(c, NOW, "Outlook", "Microsoft Edge")["notes"][0] == sw.CUT
+    monkeypatch.setattr(sw, "LIST_ROWS", 20000)
+    full = sw.read_snapshot(c, s.aternity, NOW, sw.Software("", tmp_path))
+    assert all(sw.CUT not in f["text"] for f in full["flags"]) and full["windows"]["partial"] is False
+    assert sw.split_by_program(c, NOW, "Outlook", "Microsoft Edge")["notes"] == []
+
+
+def test_one_unreadable_saved_day_does_not_stop_the_others_loading(tmp_path):
+    c, s = client()
+    reader = sw.Software("", tmp_path)
+    reader.save(sw.read_snapshot(c, s.aternity, NOW, reader))
+    (tmp_path / "software" / "2026-11-09.json").write_text("{not json")
+    again = sw.Software("", tmp_path)
+    assert again.view()["ready"] and again.view()["date"] == "2026-11-10"  # the latest read still shows
+    assert "2026-11-09.json" in again.note and "2026-11-10" in again.saved

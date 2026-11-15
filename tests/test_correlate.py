@@ -7,7 +7,8 @@ from uxcorrelate.config import Settings
 from uxcorrelate.correlate import InvestigationRequest, investigate
 from synthetic import CPU_SPIKE, INCIDENT, DemoAternity, DemoNetim, demo_sources
 from uxcorrelate.models import (
-    AppUsageSample, BootComponent, BootSample, DeviceHealthSample, EndpointInfo, HealthEvent, ProcessSample, SoftwareChange, UserSample,
+    AppUsageSample, BootComponent, BootSample, DeviceHealthSample, EndpointInfo, HealthEvent, NetimDevice, NetimInterface,
+    ProcessSample, SoftwareChange, UserSample,
 )
 
 NOW = datetime(2026, 10, 28, 12, 0, tzinfo=timezone.utc)
@@ -122,6 +123,29 @@ def test_a_crash_of_another_app_is_not_blamed():
     assert "Also: ERP took 6.0 s on PC1. Likely: ERP was not responding on PC1." in a["reason"]
 
 
+class PerPC(StubAternity):
+    """App usage of the PC asked for only, as the live client reads it."""
+    def app_usage(self, device, *a, **k):
+        return [u for u in self.usage if u.device == device]
+
+
+def test_every_pc_of_the_user_is_read_those_with_a_slow_action_first():
+    """A pooled virtual desktop user gets a new desktop at each logon: the 3 most used were
+    read, so a crash on a 4th one with one slow action was missed, and nothing was said."""
+    acts = [UserSample(T0 + timedelta(minutes=i), "amy", f"VD-{d}", "ERP", response_time=1.0)
+            for d in range(1, 5) for i in range(10)]
+    acts.append(UserSample(T0 + timedelta(minutes=60), "amy", "VD-5", "ERP", response_time=6.0))
+    crash = [AppUsageSample(T0 + timedelta(minutes=59), "VD-5", "ERP", crashes=1)]
+    r = amy(acts, usage=crash, source=PerPC)
+    assert r["answer"]["checked"] and r["endpoints"][0]["device"] == "VD-5"  # the PC with a slow action first
+    assert {g["object"] for g in r["problems"] if g["issue"] == "crash"} == {"VD-5"}
+    many = [UserSample(T0 + timedelta(minutes=i), "amy", f"VD-{d}", "ERP", response_time=1.0)
+            for d in range(1, 11) for i in range(11 - d)]
+    w = [x for x in amy(many, source=PerPC)["warnings"] if "more PC" in x]
+    assert w == ["2 more PCs of amy not checked: VD-9, VD-10 (no slow action on them; the 8 read: those with slow "
+                 "actions first, then the most used)."]
+
+
 def test_aternity_status_decides_what_is_slow():
     settings = Settings()
     settings.thresholds.slow_status = ["Major"]
@@ -162,6 +186,141 @@ def test_who_else_finds_the_common_network_point_and_compares_with_earlier_days(
     hq = next(g for g in im["groups"] if g["kind"] == "subnet")
     assert hq["name"] == "10.50.0.0/24 (not in NetIM)" and hq["slow"] == 0
     assert im["affected_users"][0]["network"] == cp["name"]
+
+
+def test_other_users_that_cannot_be_read_never_stop_the_investigation(monkeypatch):
+    from uxcorrelate.http import ApiError
+    real = DemoAternity.app_activity
+    days: list = []
+
+    def failing(self, applications, start, end):
+        days.append(start)
+        if len(days) == 1:  # the window itself
+            raise ApiError("Aternity: GET /BUSINESS_ACTIVITIES_RAW failed: timed out")
+        return real(self, applications, start, end)
+    monkeypatch.setattr(DemoAternity, "app_activity", failing)
+    monkeypatch.setattr(DemoAternity, "warnings", [], raising=False)  # as the real client's
+    result, _ = run_demo()
+    assert result["impact"] is None and result["answer"]["title"]  # the rest of the investigation is there
+    assert any(w.startswith("Other users of CRM Portal not checked: Aternity gave an error") for w in result["warnings"])
+
+    def one_day_fails(self, applications, start, end):
+        days.append(start)
+        if len(days) == 3:  # the second day before
+            raise ApiError("Aternity: timed out")
+        return real(self, applications, start, end)
+    days.clear()
+    monkeypatch.setattr(DemoAternity, "app_activity", one_day_fails)
+    im = run_demo()[0]["impact"]
+    assert im["unusual"] is True and im["baseline_days"] == len(days) - 2  # that day left out, the rest compared
+
+
+def test_other_users_from_a_cut_short_read_are_not_compared(monkeypatch):
+    real = DemoAternity.app_activity
+
+    monkeypatch.setattr(DemoAternity, "warnings", [], raising=False)  # as the real client's
+
+    def cut(self, applications, start, end):
+        self.warnings.append("Aternity BUSINESS_ACTIVITIES_RAW: stopped after 50 pages (50,000 rows); the result is "
+                             "partial.")
+        return real(self, applications, start, end)
+    monkeypatch.setattr(DemoAternity, "app_activity", cut)
+    result, _ = run_demo()
+    im = result["impact"]
+    assert im["partial"] and im["unusual"] is None and im["common_point"] is None
+    assert "cut short, so these counts are partial and not compared with other days" in result["answer"]["who_else"]
+
+
+def test_other_users_day_kind_is_the_local_day():
+    from uxcorrelate import impact
+    from uxcorrelate.models import set_zone
+
+    class Src:
+        def app_activity(self, apps, start, end):
+            return [UserSample(start, "bo", "PC2", "ERP", response_time=9.0, status="Major")]
+    set_zone("America/New_York")
+    try:  # Friday 20:00 in New York is Saturday 01:00 UTC: working days, as compared
+        fri = datetime(2026, 11, 14, 1, 0, tzinfo=timezone.utc)
+        im = impact.who_else(Src(), None, ["ERP"], {fri}, 5, lambda t: t, lambda s: s.status == "Major", "amy", None,
+                             None, None)
+        assert im["day_kind"] == "working"
+    finally:
+        set_zone("")
+
+
+def test_other_users_are_compared_with_the_same_clock_hours_across_a_clock_change():
+    from uxcorrelate import impact
+    from uxcorrelate.models import local, set_zone
+    asked: list = []
+
+    class Src:
+        def app_activity(self, apps, start, end):
+            asked.append(start)
+            return [UserSample(start, "bo", "PC2", "ERP", response_time=9.0, status="Major")]
+    set_zone("America/New_York")
+    try:  # Tuesday Nov 3 09:00 EST; New York left summer time on Nov 1
+        tue = datetime(2026, 11, 3, 14, 0, tzinfo=timezone.utc)
+        impact.who_else(Src(), None, ["ERP"], {tue}, 5, lambda t: t, lambda s: s.status == "Major", "amy", None,
+                        None, None)
+        # a 24-hour step in UTC read Oct 30 at 10:00 EDT for Nov 3 at 09:00 EST
+        assert {f"{local(t):%H:%M}" for t in asked} == {"09:00"} and len(asked) > 2
+    finally:
+        set_zone("")
+
+
+def test_netim_that_cannot_be_read_never_stops_the_investigation_nor_reads_as_nothing_wrong(monkeypatch):
+    from uxcorrelate.http import ApiError
+
+    def down(self, *a, **k):
+        raise ApiError("NetIM: GET /api/netim/v1/devices failed: timed out")
+    monkeypatch.setattr(DemoNetim, "devices", down)
+    result, _ = run_demo()
+    assert result["answer"]["title"] and result["mapped_objects"] == []  # before: the investigation failed
+    assert "NetIM topology not checked: NetIM gave an error" in " ".join(result["warnings"])
+    monkeypatch.undo()
+
+    class Net:  # the PC's own view has nothing on the network: the network line is said
+        def __init__(self, fail):
+            self.fail, self.warnings = fail, []
+
+        def devices(self):
+            if self.fail == "devices":
+                raise ApiError("NetIM: timed out")
+            return [NetimDevice("d1", "rtr1")]
+
+        def interfaces(self, device_id):
+            return [NetimInterface("i1", device_id, "Gi0/0", ["10.1.1.1/24"], 1e9)]
+
+        def metrics(self, metric, ids, start, end):
+            if self.fail == "metrics" and ids:
+                self.warnings.append(f"{metric.label} not checked: NetIM gave an error (500).")
+            return []
+
+        def alerts(self, start, end):
+            return []
+
+    class Addressed(StubAternity):
+        def endpoint_info(self, device):
+            return EndpointInfo(device=device, ip_address="10.1.1.20")
+    req = InvestigationRequest(start=T0, end=T0 + timedelta(hours=2), username="amy")
+    for fail, said in (("devices", "Network: not checked, NetIM could not be read (see Warnings)."),
+                       ("metrics", "Network: 2 NetIM objects on the path, but"),
+                       (None, "Network: nothing wrong on the path at those times (2 NetIM objects).")):
+        checked = investigate(req, Addressed(erp(lambda i: i == 8)), Net(fail), Settings())["answer"]["checked"]
+        assert any(c.startswith(said) for c in checked), (fail, checked)
+
+    calls = []
+
+    def one_fails(self, device_id):  # one device's interfaces fail: the others are still searched
+        calls.append(device_id)
+        if device_id == "d3":
+            raise ApiError("NetIM: timed out")
+        return real_itf(self, device_id)
+    real_itf = DemoNetim.interfaces
+    monkeypatch.setattr(DemoNetim, "interfaces", one_fails)
+    result, _ = run_demo()
+    assert result["impact"]["common_point"]["kind"] == "gateway"  # still found
+    assert any(w.startswith("NetIM interfaces of 1 device not checked") for w in result["warnings"])
 
 
 def test_answer_is_plain_language():
@@ -242,6 +401,73 @@ def test_a_hang_is_traced_to_its_module_the_change_before_it_and_other_pcs():
     assert not any("other PC" in t for t in why["text"])
     assert [(c["device"], [x["text"] for x in c["changes"]]) for c in a["changes"]] == [
         ("PC1", ["Scanner Updated 2.0 → 2.1", "Some Viewer Installed 9"])]
+
+
+class OthersUnread(Traced):
+    """The read of other PCs' events fails, as Aternity's client tells it: a warning each time."""
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.warnings = []
+
+    def app_health_events(self, application, start, end):
+        self.warnings.append("Health events of other PCs not checked: Aternity DEVICE_HEALTH_RAW gave an error (500).")
+        return []
+
+
+def test_a_failed_read_of_other_pcs_is_never_only_this_pc():
+    usage = [AppUsageSample(Traced.at, "PC1", "ERP", hang_time=12.0)]
+    a = amy(erp(lambda i: i == 8), usage=usage, source=OthersUnread)["answer"]
+    assert a["found"][0]["who"] == "Other PCs not known: Aternity's read of them failed or was cut short."
+    assert a["rollup"][0]["verdict"] is None and a["rollup"][0]["others"] == "not known"
+
+
+def test_a_cut_short_read_asked_again_stays_cut_short():
+    from uxcorrelate.cause import _Once, _short
+
+    class Source:
+        warnings = []
+
+        def app_health_events(self, *a):
+            self.warnings.append("Aternity DEVICE_HEALTH_RAW: stopped after 50 pages; the result is partial.")
+            return ["row"]
+    once = _Once(Source())
+    assert once.app_health_events("ERP", 1, 2) == ["row"] and _short(once)
+    assert once.app_health_events("ERP", 1, 2) == ["row"] and _short(once)  # from the cache: still partial
+    assert len(Source.warnings) == 1  # asked once
+
+
+def test_every_failed_read_is_counted_though_said_once():
+    import httpx
+    from uxcorrelate.aternity import AternityClient
+    s = Settings()
+    s.aternity.base_url = "https://aternity.test/aternity.odata/v2.0"
+    c = AternityClient(s.aternity, transport=httpx.MockTransport(lambda r: httpx.Response(500, text="down")))
+    c.http.retries = 0
+    for app in ("ERP", "Mail"):
+        assert c.app_health_events(app, T0, T0 + timedelta(hours=1)) == []
+    assert len(c.warnings) == 2 and len(set(c.warnings)) == 1  # the second failure moves the count too
+
+
+class LogUnread(Traced):
+    """The PC's change log read fails (a warning, as Aternity's client tells it)."""
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.warnings = []
+
+    def software_changes(self, device, start, end):
+        self.warnings.append("Software changes not checked: Aternity INSTALLED_SOFTWARE_CHANGE_LOG gave an error (504).")
+        return []
+
+
+def test_a_change_log_that_cannot_be_read_is_never_nothing_changed():
+    usage = [AppUsageSample(Traced.at, "PC1", "ERP", hang_time=12.0)]
+    result = amy(erp(lambda i: i == 8), usage=usage, source=LogUnread)
+    a, why = result["answer"], result["problems"][0]["why"]
+    assert a["changes"] == [{"device": "PC1", "changes": [], "more": 0, "unread": True}]  # not "nothing changed"
+    assert "The change log of PC1 could not be read in full: a change before it is not known." in why["text"]
+    assert why["possible"] == []
+    from uxcorrelate.report import render_text
+    assert "PC1: its change log could not be read in full" in render_text(result)
 
 
 def test_a_cpu_problem_names_the_busiest_process():
@@ -328,8 +554,10 @@ def test_a_missing_data_source_is_one_plain_line():
     client.http.retries = 0
     for dev in ("PC1", "PC2", "PC3"):
         client.disk_space(dev, T0, T0 + timedelta(hours=1))
-    assert client.warnings == ["Free disk space not checked: this Aternity has no RAW_DATA_STORAGE data source "
-                               "(`uxcorrelate verify` shows what to change)."]
+    # each failed read is counted (a caller tells a failure by the list growing), and shown once
+    assert len(client.warnings) == 3 and list(dict.fromkeys(client.warnings)) == [
+        "Free disk space not checked: this Aternity has no RAW_DATA_STORAGE data source "
+        "(`uxcorrelate verify` shows what to change)."]
 
 
 def test_a_removal_and_an_install_at_the_same_second_read_as_one_update():
@@ -466,6 +694,28 @@ class Billing(StubAternity):
         rows = [SoftwareChange(t, device, "Print Agent", "Uninstalled", "4.1"),
                 SoftwareChange(t, device, "Print Agent", "Installed", "4.2")]
         return [c for c in rows if start <= c.timestamp <= end]
+
+
+class BillingUnread(Billing):
+    """Aternity fails the reads of history (a warning each time, as its client tells it)."""
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        self.warnings = []
+
+    def activity_history(self, *a, **k):
+        self.warnings.append("Comparison with normal not checked: Aternity BUSINESS_ACTIVITIES_RAW gave an error (504).")
+        return []
+
+
+def test_a_failed_read_of_history_is_not_no_earlier_runs():
+    samples = [UserSample(T0 + timedelta(minutes=10 * i), "lee", "NB-12", "Billing", "Open Invoice",
+                          response_time=9.0) for i in range(3)]
+    result = investigate(InvestigationRequest(start=T0, end=T0 + timedelta(hours=2), username="lee"),
+                         BillingUnread(samples), None, Settings())
+    text = result["answer"]["normal"][0]
+    assert text[1] == ("Aternity's read of earlier Billing Open Invoice for lee failed or was cut short: not compared "
+                       "with what is normal for lee.")  # before: "No earlier Billing Open Invoice ... too few"
+    assert text[2] == "Other users within 5 min: not known (Aternity's read of them failed or was cut short)."
 
 
 def test_each_slow_action_is_compared_with_its_own_normal_and_what_changed():

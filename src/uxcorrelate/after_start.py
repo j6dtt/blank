@@ -52,11 +52,18 @@ def compare(aternity, slow: list, starts: list[dict], is_slow, warnings: list[st
         return []
     end = max(s.timestamp for s, _ in picked) + timedelta(minutes=1)
     start = end - timedelta(hours=FLEET_HOURS)
+    said = lambda: len(getattr(aternity, "warnings", None) or [])  # noqa: E731  a failed or cut-short read adds one
+    mark = said()
     try:
         boots = aternity.boots(start - timedelta(minutes=AFTER_START_MIN), end)
     except ApiError as exc:
+        boots, mark = None, None
         warnings.append(f"Start-ups of all PCs could not be read ({exc.short()}): "
                         "slow actions right after a start-up are not compared with other PCs.")
+    if boots is None or said() != mark:  # with none, every run read as "later": "too few right after"
+        if boots is not None:
+            warnings.append("Start-ups of all PCs could not be read in full: slow actions right after a start-up "
+                            "are not compared with other PCs.")
         return []
     fleet: dict[str, list[datetime]] = {}
     for b in boots:
@@ -69,10 +76,14 @@ def compare(aternity, slow: list, starts: list[dict], is_slow, warnings: list[st
         groups.setdefault((s.application, s.activity, kind(s.virtual)), []).append((s, b))
     out: list[dict] = []
     runs_of: dict[tuple, list] = {}
+    unread: set[tuple] = set()
     for (app, activity, k), items in groups.items():
         if (app, activity) not in runs_of:
+            mark = said()
             runs_of[app, activity] = aternity.activity_history(app, activity, start, end)
-        same = [r for r in runs_of[app, activity] if kind(r.virtual) == k]
+            if said() != mark:  # failed or cut short: not compared, and said so
+                unread.add((app, activity))
+        same = [] if (app, activity) in unread else [r for r in runs_of[app, activity] if kind(r.virtual) == k]
         after = [r for r in same if _after(fleet.get(r.device, []), r.timestamp)]
         later = [r for r in same if not _after(fleet.get(r.device, []), r.timestamp)]
         a, l = _side(after, is_slow), _side(later, is_slow)
@@ -84,7 +95,7 @@ def compare(aternity, slow: list, starts: list[dict], is_slow, warnings: list[st
                     "device": worst.device, "seconds": worst.response_time,
                     "minutes": round((worst.timestamp - b).total_seconds() / 60),
                     "after": a, "later": l, "enough": enough, "slower": slower,
-                    "hours": FLEET_HOURS})
+                    "hours": FLEET_HOURS, "unread": (app, activity) in unread})
     out.sort(key=lambda c: -(c["seconds"] or 0))
     return out
 
@@ -94,6 +105,9 @@ def sentence(c: dict) -> str:
     start-up was slow 1,759 of 2,593 times (67%, median 40.5 s); later 786 of 1,814
     (43%, median 27.4 s)." """
     name = f"{c['application']} {c['activity']}" if c["activity"] else c["application"]
+    if c.get("unread"):
+        return (f"{name} on {c['kind']} in the {c['hours']} h before: Aternity's read of it failed or was cut "
+                "short, so it is not compared with other PCs.")
     side = lambda s: (f"{s['slow']:,} of {s['runs']:,} times ({s['share']:.0%}"  # noqa: E731
                       + (f", median {s['median']} s)" if s["median"] is not None else ")"))
     text = (f"On {c['kind']} in the {c['hours']} h before, {name} right after a start-up was slow "

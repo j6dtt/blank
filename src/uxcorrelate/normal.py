@@ -42,6 +42,11 @@ def _status(mine: list) -> str | None:
     return seen.pop() if len(seen) == 1 else None
 
 
+def _said(aternity) -> int:
+    """How many warnings the source has said: a read that fails or is cut short adds one."""
+    return len(getattr(aternity, "warnings", None) or [])
+
+
 def compare_actions(aternity, slow: list, start, end, username: str | None, is_slow,
                     window: timedelta = timedelta(minutes=5), samples: list | None = None) -> list[dict]:
     """One entry per slow application + activity: sentences ("text") and steps ("todo")."""
@@ -54,15 +59,22 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
         who = username or dev
         name = f"{app} {act}" if act else app
         log.info("Aternity: how long %s usually takes for %s and for other users", name, who)
+        mark = _said(aternity)
         hist = [s for s in aternity.activity_history(app, act, start - timedelta(days=BASELINE_DAYS), start,
                                                      username=username, device=None if username else dev)
                 if s.response_time is not None]
+        # a read that failed or was cut short is not "no earlier runs": it is said, and not compared
+        unread = _said(aternity) != mark
+        hist = [] if unread else hist
         same = (lambda s: s.username == username) if username else (lambda s: s.device == dev)
         # other users within `window` of these slow actions (the same span as "who else")
         near = lambda s: any(abs(s.timestamp - m.timestamp) <= window for m in mine)  # noqa: E731
+        mark = _said(aternity)
         others = [s for s in aternity.activity_history(app, act, min(m.timestamp for m in mine) - window,
                                                        max(m.timestamp for m in mine) + window)
                   if not same(s) and near(s)]
+        others_unread = _said(aternity) != mark
+        others = [] if others_unread else others
         enough = len(hist) >= MIN_HISTORY
         # calendar days, counted as a reader would (Nov 3 to Nov 6: the last 3 days)
         # calendar days, today included when it has runs: 7 dates from Nov 2 to Nov 8 are the last 7 days
@@ -78,11 +90,15 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
             text = [f"{name} took {took} s at its slow action."]
         else:
             text = [f"{name} took {took} s at its {n} slow actions (slowest {round(worst, 1)} s)."]
-        text.append(f"Usually {usual} s for {who} (typical of {len(hist)} in the {back})."
-                    if enough else f"{'Only ' + str(len(hist)) if hist else 'No'} earlier {name} for {who} in the activity Aternity keeps: "
+        text.append(f"Usually {usual} s for {who} (typical of {len(hist)} in the {back})." if enough else
+                    f"Aternity's read of earlier {name} for {who} failed or was cut short: not compared with what "
+                    f"is normal for {who}." if unread else
+                    f"{'Only ' + str(len(hist)) if hist else 'No'} earlier {name} for {who} in the activity Aternity keeps: "
                     f"too few to say what is normal for {who}.")
         users = {s.username or s.device for s in others}
-        text.append(f"Other users within {window.seconds // 60} min: typical {typ} s ({plural(len(users), 'user')})."
+        text.append(f"Other users within {window.seconds // 60} min: not known (Aternity's read of them failed or "
+                    "was cut short)." if others_unread else
+                    f"Other users within {window.seconds // 60} min: typical {typ} s ({plural(len(users), 'user')})."
                     if typ is not None else f"No other user ran {name} within {window.seconds // 60} min.")
 
         # days on which Aternity marked most runs slow, and since when
@@ -97,6 +113,7 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
                 break
             run.insert(0, d)
         since, changes, todo, changed, normal_day, from_runs, pcs = None, [], [], 0, None, [], []
+        changes_unread = False
         persistent, before_slow = False, None
         if enough:
             line = (f"Aternity marked most runs slow on {len(bad)} of the {len(days)} days {who} used it "
@@ -132,7 +149,8 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
                               and s.response_time is not None]
                     # changes up to when it first became slow (any PC): later ones cannot explain that
                     ch = changes_between(aternity, d, normal, first)
-                    pcs.append({"device": d, "runs": len(runs_d), "slow": sum(1 for s in runs_d if is_slow(s)),
+                    pcs.append({"device": d, "unread": bool(ch.get("unread")),
+                            "runs": len(runs_d), "slow": sum(1 for s in runs_d if is_slow(s)),
                                 "took": _med(s.response_time for s in mine if s.device == d),
                                 "changes": ch["changes"], "changed": ch.get("count", len(ch["changes"])),
                                 "text": ch["text"]})
@@ -152,11 +170,11 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
                             + (": being slow is new." if persistent else ": occasional, not a slowdown."))
                 text += [p["text"] for p in pcs if p["text"]]
                 own = next(p for p in pcs if p["device"] == dev)
-                changes, changed = own["changes"], own["changed"]
+                changes, changed, changes_unread = own["changes"], own["changed"], own["unread"]
                 for p in pcs if persistent else []:
                     if p["changes"]:
                         names = ", ".join(dict.fromkeys(c["name"] for c in p["changes"] if c["name"]))
-                        quiet = [q["device"] for q in pcs if not q["changes"]]
+                        quiet = [q["device"] for q in pcs if not q["changes"] and not q["unread"]]  # unread: not "none"
                         todo.append(f"On {p['device']}: check what changed before {name} became slow ({names})."
                                     + (f" It was slow on {' and '.join(quiet)} too, where no change was logged: "
                                        "the changes do not explain it alone." if quiet else ""))
@@ -174,6 +192,7 @@ def compare_actions(aternity, slow: list, start, end, username: str | None, is_s
                     "usual": usual, "others_typical": typ, "others": len(users), "slow_days": len(bad),
                     "days_used": len(days), "since": since.isoformat().replace("+00:00", "Z") if since else None,
                     "changes": changes, "changed": changed, "enough": enough, "runs": len(hist), "back": back,
+                    "unread": unread, "changes_unread": changes_unread,
                     "worst": round(worst, 1) if worst is not None else None,
                     "virtual": any(s.virtual for s in mine), "status": _status(mine),
                     "pcs": [{k: v for k, v in p.items() if k != "text"} for p in pcs],

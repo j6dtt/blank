@@ -31,8 +31,8 @@ from .config import (DISK_FREE_COLUMNS, DISK_PARTS, OS_COLUMNS, OVERVIEW_SOURCES
                      NO_VALUE, TOP_STATUS, VDI_COLUMNS, VERSION_OPTIONAL, VERSION_SOURCES, Settings)
 from .after_start import AFTER_START_MIN  # "right after a start-up", as investigations
 from .correlate import slow_rule
-from .http import ApiError
-from .models import parse_time, part_label, to_float
+from .http import ApiError, short_error
+from .models import clock, day, local, local_date, parse_time, part_label, to_float
 from .netim import NetimClient, _items
 
 CODE_FIX = "edit {file} in ./src/uxcorrelate, then: docker compose restart"
@@ -72,6 +72,49 @@ def _keys(data: Any) -> str:
     if isinstance(data, list):
         data = data[0] if data else {}
     return ", ".join(sorted(data)) if isinstance(data, dict) else type(data).__name__
+
+
+def part(item: str, run, *args, client=None, system: str = "Aternity") -> list[Check]:
+    """One part of verify. An error stops that part only, said under its name: every result is
+    printed at the end, so one error had printed nothing at all. With `client`, a read Aternity
+    cut short (max_pages) or could not make, that the part did not say itself, is added to it:
+    such a part had shown its counts, or 0, as if read whole."""
+    said = getattr(client, "warnings", None)
+    said = said if isinstance(said, list) else None
+    mark = len(said) if said is not None else 0
+    try:
+        checks = list(run(*args))
+    except ApiError as exc:
+        return [Check(system, item, None, f"Not checked: {system} gave an error ({exc.short()}). "
+                      "The other checks ran.")]
+    except Exception as exc:  # a fault of ours: the other parts still run and are printed
+        return [Check(system, item, False, f"This check stopped on an error ({type(exc).__name__}: "
+                      f"{short_error(exc)}). The other checks ran.", "Tell Claude this line.")]
+    if said is not None:
+        shown = {r for c in checks for r in c.rows}
+        left = [w for w in _cut_short(client, mark) if w not in shown]
+        if left:
+            checks.append(Check(system, f"{item}: not read in full", None,
+                                "Some reads above were cut short or failed: their counts are partial.", rows=left))
+    return checks
+
+
+def _first(rows, top: int) -> str:
+    """Said when a read stopped at the check's own row limit: its counts are not the whole span."""
+    return f" (the first {len(rows):,}: the check's limit)" if rows is not None and len(rows) >= top else ""
+
+
+def _reply_keys(read) -> str:
+    """The key names of a reply read again to show them; a failed read is said (it raised, and
+    stopped the whole verify)."""
+    try:
+        return _keys(read())
+    except ApiError as exc:
+        return f"not read again ({exc.short()})"
+
+
+def _days_note(settings: Settings) -> str:
+    return f"Days are in config.yaml's timezone ({settings.timezone or 'UTC'})."
 
 
 # ---------------------------------------------------------------- Aternity
@@ -271,11 +314,14 @@ def verify_aternity(settings: Settings, client: AternityClient) -> list[Check]:
                                 f"{kind} '{name}' {'found' if found else 'not found'} in Aternity "
                                 "activity of the last 7 days.",
                                 "" if found else f"Spell it exactly as Aternity shows it ({column})."))
-    return checks + _value_ranges(settings, client, schema) + _health_events(settings, client, schema) \
-        + _app_usage(settings, client, schema) + _start_up_parts(settings, client, schema) \
-        + _change_log(settings, client, schema) + _vdi(settings, client, schema) \
-        + _remote_display(settings, client, schema) + _process_sources(client, schema) \
-        + _fleet(settings, client, schema) + _overview(settings, client, schema)
+    for item, run in (("values", _value_ranges), ("health events", _health_events),
+                      ("application crashes, hang time, UXI", _app_usage), ("start-up parts", _start_up_parts),
+                      ("software change log", _change_log), ("VDI", _vdi),
+                      ("remote display latency", _remote_display),
+                      ("process data", lambda s, c, sc: _process_sources(c, sc)), ("fleet", _fleet),
+                      ("overview", _overview)):
+        checks += part(item, run, settings, client, schema, client=client)
+    return checks
 
 
 def _raw(row: dict, fields: dict, keys) -> str:
@@ -384,6 +430,7 @@ def _start_up_parts(settings: Settings, client: AternityClient, schema: dict[str
     top = max(timed, key=lambda r: to_float(r.get(bf["duration"])))
     dev = str(top.get(bf["device"]))
     since = since - timedelta(hours=2)
+    mark = len(client.warnings)  # cut short (max_pages), "All N rows" is not all of them
     try:  # every row of that PC in the window, put in time order here
         mine_b = client.query(be, f"{bf['timestamp']} ge {odata_time(since)} and {bf['device']} eq {odata_quote(dev)}",
                               select=[bf[k] for k in ("timestamp", "started", "type", "duration") if bf.get(k)], raw=True)
@@ -394,16 +441,17 @@ def _start_up_parts(settings: Settings, client: AternityClient, schema: dict[str
                             f"Could not read that PC's rows: {exc.reason or exc}"))
         return checks
     order = lambda r, f: str(r.get(f["timestamp"]))  # noqa: E731
+    every = "All" if len(client.warnings) == mark else "Not read in full: the first"
     checks.append(Check("Aternity", "slowest start-up's PC: its start-ups", None,
                         f"Slowest start-up read: {_raw(top, bf, ('timestamp', 'started', 'device', 'type', 'duration'))}. "
-                        f"All {len(mine_b)} start-up row(s) of that PC since {odata_time(since)}, in time order:",
+                        f"{every} {len(mine_b)} start-up row(s) of that PC since {odata_time(since)}, in time order:",
                         rows=[_raw(r, bf, ("timestamp", "started", "type", "duration"))
                               for r in sorted(mine_b, key=lambda r: order(r, bf))[:20]]))
     groups: dict[str, list] = {}
     for r in sorted(mine_c, key=lambda r: order(r, cf)):
         groups.setdefault(order(r, cf), []).append(r)
     checks.append(Check("Aternity", "slowest start-up's PC: its parts", None,
-                        f"All {len(mine_c)} parts row(s) of that PC since {odata_time(since)}, grouped by "
+                        f"{every} {len(mine_c)} parts row(s) of that PC since {odata_time(since)}, grouped by "
                         f"{cf['timestamp']} ({len(groups)} different value(s)), in time order:",
                         rows=[f"{t}: {len(rs)} row(s), {sum(1 for r in rs if (to_float(r.get(cf.get('degradation', ''))) or 0) > 0)}"
                               " longer than normal; types: " + ", ".join(
@@ -674,6 +722,7 @@ def _process_sources(client: AternityClient, schema: dict[str, set[str]]) -> lis
 FLEET_DAYS = 21  # failures per day, and hangs against updates
 LOG_DAYS = 28  # change log rows read: a PC's earliest row of a version is when it arrived
 ROWS_PER_READ = 50000
+FLEET_DAY_ROWS = 20000  # the last day's activity read for PCs and users
 
 
 def _fleet(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
@@ -684,11 +733,16 @@ def _fleet(settings: Settings, client: AternityClient, schema: dict[str, set[str
     now = datetime.now(timezone.utc)
     log = _software_log(settings, client, schema, now)
     virtual = _virtual_pcs(settings, client, schema, now)
-    return (_fleet_size(settings, client, schema, now) + _widest_failures(settings, client, schema, now)
-            + _failures_per_day(settings, client, schema, now) + _rollouts(settings, client, schema, now, log, virtual)
-            + _hangs_and_updates(settings, client, schema, now, log)
-            + _after_start_up(settings, client, schema, now)
-            + _where_users_sit(settings, client, schema, now))
+    out: list[Check] = []
+    for item, run, more in (("fleet: how many PCs, how far back", _fleet_size, ()),
+                            ("fleet: widest failures", _widest_failures, ()),
+                            ("fleet: failures per day", _failures_per_day, ()),
+                            ("fleet: how software arrives", _rollouts, (log, virtual)),
+                            ("fleet: hangs against updates", _hangs_and_updates, (log,)),
+                            ("fleet: actions right after a start-up", _after_start_up, ()),
+                            ("fleet: where users sit", _where_users_sit, ())):
+        out += part(item, run, settings, client, schema, now, *more, client=client)
+    return out
 
 
 def _pieces(now: datetime, days: int) -> list[tuple[datetime, datetime]]:
@@ -704,15 +758,23 @@ def _between(column: str, start: datetime, end: datetime) -> str:
 
 
 def _per_day(items) -> str:
-    """(time, device) pairs as PCs per day."""
+    """(time, device) pairs as PCs per day, days in config.yaml's timezone (as the page's: a UTC
+    day put a New York evening on the next day)."""
     days: dict = {}
     for t, dev in items:
-        days.setdefault(t.date(), set()).add(dev)
+        days.setdefault(local_date(t), set()).add(dev)
     return ", ".join(f"{d.strftime('%b %d')} {len(p)}" for d, p in sorted(days.items()))
 
 
 def _cut_short(client, mark: int) -> list[str]:
-    return [f"PARTIAL: {w}" for w in client.warnings[mark:]]
+    return [f"PARTIAL: {w}" for w in dict.fromkeys(client.warnings[mark:])]
+
+
+def _limit(rows, top: int | None) -> list[str]:
+    """A read that stopped at the check's own row limit: Aternity says nothing then, and the
+    counts read as the whole list (verify --software's programs and installs)."""
+    return [f"PARTIAL: stopped at the check's limit of {top:,} rows: the counts are at least these"] \
+        if top and rows is not None and len(rows) >= top else []
 
 
 def _virtual_pcs(settings, client, schema, now) -> dict:
@@ -772,9 +834,11 @@ def _fleet_size(settings, client, schema, now) -> list[Check]:
     if act in schema and a.get("device") and a.get("username"):
         try:
             day = client.query(act, f"{a['timestamp']} ge {odata_time(now - timedelta(days=1))}",
-                               select=[a["device"], a["username"]], top=20000)
-            rows.append(f"last day's activity ({len(day)} rows read): "
-                        f"{len({r.get(a['device']) for r in day})} PCs, {len({r.get(a['username']) for r in day})} users")
+                               select=[a["device"], a["username"]], top=FLEET_DAY_ROWS)
+            # stopped at its own limit (a live day is ~250,000 rows), the PCs and users are of those rows only
+            rows.append(f"last day's activity ({len(day):,} rows read{_first(day, FLEET_DAY_ROWS)}): "
+                        f"{len({r.get(a['device']) for r in day})} PCs, {len({r.get(a['username']) for r in day})} users"
+                        + (" in those rows, not the whole day" if len(day) >= FLEET_DAY_ROWS else ""))
         except ApiError as exc:
             rows.append(f"activities: {exc.short()}")
     # how far back: one row in a day of that many days ago ("error": the read failed)
@@ -792,7 +856,7 @@ def _fleet_size(settings, client, schema, now) -> list[Check]:
                 back.append(f"{days}d error")
         rows.append(f"{ent} has rows: {', '.join(back)}")
     return [Check("Aternity", "fleet: how many PCs, how far back", None, "What \"N other PCs of M\" and "
-                  "\"since when\" rest on.", rows=rows)]
+                  f"\"since when\" rest on. {_days_note(settings)}", rows=rows)]
 
 
 def _widest_failures(settings, client, schema, now) -> list[Check]:
@@ -801,30 +865,36 @@ def _widest_failures(settings, client, schema, now) -> list[Check]:
     f = settings.aternity.fields.get("health_events", {})
     if ent not in schema or not f.get("device"):
         return []
-    recent = client._events(f"{f['timestamp']} ge {odata_time(now - timedelta(days=2))}", "health events of all PCs",
-                            client.EVERYWHERE)
+    def events(read):
+        """Its events, and whether the read was whole: a failed read is no events (_optional),
+        and "0 PCs" on a day that could not be read had read as "not yet then"."""
+        mark = len(client.warnings)
+        got = read()
+        return got, len(client.warnings) == mark
+
+    recent, whole = events(lambda: client._events(f"{f['timestamp']} ge {odata_time(now - timedelta(days=2))}",
+                                                  "health events of all PCs", client.EVERYWHERE))
     by: dict[tuple, set] = {}
     for e in recent:
         by.setdefault((e.name or e.category, e.component, e.sub_component), set()).add(e.device)
-    rows = [f"last 2 days: {len(recent)} events on {len({e.device for e in recent})} PCs"]
+    rows = [f"last 2 days: {len(recent)} events on {len({e.device for e in recent})} PCs"
+            + ("" if whole else " (not read in full: at least these)")]
     for (name, comp, sub), pcs in sorted(by.items(), key=lambda kv: -len(kv[1]))[:5]:
         rows.append(f"{name}: {comp}{f' / {sub}' if sub else ''}: {len(pcs)} PCs")
         if not comp:
             continue
-        old = [e for e in client.component_health_events(comp, now - timedelta(days=14), now)
-               if (e.name or e.category) == name and e.sub_component == sub]
-        days: dict = {}
-        for e in old:
-            days.setdefault(e.timestamp.date(), set()).add(e.device)
-        rows.append(f"  {len({e.device for e in old})} PCs, {len({e.username for e in old if e.username})} users in 14 days;"
-                    f" versions {dict(Counter(e.component_version for e in old).most_common(3))}")
-        rows.append("  PCs per day: " + ", ".join(f"{d.strftime('%b %d')} {len(p)}" for d, p in sorted(days.items())))
+        old, whole = events(lambda: client.component_health_events(comp, now - timedelta(days=14), now))
+        old = [e for e in old if (e.name or e.category) == name and e.sub_component == sub]
+        rows.append(f"  {len({e.device for e in old})} PCs, {len({e.username for e in old if e.username})} users in 14 days"
+                    + ("" if whole else " (not read in full: at least these)")
+                    + f"; versions {dict(Counter(e.component_version for e in old).most_common(3))}")
+        rows.append("  PCs per day: " + _per_day((e.timestamp, e.device) for e in old))
         back = []  # when it began: one day each, the same weekday, so the numbers compare
         for weeks in (4, 8, 12, 16, 26):
             start = now - timedelta(days=1, weeks=weeks)
-            same = {e.device for e in client.component_health_events(comp, start, start + timedelta(days=1))
-                    if (e.name or e.category) == name and e.sub_component == sub}
-            back.append(f"{start.strftime('%b %d')} {len(same)}")
+            got, whole = events(lambda: client.component_health_events(comp, start, start + timedelta(days=1)))
+            same = {e.device for e in got if (e.name or e.category) == name and e.sub_component == sub}
+            back.append(f"{day(start)} {len(same) if whole else 'not read'}")
         rows.append("  further back, same weekday: " + ", ".join(back))
     return [Check("Aternity", "fleet: widest failures", None, "When each began, and PCs against users.", rows=rows)]
 
@@ -879,8 +949,8 @@ def _rollouts(settings, client, schema, now, log, virtual) -> list[Check]:
     kind = lambda dev: {True: "virtual", False: "physical"}.get(virtual.get(dev), "not known")  # noqa: E731
     for (name, version), pcs in sorted(log["arrived"].items(), key=lambda kv: -len(kv[1]))[:8]:
         t = sorted(pcs.values())
-        rows.append(f"{name} {version}: {len(pcs)} PCs, {t[0].strftime('%b %d %H:%M')} to {t[-1].strftime('%b %d %H:%M')}"
-                    f", busiest day {Counter(x.strftime('%b %d') for x in t).most_common(1)[0]}, "
+        rows.append(f"{name} {version}: {len(pcs)} PCs, {clock(t[0])} to {clock(t[-1])}"
+                    f", busiest day {Counter(day(x) for x in t).most_common(1)[0]}, "
                     f"{dict(Counter(kind(d) for d in pcs))}")
     # a failing process at a version the log shows arriving on that PC: before or after?
     h = cfg.fields.get("health_events", {})
@@ -937,7 +1007,7 @@ def _hangs_and_updates(settings, client, schema, now, log) -> list[Check]:
             except ApiError as again:
                 rows.append(f"could not read it: {again.short()}")
                 continue
-        rows.append(f"{start.strftime('%b %d')} to {end.strftime('%b %d')}: {len(read)} rows")
+        rows.append(f"{day(start)} to {day(end)}: {len(read)} rows{_first(read, ROWS_PER_READ)}")
         usage += read
     by: dict = {"hang": {}, "crash": {}}
     for r in usage:
@@ -954,7 +1024,7 @@ def _hangs_and_updates(settings, client, schema, now, log) -> list[Check]:
     everything = [t for items in by["hang"].values() for t, _ in items]
     if everything:
         start, tops = min(everything), sorted(by["hang"].items(), key=lambda kv: -len(kv[1]))[:3]
-        rows.append(f"hang rows per 100 PC-days from {start.strftime('%b %d')}, before and after the update:")
+        rows.append(f"hang rows per 100 PC-days from {day(start)}, before and after the update:")
         for (name, version), pcs in sorted(log["arrived"].items(), key=lambda kv: -len(kv[1]))[:4]:
             times = sorted(pcs.values())
             middle = times[len(times) // 2]
@@ -1232,9 +1302,9 @@ def verify_netim(settings: Settings, client: NetimClient) -> list[Check]:
                       "The account must be a local NetIM user, not SAML or TACACS.")]
     checks = [Check("NetIM", "connection", True, f"Connected; NetIM has {len(devices)} devices.")]
     if devices and not any(d.ip_address for d in devices):
-        raw = client.http.get_json(f"{cfg.api_prefix}/devices", params={"limit": 1})
         checks.append(Check("NetIM", "device addresses", False,
-                            f"No device address could be read. Keys in a device: {_keys(_items(raw))}.",
+                            f"No device address could be read. Keys in a device: "
+                            f"{_reply_keys(lambda: _items(client.http.get_json(f'{cfg.api_prefix}/devices', params={'limit': 1})))}.",
                             CODE_FIX.format(file="netim.py (devices)")))
 
     by_name = {d.name.lower(): d for d in devices}
@@ -1273,11 +1343,11 @@ def verify_netim(settings: Settings, client: NetimClient) -> list[Check]:
             break
     else:
         if devices:
-            raw = _items(client.http.get_json(f"{cfg.api_prefix}/devices/{devices[0].id}/interfaces",
-                                              params={"limit": 1}))
+            keys = _reply_keys(lambda: _items(client.http.get_json(f"{cfg.api_prefix}/devices/{devices[0].id}/interfaces",
+                                                                   params={"limit": 1})))
             checks.append(Check("NetIM", "interfaces", False,
                                 "No interface IP address could be read on the first 20 devices, so "
-                                f"users cannot be placed on the network. Keys in an interface: {_keys(raw)}.",
+                                f"users cannot be placed on the network. Keys in an interface: {keys}.",
                                 CODE_FIX.format(file="netim.py (_parse_ip_entries / interfaces)")))
 
     try:
@@ -1328,13 +1398,16 @@ def verify_netim(settings: Settings, client: NetimClient) -> list[Check]:
                                 f"last hour from {target.name}."))
         else:
             from .netim import metric_request_body
-            raw = client.http.post_json(cfg.metric_data_path,
-                                        metric_request_body(metric, [target.id], start, end))
-            inner = raw.get("metricData") if isinstance(raw, dict) else None
+            try:
+                raw = client.http.post_json(cfg.metric_data_path,
+                                            metric_request_body(metric, [target.id], start, end))
+                inner = raw.get("metricData") if isinstance(raw, dict) else None
+                keys = _keys(raw) + (f"; metricData keys: {_keys(inner)}" if isinstance(inner, dict) else "")
+            except ApiError as exc:  # it had stopped the whole verify
+                keys = f"not read again ({exc.short()})"
             checks.append(Check("NetIM", item, None,
                                 f"{metric.metric_class}/{metric.metric}: no samples read from {target.name} "
-                                f"in the last hour. Reply keys: {_keys(raw)}"
-                                f"{'; metricData keys: ' + _keys(inner) if isinstance(inner, dict) else ''}. "
+                                f"in the last hour. Reply keys: {keys}. "
                                 "If the device is polled, the reply layout differs: "
                                 + CODE_FIX.format(file="netim.py (parse_metric_response)")))
     client.warnings.clear()
@@ -1420,7 +1493,7 @@ def _software(client: AternityClient, schema: dict[str, set[str]], pc: str | Non
         except ApiError as exc:
             checks.append(Check("Aternity", what, None, f"error: {exc.short()}"))
             return None, 0.0, []
-        return rows, time.monotonic() - t0, _cut_short(client, mark)
+        return rows, time.monotonic() - t0, _cut_short(client, mark) + _limit(rows, kw.get("top"))
 
     if pc:  # one PC's whole list, named by the person who typed it
         mine, secs, cut = read("software: one PC", filter=f"{D} eq {odata_quote(pc)}", select=list(c.values()))
@@ -1502,7 +1575,7 @@ def _windows(client, schema, inventory, read, c, checks) -> None:
     except ApiError as exc:
         checks.append(Check("Aternity", "software: Windows on the PCs", None, f"error: {exc.short()}"))
         return
-    secs, cut = time.monotonic() - t0, _cut_short(client, mark)
+    secs, cut = time.monotonic() - t0, _cut_short(client, mark) + _limit(rows, SW_ONE_NAME)
     win = {r.get(dev): f"{r.get(o['name'])} {r.get(o['version'])}" for r in rows}
     per = Counter(win.values())
     weeks: Counter = Counter()  # Monday of the week Windows was last updated; None: 8+ weeks ago
@@ -1510,8 +1583,8 @@ def _windows(client, schema, inventory, read, c, checks) -> None:
         now = datetime.now(timezone.utc)
         for r in rows:
             t = parse_time(r.get(o["updated"]))
-            if t:
-                weeks[None if (now - t).days > 8 * 7 else (t - timedelta(days=t.weekday())).date()] += 1
+            if t:  # the Monday of its week in config.yaml's timezone
+                weeks[None if (now - t).days > 8 * 7 else local_date(t) - timedelta(days=local(t).weekday())] += 1
     dated = sum(weeks.values())
     week_line = ", ".join([f"older {weeks[None]:,}"] * (None in weeks)
                           + [f"{d:%b %d} {n:,}" for d, n in sorted((d, n) for d, n in weeks.items() if d)])
@@ -1785,8 +1858,8 @@ def _overview(settings: Settings, client: AternityClient, schema: dict[str, set[
         try:
             mark = len(client.warnings)
             rows = client.query(ev, _between(h["timestamp"], now - timedelta(days=7), now),
-                                select=[h[k] for k in ("device", "name", "component", "count")
-                                        if h.get(k) in schema[ev]], raw=True)
+                                select=[h[k] for k in ("device", "category", "name", "severity", "component",
+                                                       "count") if h.get(k) in schema[ev]], raw=True)
             cut = _cut_short(client, mark)
         except ApiError as exc:
             rows, cut = None, []
@@ -1798,14 +1871,25 @@ def _overview(settings: Settings, client: AternityClient, schema: dict[str, set[
             for r in rows:
                 by.setdefault(part_label(r.get(h["component"])) or "(no label)", []).append(r)
             disk = {p.lower() for p in DISK_PARTS}
+            out = []
+            for label, rs in sorted(by.items(), key=lambda kv: -len(kv[1])):
+                out.append(f"{label}: {len({r.get(h['device']) for r in rs})} PCs, events {_values(rs, h['name'], 3)}"
+                           + (" (read as a failing disk)" if label.lower() in disk else ""))
+                if label.lower() in disk:  # every event under it, with Aternity's own category and severity:
+                    # the evidence for which of them is a failing disk (stage, Nov 14 2026: Low Disk
+                    # Space and Corrupted FS were under "(Drive)" with HD Failure)
+                    kinds: dict = {}
+                    for r in rs:
+                        kinds.setdefault((r.get(h["category"]) if h.get("category") else None, r.get(h["name"])),
+                                         []).append(r)
+                    out += [f"↳ {cat} / {name}: {len({r.get(h['device']) for r in ks})} PCs, severity "
+                            + (_values(ks, h["severity"], 3) if h.get("severity") in schema[ev] else "not published")
+                            for (cat, name), ks in sorted(kinds.items(), key=lambda kv: -len(kv[1]))]
             checks.append(Check("Aternity", "overview: failing-part labels", None,
                                 f"{len(rows)} health event rows in the last 7 days, by Aternity's label on the "
                                 f"failing part ({h['component']}). Read as a failing disk: "
-                                f"{', '.join(DISK_PARTS)}. Send this list if another label is hardware:",
-                                rows=[f"{label}: {len({r.get(h['device']) for r in rs})} PCs, events "
-                                      f"{_values(rs, h['name'], 3)}" + (" (read as a failing disk)"
-                                                                        if label.lower() in disk else "")
-                                      for label, rs in sorted(by.items(), key=lambda kv: -len(kv[1]))] + cut))
+                                f"{', '.join(DISK_PARTS)}, each event under them with its category and severity. "
+                                "Send this list if another label is hardware:", rows=out + cut))
         if rows is not None and times:
             checks.append(_times_in_a_row(rows, h, cut))
     # Aternity's own incidents and alerts: published? what do they say?
@@ -1827,7 +1911,7 @@ def _overview(settings: Settings, client: AternityClient, schema: dict[str, set[
         except ApiError as exc:
             checks.append(Check("Aternity", item, None, f"Published, but reading it gave an error: {exc.short()}"))
             continue
-        per = Counter(t.date() for t in (parse_time(r.get(spec["time"])) for r in rows) if t)
+        per = Counter(local_date(t) for t in (parse_time(r.get(spec["time"])) for r in rows) if t)
         days = ", ".join(f"{d.strftime('%b %d')} {n}" for d, n in sorted(per.items()))
         checks.append(Check("Aternity", item, None,
                             f"Published. {len(rows)} rows in the last 7 days{' (the first 500)' if len(rows) == 500 else ''}"
@@ -1989,7 +2073,10 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
             add("model", False, "model not set.", f"Set model in config.yaml ({where}) to one of the names "
                 "listed above.")
             continue
-        if listed and cfg.model not in models:
+        if listed and not models:  # as the Connections light: not known, not wrong
+            add("model", None, f"The service's model list is empty, so \"{cfg.model}\" could not be looked up "
+                "there; the plain reply below shows whether it answers.")
+        elif listed and cfg.model not in models:
             close = _closest(cfg.model, models)
             add("model", False, f"\"{cfg.model}\" is not in the service's list.{_closest_text(close)}",
                 f"Set model in config.yaml ({where}) to a listed name.")
@@ -2299,7 +2386,9 @@ def _answers(client, add) -> None:
 def render_checks(checks: list[Check]) -> str:
     mark = {True: "OK  ", False: "FAIL", None: "--  "}
     lines = []
-    for system in ("Aternity", "NetIM", AI):
+    # every system, in the order first seen: a fixed list of three left out config.yaml's notes,
+    # counted in "problem(s) found" but never printed
+    for system in dict.fromkeys(c.system for c in checks):
         rows = [c for c in checks if c.system == system]
         if not rows:
             continue

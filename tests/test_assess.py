@@ -201,7 +201,7 @@ def test_the_ais_text_is_held_to_the_facts():
 
 
 def test_one_is_written_when_due_and_kept(tmp_path):
-    t = filled()  # NOW is 14:30 in Chicago: the 12:00 one is owed
+    t = filled()  # NOW is 14:30 in New York: the 12:00 one is owed
     a = A.Assessments(t, store=tmp_path)
     ai = Ai("No usual to compare with yet.\n- System Crash is on 1 PC.\nNext: look at System Crash.")
     assert a.due(NOW) == 12 and a.due(NOW - 9 * HOUR) is None  # 05:30: before the first
@@ -234,6 +234,19 @@ def test_yesterdays_summary_is_written_once_from_its_saved_counts(tmp_path):
     t = filled()
     t.health_days[date(2026, 11, 8)] = {("Application", "Application Crash"): {"PC1": 10.0, "PC2": 20.0}}
     t.saved[date(2026, 11, 8)] = {"complete": True, "pcs": 40, "top_pcs": 5, "apps": {"Mail": {"runs": 50, "Major": 6}}}
+    # its health events not read: it waits until noon (written once, "No crash or event" was kept for good)
+    early = A.Assessments(t, store=tmp_path / "early")
+    early.tick(NOW - 3 * HOUR, lambda: (None, ""))  # 11:30
+    assert early.view(NOW)["yesterday"] is None
+    early.tick(NOW, lambda: (None, ""))  # 14:30, still not read
+    assert "That day's health events could not be read: its events are not counted." in \
+        early.view(NOW)["yesterday"]["lines"]
+    t.health_cut.add(date(2026, 11, 8))
+    cut = A.Assessments(t, store=tmp_path / "cut")
+    cut.tick(NOW - 3 * HOUR, lambda: (None, ""))
+    assert any("was cut short" in x for x in cut.view(NOW)["yesterday"]["lines"])
+    t.health_cut.clear()
+    t.health_read.add(date(2026, 11, 8))
     a = A.Assessments(t, store=tmp_path)
     a.tick(NOW, lambda: (None, ""))
     y = a.view(NOW)["yesterday"]
@@ -251,7 +264,7 @@ def test_yesterdays_summary_is_written_once_from_its_saved_counts(tmp_path):
 def test_the_endpoint(tmp_path, monkeypatch):
     monkeypatch.setenv("UXCORRELATE_DATA", str(tmp_path))
     cfg = tmp_path / "config.yaml"
-    cfg.write_text("timezone: America/Chicago\n")
+    cfg.write_text("timezone: America/New_York\n")
     app = web.create_app(str(cfg))
     got = TestClient(app).get("/api/assess").json()
     assert got["periods"] == [] and got["hours"] == [6, 9, 12, 15, 18] and got["yesterday"] is None
@@ -349,3 +362,20 @@ def test_a_saturday_keeps_the_weekend_days_its_start_ups_are_compared_with(tmp_p
     assert all(a.days[d]["boots"]["User Logon"]["n"] == 6 for d in days)
     assert {p.stem for p in (tmp_path / "assess").glob("*.json")} >= set(days)
     assert a.boots_view(sat)["types"]["User Logon"]["usual"]["days"] == 4
+
+
+def test_a_day_of_start_ups_is_read_to_its_own_midnight_on_a_clock_change(tmp_path):
+    t = filled()
+    sat = NOW + timedelta(days=5)  # Saturday Nov 14: Sunday Nov 1 is one of the weekend days before
+    spans: dict = {}
+
+    class Client:
+        warnings: list = []
+
+        def boots(self, start, end):
+            spans[t.day(start)] = end - start
+            return []
+
+    A.Assessments(t, store=tmp_path, aternity_of=Client)._boots(sat)
+    assert spans[date(2026, 11, 1)] == timedelta(hours=25)  # it read 24: the last hour of that day was left out
+    assert spans[date(2026, 10, 31)] == timedelta(hours=24)

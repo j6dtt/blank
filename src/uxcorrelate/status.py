@@ -101,7 +101,10 @@ def check_ai(cfg, used: bool, env=None, transport=None) -> dict:
     if listed is None:
         return _item(name, "model", OK, f"Answered in {took:.1f} s (it has no model list to look {cfg.model} up in).",
                      **more)
-    if listed and cfg.model not in listed:
+    if not listed:  # it said "is listed" of an empty list
+        return _item(name, "model", WARN, f"Answered in {took:.1f} s, but its model list is empty, so {cfg.model} "
+                     "could not be looked up (uxcorrelate verify --ai asks it a question).", **more)
+    if cfg.model not in listed:
         return _item(name, "model", WARN, f"Answered in {took:.1f} s, but {cfg.model} is not in its list of "
                      f"{len(listed)} models (uxcorrelate verify --ai prints them).", **more)
     return _item(name, "model", OK, f"Answered in {took:.1f} s; {cfg.model} is listed.", **more)
@@ -143,12 +146,19 @@ class Status:
 
 
 def keep_checking(status: Status, settings_of, sleep, clock=lambda: datetime.now(timezone.utc),
-                  rounds: int | None = None) -> None:
-    """Runs in a background thread: every connection, every CHECK_EVERY_S."""
+                  rounds: int | None = None, notes_of=lambda: []) -> None:
+    """Runs in a background thread: every connection, every CHECK_EVERY_S; notes_of: what
+    config.yaml has that is not used (config.config_notes), said in the Connections dialog."""
+    said: list[str] = []
     while rounds is None or rounds > 0:
         now = clock()
         try:
-            status.set(check_all(settings_of(), now), now)
+            notes = notes_of()
+            for n in notes:
+                if n not in said:
+                    log.warning("%s", n)
+            said = notes
+            status.set(check_all(settings_of(), now), now, " ".join(notes))
         except Exception as exc:  # a broken config.yaml: said in the panel, tried again
             status.set([], now, f"The settings could not be read ({short_error(exc)}).")
         if rounds is not None:

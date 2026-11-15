@@ -215,20 +215,26 @@ def utc(dt: datetime) -> datetime:
 
 
 def parse_time(value) -> datetime | None:
-    """Parse ISO-8601 strings, epoch seconds or epoch milliseconds into UTC."""
+    """Parse ISO-8601 strings, epoch seconds or epoch milliseconds into UTC; None when it is no time.
+
+    A value that is not a time is None, as a missing one: the row is skipped as one with no time.
+    It raised before, so one odd value in a reply stopped the whole read (and an investigation)."""
     if value is None or value == "":
         return None
     if isinstance(value, datetime):
         return utc(value)
-    if isinstance(value, (int, float)):
-        seconds = value / 1000 if value > 1e11 else value
-        return datetime.fromtimestamp(seconds, tz=timezone.utc)
-    text = str(value).strip()
-    if text.isdigit():
-        return parse_time(int(text))
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
-    return utc(datetime.fromisoformat(text))
+    try:
+        if isinstance(value, (int, float)):
+            seconds = value / 1000 if value > 1e11 else value
+            return datetime.fromtimestamp(seconds, tz=timezone.utc)
+        text = str(value).strip()
+        if text.isdigit():
+            return parse_time(int(text))
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        return utc(datetime.fromisoformat(text))
+    except (ValueError, OverflowError, OSError):
+        return None
 
 
 def to_float(value) -> float | None:

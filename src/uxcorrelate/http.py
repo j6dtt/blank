@@ -79,10 +79,20 @@ class RestClient:
         raise AssertionError("unreachable")
 
     def get_json(self, url: str, **kwargs):
-        return self.request("GET", url, **kwargs).json()
+        return self._json(self.request("GET", url, **kwargs))
 
     def post_json(self, url: str, body, **kwargs):
-        return self.request("POST", url, json=body, **kwargs).json()
+        return self._json(self.request("POST", url, json=body, **kwargs))
+
+    def _json(self, response: httpx.Response):
+        """The reply as JSON. Not JSON (a proxy's or login page with status 200) is an ApiError,
+        as every other failed read: a plain decode error got past the guards that keep an
+        investigation or a reader going."""
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise ApiError(f"{self.name}: {response.request.method} {response.request.url} -> not JSON: "
+                           f"{response.text[:300]}", response.status_code, "the reply was not JSON") from exc
 
     def close(self) -> None:
         self._client.close()

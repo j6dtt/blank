@@ -122,3 +122,31 @@ def test_kubernetes_checks_have_their_own_quiet_address(tmp_path):
     assert not quiet.filter(line("10.1.2.3:5000", "/api/status"))
     assert quiet.filter(line("10.1.2.3:5000", "/"))  # someone opening the page is still logged
     assert quiet.filter(line("10.1.2.3:5000", "/api/today"))
+
+
+def test_a_source_that_does_not_answer_is_said_without_its_url():
+    from uxcorrelate.http import ApiError
+    from uxcorrelate.web import _did_not_answer
+    exc = ApiError("Aternity: GET https://aternity.test/odata/BUSINESS_ACTIVITIES_RAW?$filter=x -> HTTP 504: <html>",
+                   504)
+    said = _did_not_answer(exc)
+    assert said.startswith("Aternity did not answer (HTTP 504).") and "https://" not in said and "<html>" not in said
+
+
+def test_only_what_was_asked_is_a_bad_request_a_fault_of_ours_is_logged(monkeypatch, caplog):
+    def fake_settings(path=None):
+        s = Settings()
+        s.aternity.base_url = "https://aternity.test/aternity.odata/v2.0"
+        return s
+
+    def broken(req, aternity, netim, settings):
+        raise ValueError("max() arg is an empty sequence")  # a bug: it was a 400 with these words, not logged
+
+    monkeypatch.setattr(web, "load_settings", fake_settings)
+    monkeypatch.setattr(web, "investigate", broken)
+    client = TestClient(web.create_app())
+    assert client.post("/api/investigate", json={**BODY, "username": ""}).json()["detail"] == \
+        "Provide a username or a device name"
+    caplog.set_level(logging.ERROR, logger="uxcorrelate")
+    job = wait(client, client.post("/api/jobs", json=BODY).json()["id"])
+    assert job["error"].startswith("ValueError") and "An investigation failed" in caplog.text

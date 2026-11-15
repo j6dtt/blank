@@ -180,3 +180,64 @@ def test_occasional_beside_another_verdict_is_an_also_line():
     assert a["title"].startswith("Mail Send took 9.0 s on PC1 (Minor), 3 min after a start-up")
     assert a["reason"].endswith("Also slow: ERP Open 3.6 s on PC1: slow 1 of 11 times from Nov 6, usually 0.2 s "
                                 "(before: 1 of 32 slow).")
+
+
+# -- review of Nov 15 2026: a read that failed is never said as "none" or "0" ------------------------
+
+def test_a_pc_whose_change_log_failed_is_not_one_with_no_change():
+    from uxcorrelate.answer import _changes_phrase
+    c = normal(since="2026-11-06T09:00:00Z", changes=[change("Print Agent")])
+    c["pcs"] = [{"device": "VD-1", "changes": [change("Print Agent")], "changed": 1, "unread": False,
+                 "runs": 5, "slow": 4, "took": 6.0},
+                {"device": "VD-2", "changes": [], "changed": 0, "unread": True, "runs": 4, "slow": 3, "took": 5.0}]
+    said = _changes_phrase(c)  # it said "none on VD-2: they do not explain it alone"
+    assert "none on" not in said and "the change log of VD-2 could not be read in full" in said
+    assert build_answer([], [act(0)], [act(0)], "amy", None, True, [], None, None, 5, None,
+                        normal=[c])["level"] == "possible"  # not lowered to "unsure" by a log not read
+
+
+def test_an_also_slow_line_says_a_change_log_not_read():
+    slow = [act(0, seconds=4.0), act(5, app="Mail", activity="Send", seconds=9.0)]
+    c = normal(since="2026-11-06T09:00:00Z", changes=[change("Print Agent")], took=4.0)
+    mail = normal(app="Mail", activity="Send", took=9.0, since="2026-11-06T09:00:00Z")
+    mail["changes_unread"], mail["pcs"] = True, []
+    a = build_answer([], slow, slow, "amy", None, True, [], None, None, 5, None, normal=[c, mail])
+    assert "Mail Send 9.0 s on PC1, usually 1.0 s, slow 7 of 9 times from Nov 6, its change log could not be " \
+           "read in full" in a["reason"]  # it said "no change to check logged"
+
+
+def test_what_was_checked_says_a_read_that_failed():
+    checked = {"devices": ["PC1"], "pc": {"measured": 0, "cpu": None, "memory": None, "disk_queue": None,
+                                          "limits": {"cpu": 85, "memory": 90, "disk_queue": 2}},
+               "events": [0, 0], "crashes_hangs": [0, 0], "start_ups": [0, 0],
+               "failed": {"events": 1, "crashes_hangs": 0, "start_ups": 0}}
+    a = build_answer([], [act(0)], [act(0)], "amy", None, True, [], None, None, 5, None, checked=checked,
+                     unread=["Health events not checked: Aternity gave an error."])
+    assert "Health events on PC1: not read in full (see Warnings); 0 in what was read" in " ".join(a["checked"])
+    assert "App crashes and hangs on PC1: 0 in the window" in " ".join(a["checked"])  # read: as before
+
+
+def test_other_users_when_every_day_before_failed_is_not_no_other_days():
+    impact = {"applications": ["ERP"], "users": 40, "slow": 4, "unusual": None, "common_point": None,
+              "rate": .1, "usual_rate": None, "groups": [], "affected_users": [], "affected_total": 0,
+              "baseline_days": 0, "days_unread": 5}
+    a = build_answer([], [act(0)], [act(0)], "amy", impact, True, [], None, None, 5, None)
+    assert a["who_else"].endswith("The days before could not be read, so this is not compared with other days.")
+
+
+def test_no_problem_recorded_says_what_was_not_read():
+    impact = {"applications": ["ERP"], "users": 40, "slow": 4, "unusual": False, "common_point": None,
+              "rate": .1, "usual_rate": .1, "groups": [], "affected_users": [], "affected_total": 0}
+    a = build_answer([], [act(0)], [act(0)], "amy", impact, True, [], None, None, 5, None,
+                     unread=["Health events not checked: Aternity gave an error."])
+    assert a["reason"].startswith("No problem was recorded within 5 min of the slow action. Not all of it could "
+                                  "be read: 1 warning (see Warnings).")
+
+
+def test_the_rollup_takes_a_full_read_over_a_short_one():
+    from uxcorrelate.answer import _rollup
+    short = {"pcs": 0, "short": True, "of": None}
+    full = {"pcs": 0, "of": 120, "of_what": "PCs using ERP"}
+    rows = _rollup([{"what": "ERP crashed", "times": 1, "_others": short},
+                    {"what": "ERP crashed", "times": 1, "_others": full}])
+    assert rows[0]["verdict"] == "Only this PC" and rows[0]["others"] == "0 of 120"  # it kept "not known"

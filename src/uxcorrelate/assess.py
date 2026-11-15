@@ -39,6 +39,7 @@ HOURS = (6, 9, 12, 15, 18)  # local time: an assessment at each; the first read 
 # today and the 14 days _same_days looks back in: a weekend's weekend days before reach 14 days back
 # (with 8, a Saturday's usual start-ups were deleted before being saved: KeyError, no logon chart)
 KEEP_DAYS = 15
+UNREAD_WAIT_H = 12  # the Yesterday summary waits until noon for its health events to be read
 TOP = 3  # events, applications named in one assessment
 MIN_ACTIONS = 50  # an hour with fewer measured actions has no share (one slow action would move it a lot)
 MIN_STARTS = 5  # an hour, or a type, with fewer start-ups has no typical time
@@ -152,7 +153,9 @@ def snapshot(today_view: dict, care_view: dict | None, status_view: dict | None,
         "slow": {"pcs": s["pcs"], "actions": s["actions"], "users": s["users"], "usual": _usual(s.get("usual"))},
         "apps": {a["application"]: a["actions"] for a in today_view.get("applications", [])},
         "care": {"listed": len(users), "with_issue": sum(1 for u in users if u.get("status") == "issue"),
-                 "issues": sum(len(u.get("issues", [])) + len(u.get("earlier", [])) for u in users)},
+                 # a tile's disk line stands for several issues (care._one_disk): each one counts
+                 "issues": sum(sum(i.get("merged", 1) for i in u.get("issues", [])) + len(u.get("earlier", []))
+                               for u in users)},
         "down": sorted(i["name"] for i in (status_view or {}).get("items", []) if i.get("state") == "down"),
         # start-ups today, per Aternity type: how many, the typical time, the days before (boots_view)
         "boots": boots,
@@ -509,15 +512,18 @@ def boots_of(rows: list, local) -> dict:
             for name, x in per.items()}
 
 
-def summary_lines(day: date, saved: dict | None, events: dict, sev: dict, periods: list[dict]) -> list[str] | None:
-    """A finished day in lines, from its saved counts (None: not saved yet)."""
+def summary_lines(day: date, saved: dict | None, events: dict, sev: dict, periods: list[dict],
+                  unread: str | None = None) -> list[str] | None:
+    """A finished day in lines, from its saved counts (None: not saved yet). `unread`: why its
+    health events are not counted (a day not read had read "No crash or event", kept for good)."""
     if not saved:
         return None
     out = [f"{day:%A %b %d}: {saved.get('pcs', 0):,} PCs active; {TOP_STATUS} slow actions on "
            f"{plural(saved.get('top_pcs', 0), 'PC')}."]
     top = sorted(((k, len(devs)) for k, devs in events.items() if sev.get(k) in SEVERITY_ORDER[:2] and devs),
                  key=lambda kv: (SEVERITY_ORDER.index(sev[kv[0]]), -kv[1], kv[0]))[:TOP]
-    out += [f"{k[1]} ({sev[k]}): {_pcs(n)}, {reach(n)}." for k, n in top] or ["No crash or event rated Critical or Major."]
+    out += [unread] if unread else \
+        [f"{k[1]} ({sev[k]}): {_pcs(n)}, {reach(n)}." for k, n in top] or ["No crash or event rated Critical or Major."]
     apps = sorted(((a, c.get(TOP_STATUS, 0)) for a, c in saved.get("apps", {}).items() if c.get(TOP_STATUS)),
                   key=lambda kv: (-kv[1], kv[0]))[:TOP]
     if apps:
@@ -633,7 +639,15 @@ class Assessments:
             saved = self.today.saved.get(y)
             events = {k: set(v) for k, v in self.today.health_days.get(y, {}).items()}
             sev = {k: c.most_common(1)[0][0] for k, c in self.today.health_sev.items() if c}
-        lines = summary_lines(y, saved, events, sev, (rec or {}).get("periods", []))
+            read, cut = y in self.today.health_read, y in self.today.health_cut
+        unread = None  # its events not read: wait for a read, then (from noon) say so; it is written once
+        if cut:
+            unread = "Aternity's reply for that day's health events was cut short: its events are not counted."
+        elif not read:
+            if self.today.local(now).hour < UNREAD_WAIT_H:
+                return
+            unread = "That day's health events could not be read: its events are not counted."
+        lines = summary_lines(y, saved, events, sev, (rec or {}).get("periods", []), unread)
         if lines is None:
             return
         rec = self.days.setdefault(y.isoformat(), {"date": y.isoformat(), "periods": [], "summary": None})
@@ -669,7 +683,7 @@ class Assessments:
                 continue
             start = self.today.midnight(d)
             mark = len(client.warnings)
-            rows = client.boots(start, now if d == t else start + timedelta(days=1))
+            rows = client.boots(start, now if d == t else self.today.midnight(d + timedelta(days=1)))  # 23 or 25 h
             if len(client.warnings) > mark:  # not read (or cut short): no typical from part of a day
                 self.boots_note = (f"Aternity's start-ups of {d:%b %d} could not be read ({client.warnings[-1]}); "
                                    "tried again with the next read.")
@@ -730,7 +744,7 @@ class Assessments:
             return sum(1 for secs in first.values() if secs < (h + 1) * 3600)
         mine: dict = {}
         for when, dev in crashes:
-            secs = (when - today.midnight(t)).total_seconds()
+            secs = today.clock_secs(when)
             mine[dev] = min(mine.get(dev, secs), secs)
         past = []
         for d in [d for d in self._same_days(t) if d in health_days]:

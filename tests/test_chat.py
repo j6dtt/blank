@@ -15,8 +15,8 @@ from uxcorrelate.config import AiService, Settings
 from uxcorrelate.names import NameList
 from uxcorrelate.today import HOUR, Today
 
-ZONE = "America/Chicago"
-NOW = datetime(2026, 11, 9, 20, 30, tzinfo=timezone.utc)  # Monday 14:30 in Chicago
+ZONE = "America/New_York"
+NOW = datetime(2026, 11, 9, 19, 30, tzinfo=timezone.utc)  # Monday 14:30 in New York
 F = {"timestamp": "TIMEFRAME", "username": "USERNAME", "device": "DEVICE_NAME", "application": "APPLICATION_NAME",
      "status": "SLA_STATUS", "activity": "ACTIVITY_NAME", "response_time": "ACTIVITY_RESPONSE_TIME",
      "virtualization": "VIRTUALIZATION"}
@@ -38,7 +38,7 @@ def ev(t, pc, name, sev, app=None, cat="Application"):
 
 def filled() -> Today:
     t = Today(ZONE)
-    nine = t.midnight(date(2026, 11, 9)) + 9 * HOUR  # 09:00 Chicago
+    nine = t.midnight(date(2026, 11, 9)) + 9 * HOUR  # 09:00 New York
     t.add_hour(nine, [act(nine, "VD-1", "Major", "Mail", True, 40.0, "Launch"),
                       act(nine + timedelta(minutes=20), "VD-1", "Major", "Mail", True, 12.0),
                       act(nine, "VD-2", "Major", "ERP", True), act(nine, "PC3", "Major", "ERP"),
@@ -264,7 +264,7 @@ def test_who_lists_users_and_pcs_with_a_run_for_each():
     r = who(t, NOW, "slow", app="mail")  # "mail" fits two apps: the one with the most is listed
     assert r["rows"] == [["u-VD-1", "VD-1", 2, "Mail Launch 40.0 s", "09:00–09:20"]]
     assert r["runs"][0] == {"username": "u-VD-1", "device": "VD-1", "application": "Mail",
-                            "start": "2026-11-09T14:30:00Z", "end": "2026-11-09T15:50:00Z"}
+                            "start": "2026-11-09T13:30:00Z", "end": "2026-11-09T14:50:00Z"}
     crash = who(t, NOW, "event", name="application crash")
     assert [x[:3] for x in crash["rows"]] == [["u-VD-1", "VD-1", 2], ["u-PC3", "PC3", 1]]
     assert "No event named like" in who(t, NOW, "event", name="blue screen")["notes"][0]
@@ -275,12 +275,12 @@ def test_investigate_takes_known_names_and_asks_when_unsure():
     names.add([{"USERNAME": "u-VD-1", "DEVICE_NAME": "VD-1"}, {"USERNAME": "u-VD-2", "DEVICE_NAME": "VD-2"}],
               F, NOW - HOUR, NOW)
     r = investigate(t, names, NOW, username="U-VD-1")  # any case
-    assert r["action"]["username"] == "u-VD-1" and r["action"]["start"] == "2026-11-09T14:30:00Z"
+    assert r["action"]["username"] == "u-VD-1" and r["action"]["start"] == "2026-11-09T13:30:00Z"
     assert "Around their Major slow actions today" in r["notes"][0]
     unsure = investigate(t, names, NOW, username="vd")
     assert unsure["action"] is None and unsure["rows"] == [["u-VD-1"], ["u-VD-2"]]
     one = investigate(t, names, NOW, device="vd-2", hours=2)
-    assert one["action"]["device"] == "VD-2" and one["action"]["start"] == "2026-11-09T18:30:00Z"
+    assert one["action"]["device"] == "VD-2" and one["action"]["start"] == "2026-11-09T17:30:00Z"
     assert investigate(t, names, NOW)["notes"] == ["Name a user or a PC to investigate."]
     assert investigate(t, NameList(), NOW, username="newname")["action"]["username"] == "newname"  # list empty
 
@@ -475,3 +475,31 @@ def test_login_look_ups_who_logged_in_where():
     assert run_block("logins", {"device": "PC3"}, t, None, NOW, lambda: a)["total"] == "2 logons"
     tool = next(x["function"] for x in TOOLS if x["function"]["name"] == "logins")
     assert set(tool["parameters"]["properties"]) == {"username", "device", "date", "current"}
+
+    class Failing:  # Aternity did not answer: never "recorded no logon"
+        warnings: list = []
+
+        def boots(self, start, end, username=None, device=None):
+            self.warnings.append("Boot/logon data not checked: Aternity BOOTS gave an error (HTTP 500).")
+            return []
+    gone = logins(t, None, NOW, lambda: Failing(), device="PC3")
+    assert "could not be read, so whether there were any is not known" in gone["say"]
+    assert not any("recorded no start-up" in n for n in gone["notes"])
+
+
+def test_a_number_written_as_a_word_is_checked_too():
+    from uxcorrelate.chat import allowed, numbers
+    assert numbers("Three PCs crashed, 1,204 actions") == {3.0, 1204.0}  # "three" passed when the counts said 5
+    assert numbers("the one to look at, one of them") == set()  # a pronoun, not a count
+    assert numbers("Three PCs crashed") - allowed("PCs with a crash: 5") == {3.0}
+
+
+def test_a_day_cut_short_and_todays_cut_short_reply_are_said_not_not_read_yet():
+    from datetime import date
+    from uxcorrelate.chat import _health_notes
+    before = [date(2026, 11, 13), date(2026, 11, 14)]
+    notes = _health_notes(None, before, {date(2026, 11, 14)}, {date(2026, 11, 13)},
+                          "Aternity's reply for today's health events was cut short: some may be missing.")
+    assert not any("not read yet" in n for n in notes)  # it was read: Aternity cut it short
+    assert "Aternity's reply for 1 of the 2 days before was cut short: that day is left out." in notes
+    assert notes[-1].startswith("Aternity's reply for today's health events was cut short")

@@ -43,7 +43,7 @@ bucket_minutes: 5
 boot_unit: s
 
 # "Today" runs from midnight in this time zone (as in Windows / Linux:
-# Area/City, e.g. America/Chicago); the days and times written in an
+# Area/City, e.g. America/New_York); the days and times written in an
 # investigation's sentences are in it too. Empty: UTC.
 timezone: ""
 

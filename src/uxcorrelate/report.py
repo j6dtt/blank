@@ -111,6 +111,10 @@ def _answer_lines(a: dict, who: str) -> list[str]:
         devs = [c["device"] for c in a["changes"]]
         lines += ["", "What changed on " + (f"the {len(devs)} PCs" if len(devs) > 2 else " and ".join(devs)) + ":"]
         for c in a["changes"]:
+            if c.get("unread"):
+                lines.append(f"  {c['device']}: its change log could not be read in full (Aternity's read failed or "
+                             "was cut short)")
+                continue
             if not c["changes"]:
                 lines.append(f"  {c['device']}: nothing in the window or the 14 days before it")
                 continue
@@ -201,12 +205,15 @@ def render_logons(lg: dict) -> str:
     f, unit = lg["filters"], f" {lg['unit']}" if lg.get("unit") else ""
     who = ", ".join(f"{k} {v}" for k, v in f.items() if v) or "everyone"
     lines = [f"Start-ups (boots and logons): {who}", f"Window: {_t(lg['start'])} -> {_t(lg['end'])}", ""]
-    if not lg["total"]:
-        return _wrap(lines + ["No boots or logons in the window."])
-    lines.append(f"{lg['total']} start-ups. Typical and 1-in-10 slowest, per Aternity measurement:")
+    if not lg["total"]:  # a read that failed is not "none": it returned before the warnings
+        said = lg.get("warnings") or []
+        return _wrap(lines + (["No boots or logons could be read in this window:"] + [f"WARNING: {w}" for w in said]
+                              if said else ["No boots or logons in the window."]))
+    lines.append(f"{lg['total']} start-ups. Typical and 1-in-10 slowest (from 10 measured), per Aternity measurement:")
     for t in lg["types"]:
-        lines.append(f"  {t['type']}: typical {t['typical']}{unit}, 1 in 10 over {t['p90']}{unit} "
-                     f"({t['count']} measured)")
+        lines.append(f"  {t['type']}: typical {t['typical']}{unit}, "
+                     + (f"1 in 10 over {t['p90']}{unit} " if t["p90"] is not None else f"slowest {t['max']}{unit} ")
+                     + f"({t['count']} measured)")
     if lg.get("causes"):
         lines += ["", "Main causes (parts longer than normal, and on how many PCs):"]
         for i, c in enumerate(lg["causes"], 1):

@@ -40,15 +40,24 @@ def build_sources(settings):
     return aternity, netim, end - timedelta(hours=4), end
 
 
+def _time_arg(flag: str, text: str):
+    """A time typed on the command line, or a plain error (it was a traceback, or None later)."""
+    when = parse_time(text)
+    if when is None:
+        raise SystemExit(f"{flag} {text!r} is not a time: write it as 2026-11-10T09:00 (UTC) "
+                         "or 2026-11-10T09:00-05:00.")
+    return when
+
+
 def cmd_investigate(args) -> int:
     settings = load_settings(args.config)
     if args.bucket:
         settings.bucket_minutes = args.bucket
     aternity, netim, start, end = build_sources(settings)
     if args.end:
-        end = parse_time(args.end)
+        end = _time_arg("--end", args.end)
     if args.start:
-        start = parse_time(args.start)
+        start = _time_arg("--start", args.start)
     elif args.last:
         start = end - args.last
     req = InvestigationRequest(start=start, end=end, username=args.user,
@@ -68,8 +77,8 @@ def cmd_logons(args) -> int:
     from .aternity import AternityClient
     from .logons import logon_report
     settings = load_settings(args.config)
-    end = parse_time(args.end) if args.end else datetime.now(timezone.utc)
-    start = parse_time(args.start) if args.start else end - (args.last or timedelta(hours=24))
+    end = _time_arg("--end", args.end) if args.end else datetime.now(timezone.utc)
+    start = _time_arg("--start", args.start) if args.start else end - (args.last or timedelta(hours=24))
     result = logon_report(AternityClient(settings.aternity), start, end, username=args.user,
                           device=args.device, location=args.location, top=args.top,
                           unit=settings.boot_unit)
@@ -153,26 +162,26 @@ def cmd_netim_check(args) -> int:
 def cmd_verify(args) -> int:
     from .aternity import AternityClient
     from .netim import NetimClient
-    from .verify import Check, render_checks, verify_ai, verify_aternity, verify_vdi_network, verify_netim
+    from .verify import Check, part, render_checks, verify_ai, verify_aternity, verify_vdi_network, verify_netim
+    from .config import config_notes
+    from .models import set_zone
     settings = load_settings(args.config)
-    checks: list[Check] = []
-    if args.overview:  # only what a "today's issues" overview could rest on
-        from .verify import verify_overview
-        checks = verify_overview(settings, AternityClient(settings.aternity))
-        print(render_checks(checks))
-        return 1 if any(c.ok is False for c in checks) else 0
-    if args.versions:  # only each application's version on what users feel
-        from .verify import verify_versions
-        checks = verify_versions(settings, AternityClient(settings.aternity))
-        print(render_checks(checks))
-        return 1 if any(c.ok is False for c in checks) else 0
-    if args.software:  # only what Aternity's installed software list holds
-        from .verify import verify_software
-        checks = verify_software(settings, AternityClient(settings.aternity), pc=args.pc)
+    set_zone(settings.timezone)  # days per day in config.yaml's timezone, as the page's
+    # what config.yaml has that is not used, first in every kind of verify
+    checks: list[Check] = [Check("config.yaml", "settings", False, n, "Correct it or take it out of config.yaml.")
+                           for n in config_notes(args.config)]
+    # each part guarded (verify.part): every result is printed at the end, and one error had printed none
+    if args.overview or args.versions or args.software:  # one Aternity part only
+        from .verify import verify_overview, verify_software, verify_versions
+        client = AternityClient(settings.aternity)
+        item, run = (("overview", lambda: verify_overview(settings, client)) if args.overview else
+                     ("versions", lambda: verify_versions(settings, client)) if args.versions else
+                     ("software", lambda: verify_software(settings, client, pc=args.pc)))
+        checks += part(item, run, client=client)
         print(render_checks(checks))
         return 1 if any(c.ok is False for c in checks) else 0
     if args.ai:  # only the AI services: seconds, not the minutes the Riverbed checks take
-        checks = verify_ai(settings)
+        checks += part("AI services", verify_ai, settings, system="AI service")
         print(render_checks(checks))
         return 1 if any(c.ok is False for c in checks) else 0
     for system, base_url, run, client_cls, cfg in (
@@ -183,11 +192,12 @@ def cmd_verify(args) -> int:
             checks.append(Check(system, "base_url", False, "Not set.",
                                 f"Set {system.lower()}.base_url in config.yaml."))
             continue
-        checks += run(settings, client_cls(cfg))
+        checks += part(system, run, settings, client_cls(cfg), system=system)
     if settings.aternity.base_url and settings.netim.base_url:
-        checks += verify_vdi_network(settings, AternityClient(settings.aternity), NetimClient(settings.netim))
+        checks += part("which addresses NetIM can place", verify_vdi_network, settings,
+                       AternityClient(settings.aternity), NetimClient(settings.netim), system="NetIM")
     if settings.ai.services:
-        checks += verify_ai(settings)
+        checks += part("AI services", verify_ai, settings, system="AI service")
     print(render_checks(checks))
     return 1 if any(c.ok is False for c in checks) else 0
 

@@ -103,6 +103,15 @@ def _most(versions: dict) -> str | None:
     return max(versions, key=lambda v: (versions[v], order(v))) if versions else None
 
 
+CUT = "Aternity's reply was cut short, so these counts are partial."
+
+
+def _partial(client, mark: int, rows: list, top: int | None) -> bool:
+    """A read cut short: the client stopped at its page limit (a warning after `mark`), or the
+    rows reached `top`. Its counts are partial and must say so."""
+    return len(client.warnings) > mark or bool(top and len(rows) >= top)
+
+
 class _Reads:
     """Aternity reads that never stop the whole read: what failed or was cut short is a note."""
 
@@ -110,6 +119,7 @@ class _Reads:
         self.client, self.notes = client, notes
         self.schema: dict | None = None
         self.error = ""  # the first read Aternity did not answer, in a few words
+        self.cut = False  # the last read was cut short (its counts are partial)
         self.usage: dict[str, int] = {}  # every application in app usage -> its crashes (the name search)
         self.crash_names: dict[str, int] = {}  # application (else program file) of crash events -> PCs
         try:
@@ -127,13 +137,15 @@ class _Reads:
 
     def rows(self, entity: str, what: str, **kw) -> list[dict] | None:
         mark = len(self.client.warnings)
+        self.cut = False
         try:
             got = self.client.query(entity, **kw)
         except Exception as exc:
             self.error = self.error or short_error(exc)
             self.notes.append(f"{what} could not be read ({short_error(exc)}).")
             return None
-        if len(self.client.warnings) > mark or (kw.get("top") and len(got) >= kw["top"]):
+        self.cut = _partial(self.client, mark, got, kw.get("top"))
+        if self.cut:
             self.notes.append(f"{what}: Aternity's reply was cut short ({len(got):,} rows), so its counts "
                               "are partial.")
         return got
@@ -232,6 +244,7 @@ def _windows(q: _Reads, cfg, local, now: datetime, say) -> dict | None:
     rows = q.rows(inv, "Windows on each PC", select=[dev] + cols, top=LIST_ROWS)
     if not rows:
         return None
+    partial = q.cut
     win: dict = {}
     weeks: Counter = Counter()
     older = 0
@@ -251,7 +264,7 @@ def _windows(q: _Reads, cfg, local, now: datetime, say) -> dict | None:
     out = {"pcs": len(win), "older": older, "dated": older + sum(weeks.values()),
            "weeks": [[(this_monday - timedelta(days=7 * k)).isoformat(),
                       weeks[(this_monday - timedelta(days=7 * k)).isoformat()]] for k in range(WEEKS - 1, -1, -1)],
-           "versions": [], "read_updates": False}
+           "versions": [], "read_updates": False, "partial": partial}
     S, c = SOFTWARE_SOURCE, SOFTWARE_COLUMNS
     by_win: dict = {}
     for d, w in win.items():
@@ -267,6 +280,8 @@ def _windows(q: _Reads, cfg, local, now: datetime, say) -> dict | None:
     for r in ups or []:
         has.setdefault(r.get(c["device"]), set()).add(str(r.get(c["name"])))
     out["read_updates"] = ups is not None
+    # cut short: PCs past the cut seem to have no update, which a flag would count as missing
+    out["partial"] = partial or q.cut
     for w, devs in sorted(by_win.items(), key=lambda kv: (-len(kv[1]), kv[0])):
         total = len(devs)
         count = Counter(u for d in devs for u in has.get(d, ()))
@@ -303,6 +318,7 @@ def _versions(q: _Reads, now: datetime, say) -> dict:
     desktops (app usage); actions, Major actions, PCs with a Major action (actions)."""
     apps: dict[str, dict] = {}
     read: dict[str, set] = {}
+    cut: set[str] = set()  # applications whose rows were cut short
     start = now - timedelta(days=DAYS)
     for key, problem, pick in (("usage", "crashes and hangs", "crashes"), ("actions", "slow actions", "status")):
         s = VERSION_SOURCES[key]
@@ -340,7 +356,9 @@ def _versions(q: _Reads, now: datetime, say) -> dict:
             say(f"Reading application versions on {problem}: {i} of {min(len(cands), APPS_MAX)} applications")
             if _app_rows(q, key, a, start, now, apps.setdefault(a, {})):
                 read.setdefault(a, set()).add(key)
-    return {a: _judged(a, vs, read.get(a, ())) for a, vs in apps.items() if a in read}
+                if q.cut:
+                    cut.add(a)
+    return {a: _judged(a, vs, read.get(a, ()), a in cut) for a, vs in apps.items() if a in read}
 
 
 def _app_rows(q: _Reads, key: str, a: str, start: datetime, now: datetime, vs: dict) -> bool:
@@ -383,7 +401,7 @@ def _app_rows(q: _Reads, key: str, a: str, start: datetime, now: datetime, vs: d
     return True
 
 
-def _judged(a: str, vs: dict, read) -> dict:
+def _judged(a: str, vs: dict, read, partial: bool = False) -> dict:
     rows = [{"version": v, "pcs": len(x["pcs"]), "crash": len(x["crash"]), "hang": len(x["hang"]),
              "virtual": len(x["virtual"]), "action_pcs": len(x["apcs"]), "action_virtual": len(x["avirtual"]),
              "actions": int(round(x["actions"])), "major": int(round(x["major"])),
@@ -391,7 +409,7 @@ def _judged(a: str, vs: dict, read) -> dict:
     rows.sort(key=lambda r: (-max(r["pcs"], r["action_pcs"]), order(r["version"])))
     union = lambda k: len(set().union(*(x[k] for x in vs.values()))) if vs else 0  # noqa: E731
     # the application's PCs across its versions, each PC once (for "which crashed the most")
-    app = {"application": a, "read": sorted(read), "versions": rows,
+    app = {"application": a, "read": sorted(read), "versions": rows, "partial": partial,
            "totals": {"pcs": union("pcs"), "crash": union("crash"), "hang": union("hang"),
                       "action_pcs": union("apcs"), "slow": union("major_pcs")}}
     judge(app)
@@ -404,8 +422,12 @@ def app_now(client, now: datetime, application: str) -> dict:
     notes: list[str] = []
     q = _Reads(client, notes)
     vs: dict = {}
-    read = [key for key in ("usage", "actions") if _app_rows(q, key, application, now - timedelta(days=DAYS), now, vs)]
-    app = _judged(application, vs, read)
+    read, cut = [], False
+    for key in ("usage", "actions"):
+        if _app_rows(q, key, application, now - timedelta(days=DAYS), now, vs):
+            read.append(key)
+            cut = cut or q.cut
+    app = _judged(application, vs, read, cut)
     return dict(_versions_view({application: app})[0], notes=notes, error=q.error if not read else "")
 
 
@@ -562,7 +584,8 @@ def _flags(snap: dict) -> list[dict]:
         for r in a["raised"]:
             f = dict(r, application=a["application"])
             flags.append({"key": f"{r['kind']}|{a['application']}|{r['version']}", "kind": r["kind"],
-                          "label": KIND[r["kind"]], "pcs": r["pcs"], "text": flag_text(r["kind"], f),
+                          "label": KIND[r["kind"]], "pcs": r["pcs"],
+                          "text": flag_text(r["kind"], f) + (f" {CUT}" if a.get("partial") else ""),
                           "application": a["application"], "version": r["version"]})
     progs = [program_view(p) for p in snap.get("programs", {}).values()]
     apps = [p for p in progs if p["type"] != SOFTWARE_OS_UPDATE]
@@ -597,7 +620,8 @@ def _flags(snap: dict) -> list[dict]:
                       "text": f"{len(gaps):,} Windows updates are on most PCs of their Windows version but not on "
                               f"every one; most: {m['update']} not on {m['without']:,} of the {w['pcs']:,} PCs on "
                               f"{w['windows']}" + (f"; {m['instead'][0]['on']:,} of those have "
-                                                   f"{m['instead'][0]['update']}." if m["instead"] else ".")})
+                                                   f"{m['instead'][0]['update']}." if m["instead"] else ".")
+                              + (f" {CUT}" if win.get("partial") else "")})
     few = [p for p in apps if p["pcs"] <= FEW_PCS]
     if few:
         flags.append({"key": "few", "kind": "few", "label": KIND["few"], "pcs": max(p["pcs"] for p in few),
@@ -652,22 +676,27 @@ class Software:
     def load(self) -> None:
         if not self.store:
             return
+        bad = []
         try:
             self.store.mkdir(parents=True, exist_ok=True)
             cut = (date.today() - timedelta(days=KEEP_DAYS)).isoformat()
             latest = None
             for path in sorted(self.store.glob("*.json")):
-                if path.stem < cut:
-                    path.unlink()
-                    continue
-                snap = json.loads(path.read_text())
-                self.saved[path.stem] = {f["key"]: f["pcs"] for f in snap.get("flags", [])}
-                latest = snap
+                try:  # one unreadable day no longer stops the others (and the latest read) loading
+                    if path.stem < cut:
+                        path.unlink()
+                        continue
+                    snap = json.loads(path.read_text())
+                    self.saved[path.stem] = {f["key"]: f["pcs"] for f in snap.get("flags", [])}
+                    latest = snap
+                except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+                    bad.append(f"{path.name} ({short_error(exc)})")
             self.snap = latest
-        except (OSError, ValueError) as exc:
-            self.note = (f"The saved days in {self.store} could not be read ({short_error(exc)}): flags are not "
-                         "marked new and have no days before. The folder must be writable by the container "
-                         "(uid 1000).")
+        except OSError as exc:
+            bad.append(f"the folder ({short_error(exc)})")
+        if bad:
+            self.note = (f"Saved days in {self.store} could not be read: {', '.join(bad[:3])}; those days are not "
+                         "in each flag's days. The folder must be writable by the container (uid 1000).")
             log.warning("Software: %s", self.note)
 
     def save(self, snap: dict) -> None:
@@ -755,10 +784,12 @@ def keep_reading(sw: Software, make_client, cfg_of, sleep, clock=lambda: datetim
     while True:
         try:
             client = make_client()
-        except Exception as exc:  # a broken config.yaml
-            sw.off = f"The settings could not be read ({short_error(exc)})."
+        except Exception as exc:  # a broken config.yaml: tried again (it once stopped the reader until a restart)
+            sw.off = f"The settings could not be read ({short_error(exc)}); trying again in {RETRY_MIN} minutes."
             log.warning("Software: %s", sw.off)
-            return
+            sleep(RETRY_MIN * 60)
+            continue
+        sw.off = None
         if client is None:
             sw.off = "Aternity is not set, so there is nothing to show (aternity.base_url in config.yaml)."
             log.info("Software: %s", sw.off)
@@ -833,7 +864,7 @@ def programs_per_pc(client, notes: list[str]) -> dict | None:
     mark = len(client.warnings)
     summed = q.rows(S, "Programs per PC, added up by Aternity", select=[D, T, K] if typed else [D, K],
                     top=LIST_ROWS * 3)
-    if not summed or len(client.warnings) > mark:
+    if not summed or len(client.warnings) > mark or q.cut:  # PCs left out: no ranking of them
         return None
     per: dict = {}
     for r in summed:
@@ -1044,7 +1075,7 @@ def compare(client, cfg, now: datetime, application: str, a: str | None = None, 
         for k, by in sorted(kinds.items(), key=lambda kv: (-len(kv[1][a]) - len(kv[1][b]), kv[0]))[:5]:
             line(f"PCs with {k}", "events", len(by[a]), len(A["pcs"]), len(by[b]), len(B["pcs"]))
         if client.warnings:
-            notes += [w for w in client.warnings if "health" in w.lower()]
+            notes += [w for w in dict.fromkeys(client.warnings) if "health" in w.lower() and w not in notes]
     if A["actions"] or B["actions"]:
         line(f"Actions rated {TOP_STATUS}", "actions", A["major"], A["actions"], B["major"], B["actions"], "actions")
         busy = sorted(act, key=lambda k: (-sum(x[0] for x in act[k].values()), k))[:5]
@@ -1068,9 +1099,11 @@ def before_after(client, now: datetime, application: str) -> dict:
     PC-days, as each side has its own number of days."""
     u = VERSION_SOURCES["usage"]
     start = now - timedelta(days=UPDATE_DAYS)
+    mark, top = len(client.warnings), LIST_ROWS * 5
     rows = client.query(u["entity"], select=[u["device"], u["time"], u["version"], u["crashes"], u["hang_time"]],
                         filter=f"{_span(u, start, now)} and {u['application']} eq {odata_quote(application)}",
-                        top=LIST_ROWS * 5)
+                        top=top)
+    cut = _partial(client, mark, rows, top)
     days: dict = {}
     for r in rows:
         d, t, v = r.get(u["device"]), parse_time(r.get(u["time"])), r.get(u["version"])
@@ -1106,6 +1139,8 @@ def before_after(client, now: datetime, application: str) -> dict:
     every = rows and all((to_float(r.get(u["crashes"])) or 0) > 0 for r in rows)
     notes = [f"Every day listed for {application} had a crash: app usage holds it only where it failed, so before "
              "and after cannot be compared."] if every else []
+    if cut:
+        notes.insert(0, f"{CUT} Read: {len(rows):,} rows.")
     return {"application": application, "days": UPDATE_DAYS, "pairs": out[:5], "notes": notes}
 
 
@@ -1116,8 +1151,10 @@ def split_by_program(client, now: datetime, application: str, program: str, prob
     flag: split by any of the installed programs, some differ by chance (docs/software-tab.md)."""
     c = SOFTWARE_COLUMNS
     problem = problem if problem in ("crash", "hang", "slow") else "crash"
+    mark = len(client.warnings)
     inst = client.query(SOFTWARE_SOURCE, filter=f"{c['name']} eq {odata_quote(program)}",
                         select=[c["device"], c["version"]], top=LIST_ROWS)
+    cut = _partial(client, mark, inst, LIST_ROWS)
     has: dict[str, set] = {}
     for r in inst:
         if r.get(c["device"]):
@@ -1126,6 +1163,7 @@ def split_by_program(client, now: datetime, application: str, program: str, prob
     s = VERSION_SOURCES["actions" if problem == "slow" else "usage"]
     flt = f"{_span(s, start, now)} and {s['application']} eq {odata_quote(application)}"
     per: dict[str, list] = {}  # PC -> [ran, with the problem, actions, Major actions]
+    mark = len(client.warnings)
     if problem == "slow":
         rows = client.query(s["entity"], filter=flt, select=[s["device"], s["status"], s["volume"]], top=LIST_ROWS)
         for r in rows:
@@ -1147,6 +1185,8 @@ def split_by_program(client, now: datetime, application: str, program: str, prob
         if per and all(x[1] for x in per.values()):
             notes.append(f"Every PC listed for {application} had {'a crash' if problem == 'crash' else 'hang time'}: "
                          "app usage holds it only where it failed, so the PCs that ran it without one are not known.")
+    if cut or _partial(client, mark, rows, LIST_ROWS):
+        notes.insert(0, CUT)
     groups: dict[str, list] = {}
     for d, x in per.items():
         for v in has.get(d) or ["without"]:

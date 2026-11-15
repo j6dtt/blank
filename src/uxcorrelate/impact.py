@@ -5,11 +5,13 @@ subnet holds their IP (the gateway), or their /24 when NetIM has no such
 subnet. Aternity only knows the locations an admin configured; NetIM knows the
 network, which is what lets slow users be traced to one router or subnet.
 
-Each group, and the whole, is compared with the same clock hours on the same
-weekday of the previous weeks (a Monday with Mondays, not with a weekend):
+Each group, and the whole, is compared with the same clock hours on the DAYS_BACK
+days before, working days with working days (a live Aternity keeps about 8 days):
 "unusual" means more users slow than on any of those days. No other threshold
 is used. The common point is the group holding more than half of the slow
-users, if it is unusual.
+users, if it is unusual. A read Aternity failed or cut short is said: a failure
+of the window's read leaves the section out (the investigation goes on), a day
+before that fails is left out, and counts from a cut-short read are not compared.
 
 A virtual desktop's address is the desktop's, not where the user sits: those
 users are one group of their own, never a network point.
@@ -22,8 +24,8 @@ import logging
 from collections import Counter
 from datetime import datetime, timedelta
 
-from .http import short_error
-from .models import local_date
+from .http import ApiError, short_error
+from .models import local, local_date, utc
 
 log = logging.getLogger("uxcorrelate")
 DAYS_BACK = 7  # a live Aternity keeps about 8 days of activities: earlier weeks are gone
@@ -44,8 +46,13 @@ def gateway_index(netim) -> tuple[list[tuple], bool]:
         if cached is not None:
             by_device = cached()
             ready = bool(by_device)
-        else:  # simple sources (tests) answer directly
-            by_device = {d.id: netim.interfaces(d.id) for d in netim.devices()}
+        else:  # simple sources (tests) answer directly; a device that fails is left out, not the index
+            by_device = {}
+            for d in netim.devices():
+                try:
+                    by_device[d.id] = netim.interfaces(d.id)
+                except ApiError:
+                    continue
             ready = True
         names = {d.id: d.name for d in netim.devices()} if by_device else {}
     except Exception as exc:  # NetIM trouble must not stop the comparison
@@ -124,7 +131,17 @@ def who_else(aternity, netim, apps: list[str], degraded: set[datetime], minutes:
     start, end = min(degraded), max(degraded) + timedelta(minutes=minutes)
     log.info("Aternity: comparing with other users of %s, %s to %s UTC", ", ".join(apps),
              start.strftime("%Y-%m-%d %H:%M"), end.strftime("%Y-%m-%d %H:%M"))
-    users = _per_user(aternity.app_activity(apps, start, end), who, device, degraded, bucket, is_slow)
+    said = getattr(aternity, "warnings", None)  # the investigation shows these
+    said = said if isinstance(said, list) else []
+    mark = len(said)
+    try:  # every user of the apps: a big read. It failing once stopped the whole investigation
+        rows = aternity.app_activity(apps, start, end)
+    except ApiError as exc:
+        said.append(f"Other users of {', '.join(apps)} not checked: Aternity gave an error ({exc.short()}).")
+        log.warning("Aternity: %s", said[-1])
+        return None
+    partial = len(said) > mark  # cut short (its page limit): the counts are partial
+    users = _per_user(rows, who, device, degraded, bucket, is_slow)
 
     nets, ready = gateway_index(netim)
     cache: dict = {}
@@ -134,13 +151,21 @@ def who_else(aternity, netim, apps: list[str], degraded: set[datetime], minutes:
     own_group = VIRTUAL_GROUP if user_virtual else group_of(user_ip, nets, cache) if user_ip else None
 
     # the same clock hours on the days before, working days against working days
-    history = []
+    history, unread = [], 0
     for back in range(1, DAYS_BACK + 1):
-        shift = timedelta(days=back)
+        # the same clock hours: a 24-hour step in UTC put 09:00 against 10:00 across a clock change
+        shift = start - utc(local(start) - timedelta(days=back))
         if (local_date(start - shift).weekday() >= 5) != (local_date(start).weekday() >= 5):
             continue
         log.info("Aternity: same hours %d day(s) earlier, for comparison", back)
-        rows = aternity.app_activity(apps, start - shift, end - shift)
+        mark = len(said)
+        try:
+            rows = aternity.app_activity(apps, start - shift, end - shift)
+        except ApiError as exc:
+            unread += 1
+            log.warning("Aternity: other users %d day(s) earlier could not be read (%s)", back, exc.short())
+            continue
+        partial = partial or len(said) > mark
         old = _per_user(rows, who, device, {t - shift for t in degraded}, bucket, is_slow)
         for u in old.values():
             u["group"] = place(u)
@@ -155,9 +180,12 @@ def who_else(aternity, netim, apps: list[str], degraded: set[datetime], minutes:
                 rates.append(sum(bool(u["slow"]) for u in sel) / len(sel))
         return round(max(rates), 3) if rates else None
 
+    if unread:
+        said.append(f"Other users of {', '.join(apps)}: {unread} of the days before could not be read and are "
+                    "left out of the comparison.")
     slow_total = sum(bool(u["slow"]) for u in users.values())
     rate = _rate(slow_total, len(users))
-    usual_rate = usual(lambda u: True)
+    usual_rate = None if partial else usual(lambda u: True)  # partial counts are not compared
     unusual = None if usual_rate is None or rate is None else rate > usual_rate
 
     groups: dict[tuple, dict] = {}
@@ -167,7 +195,7 @@ def who_else(aternity, netim, apps: list[str], degraded: set[datetime], minutes:
         g["slow"] += bool(u["slow"])
     for key, g in groups.items():
         g["rate"] = _rate(g["slow"], g["users"])
-        g["usual_rate"] = usual(lambda u, key=key: u["group"] == key)
+        g["usual_rate"] = None if partial else usual(lambda u, key=key: u["group"] == key)
         g["unusual"] = None if g["usual_rate"] is None else g["rate"] > g["usual_rate"]
         g["includes_user"] = key == own_group
     ranked = sorted(groups.values(), key=lambda g: (-g["slow"], -g["users"]))
@@ -191,7 +219,11 @@ def who_else(aternity, netim, apps: list[str], degraded: set[datetime], minutes:
     return {
         "applications": apps, "start": _iso(start), "end": _iso(end),
         "users": len(users), "slow": slow_total, "rate": rate,
-        "usual_rate": usual_rate, "baseline_days": len(history), "unusual": unusual,
+        "usual_rate": usual_rate, "baseline_days": len(history), "unusual": unusual, "partial": partial,
+        "days_unread": unread,  # days before that could not be read (all of them: not "no other days")
+        # the kind of day compared with, in config.yaml's timezone (the page took the UTC day: a
+        # Friday 20:00 in New York read "weekend days")
+        "day_kind": "weekend" if local_date(start).weekday() >= 5 else "working",
         "user_group": own_group[1] if own_group else None, "user_location": user_location,
         "netim_index_ready": ready,
         "groups": ranked[:10], "common_point": common,

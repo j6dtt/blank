@@ -35,8 +35,8 @@ class AiClient:
     def models(self) -> list[str]:
         """The model names the service lists."""
         data = self.http.get_json(self.cfg.models_path, params=self.cfg.query, headers=self.headers)
-        items = data if isinstance(data, list) else next(
-            (data[k] for k in ("data", "models") if isinstance(data.get(k), list)), [])
+        items = data if isinstance(data, list) else next(  # any other reply: no list (it raised)
+            (data[k] for k in ("data", "models") if isinstance(data.get(k), list)), []) if isinstance(data, dict) else []
         names = [i if isinstance(i, str) else (i.get("id") or i.get("name")) for i in items
                  if isinstance(i, (str, dict))]
         return sorted(str(n) for n in names if n)

@@ -35,7 +35,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from .ai import AiClient
-from .chat import LOGIN_DAYS, _kinds_named, _match, _named, _singular, allowed, logins, numbers
+from .chat import LOGIN_DAYS, _health_notes, _kinds_named, _match, _named, _singular, allowed, logins, numbers
 from .config import OS_COLUMNS, SOFTWARE_COLUMNS, SOFTWARE_OS_UPDATE, SOFTWARE_SOURCE, TOP_STATUS
 from .http import ApiError, short_error
 from .today import EVENT_PAD, HEALTH_DAYS, NO_APP, SLOW_PAD, Today
@@ -332,6 +332,7 @@ def events(today: Today, now: datetime, kinds=None, app: str | None = None, user
         hd = {d: v for d, v in today.health_days.items() if first <= d < t}
         ha = {d: v for d, v in today.health_apps.items() if first <= d < t}
         read = {d for d in today.health_read if first <= d < t}
+        cut, said = set(today.health_cut), today.notes.get("health")
         sev = {k: c.most_common(1)[0][0] for k, c in today.health_sev.items() if c}
     notes = []
     every = {x[2] for x in health} | {k for v in hd.values() for k in v}
@@ -376,9 +377,7 @@ def events(today: Today, now: datetime, kinds=None, app: str | None = None, user
             rows.append(r)
             runs.append({"username": "", "device": r[2], "start": _iso(when - EVENT_PAD),
                          "end": _iso(when + EVENT_PAD)})
-    missing = days - 1 - len(read)
-    if missing > 0:
-        notes.append(f"{missing} of the {days - 1} days before were not read yet (read once a day).")
+    notes += _health_notes(today, [t - timedelta(days=n) for n in range(days - 1, 0, -1)], read, cut, said)
     if days > 1:
         notes.append("Today: one row per event. Days before: one row per PC, kind of event and day, at its first "
                      "time that day.")
@@ -405,19 +404,21 @@ def activity(today: Today, now: datetime, user: str | None = None, pc: str | Non
     with today.lock:
         hours = sorted((h for h in today.hours.values() if h.day == t), key=lambda h: h.start)
         users = _users(today, t)
-    notes = ["Today only, from midnight; actions not rated Major are counted, not listed."]
+    gaps = today.activity_gaps(now)
+    notes = ["Today only, from midnight; actions not rated Major are counted, not listed."] + gaps
     summary: dict = {}
     user_l, pc_l = (user or "").strip().lower(), (pc or "").strip().lower()
+    read = " in what could be read" if gaps else ""  # not "none" of hours that were not read
     if user_l and user_l not in users:
         near = [u for u in users if user_l in u][:5]
-        notes.append(f"No user \"{user}\" had a measured action today" + (f"; names like it: {', '.join(near)}."
-                                                                         if near else "."))
+        notes.append(f"No user \"{user}\" had a measured action today{read}" + (f"; names like it: {', '.join(near)}."
+                                                                                if near else "."))
     if pc_l and not any(pc_l in {d.lower() for d in h.devs} for h in hours):
-        notes.append(f"No PC \"{pc}\" had a measured action today.")
+        notes.append(f"No PC \"{pc}\" had a measured action today{read}.")
     names = {a for h in hours for a in h.apps}
     apps = set(_match(names, app)) if app else None
     if app and not apps:
-        notes.append(f"No application named like \"{app}\" had a measured action today.")
+        notes.append(f"No application named like \"{app}\" had a measured action today{read}.")
     elif app and len(apps) > 1:
         notes.append(f"\"{app}\" matches {len(apps)} applications, counted together: {', '.join(sorted(apps)[:5])}.")
     rows, runs = [], []
@@ -601,10 +602,10 @@ def startups(today: Today, names, now: datetime, reach: Reach | None, user: str 
                      " ".join(st.get("why") or []) or None])
         runs.append({"username": st["username"] or "", "device": st["device"], "start": _iso(t - EVENT_PAD),
                      "end": _iso(min(t + EVENT_PAD, now))})
-    # "1 in 10 over" only from 10 measured: with fewer it is worked out past the slowest one
+    # "1 in 10 over" only from logons.P90_MIN measured (None below): fewer is worked out past the slowest
     summary = {"start_ups": lg["total"],
                "per_type": {t["type"]: f"typical {t['typical']}{u}" + (f", 1 in 10 over {t['p90']}{u}"
-                                                                      if t["count"] >= 10 else "")
+                                                                      if t["p90"] is not None else "")
                             + f", {t['count']} measured" for t in lg["types"]}}
     causes = [f"{c['component']}: longer than normal on {c['pcs']} PC(s), {c['times']} time(s)"
               for c in lg.get("causes", [])[:5]]
@@ -694,7 +695,8 @@ def pc_changes(today: Today, names, now: datetime, reach: Reach | None, pc: str 
     start = now - timedelta(days=days)
     mark = len(client.warnings)
     changes = _updates(client.software_changes(name, start, now), start, now)
-    if len(client.warnings) > mark:
+    unread = len(client.warnings) > mark
+    if unread:
         notes.append(f"Aternity's change log could not be read in full ({client.warnings[-1]}).")
     if program:
         like = set(_like({c["name"] for c in changes if c["name"]}, program))
@@ -724,7 +726,7 @@ def pc_changes(today: Today, names, now: datetime, reach: Reach | None, pc: str 
                  "back later, and a batch of removals in one minute, are not changes to look at one by one.")
     if _kind_of(today, name) == "virtual":
         notes.append("A virtual desktop: Aternity's log time runs late there (usually by under a day).")
-    if not changes:
+    if not changes and not unread:  # a failed read is not "no change"
         notes.append(f"Aternity logged no change on {name} in the last {days} days"
                      + (f" for a program like \"{program}\"." if program else "."))
     return _step("pc_changes", args, f"What changed on {name}, the last {days} days", ["When", "Program", "Change",
@@ -837,7 +839,9 @@ def investigate(today: Today, names, now: datetime, reach: Reach | None, user: s
     result = reach.investigate(picked["username"], picked["device"], app, t0, t1)
     a = result.get("answer") or {}
     who = " on ".join(x for x in (picked["username"], picked["device"]) if x) + (f" / {app}" if app else "")
-    window = f"{today.local(t0):%a %b %d %H:%M} to {today.local(t1):%H:%M}"
+    # up to 24 hours: the end's day is said when it is another day ("Sat Nov 14 13:00 to 12:00" read backwards)
+    end_fmt = "%H:%M" if today.local(t0).date() == today.local(t1).date() else "%a %b %d %H:%M"
+    window = f"{today.local(t0):%a %b %d %H:%M} to {today.local(t1).strftime(end_fmt)}"
     text = render_text(result)
     notes.append("The AI read the investigation's answer and problems as the report writes them"
                  + (" (cut short)." if len(text) > TEXT_CHARS else "."))

@@ -14,8 +14,8 @@ from uxcorrelate.care import CARE_MAX, Care
 from uxcorrelate.config import AternityConfig, CareUser, load_settings
 from uxcorrelate.today import HOUR, Today
 
-ZONE = "America/Chicago"
-NOW = datetime(2026, 11, 9, 20, 30, tzinfo=timezone.utc)  # Monday 14:30 in Chicago
+ZONE = "America/New_York"
+NOW = datetime(2026, 11, 9, 19, 30, tzinfo=timezone.utc)  # Monday 14:30 in New York
 F = {"timestamp": "TIMEFRAME", "username": "USERNAME", "device": "DEVICE_NAME", "application": "APPLICATION_NAME",
      "status": "SLA_STATUS", "activity": "ACTIVITY_NAME", "response_time": "ACTIVITY_RESPONSE_TIME",
      "virtualization": "VIRTUALIZATION"}
@@ -45,11 +45,13 @@ def today_with(majors: int, event=None) -> Today:
 
 
 def history(request: httpx.Request):
-    """8 days of activity, by username: MQ2208 0-2 Major by 14:30 on working days; tz9013 1-3."""
+    """8 days of activity, by username: MQ2208 0-2 Major by 14:30 on the latest 5 days, a weekend
+    among them; tz9013 1-2."""
     flt = request.url.params["$filter"].lower()
     tz = Today(ZONE)
     rows = []
-    for back, majors in ((1, 5), (2, 9), (3, 1), (4, 2), (5, 0), (6, 2), (7, 1)):  # Sun 5, Sat 9: weekend
+    for back, majors in ((1, 1), (2, 2), (3, 1), (4, 2), (5, 0), (6, 9), (7, 9)):  # Sun 1, Sat 2; Tue 9 and Mon
+        # 9 are past the latest 5 days
         d = date(2026, 11, 9) - timedelta(days=back)
         ten = tz.midnight(d) + 10 * HOUR
         if "'mq2208'" in flt:
@@ -79,13 +81,14 @@ def test_more_major_actions_than_on_their_own_days_before_is_an_issue_and_queues
     care = Care(today_with(3), lambda: USERS)
     care.check(client(seen), NOW)
     assert len(seen) == 3 and "USERNAME eq 'mq2208'" in seen[0]  # their own days, by username
-    assert "TIMEFRAME ge 2026-11-01T05:00:00Z" in seen[0]  # 8 days before today's midnight (Chicago)
+    assert "TIMEFRAME ge 2026-11-01T04:00:00Z" in seen[0]  # 8 days before today's midnight (New York)
     v = care.view(NOW)
     assert v["count"] == 1 and [u["title"] for u in v["users"]] == ["Payroll lead", "ghost1", "tz9013"]
     mq = v["users"][0]
     assert (mq["status"], mq["level"], mq["since_local"], mq["username"]) == ("issue", "Major", "14:20", "MQ2208")
-    assert mq["usual"] == {"enough": True, "days": 5, "low": 0, "high": 2, "kind": "working days"}  # weekend left out
-    assert mq["issues"][0]["text"].startswith("3 Major slow actions by 14:30, the last at 14:20; on the 5 working "
+    # the latest 5 days with a PC in use, the weekend too: people on the Care list often work weekends
+    assert mq["usual"] == {"enough": True, "days": 5, "low": 0, "high": 2, "kind": "days"}
+    assert mq["issues"][0]["text"].startswith("3 Major slow actions by 14:30, the last at 14:20; on the 5 "
                                               "days before that "
                                               "they used a PC: 0 to 2 by this time. Most in Mail (3).")
     assert mq["pcs"] == [{"device": "VD-7", "kind": "virtual"}] and (mq["actions"], mq["major"]) == (4, 3)
@@ -112,7 +115,7 @@ def test_the_reader_checks_the_care_list_after_each_read():
         def __init__(self):
             self.checks = []
 
-        def check(self, client, now):
+        def check(self, client, now, read=True):
             self.checks.append(now)
     stub, sleeps = Stub(), []
 
@@ -134,7 +137,7 @@ def test_as_many_as_on_a_day_before_is_not_an_issue():
 
 
 def test_a_critical_or_major_event_is_an_issue_a_minor_one_is_not():
-    t0 = datetime(2026, 11, 9, 20, 5, tzinfo=timezone.utc)  # 14:05 Chicago
+    t0 = datetime(2026, 11, 9, 19, 5, tzinfo=timezone.utc)  # 14:05 New York
     events = [ev(t0, "MQ2208", "VD-7", "System Crash", "Critical"),
               ev(t0, "MQ2208", "VD-7", "Application Crash", "Major", "Application", "Mail"),
               ev(t0 + timedelta(minutes=20), "MQ2208", "VD-7", "Application Crash", "Major", "Application", "Mail"),
@@ -149,16 +152,18 @@ def test_a_critical_or_major_event_is_an_issue_a_minor_one_is_not():
 
 
 def test_an_event_is_over_after_an_hour_with_no_new_one_and_a_later_one_is_a_new_issue():
-    at = lambda h, m: datetime(2026, 11, 9, h + 6, m, tzinfo=timezone.utc)  # noqa: E731  (Chicago time)
+    at = lambda h, m: datetime(2026, 11, 9, h + 5, m, tzinfo=timezone.utc)  # noqa: E731  (New York time)
     crash = lambda h, m: ev(at(h, m), "MQ2208", "VD-7", "Application Crash", "Major", "Application", "Mail")  # noqa
     care = Care(today_with(0, [crash(9, 0), crash(14, 0), crash(14, 40)]), lambda: USERS[:1])
-    care.check(client(), at(14, 50))
+    read(care, at(14, 50))
     issues = care.issues["mq2208"]  # 09:00 was over before the user's first check: kept, not lit
     assert [i["clears"] for i in care.view(at(14, 50))["users"][0]["issues"]] == [
-        "Clears at 15:35 if no new Application Crash."]  # 3 reads of 15 min after the read at 14:50
-    assert [(i["since"][11:16], "cleared" in i) for i in issues] == [("15:00", True), ("20:00", False)]
+        "Clears at the 15:35 read if no new Application Crash."]  # the 3rd read of 15 min after the one at 14:50
+    assert [(i["since"][11:16], "cleared" in i) for i in issues] == [("14:00", True), ("19:00", False)]  # UTC
     assert care.pending == ["mq2208"]
     care.run_next(lambda u, s, e: {"answer": {"title": "Mail crashed on VD-7"}}, at(14, 50))
+    for m in (5, 20, 35):  # the reads after 14:50: off at the 3rd
+        care.check(client(), at(15, m))
     care.check(client(), at(15, 45))  # 65 min after 14:40
     mq = care.view(at(15, 45))["users"][0]
     assert (mq["status"], mq["issues"]) == ("ok", [])
@@ -172,26 +177,26 @@ def test_an_event_is_over_after_an_hour_with_no_new_one_and_a_later_one_is_a_new
     assert care.pending == ["mq2208"]
     # "Investigate again now" and the one that runs by itself: from 30 min before the day's first
     # issue, over or not (stage, Nov 2026: the button took the open 17:00 one, leaving 09:00 out)
-    assert care.view(at(17, 5))["users"][0]["start"] == "2026-11-09T14:30:00Z"  # 08:30 Chicago
-    assert care.detail("mq2208", at(17, 5))["start"] == "2026-11-09T14:30:00Z"
+    assert care.view(at(17, 5))["users"][0]["start"] == "2026-11-09T13:30:00Z"  # 08:30 New York
+    assert care.detail("mq2208", at(17, 5))["start"] == "2026-11-09T13:30:00Z"
     calls = []
     care.run_next(lambda u, s, e: calls.append(s) or {"answer": {"title": "T"}}, at(17, 5))
-    assert calls == [datetime(2026, 11, 9, 14, 30, tzinfo=timezone.utc)]
+    assert calls == [datetime(2026, 11, 9, 13, 30, tzinfo=timezone.utc)]
 
 
 def test_an_open_event_saved_by_the_build_before_is_the_same_issue():
-    t0 = datetime(2026, 11, 9, 20, 5, tzinfo=timezone.utc)  # 14:05 Chicago
+    t0 = datetime(2026, 11, 9, 19, 5, tzinfo=timezone.utc)  # 14:05 New York
     care = Care(today_with(0, [ev(t0, "MQ2208", "VD-7", "System Crash", "Critical")]), lambda: USERS[:1])
     care.issues["mq2208"] = [{"key": "event 2026-11-09 System/System Crash", "kind": "event", "level": "Critical",
-                              "since": "2026-11-09T20:05:00Z", "day": "2026-11-09", "text": "System Crash"}]
-    care.reports["mq2208"] = {"at": "2026-11-09T20:10:00Z", "start": "2026-11-09T19:35:00Z",
-                              "end": "2026-11-09T20:10:00Z", "username": "MQ2208", "title": "T"}
+                              "since": "2026-11-09T19:05:00Z", "day": "2026-11-09", "text": "System Crash"}]
+    care.reports["mq2208"] = {"at": "2026-11-09T19:10:00Z", "start": "2026-11-09T18:35:00Z",
+                              "end": "2026-11-09T19:10:00Z", "username": "MQ2208", "title": "T"}
     care.check(client(), NOW)
     assert len(care.issues["mq2208"]) == 1 and care.pending == []
     # what it had is not new: a restart onto this build does not light it again
     assert care.issues["mq2208"][0]["seen"] == 1 and care.view(NOW)["users"][0]["status"] == "ok"
     care.check(client(), NOW + HOUR)
-    assert care.issues["mq2208"][0]["ended"] == "quiet" and care.issues["mq2208"][0]["last"] == "2026-11-09T20:05:00Z"
+    assert care.issues["mq2208"][0]["ended"] == "quiet" and care.issues["mq2208"][0]["last"] == "2026-11-09T19:05:00Z"
 
 
 def test_the_investigation_runs_once_an_hour_and_its_headline_is_the_why():
@@ -203,7 +208,7 @@ def test_the_investigation_runs_once_an_hour_and_its_headline_is_the_why():
         calls.append((username, start, end))
         return {"answer": {"title": "Mail was slow on VD-7", "reason": "Its CPU was high.", "level": "found"}}
     assert care.run_next(investigate, NOW) == "mq2208" and care.run_next(investigate, NOW) is None
-    assert calls == [("MQ2208", datetime(2026, 11, 9, 19, 50, tzinfo=timezone.utc), NOW)]  # 30 min before 14:20
+    assert calls == [("MQ2208", datetime(2026, 11, 9, 18, 50, tzinfo=timezone.utc), NOW)]  # 30 min before 14:20
     mq = care.view(NOW)["users"][0]
     assert mq["why"]["title"] == "Mail was slow on VD-7" and mq["investigating"] is None
     # a new issue 20 minutes later: said, but no second investigation within the hour
@@ -215,7 +220,7 @@ def test_the_investigation_runs_once_an_hour_and_its_headline_is_the_why():
     detail = care.detail("mq2208", later)
     assert detail["report"]["result"]["answer"]["title"] == "Mail was slow on VD-7"
     assert (detail["report"]["at_local"], detail["report"]["span_local"]) == ("Nov 09 14:30",
-                                                                            "13:50 to 14:30 America/Chicago")
+                                                                            "13:50 to 14:30 America/New_York")
     assert [i["kind"] for i in detail["history"]] == ["event", "slow"]  # newest first
 
 
@@ -223,12 +228,15 @@ def test_a_slow_spell_is_over_after_an_hour_with_no_major_action_and_a_later_one
     care = Care(today_with(3), lambda: USERS[:1])  # Major at 14:00, 14:10, 14:20
     care.check(client(), NOW)
     care.run_next(lambda u, s, e: {"answer": {"title": "Mail was slow on VD-7"}}, NOW)
-    at = lambda h, m: datetime(2026, 11, 9, h + 6, m, tzinfo=timezone.utc)  # noqa: E731  (Chicago time)
-    care.check(client(), at(15, 10))
+    at = lambda h, m: datetime(2026, 11, 9, h + 5, m, tzinfo=timezone.utc)  # noqa: E731  (New York time)
+    read(care, at(14, 45))
+    read(care, at(15, 0))
     mq = care.view(at(15, 10))["users"][0]
-    assert mq["status"] == "issue"  # the 3rd read after 14:30
-    assert mq["issues"][0]["clears"] == "Clears at 15:15 if no new Major action."  # 3 reads after 14:30
+    assert mq["status"] == "issue"  # 2 reads after 14:30
+    assert mq["issues"][0]["clears"] == "Clears at the 15:15 read if no new Major action."  # the 3rd after 14:30
     assert care.detail("mq2208", at(15, 10))["issues"][0]["clears"] == mq["issues"][0]["clears"]
+    care.check(client(), at(15, 15))
+    assert care.view(at(15, 15))["users"][0]["status"] == "ok"  # the 3rd read: off
     care.check(client(), at(15, 25))  # 65 min: over, though 3 is still more than their usual 0 to 2
     mq = care.view(at(15, 25))["users"][0]
     assert (mq["status"], mq["issues"], mq["level"]) == ("ok", [], None)
@@ -242,18 +250,19 @@ def test_a_slow_spell_is_over_after_an_hour_with_no_major_action_and_a_later_one
     care.today.add_hour(three, [act(at(15, 15), "MQ2208", "VD-7", "Major")], F, at(15, 40))
     care.check(client(), at(15, 40))
     slow = care.issues["mq2208"]
-    assert len(slow) == 1 and "cleared" not in slow[0] and slow[0]["last"] == "2026-11-09T21:15:00Z"
+    assert len(slow) == 1 and "cleared" not in slow[0] and slow[0]["last"] == "2026-11-09T20:15:00Z"
     assert care.pending == []  # not a new issue: the investigation covers its start
     assert care.view(at(15, 40))["users"][0]["status"] == "issue"  # but a row this read saw first: lit
-    care.check(client(), at(16, 20))
-    assert care.issues["mq2208"][0]["cleared"] == "2026-11-09T22:20:00Z"
+    for m in (55, 70, 80):  # the reads after it: off at the 3rd (16:20)
+        care.check(client(), at(15, 0) + timedelta(minutes=m))
+    assert care.issues["mq2208"][0]["cleared"] == "2026-11-09T21:20:00Z"
     # 17:00, still more than their usual: a new spell, a new issue, a new investigation (over an hour on)
     five = care.today.midnight(date(2026, 11, 9)) + 17 * HOUR
     care.today.add_hour(five, [act(at(17, 0), "MQ2208", "VD-7", "Major")], F, at(17, 5))
     care.check(client(), at(17, 5))
     slow = care.issues["mq2208"]
-    assert [("cleared" in i, i["since"]) for i in slow] == [(True, "2026-11-09T20:20:00Z"),
-                                                             (False, "2026-11-09T23:00:00Z")]
+    assert [("cleared" in i, i["since"]) for i in slow] == [(True, "2026-11-09T19:20:00Z"),
+                                                             (False, "2026-11-09T22:00:00Z")]
     assert slow[1]["key"].endswith(" 2") and care.pending == ["mq2208"]
     assert care.view(at(17, 5))["users"][0]["since_local"] == "17:00"
 
@@ -262,15 +271,17 @@ def test_an_open_slow_issue_saved_by_the_build_before_ends_at_its_last_major_act
     care = Care(today_with(3), lambda: USERS[:1])
     care.check(client(), NOW)
     care.issues["mq2208"] = [{"key": "slow 2026-11-09", "kind": "slow", "level": "Major", "day": "2026-11-09",
-                              "since": "2026-11-09T20:00:00Z", "text": "3 Major slow actions by 14:30"}]  # no "last"
-    care.check(client(), datetime(2026, 11, 9, 21, 25, tzinfo=timezone.utc))
-    assert care.issues["mq2208"][0]["last"] == "2026-11-09T20:20:00Z"
+                              "since": "2026-11-09T19:00:00Z", "text": "3 Major slow actions by 14:30"}]  # no "last"
+    care.check(client(), datetime(2026, 11, 9, 20, 25, tzinfo=timezone.utc))
+    assert care.issues["mq2208"][0]["last"] == "2026-11-09T19:20:00Z"
     assert care.view(NOW + HOUR)["users"][0]["earlier"][0]["over"] == "none in the hour after 14:20"
 
 
 def test_a_slow_spell_is_over_when_they_are_back_within_their_usual():
     care = Care(today_with(3), lambda: USERS[:1])
     care.check(client(), NOW)
+    for k in (1, 2, 3):  # the 3 reads after it: the light goes off
+        care.check(client(), NOW + k * timedelta(minutes=15))
     late = NOW + 8 * HOUR  # 22:30: their days before had one more Major at 22:00, so 3 is within 1 to 3
     care.check(client(), late)
     mq = care.view(late)["users"][0]
@@ -450,7 +461,7 @@ def test_the_add_and_remove_endpoints(tmp_path, monkeypatch):
     app.state.care.today.__dict__.update(today_with(3).__dict__)
     # every change needs the PIN: today's date, YYYYMMDD, in the page's time zone (the user's choice)
     pin = app.state.care.pin(datetime.now(timezone.utc))
-    # in the page's time zone (the test's Today is Chicago's: after midnight UTC it is still the day before)
+    # in the page's time zone (the test's Today is New York's: after midnight UTC it is still the day before)
     assert len(pin) == 8 and pin == f"{app.state.care.today.local(datetime.now(timezone.utc)):%Y%m%d}"
     for wrong in ({}, {"pin": "20200101"}, {"pin": ""}):
         no = http.post("/api/care/users", json={"username": "tz9013", "label": "Desk", **wrong})
@@ -547,7 +558,7 @@ def test_the_order_endpoint(tmp_path, monkeypatch):
 
 
 # -- the alert (the user's rule, 2026-11-14) and /api/MSS/care/status ----------------------------------
-AT = lambda h, m: datetime(2026, 11, 9, h + 6, m, tzinfo=timezone.utc)  # noqa: E731  (Chicago time, Monday)
+AT = lambda h, m: datetime(2026, 11, 9, h + 5, m, tzinfo=timezone.utc)  # noqa: E731  (New York time, Monday)
 H2 = dict(H, component="HEALTH_EVENT_COMPONENT", count="HEALTH_EVENT_VOLUME")
 
 
@@ -556,6 +567,12 @@ def event(h, m, name="Application Hang", sev="Major", cat="Application", app="Ma
     row = ev(AT(h, m), user, pc, name, sev, cat, app)
     row.update(HEALTH_EVENT_COMPONENT=part, HEALTH_EVENT_VOLUME=n)
     return row
+
+
+def read(care: Care, at: datetime) -> None:
+    """One read of the Today reader at `at`: the next one is refresh_min on (Today.next_read)."""
+    care.today.next_read = at + timedelta(minutes=care.today.refresh_min)
+    care.check(client(), at)
 
 
 def care_at(rows, refresh=5, users=USERS[:1], store=None) -> Care:
@@ -569,10 +586,10 @@ def test_an_alert_is_on_for_3_reads_after_a_read_that_brought_something_new_then
     care = care_at([])
     care.check(client(), AT(14, 0))
     care.today.set_health([event(14, 2)], H2, today=True)
-    care.check(client(), AT(14, 5))  # the read that saw the 14:02 hang first
+    read(care, AT(14, 5))  # the read that saw the 14:02 hang first
     mq = care.view(AT(14, 5))["users"][0]
     assert (mq["status"], mq["level"], mq["since_local"]) == ("issue", "Major", "14:02")
-    assert mq["issues"][0]["clears"] == "Clears at 14:20 if no new Application Hang."  # 3 reads of 5 min
+    assert mq["issues"][0]["clears"] == "Clears at the 14:20 read if no new Application Hang."  # 3 reads of 5 min
     for m in (10, 15):  # nothing new: still on
         care.check(client(), AT(14, m))
         assert care.view(AT(14, m))["users"][0]["status"] == "issue"
@@ -617,7 +634,7 @@ def test_a_row_aternity_sends_late_lights_the_tile_and_its_day_is_investigated_a
     care.today.set_health(late, H2, today=True)
     care.check(client(), AT(11, 10))
     mq = care.view(AT(11, 10))["users"][0]
-    first = next(i for i in care.issues["mq2208"] if i["since"] == "2026-11-09T12:04:00Z")
+    first = next(i for i in care.issues["mq2208"] if i["since"] == "2026-11-09T11:04:00Z")
     assert first["ended"] == "quiet" and mq["status"] == "issue" and care.pending == ["mq2208"]
     care.run_next(run, AT(11, 10))
     assert calls[-1] == (AT(5, 34), AT(11, 10))  # 30 min before 06:04
@@ -629,7 +646,7 @@ def test_a_failing_disk_stays_on_all_day():
     disk = event(8, 0, "Faulty HD S.M.A.R.T. Status", "Major", "System", None, part="WDC WD10EZEX (Disk)")
     care = care_at([disk, event(15, 0, "System Crash", "Critical", "System", None)], refresh=5)
     care.check(client(), AT(15, 2))
-    for at in (AT(15, 2), AT(17, 55)):
+    for at in (AT(15, 7), AT(15, 12), AT(15, 17), AT(17, 55)):  # the System Crash goes off at 15:17
         care.check(client(), at)
         mq = care.view(at)["users"][0]
         assert mq["status"] == "issue" and mq["issues"][0]["what"] == "System/Faulty HD S.M.A.R.T. Status"
@@ -670,7 +687,8 @@ def test_times_in_one_event_row_are_added_up_and_a_row_that_grows_lights_again()
     care.check(client(), AT(14, 0))
     care.check(client(), AT(14, 5))
     assert care.issues["mq2208"][0]["text"].startswith("Application Hang (Application) 3 times in Mail")
-    care.check(client(), AT(14, 20))
+    for m in (10, 15, 20):
+        care.check(client(), AT(14, m))
     assert care.view(AT(14, 20))["users"][0]["status"] == "ok"
     care.today.set_health([event(14, 2, n=4)], H2, today=True)  # the same row, one more time
     care.check(client(), AT(14, 25))
@@ -687,7 +705,7 @@ def test_the_status_for_another_platform(tmp_path):
     got = http.get("/api/MSS/care/status").json()
     assert (got["ready"], got["users"], got["refresh_minutes"]) == (False, [], 15) and got["note"]
     care = app.state.care
-    care.today.__dict__.update(today_with(3).__dict__)  # Major at 14:00, 14:10, 14:20 (20:00 UTC on)
+    care.today.__dict__.update(today_with(3).__dict__)  # Major at 14:00, 14:10, 14:20 (19:00 UTC on)
     care.today.set_health([
         ev(AT(14, 5), "MQ2208", "VD-7", "Application Crash", "Major", "Application", "Mail"),
         ev(AT(14, 25), "MQ2208", "VD-7", "Application Crash", "Major", "Application", "Mail"),
@@ -697,40 +715,207 @@ def test_the_status_for_another_platform(tmp_path):
     assert care.status(NOW)["ready"] is False  # no read of Aternity has worked yet
     care.today.read_ok = care.today.as_of = NOW
     got = care.status(NOW)
-    assert (got["ready"], got["as_of"], got["note"]) == (True, "2026-11-09T20:30:00Z", None)
+    assert (got["ready"], got["as_of"], got["note"]) == (True, "2026-11-09T19:30:00Z", None)
     assert http.get("/api/MSS/care/status").json()["ready"] is True  # the route (it asks at the real time)
     rows = {u["username"]: u for u in got["users"]}
     assert [u["username"] for u in got["users"]] == ["tz9013", "MQ2208", "ghost1"]  # as the tab: a failing disk first
     assert rows["MQ2208"] == {
         "username": "MQ2208", "label": "Payroll lead", "status": "alert", "level": "Major",
-        "since": "2026-11-09T20:05:00Z",
-        "summary": "Application Crash - Mail, 2 times 20:05-20:25 UTC, on VD-7; +1 more: Major slow actions"}
+        "since": "2026-11-09T19:05:00Z",
+        "summary": "Application Crash - Mail, 2 times 19:05-19:25 UTC, on VD-7; +1 more: Major slow actions"}
     assert rows["tz9013"] == {
-        "username": "tz9013", "label": "", "status": "alert", "level": "Major", "since": "2026-11-09T14:00:00Z",
-        "summary": "Faulty HD S.M.A.R.T. Status on PC-3 since 14:00 UTC (stays on today)"}
+        "username": "tz9013", "label": "", "status": "alert", "level": "Major", "since": "2026-11-09T13:00:00Z",
+        "summary": "Faulty HD S.M.A.R.T. Status on PC-3 since 13:00 UTC (stays on today)"}
     assert rows["ghost1"] == {"username": "ghost1", "label": "", "status": "unknown", "level": None, "since": None,
                               "summary": "Not seen in Aternity in 8 days: check the username"}
-    # two hours on: the crashes and slow actions are earlier today, the disk is still on
+    # two hours on: the crashes and slow actions are earlier today (off at the 3rd read after 19:30 UTC),
+    # the disk is still on
+    for k in (1, 2, 3):
+        care.check(client(), NOW + k * timedelta(minutes=15))
+    care.today.read_ok = care.today.as_of = NOW + 2 * HOUR
     later = care.status(NOW + 2 * HOUR)
     mq = next(u for u in later["users"] if u["username"] == "MQ2208")
-    assert (mq["status"], mq["level"], mq["since"]) == ("ok", None, "2026-11-09T21:15:00Z")  # 3 reads after 20:30
-    assert mq["summary"] == "OK since 21:15 UTC. Earlier today: 2 issues, the last Application Crash - Mail at 20:25 UTC"
+    assert (mq["status"], mq["level"], mq["since"]) == ("ok", None, "2026-11-09T20:15:00Z")  # the 3rd read after 20:30
+    assert mq["summary"] == "OK since 20:15 UTC. Earlier today: 2 issues, the last Application Crash - Mail at 19:25 UTC"
     # a read that failed in part: as_of stays at the last good one, and the note says so
-    care.today.as_of = NOW + HOUR
-    assert care.status(NOW + HOUR)["as_of"] == "2026-11-09T20:30:00Z" and "21:30 UTC" in care.status(NOW + HOUR)["note"]
+    care.today.read_ok, care.today.as_of = NOW, NOW + HOUR
+    assert care.status(NOW + HOUR)["as_of"] == "2026-11-09T19:30:00Z" and "20:30 UTC" in care.status(NOW + HOUR)["note"]
     assert all(len(u["summary"]) <= 120 and u["summary"].isascii() and "pcs" not in u for u in got["users"])
 
 
 def test_status_summaries_ok_one_earlier_and_plain_ascii():
     care = Care(today_with(0), lambda: USERS[:1])
-    one = [{"kind": "event", "what": "Application/Application Crash", "since": "2026-11-09T19:50:00Z",
-            "last": "2026-11-09T20:20:00Z", "apps": ["Outlook"], "key": "k"}]
+    one = [{"kind": "event", "what": "Application/Application Crash", "since": "2026-11-09T18:50:00Z",
+            "last": "2026-11-09T19:20:00Z", "apps": ["Outlook"], "key": "k"}]
     assert care._ok_words({"earlier": one}, [AT(14, 35)]) == \
-        "OK since 20:35 UTC. Earlier today: Application Crash - Outlook 19:50-20:20 UTC"
+        "OK since 19:35 UTC. Earlier today: Application Crash - Outlook 18:50-19:20 UTC"
     assert care._ok_words({"earlier": [], "actions": 214, "major": 1, "usual": {"enough": True, "low": 0, "high": 3}},
                           []) == "OK: 214 actions today, 1 Major (usual by now 0-3)"
     assert care._ok_words({"earlier": [], "actions": 0, "major": 0, "usual": None}, []) == "OK: no activity today yet"
     from uxcorrelate.care import _ascii, _fit
     assert _ascii("Microsoft® Outlook – Mail…") == "Microsoft Outlook - Mail..."
-    long = _fit("System Crash at 15:02 UTC on VD-41", ["Application Crash"] * 3 + ["x" * 120])
-    assert long == "System Crash at 15:02 UTC on VD-41; +4 more"
+    long = _fit("System Crash at 14:02 UTC on VD-41", ["Application Crash"] * 3 + ["x" * 120])
+    assert long == "System Crash at 14:02 UTC on VD-41; +4 more"
+
+
+# -- gaps found on stage, Nov 14 2026: the light counted 15 minutes, not 3 reads -------------------------
+def test_the_light_counts_reads_not_minutes_and_says_when_aternity_sent_it(caplog):
+    """A crash Aternity first sent 49 minutes later, while reads took 2.5 minutes, so a cycle was 7.5
+    (stage, Nov 14 2026: 17:21, sent at 18:10; here 6 hours earlier). The light goes off at the 3rd read
+    after the one that brought it, whatever their times; a check after a change on the page is not a
+    read; the tile says when Aternity sent it and which read clears it."""
+    caplog.set_level("INFO", "uxcorrelate")
+    crash = event(11, 21, "Application Crash", app="Microsoft OneDrive")
+    care = care_at([], refresh=5)
+    read(care, AT(12, 3))
+    care.today.set_health([crash], H2, today=True)
+    sent = AT(12, 10) + timedelta(seconds=31)
+    read(care, sent)
+    mq = care.view(sent)["users"][0]
+    assert mq["status"] == "issue" and mq["issues"][0]["clears"] == (
+        "Aternity sent it at 12:10. Clears at the 12:25 read if no new Application Crash.")
+    assert "alert on. Aternity sent it at 12:10. Clears at the 12:25 read" in caplog.text
+    care.check(client(), sent + timedelta(minutes=2), read=False)  # a check after a change on the page
+    assert care.issues["mq2208"][0]["left"] == 3 and care.as_of == sent  # not a read: "as of" stays too
+    for k, lit in ((1, True), (2, True), (3, False)):  # every 7.5 minutes: at 14:54 after it, still lit
+        at = sent + k * timedelta(minutes=7, seconds=27)
+        read(care, at)
+        assert (care.view(at)["users"][0]["status"] == "issue") is lit, k
+    assert care.issues["mq2208"][0]["off"] == "2026-11-09T17:32:52Z"
+    assert "no longer lit: nothing new of it in 3 reads since Aternity sent it at 12:10." in caplog.text
+    care.today.read_ok = care.today.as_of = at
+    s = care.status(at)["users"][0]
+    assert (s["status"], s["since"]) == ("ok", "2026-11-09T17:32:52Z")  # OK since the read that put it out
+    # a row sent within a read of when it happened: nothing said of when it was sent
+    care.today.set_health([crash, event(12, 30, "Application Crash", app="Microsoft OneDrive")], H2, today=True)
+    read(care, AT(12, 35))
+    assert care.view(AT(12, 35))["users"][0]["issues"][0]["clears"] == (
+        "Clears at the 12:50 read if no new Application Crash.")
+
+
+def test_a_light_goes_on_counting_over_a_restart_unless_its_time_passed(tmp_path):
+    care = care_at([], store=tmp_path)
+    read(care, AT(14, 0))
+    care.today.set_health([event(14, 2)], H2, today=True)
+    read(care, AT(14, 5))  # lit: 3 reads left
+    read(care, AT(14, 10))  # 2 left
+    again = care_at([event(14, 2)], store=tmp_path)  # restarted at once
+    read(again, AT(14, 12))
+    assert again.view(AT(14, 12))["users"][0]["status"] == "issue" and again.issues["mq2208"][0]["left"] == 1
+    read(again, AT(14, 17))
+    assert again.view(AT(14, 17))["users"][0]["status"] == "ok"
+    # restarted long after: the reads missed are not known, its time is up: off, not lit for 3 more reads
+    care = care_at([], store=tmp_path / "b")
+    read(care, AT(15, 0))
+    care.today.set_health([event(15, 2)], H2, today=True)
+    read(care, AT(15, 5))
+    late = care_at([event(15, 2)], store=tmp_path / "b")
+    read(late, AT(16, 0))
+    lit = late.issues["mq2208"][0]
+    assert late.view(AT(16, 0))["users"][0]["status"] == "ok" and lit["off"] == "2026-11-09T20:20:00Z"
+
+
+def test_an_issue_saved_by_the_build_before_counts_the_reads_its_time_leaves():
+    care = care_at([event(14, 2)])
+    read(care, AT(14, 5))
+    i = care.issues["mq2208"][0]
+    del i["left"]  # as saved before the light counted reads
+    assert care.alert(i, AT(14, 12))  # 7 minutes: on by its time
+    read(care, AT(14, 12))
+    assert i["left"] == 1  # 1 read of 5 minutes gone by its time, and this one
+    read(care, AT(14, 17))
+    assert not care.alert(i, AT(14, 17)) and i["off"] == "2026-11-09T19:17:00Z"
+
+
+def test_saved_files_one_unreadable_or_two_for_one_user(tmp_path):
+    care = care_at([event(14, 2)], store=tmp_path)
+    read(care, AT(14, 5))
+    mine = next((tmp_path / "care").glob("*.json"))
+    # the same user saved before under another spelling (the file name has it): the newest wins and
+    # the other is deleted at the next save
+    older = mine.with_name("mq2208-" + mine.name.rsplit("-", 1)[1])
+    older.write_text(json.dumps({"username": "mq2208", "issues": [dict(care.issues["mq2208"][0], text="OLD")],
+                                 "report": None}))
+    import os
+    os.utime(older, (1, 1))
+    (tmp_path / "care" / "broken-00000000.json").write_text("{not json")
+    again = Care(today_with(0), lambda: USERS[:1], tmp_path)
+    assert again.issues["mq2208"][0]["text"] != "OLD"  # the newest file
+    assert "1 saved Care list files" in " ".join(again.notes.values()) and "broken-00000000.json" in " ".join(
+        again.notes.values())
+    again.save("mq2208")
+    assert not older.exists() and mine.exists()
+
+
+def test_the_status_says_when_no_read_came_for_3_reads_time():
+    care = Care(today_with(3), lambda: USERS[:1])
+    care.check(client(), NOW)
+    care.today.read_ok = care.today.as_of = NOW
+    assert care.status(NOW + timedelta(minutes=44))["note"] is None  # 15-minute reads: under 3 reads' time
+    note = care.status(NOW + timedelta(minutes=46))["note"]
+    assert note == "No read of Aternity since 19:30 UTC (reads are every 15 min): the statuses are out of date."
+
+
+def test_the_investigation_worker_goes_on_after_an_error_it_did_not_expect(caplog):
+    care = Care(today_with(0), lambda: USERS[:1])
+    calls = []
+
+    class Stop(BaseException):  # not an Exception: the worker's guard lets it through
+        pass
+
+    def run_next(investigate, now):
+        calls.append(now)
+        if len(calls) == 1:
+            raise KeyError("since")
+        raise Stop
+
+    care.run_next = run_next
+    with pytest.raises(Stop):
+        care.work(None, lambda s: None, clock=lambda: NOW)
+    assert len(calls) == 2 and "error the code did not expect" in caplog.text
+
+
+def test_an_ok_tile_says_when_major_actions_were_not_compared_and_what_the_bars_were():
+    """Stage, Nov 14 2026: "No issue: 164 actions today, 3 rated Major" with no word that they were not
+    compared; and a tile with bars said "0 rated Major" with no word of what the bars were."""
+    sat = datetime(2026, 11, 14, 19, 30, tzinfo=timezone.utc)
+    care = Care(today_with(3), lambda: USERS[:1])  # Major at 14:00, 14:10, 14:20 on Monday Nov 9
+    care.check(client(), NOW)
+    care.issues["mq2208"][0]["apps"] = ["Mail"]
+    assert care.usual("mq2208", sat)["enough"]  # a Saturday: the latest 5 days, any day of the week
+    h = care.history["mq2208"]["days"]
+    care.history["mq2208"]["days"] = {d: h[d] for d in sorted(h)[-2:]}  # only 2 days with a PC in use
+    u = care.usual("mq2208", sat)
+    assert u == {"enough": False, "days": 2, "kind": "days", "need": 3, "read": 8}
+    tile = care.tile(USERS[0], sat)
+    assert tile["before"] == "Mon Nov 09: Major slow actions"
+    words = care._ok_words(dict(tile, actions=164, major=3), [])
+    assert words == "OK: 164 actions today, 3 Major (not compared: no usual yet)"
+
+
+def test_a_failing_disk_with_several_events_is_one_line_on_the_tile():
+    rows = [event(8, 23, "Faulty HD S.M.A.R.T. Status", "Major", "Hardware", None, part="WDC (Disk)"),
+            event(9, 6, "HD Failure", "Critical", "Hardware", None, part="DR0 (Drive)"),
+            event(11, 46, "HD Failure", "Critical", "Hardware", None, part="DR0 (Drive)"),
+            event(12, 0, "System Crash", "Critical", "System", None)]
+    care = care_at(rows)
+    read(care, AT(12, 2))
+    mq = care.view(AT(12, 2))["users"][0]
+    assert [i["text"] for i in mq["issues"]] == [
+        "Faulty HD S.M.A.R.T. Status and HD Failure on VD-7: 3 events, first at 08:23, the last at 11:46.",
+        "System Crash (System), first at 12:00 on VD-7."]
+    assert mq["level"] == "Critical" and mq["issues"][0]["level"] == "Critical"
+    assert mq["issues"][0]["clears"] == "Stays on today: a failing disk is the PC's state."
+
+
+def test_a_slow_spell_first_seen_when_already_over_is_kept_as_earlier_today():
+    """Dev, Nov 15 2026: 5 Major against a usual of 0 to 3, the last over an hour before the user's
+    first check: the spell was dropped and the tile said "No issue: 5 rated Major (usual by now: 0 to 3)"."""
+    care = Care(today_with(3), lambda: USERS[:1])  # Major at 14:00, 14:10, 14:20
+    later = NOW + 2 * HOUR  # 16:30: the last Major was 2 hours before the first check
+    care.check(client(), later)
+    mq = care.view(later)["users"][0]
+    assert mq["status"] == "ok" and mq["usual"]["enough"]  # first seen when over: not lit
+    assert [(i["since_local"], i["over"]) for i in mq["earlier"]] == [("14:20", "none in the hour after 14:20")]
+    care.check(client(), later + timedelta(minutes=15))
+    assert len(care.issues["mq2208"]) == 1  # kept once

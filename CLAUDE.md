@@ -65,7 +65,9 @@ demo mode: nothing in `src/` knows about it.
 - `logons.py`: slow start-ups (`WINDOWS_MACHINE_BOOTS`,
   `MACHINE_BOOT_COMPONENTS`). Rows of one device within an hour, no type
   twice, are one start-up (one row, a column per Aternity type). Per type:
-  typical and 90th percentile; per row: the device's own 30-day usual and
+  typical and 90th percentile (`P90_MIN` 10 measured, else None and the
+  slowest is shown: from 2 of 10 s and 20 s it said "1 in 10 over 27 s");
+  per row: the device's own 30-day usual and
   what took the time (a part belongs to the latest start-up row of its PC
   at or before it, within an hour; part types never equal start-up types
   on a live Aternity, so types are not compared). Why: the part with the most Aternity degradation,
@@ -242,7 +244,8 @@ demo mode: nothing in `src/` knows about it.
 - `names.py`: the usernames and device names offered as you type in the
   Username and Device boxes (`/api/names`): every one seen in Aternity's
   activity, fed by the Today reader; dropped after 8 days unseen. Any name
-  can still be typed.
+  can still be typed. "Some may be missing" while a span cut short is not
+  read whole again and is within the 8 days (`cut`; it stayed for ever).
 - `today.py`: the "Today" tab, first (`/api/today`): what Aternity itself
   rated today, from midnight in `timezone` (config.yaml; empty = UTC):
   health events with severity in `TILE_SEVERITIES` (Critical, Major) as
@@ -253,7 +256,13 @@ demo mode: nothing in `src/` knows about it.
   (`keep_reading`; HTTP and HTTPS share it): activity an hour at a time,
   the last 24 h at start, then every `refresh_minutes` (config.yaml, 15
   unless set, 5 to 60: `REFRESH_RANGE`; `Today.refresh_min`; the names
-  and the Care list go with it) the current hour and each hour once more
+  and the Care list go with it; a read starts refresh_min after the one
+  before started, whatever a read takes: `Today.next_read`, it was a
+  sleep after each read; each read is guarded, `_guarded`: an error the
+  code did not expect is logged and the reader goes on, it once could
+  stop the Today tab, names, Care list and assessments; a reply cut
+  short counts in `failures`, so `read_ok` does not move, and a cut-short
+  health read keeps today's rows it left out) the current hour and each hour once more
   15 min after it ends (late rows logged); health events today at each
   read, the 14 days before once a day. Activity is kept ~8 days, so
   each finished day's counts are saved in `$UXCORRELATE_DATA/days/<date>.json`
@@ -354,7 +363,10 @@ demo mode: nothing in `src/` knows about it.
   rows it holds (`Hour.user_devs`/`user_runs`/`dev_kind`). Issue: an event
   in `TILE_SEVERITIES` with their username today, or more Major actions by
   this time of day than on any of their own days before with a PC in use
-  (same kind of day, `USUAL_DAYS`, `MIN_USUAL`; their `HISTORY_DAYS` read
+  (the latest `USUAL_DAYS`, any day of the week: people on the Care list
+  often work weekends, the user, Nov 15 2026; the working / weekend split
+  stays for the fleet's Today tab and assessment, where a Saturday hour had
+  735 activity rows against about 10,550 on a working day; `MIN_USUAL`; their `HISTORY_DAYS` read
   by username once a day, spelled as Aternity writes it via `NameList`).
   An investigation is queued (`Care.work`, one at a time, one per user
   per `RUN_EVERY`) while one of today's issues is not covered by the
@@ -376,17 +388,34 @@ demo mode: nothing in `src/` knows about it.
   rule, 2026-11-14): `alert` is on while a read brought more of an issue
   than it had seen (`seen`: events' `HEALTH_EVENT_VOLUME` added up, 1
   when empty, as investigations; slow: the day's Major actions while the
-  spell is open) in the last `ALERT_READS` (3) x refresh_minutes
-  (`fresh`: that read's time), whatever the rows' own time (Aternity
-  sends rows late); a failing disk (`disk`: `DISK_PARTS` label on the
+  spell is open) (`fresh`: that read's time), whatever the rows' own
+  time (Aternity sends rows late), and goes off at the `ALERT_READS` (3)rd
+  read of the Today reader after it (`left`, counted by `_count_read`,
+  reads not minutes: 15 minutes held 2 reads when reads were slow,
+  stage, Nov 14; `check(..., read=False)` after a change on the page is
+  not a read and does not move `as_of`; `off`: the read that put it out,
+  logged "no longer lit"); a failing disk (`disk`: `DISK_PARTS` label on the
   failing part, the Today reader's 7th field) all day. A restart does not
-  light again (`seen` saved; an issue saved before has no `seen`: what it
-  had is not new); at a user's first check (`checked`: added, or after a
-  restart) only an occurrence within the alert's time lights it. The tile:
-  `issues` (alert on, `_clears`: "Clears at HH:MM if no new Application
-  Hang" / "Stays on today: a failing disk is the PC's state"), the most
-  serious first (disk, Critical, Major, events before slow), then
-  `earlier` ("Earlier today: ..."). Every user has a tile: alert (a
+  light again (`seen`, `left` saved; one lit before a restart goes on
+  counting unless `ALERT_READS` reads' time passed, `_restarted`; an issue
+  saved before has no `seen`: what it had is not new, none with `left`:
+  the reads its time leaves); at a user's first check (`checked`: added,
+  or after a restart) only an occurrence within the alert's time lights
+  it. The tile: `issues` (alert on, `_clears`: "Aternity sent it at
+  18:10." when that was more than a read after it happened (a 17:21 crash
+  first sent at 18:10 read as an hour-long light, stage), then "Clears at
+  the 18:25 read if no new Application Crash" (`Today.next_read`), or
+  "Stays on today: a failing disk is the PC's state"; a PC's lit disk
+  events are one line, `_one_disk`), the most serious first (disk,
+  Critical, Major, events before slow), then `earlier` ("Earlier
+  today: ..."), `before` (the latest issue before today: what the small
+  bars were). An OK tile with Major actions their usual could not judge
+  says "not compared" and why (`usual`'s `need`, `read`: too few days
+  with a PC in the 8 days read; it was every Saturday while weekends were
+  compared with weekends only, stage, Nov 14).
+  Files: one unreadable no longer stops the others loading; a user's
+  file under an older spelling is replaced by the newest
+  (`load`, `save`). The investigation worker is guarded (`work`). Every user has a tile: alert (a
   failing disk, Critical, Major: as a tile's own issues), then not seen
   in 8 days, then "✓ OK"; inside each, the list's own order (`place`),
   set by "⠿ Arrange tiles" (the user's request, 2026-11-14: drag by ⠿,
@@ -397,7 +426,7 @@ demo mode: nothing in `src/` knows about it.
   as_of (`Today.read_ok`: the last read with no failed read,
   `Today.failures`), refresh_minutes, note, users in the tab's order with
   username, label, status alert / ok / unknown, level, since (the alert's
-  issue; OK: when the last alert ended, `_alert_end`, else local
+  issue; OK: when the last alert ended, `_alert_end`: its `off` read, else local
   midnight), summary (`_said`, `_ok_words`, `_fit`: our words, never AI,
   `_ascii`, `SUMMARY_MAX` 120, "+N more: ..."); all times UTC, no PC
   field (PCs only in the summary). Slow start-ups and alerts out of the
@@ -440,7 +469,8 @@ demo mode: nothing in `src/` knows about it.
   crash alone on stage; or one kind's whole list; a question naming one
   application goes to version_problems, said in both descriptions, as
   Nemotron took it to the flags), versions, version_problems (from the latest read), compare,
-  before_after, program_split, pcs, pcs_without_update (read now, as a
+  before_after (its description says when to use it: "got worse after its last update"
+  went to version_problems with Nemotron, verify --ai on stage, Nov 14), program_split, pcs, pcs_without_update (read now, as a
   click; Aternity's error is said in the answer). Names are matched to the latest read (`pick`:
   exact, the one that has it, the one that ends with it: "Edge" =
   Microsoft Edge), versions by their start (`software.version_of`,
@@ -504,7 +534,8 @@ demo mode: nothing in `src/` knows about it.
   highest Major share of apps with `SHARE_RUNS` runs or more (the top by
   count is not always the worst). Events by event, today: a note gathers
   the rows' usual words, more than usual first (GPT skipped the column
-  on stage, but uses notes). Every number in its sentence must be in the
+  on stage, but uses notes). Every number in its sentence (digits, and
+  words two to twenty: `WORD_NUMBERS`, "one" is a pronoun) must be in the
   counts given, the question or the settings (`numbers`/`allowed`), and
   no worked-out comparison (`RATIO`, "3 times worse"); otherwise our own
   sentence (`say`) is shown, with a note. The counts table is always
@@ -618,7 +649,10 @@ demo mode: nothing in `src/` knows about it.
   Aternity's own status and severity words with counts, and whether its
   incidents and alerts (`OVERVIEW_SOURCES` in `config.py`) are published,
   and Aternity's label on each failing part over 7 days (`part_label`;
-  those in `DISK_PARTS` marked), so other hardware is added from it, and
+  those in `DISK_PARTS` marked, each event under them with Aternity's
+  category and severity: stage showed Low Disk Space and Corrupted FS
+  under "(Drive)" with HD Failure, all read as a failing disk; the rule
+  waits for that evidence), so other hardware is added from it, and
   from the same read whether one row holds several times
   (`_times_in_a_row`: `HEALTH_EVENT_VOLUME` above 1, by event).
 - `verify --software` (`verify._software`, only on its own), short: what
@@ -672,9 +706,13 @@ demo mode: nothing in `src/` knows about it.
   with limit 1; the AI service's model list with the chats' key and
   header), `CHECK_TIMEOUT_S`, no second try. ok / down (flashes red in
   the bar; no answer, or login refused) / warn (the model set is not in
-  the service's list) / off (not set). A click on any light opens the
+  the service's list, or the list is empty: it said "is listed") / off
+  (not set). A click on any light opens the
   one "Connections" dialog (since when, reply time, which model the
-  chats use). State changes are logged. No URL on the page. It proves
+  chats use; what config.yaml has that is not used, `config.config_notes`:
+  a key at the top that is no setting, refresh_minutes out of range, logged
+  once; verify prints them first, with a wrong time zone, which the page
+  leaves to the Today tab). State changes are logged. No URL on the page. It proves
   connection and login, not the model's answers (`verify --ai`).
 - `http.py` is the shared REST client (basic auth, retries on 429/5xx);
   `models.py` holds the dataclasses and `parse_time`.
@@ -690,7 +728,10 @@ demo mode: nothing in `src/` knows about it.
   a result is put in it (`mode(tab, true)`) or it is clicked when open.
   Scrolled down to the tabs, the bar pins as one slim row (`pinBar`,
   `#headWrap` keeps its height: nothing jumps) and "↑ Top" shows (the
-  user's request, 2026-11-13: long pages). Dialogs are in-page (`swDialog`), never `alert()`. A CSS
+  user's request, 2026-11-13: long pages). Every reply is read by
+  `readJson` (a proxy's HTML 502/504 was "Unexpected token '<'") and a
+  running job by `jobNow` (a dropped connection or 502-504 tried again,
+  `JOB_TRIES`: one blip ended the wait while the job ran on). Dialogs are in-page (`swDialog`), never `alert()`. A CSS
   `display` on an element with `hidden` needs its own `[hidden]` rule.
   Every "Investigate ▸" (Today lists, the chats, the Care list, the
   Software lists) goes through `investigateNow()`: fill the Investigate
@@ -724,12 +765,63 @@ demo mode: nothing in `src/` knows about it.
 - A failing NetIM metric or alerts call, or an optional Aternity source
   (health events, app UXI), must not abort an investigation.
   It goes into `netim.warnings` / `aternity.warnings`, which `investigate()` copies into the result.
+  A read that failed or was cut short is never "nothing found" (review of
+  Nov 15 2026: "Only this PC", "nothing changed" and "nothing wrong on the
+  network" were said of reads that had failed): callers compare the
+  warnings' count before and after (`_optional` adds one per failure,
+  logged once; `cause._Once` keeps `short`, `cause._short`,
+  `cause._read_changes`, `normal._said`, `logons._said`,
+  `software._partial`), and say it: who else "not known" / "at least N"
+  with no verdict, "its change log could not be read in full" (class D
+  title too), Other users not compared (`impact` `partial`; a failed
+  window or day is a warning), "Network: not checked" / "not fully
+  checked" (`answer` `net_unread`), "these counts are partial"
+  (`software.CUT`). The second review ("REVIEW ALL", Nov 15) found more of
+  the same, each said now: "What was checked" counts per source the reads
+  that failed (`checked["failed"]`: "not read in full (see Warnings)");
+  the answer's reason "Not all of it could be read: N warnings"
+  (`answer.not_all`; class H title unchanged); Other users with every day
+  before unread (`impact` `days_unread`); a health day before cut short is
+  left out of the usual (`Today.health_cut`, a note on the tab; it had
+  counted as a quiet day); the chats' and Ask anything's event look-ups
+  say it (`chat._health_notes`, not "not read yet"), their activity
+  look-ups name hours cut short or a failed read (`Today.activity_gaps`:
+  "No user X had a measured action today" was said of an hour not read);
+  logins with nothing read say "not known" (it said "recorded no logon");
+  the Start-ups tab and the CLI `logons` report with nothing read show the
+  warnings (they said "No boots or logons"); a software "No PC …" from a
+  cut-short read is "in what could be read" (`software_chat._of_read`),
+  a daily read's own cut short is said in version_problems; the
+  assessment's Yesterday (written once) waits for its health events until
+  `assess.UNREAD_WAIT_H` (noon), then says they were not read or cut short
+  (it said "No crash or event" for good). NetIM lists stop when NetIM does
+  not move on (a next_offset not past this one, the same page again) and
+  after `netim.MAX_PAGES`, a warning: either read for ever. verify: each
+  part is guarded (`verify.part`: one error printed nothing at all, as
+  every result is printed at the end), a part's reads cut short or failed
+  are a "…: not read in full" line, a check's own row limit is said
+  (`_limit`, `_first`), days are in config.yaml's timezone (`set_zone` in
+  `cmd_verify`), every group is printed (`render_checks` left out
+  config.yaml's notes, counted as problems), an empty model list is not a
+  FAIL (as the Connections light). An investigation reads up to `correlate.MAX_PCS` (8)
+  of a user's PCs, those with a slow action first, then the most used; a
+  warning names the ones left out. A reply that is not JSON is an
+  `ApiError` ("the reply was not JSON"); the page says a source that did
+  not answer in our words (`web._did_not_answer`), and only what was asked
+  or config.yaml is a 400 (any ValueError inside an investigation was).
 - Aternity writes "N/A" for no value: `AternityClient.query` turns it into
   None (verify reads `raw=True` to show values as sent). A module named
   "unknown (Dll)" / version "0.0.0.0" is no module. App hang time
   (APPLICATION_HANG_TIME_TOTAL) has no documented unit: never print one.
 - Every timestamp is a timezone-aware UTC datetime. Use `models.parse_time`,
-  which accepts ISO strings and epoch seconds or milliseconds. Days and
+  which accepts ISO strings and epoch seconds or milliseconds; a value that
+  is no time is None (the row is skipped: it raised, and one odd value
+  stopped the whole read); the CLI says a typed one (`cli._time_arg`).
+  Days are compared by the local clock (`Today.clock_secs`; elapsed
+  seconds since midnight were an hour off on Nov 1 2026, 25 hours), a day
+  ends at its own midnight (`midnight(d + 1 day)`, never 24 h), and Other
+  users' days before are the same clock hours (`impact`: a 24-hour step in
+  UTC put 09:00 against 10:00). Days and
   times written in sentences, and day groupings, are in config.yaml's
   `timezone` (`models.day`, `clock`, `local_date`; `set_zone` per
   investigation), as the page's lists: a UTC day once put a 10:37 PM

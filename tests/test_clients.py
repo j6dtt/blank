@@ -254,3 +254,63 @@ def test_failures_are_told_without_urls_or_raw_replies(caplog):
     assert netim.warnings == ["Interface utilization out (%) not checked: NetIM gave an error "
                               "(View 'X_SOURCE' doesn't exist.)."]
     assert not [s for s in said if "https://" in s or "<?xml" in s]
+
+
+def test_a_reply_that_is_not_json_is_an_api_error():
+    """A proxy's or login page with status 200: an ApiError, so the guards that keep an
+    investigation going catch it (a plain decode error got past them)."""
+    import pytest
+    from uxcorrelate.http import ApiError, RestClient
+    c = RestClient("Aternity", "https://aternity.test", retries=0,
+                   transport=httpx.MockTransport(lambda r: httpx.Response(200, text="<html>Sign in</html>")))
+    with pytest.raises(ApiError) as err:
+        c.get_json("/BUSINESS_ACTIVITIES_RAW")
+    assert err.value.short() == "the reply was not JSON"
+
+
+def test_a_row_with_a_time_that_is_no_time_is_skipped_not_the_whole_read():
+    from uxcorrelate.models import parse_time
+    assert parse_time("11/10/2026 15:00") is None and parse_time(1e30) is None and parse_time("N/A") is None
+    assert parse_time("2026-11-10T15:00:00.1234567Z") == datetime(2026, 11, 10, 15, 0, 0, 123456, tzinfo=timezone.utc)
+
+    def handler(request: httpx.Request):  # one odd time raised ValueError: the whole read (and investigation) failed
+        return httpx.Response(200, json={"value": [
+            {"TIMEFRAME": "not a time", "USERNAME": "u1", "DEVICE_NAME": "LT1", "APPLICATION_NAME": "CRM"},
+            {"TIMEFRAME": "2026-10-27T10:05:00Z", "USERNAME": "u1", "DEVICE_NAME": "LT1", "APPLICATION_NAME": "CRM",
+             "ACTIVITY_RESPONSE_TIME": 2.0}]})
+
+    cfg = AternityConfig(base_url="https://aternity.test/aternity.odata/v2.0", username="u", password="p")
+    samples = AternityClient(cfg, transport=httpx.MockTransport(handler)).user_activity(START, END, username="u1")
+    assert [s.response_time for s in samples] == [2.0]
+
+
+def test_a_time_typed_on_the_command_line_that_is_no_time_is_said():
+    import pytest
+
+    from uxcorrelate.cli import _time_arg
+    assert _time_arg("--start", "2026-11-10T09:00Z") == datetime(2026, 11, 10, 9, 0, tzinfo=timezone.utc)
+    with pytest.raises(SystemExit, match="--start 'yesterday' is not a time"):
+        _time_arg("--start", "yesterday")
+
+
+def test_netim_lists_stop_when_netim_does_not_move_on():
+    """A next_offset that stays put, or a NetIM that ignores offset, read for ever: the
+    investigation never ended. A row that is no object is skipped, not a crash."""
+    import httpx
+    from uxcorrelate.config import NetimConfig
+    from uxcorrelate.netim import NetimClient
+    calls = []
+
+    def stuck(request):
+        calls.append(request.url.params.get("offset"))
+        return httpx.Response(200, json={"items": [{"id": 1, "name": "r1"}, "odd"],
+                                         "meta": {"next_offset": 0, "total": 99}})
+    c = NetimClient(NetimConfig(base_url="https://netim.test"), transport=httpx.MockTransport(stuck))
+    assert [d.name for d in c.devices()] == ["r1"] and len(calls) == 1
+
+    def ignores_offset(request):  # no meta, always the same full page
+        calls.append(request.url.params.get("offset"))
+        return httpx.Response(200, json=[{"id": i} for i in range(500)])
+    calls.clear()
+    c = NetimClient(NetimConfig(base_url="https://netim.test"), transport=httpx.MockTransport(ignores_offset))
+    assert len(c.devices()) == 500 and len(calls) == 2

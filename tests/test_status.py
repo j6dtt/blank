@@ -71,6 +71,8 @@ def test_down_refused_not_listed_and_not_set():
     assert refused["state"] == "down" and "refused the key" in refused["text"]
     assert st.check_ai(settings().ai.services[1], True, {}, service([], status={"gpt.test": 500}))["state"] == "down"
     assert states(st.check_all(Settings(), NOW)) == {"Aternity": "off", "NetIM": "off"}
+    empty = st.check_ai(settings().ai.services[1], True, {}, service([], models=()))
+    assert empty["state"] == "warn" and "model list is empty" in empty["text"]  # was "gpt-x is listed."
 
 
 def test_since_when_and_the_endpoint(monkeypatch, caplog):
@@ -98,3 +100,23 @@ def test_since_when_and_the_endpoint(monkeypatch, caplog):
         raise ValueError("config.yaml: line 3")
     st.keep_checking(app.state.status, broken, lambda s: None, lambda: NOW, rounds=1)
     assert "could not be read (config.yaml: line 3)" in TestClient(app).get("/api/status").json()["note"]
+
+
+def test_what_config_yaml_has_that_is_not_used_is_said(tmp_path, monkeypatch, caplog):
+    from uxcorrelate.config import config_notes, load_settings
+    path = tmp_path / "config.yaml"
+    path.write_text("timezon: America/New_York\ntimezone: America/NewYork\nrefresh_minutes: 2\n")
+    notes = config_notes(path)  # each was ignored with no word: the page stayed on UTC
+    assert len(notes) == 3 and '"timezon" is not a setting' in notes[0]
+    assert 'timezone "America/NewYork" is not a time zone' in notes[1] and "so 5 is used" in notes[2]
+    assert load_settings(path).refresh_minutes == 5
+    assert len(config_notes(path, zone=False)) == 2  # the page: the Today tab says a wrong time zone
+    path.write_text("timezone: America/New_York\nrefresh_minutes: 15\n")
+    assert config_notes(path) == []
+    path.write_text("tz: x\n")
+    monkeypatch.setattr(st, "check_all", lambda settings, now: [st._item("NetIM", "api", "ok", "Answered.")])
+    s = st.Status()
+    with caplog.at_level("WARNING", logger="uxcorrelate"):
+        st.keep_checking(s, Settings, lambda x: None, lambda: NOW, rounds=2, notes_of=lambda: config_notes(path))
+    assert '"tz" is not a setting' in s.view()["note"]  # in the Connections dialog
+    assert len([r for r in caplog.records if "is not a setting" in r.getMessage()]) == 1  # logged once

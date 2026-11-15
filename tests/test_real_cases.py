@@ -144,6 +144,29 @@ def test_a_launch_not_slower_after_start_ups_elsewhere_is_not_the_headline():
     assert len(said) == 1 and said[0].endswith("Not slower right after a start-up: not the reason.")
 
 
+class FleetUnread(OutlookAfterLogon):
+    """The same, but Aternity fails the read of every PC's launches (a warning, as its client says)."""
+    def __init__(self):
+        self.warnings = []
+
+    def activity_history(self, application, activity, start, end, username=None, device=None):
+        if username:
+            return super().activity_history(application, activity, start, end, username, device)
+        self.warnings.append("Comparison with normal not checked: Aternity BUSINESS_ACTIVITIES_RAW gave an error.")
+        return []
+
+
+def test_a_failed_read_of_every_pcs_launches_is_said_not_too_few_runs():
+    settings = Settings()
+    settings.thresholds.slow_status = ["Minor", "Major"]
+    c = FleetUnread
+    a = investigate(InvestigationRequest(start=c.START, end=c.END, username="user1"), c(), None, settings)["answer"]
+    said = [x for x in a["checked"] if "right after a start-up" in x or "24 h before" in x]
+    assert said == ["Microsoft Outlook Launch on virtual desktops in the 24 h before: Aternity's read of it failed or "
+                    "was cut short, so it is not compared with other PCs."]  # before: "Too few runs to compare"
+    assert "67%" not in a["title"]
+
+
 class TeamsAfterLogonBusyPC:
     """Nov 8 (live): a user on two pooled virtual desktops. On VD-14 they log on at
     09:29 (User Logon 37.4 s, usual 47.6 s) and Teams Launch takes 43.8 s (Minor) at

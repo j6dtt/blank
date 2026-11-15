@@ -137,3 +137,59 @@ def test_on_pooled_virtual_desktops_a_start_up_is_compared_with_the_users_own():
     st = logon_report(Physical(), START, END, username="ann", unit="s")["starts"][0]
     assert st["pooled"] is False
     assert st["why"][0].startswith("VD-40 has only 0 earlier Sign-in")
+
+
+def test_reads_that_fail_are_said_not_read_as_nothing_there():
+    """A read Aternity fails (a warning, as its client says) is never "too few earlier start-ups",
+    "no breakdown recorded" or "nothing was installed"."""
+    from uxcorrelate.models import BootSample as B
+
+    class Down:
+        def __init__(self, fail):
+            self.fail, self.warnings = fail, []
+
+        def _no(self, what):
+            self.warnings.append(f"{what} not checked: Aternity gave an error (504).")
+            return []
+
+        def boots(self, start, end, **k):
+            if start < START - timedelta(days=1):  # the last 30 days
+                return self._no("Boot/logon data") if "history" in self.fail else \
+                    [B(START - timedelta(days=d), "LAB-7", "pat", type="Sign-in", duration=20.0) for d in range(1, 12)]
+            return [B(START + timedelta(minutes=30), "LAB-7", "pat", type="Sign-in", duration=75.0)]
+
+        def boot_components(self, *a, **k):
+            return self._no("Boot/logon components")
+
+        def software_changes(self, *a, **k):
+            return self._no("Software changes")
+
+    why = logon_report(Down({"history"}), START, END, device="LAB-7", unit="s")["starts"][0]["why"]
+    assert why == ["Aternity's read of its earlier start-ups failed or was cut short: not compared with what is "
+                   "normal.", "Aternity's read of what took the time failed or was cut short.",
+                   "The change log of LAB-7 could not be read in full: what changed in the 14 days before Oct 28 is "
+                   "not known."]
+    st = logon_report(Down(set()), START, END, device="LAB-7", unit="s")["starts"][0]
+    assert st["unusual"] is True and "could not be read in full" in st["why"][1]  # between the normal and the slow
+    assert "parts_unread" not in st
+
+
+def test_1_in_10_over_is_only_given_from_10_start_ups():
+    from uxcorrelate.logons import _stats
+    from uxcorrelate.report import render_logons
+    two = _stats([10.0, 20.0])  # it said "1 in 10 over 27.0 s": past the slowest one
+    assert two["p90"] is None and two["max"] == 20.0
+    assert _stats([float(v) for v in range(1, 11)])["p90"] is not None
+    lg = logon_report(DemoAternity(START), START, END, unit="s")
+    lg["types"] = [{"type": "Logon", "count": 2, **two}]
+    assert "Logon: typical 15.0 s, slowest 20.0 s (2 measured)" in render_logons(lg)
+
+
+def test_a_logons_report_with_nothing_read_says_the_read_failed():
+    """The CLI's logons report said "No boots or logons in the window." of a read Aternity refused."""
+    from uxcorrelate.report import render_logons
+    lg = {"filters": {"device": "LAB-7"}, "unit": "s", "start": "2026-10-28T09:00:00Z", "end": "2026-10-28T12:00:00Z",
+          "total": 0, "warnings": ["Boot/logon data not checked: Aternity BOOTS gave an error (HTTP 500)."]}
+    text = render_logons(lg)
+    assert "No boots or logons could be read in this window:" in text and "HTTP\n500" in text  # wrapped at 72
+    assert "No boots or logons in the window." in render_logons(dict(lg, warnings=[]))

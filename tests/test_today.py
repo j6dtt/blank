@@ -18,8 +18,8 @@ F = {"timestamp": "TIMEFRAME", "username": "USERNAME", "device": "DEVICE_NAME",
      "application": "APPLICATION_NAME", "status": "SLA_STATUS"}
 H = {"timestamp": "TIMEFRAME", "device": "DEVICE_NAME", "category": "HEALTH_EVENT_CATEGORY",
      "name": "HEALTH_EVENT_NAME", "severity": "HEALTH_EVENT_SEVERITY"}
-ZONE = "America/Chicago"  # UTC-6 in November
-NOW = datetime(2026, 11, 9, 20, 30, tzinfo=timezone.utc)  # Monday 14:30 in Chicago
+ZONE = "America/New_York"  # UTC-5 in November
+NOW = datetime(2026, 11, 9, 19, 30, tzinfo=timezone.utc)  # Monday 14:30 in New York
 
 
 def act(pc, status, app="ERP", user=None):
@@ -38,7 +38,7 @@ def day_file(d, top_by_hour, major_at_9=0, complete=True):
 
 def filled(**kw):
     t = Today(ZONE, **kw)
-    nine = t.midnight(date(2026, 11, 9)) + 9 * HOUR  # 09:00 Chicago
+    nine = t.midnight(date(2026, 11, 9)) + 9 * HOUR  # 09:00 New York
     t.add_hour(nine, [act("PC1", "Major"), act("PC1", "Major"), act("PC2", "Minor"), act("PC3", "Normal"),
                       act("PC4", "Major", app="Mail"), act("PC5", "Undefined")], F, NOW)
     t.add_hour(nine + 5 * HOUR, [act("PC2", "Major")], F, NOW)  # 14:00, this hour so far
@@ -68,7 +68,7 @@ def test_counts_pcs_users_and_apps_with_aternitys_own_words():
 def test_usual_is_the_range_of_the_same_kind_of_day_before():
     assert usual([2, 5, 4], 6)["verdict"] == "more" and usual([2, 5, 4], 1)["verdict"] == "fewer"
     assert usual([2, 5, 4], 5) == {"enough": True, "days": 3, "low": 2, "high": 5, "verdict": "usual"}
-    assert usual([2, 5], 9) == {"enough": False, "days": 2}
+    assert usual([2, 5], 9) == {"enough": False, "days": 2, "need": 3}
 
 
 def test_actions_are_compared_with_the_saved_working_days_by_the_same_hour(tmp_path):
@@ -101,6 +101,16 @@ def test_a_finished_day_is_saved_without_names_and_its_hours_dropped(tmp_path):
     assert "PC9" not in json.dumps(saved) and "ann" not in json.dumps(saved)
     assert all(h.day == date(2026, 11, 9) for h in t.hours.values())
     assert Today(ZONE, tmp_path).saved[d]["top_pcs"] == 1  # read back at the next start
+
+
+def test_one_unreadable_saved_day_does_not_stop_the_days_after_it_loading(tmp_path):
+    days = tmp_path / "days"
+    days.mkdir()
+    (days / "2026-11-03.json").write_text("{cut off")
+    (days / "2026-11-04.json").write_text(json.dumps(day_file(date(2026, 11, 4), [1] * 24)))
+    t = Today(ZONE, tmp_path)
+    assert list(t.saved) == [date(2026, 11, 4)]  # before: the bad file stopped the loop, the usual lost the rest
+    assert "2026-11-03.json" in t.notes["files"]
 
 
 def test_a_day_with_an_hour_missing_is_saved_but_never_used_as_usual(tmp_path):
@@ -151,7 +161,7 @@ def t_health_today(t):
 
 def test_the_day_starts_at_midnight_in_the_set_time_zone_and_a_wrong_one_is_said():
     t = Today(ZONE)
-    assert t.midnight(date(2026, 11, 9)) == datetime(2026, 11, 9, 6, 0, tzinfo=timezone.utc)
+    assert t.midnight(date(2026, 11, 9)) == datetime(2026, 11, 9, 5, 0, tzinfo=timezone.utc)
     assert len(t.hour_starts(date(2026, 11, 1))) == 25  # clocks went back that night
     utc = Today("")
     assert utc.zone_label == "UTC" and "set timezone" in utc.zone_note
@@ -177,10 +187,10 @@ def test_the_reader_fills_today_and_the_name_list_then_waits(tmp_path):
         flt = request.url.params.get("$filter", "")
         seen.append((request.url.path.rsplit("/", 1)[-1], request.url.params.get("$select", ""), flt))
         if request.url.path.endswith("/BUSINESS_ACTIVITIES_RAW"):
-            if "2026-11-09T15:00:00Z" in flt:  # 09:00-10:00 Chicago
+            if "2026-11-09T14:00:00Z" in flt:  # 09:00-10:00 New York
                 return httpx.Response(200, json={"value": [act("PC1", "Major")]})
             return httpx.Response(200, json={"value": []})
-        if "2026-11-09T06:00:00Z" in flt:  # today's health events
+        if "2026-11-09T05:00:00Z" in flt:  # today's health events
             return httpx.Response(200, json={"value": [ev(NOW - HOUR, "PC1", "System Crash", "Critical", "System")]})
         return httpx.Response(200, json={"value": []})
 
@@ -192,10 +202,10 @@ def test_the_reader_fills_today_and_the_name_list_then_waits(tmp_path):
     acts = [x for x in seen if x[0] == "BUSINESS_ACTIVITIES_RAW"]
     assert len(acts) == 25 and acts[0][1] == ("TIMEFRAME,USERNAME,DEVICE_NAME,APPLICATION_NAME,SLA_STATUS,"
                                               "ACTIVITY_NAME,ACTIVITY_RESPONSE_TIME,VIRTUALIZATION")
-    assert acts[0][2] == "TIMEFRAME ge 2026-11-09T20:00:00Z and TIMEFRAME lt 2026-11-09T21:00:00Z"  # newest first
+    assert acts[0][2] == "TIMEFRAME ge 2026-11-09T19:00:00Z and TIMEFRAME lt 2026-11-09T20:00:00Z"  # newest first
     health = [x for x in seen if x[0] == "DEVICE_HEALTH_RAW"]
     assert {"USERNAME", "APPLICATION_NAME"} <= set(health[0][1].split(","))
-    assert len(health) == 15 and health[-1][2].endswith("lt 2026-11-09T20:30:00Z")  # 14 days before, then today
+    assert len(health) == 15 and health[-1][2].endswith("lt 2026-11-09T19:30:00Z")  # 14 days before, then today
     v = t.view(NOW)
     assert v["ready"] and v["slow"]["pcs"] == 1 and v["tiles"][0]["name"] == "System Crash"
     assert list(names.seen["device"]) == ["PC1"]
@@ -210,7 +220,7 @@ def test_not_set_and_still_reading_are_said():
 
 def test_who_lists_the_users_and_pcs_behind_a_tile_or_a_row_with_a_span_to_investigate():
     t = Today(ZONE)
-    nine = t.midnight(date(2026, 11, 9)) + 9 * HOUR  # 15:00 UTC
+    nine = t.midnight(date(2026, 11, 9)) + 9 * HOUR  # 14:00 UTC
     G = dict(F, activity="ACTIVITY_NAME", response_time="ACTIVITY_RESPONSE_TIME")
 
     def run(minute, pc, app, secs, user=None, status="Major"):
@@ -229,10 +239,10 @@ def test_who_lists_the_users_and_pcs_behind_a_tile_or_a_row_with_a_span_to_inves
     pc1 = slow["rows"][0]  # most slow actions first; Minor is not counted
     assert (pc1["device"], pc1["username"], pc1["count"]) == ("PC1", "u-PC1", 3)
     assert (pc1["application"], pc1["activity"], pc1["seconds"]) == ("ERP", "Open", 30.5)  # its slowest
-    assert (pc1["first"], pc1["last"]) == ("09:05", "09:40")  # Chicago time
-    assert (pc1["start"], pc1["end"]) == ("2026-11-09T14:35:00Z", "2026-11-09T16:10:00Z")  # 30 min each side
+    assert (pc1["first"], pc1["last"]) == ("09:05", "09:40")  # New York time
+    assert (pc1["start"], pc1["end"]) == ("2026-11-09T13:35:00Z", "2026-11-09T15:10:00Z")  # 30 min each side
     assert [r["device"] for r in slow["rows"]] == ["PC1", "PC2", "PC4"]  # then the slowest
-    assert slow["rows"][2]["end"] == "2026-11-09T20:30:00Z"  # never after now
+    assert slow["rows"][2]["end"] == "2026-11-09T19:30:00Z"  # never after now
 
     erp = t.who(NOW, "app", "ERP")
     assert erp["application"] == "ERP" and [(r["device"], r["count"]) for r in erp["rows"]] == [("PC1", 2), ("PC2", 1)]
@@ -244,7 +254,7 @@ def test_who_lists_the_users_and_pcs_behind_a_tile_or_a_row_with_a_span_to_inves
     crash = t.who(NOW, "event", "Application Crash", "Application")
     assert crash["what"] == "Application Crash (Application)" and crash["application"] is None
     assert [(r["device"], r["username"], r["count"]) for r in crash["rows"]] == [("PC1", "u-PC1", 2), ("PC9", None, 1)]
-    assert (crash["rows"][0]["start"], crash["rows"][0]["end"]) == ("2026-11-09T14:00:00Z", "2026-11-09T17:00:00Z")
+    assert (crash["rows"][0]["start"], crash["rows"][0]["end"]) == ("2026-11-09T13:00:00Z", "2026-11-09T16:00:00Z")
     assert "seconds" not in crash["rows"][0]  # events have no time taken
     assert t.who(NOW, "event", "Application Crash", "System")["rows"] == []  # the category counts too
 
@@ -266,3 +276,99 @@ def test_the_endpoint():
     assert http.get("/api/today").json()["ready"] is True
     assert http.get("/api/today/who", params={"kind": "slow"}).json()["rows"] == []
     assert http.get("/api/today/who", params={"kind": "nope"}).status_code == 400
+
+
+# -- gaps found Nov 14 2026 ------------------------------------------------------------------------
+def test_reads_keep_their_times_and_an_unexpected_error_does_not_stop_the_reader(caplog):
+    """A read starts refresh_min after the one before started, whatever it takes (it was a 5-minute
+    sleep after each read: a cycle was 5 minutes plus the read). An error the code did not expect is
+    logged and the reader goes on (it had no guard: the Today tab, names, Care list and assessments
+    would stop until a restart)."""
+    t = Today(ZONE)
+    t.refresh_min = 5
+    now, sleeps, checks = [NOW], [], []
+
+    class Stop(BaseException):
+        pass
+
+    class Care:
+        def check(self, client, at, read=True):
+            checks.append(at)
+            now[0] += timedelta(seconds=150)  # the read and the check take 2.5 minutes
+            if len(checks) == 2:
+                raise KeyError("since")
+
+    def sleep(s):
+        sleeps.append(s)
+        now[0] += timedelta(seconds=s)
+        if len(sleeps) == 3:
+            raise Stop
+
+    cfg = AternityConfig(base_url="https://aternity.test/aternity.odata/v2.0", username="u", password="p")
+    make = lambda: AternityClient(cfg, transport=httpx.MockTransport(lambda q: httpx.Response(200, json={"value": []})))  # noqa
+    with pytest.raises(Stop):
+        keep_reading(t, None, make, sleep, clock=lambda: now[0], care=Care())
+    assert sleeps == [150, 150, 150]  # every read 5 minutes after the one before started
+    assert len(checks) == 3 and "error the code did not expect" in caplog.text  # went on after the error
+    assert t.next_read == NOW + 3 * timedelta(minutes=5)  # the reads started at 20:35 and 20:40: the next at 20:45
+
+
+def test_a_cut_short_reply_is_not_a_good_read_and_keeps_the_rows_it_left_out():
+    t = Today(ZONE)
+    rows = [ev(NOW - HOUR, "PC1", "App Crash", "Major"), ev(NOW - 2 * HOUR, "PC2", "App Hang", "Major")]
+    t.set_health(rows, H, today=True)
+    t.set_health(rows[:1], H, today=True, partial=True)  # Aternity's reply cut short: PC2's row is missing
+    assert {x[1] for x in t.health} == {"PC1", "PC2"} and len(t.health) == 2
+    t.set_health(rows[:1], H, today=True)  # a full reply: as sent
+    assert [x[1] for x in t.health] == ["PC1"]
+
+    class Client:
+        cfg = AternityConfig(base_url="x")
+        warnings: list = []
+
+        def query(self, *a, **k):
+            self.warnings.append("cut short")
+            return rows
+
+    from uxcorrelate.today import _read_health
+    t.health_for = t.day(NOW)  # the days before were read
+    _read_health(t, Client(), NOW)
+    assert t.failures == 1  # read_ok does not move: the Care list's status says the read was not in full
+
+
+def test_the_time_of_day_is_the_local_clock_on_a_clock_change_day():
+    t = Today(ZONE)
+    three_pm = datetime(2026, 11, 1, 20, 0, tzinfo=timezone.utc)  # 15:00 EST, the day clocks went back
+    assert (three_pm - t.midnight(date(2026, 11, 1))).total_seconds() == 16 * 3600  # elapsed: what it used
+    assert t.clock_secs(three_pm) == 15 * 3600  # the clock the other days are compared by
+
+
+def test_a_day_before_cut_short_is_left_out_of_the_usual_and_said():
+    t = filled()
+    mid = lambda d: t.midnight(d)  # noqa: E731
+    for d in (date(2026, 11, 4), date(2026, 11, 5), date(2026, 11, 6)):
+        t.set_health([ev(mid(d) + 8 * HOUR, f"PC{i}", "Application Crash", "Major") for i in range(3)], H,
+                     today=False, days_read=(d,))
+    # Nov 3 cut short: 0 crashes read, so it read as a quiet day and today's 2 as within 0 to 3
+    t.set_health([], H, today=False, partial=True, days_read=(date(2026, 11, 3),))
+    t.set_health(t_health_today(t), H, today=True)
+    v = t.view(NOW)
+    crash = v["tiles"][0]
+    assert crash["usual"] == {"enough": True, "days": 3, "low": 3, "high": 3, "verdict": "fewer"}
+    assert crash["days"][1]["pcs"] is None  # Nov 3: not read, not 0
+    assert any("health events of Nov 3 were cut short" in x for x in v["notes"])
+    t.set_health([], H, today=False, days_read=(date(2026, 11, 3),))  # read whole later: used again
+    assert not any("cut short" in x for x in t.view(NOW)["notes"])
+
+
+def test_hours_cut_short_and_a_failed_read_are_said_with_a_look_up():
+    """Ask anything said "No user X had a measured action today" of an hour Aternity did not send."""
+    t = Today("")
+    now = t.midnight(datetime(2026, 11, 10, tzinfo=timezone.utc).date()) + timedelta(hours=15)
+    f = {"timestamp": "T", "device": "D", "username": "U", "application": "A", "status": "S"}
+    row = {"T": (now - timedelta(hours=2)).isoformat(), "D": "PC1", "U": "amy", "A": "Mail", "S": "Major"}
+    t.add_hour(t.hour_of(now - timedelta(hours=2)), [row], f, now, partial=True)
+    t.note("activity", "Aternity activity could not be read (HTTP 503); trying again in 15 min.")
+    gaps = t.activity_gaps(now)
+    assert gaps[0] == "Aternity's reply for today's hour 13:00 was cut short: the counts are at least these."
+    assert gaps[1].startswith("Aternity activity could not be read")

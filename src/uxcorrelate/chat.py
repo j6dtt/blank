@@ -301,7 +301,7 @@ def slow_actions(today: Today, now: datetime, group_by: str = "app", app: str | 
         saved = dict(today.saved)
     before = [t - timedelta(days=n) for n in range(days - 1, 0, -1)]
     have = [d for d in before if d in saved]
-    notes = []
+    notes = today.activity_gaps(now)
     if len(have) < len(before):
         notes.append(f"{len(before) - len(have)} of the {len(before)} days before have no saved counts (they are "
                      "saved each night, from the first night this ran).")
@@ -464,6 +464,23 @@ def slow_actions(today: Today, now: datetime, group_by: str = "app", app: str | 
                    period, cols, rows, notes, value=2)
 
 
+def _health_notes(today: Today, before: list, read: set, cut: set, today_note: str | None) -> list[str]:
+    """What the health counts leave out: days before not read yet, days Aternity cut short (left
+    out, as the Today tab does: "not read yet" was said of them) and today's reply cut short (its
+    counts were given as whole)."""
+    notes = []
+    gone = [d for d in before if d in cut]
+    missing = [d for d in before if d not in read and d not in cut]
+    if missing:
+        notes.append(f"{len(missing)} of the {len(before)} days before were not read yet (read once a day).")
+    if gone:
+        notes.append(f"Aternity's reply for {len(gone)} of the {len(before)} days before was cut short: "
+                     f"{'that day is' if len(gone) == 1 else 'those days are'} left out.")
+    if today_note:
+        notes.append(today_note)
+    return notes
+
+
 def events(today: Today, now: datetime, group_by: str = "event", name: str | None = None,
            severity: str | None = None, days=1, app: str | None = None) -> dict:
     t = today.day(now)
@@ -475,6 +492,7 @@ def events(today: Today, now: datetime, group_by: str = "event", name: str | Non
         hd = {d: v for d, v in today.health_days.items() if first <= d < t}
         ha = {d: v for d, v in today.health_apps.items() if first <= d < t}
         read = {d for d in today.health_read if first <= d < t}
+        cut, said = set(today.health_cut), today.notes.get("health")
         sev = {k: c.most_common(1)[0][0] for k, c in today.health_sev.items() if c}
     used = {"group_by": group_by, "name": name, "severity": severity, "app": app, "days": days}
     app = (app or "").strip() or None
@@ -502,10 +520,7 @@ def events(today: Today, now: datetime, group_by: str = "event", name: str | Non
             for (k, _), devs in per_app.get(d, {}).items():
                 per_day[d].setdefault(k, set()).update(devs)
     before = [t - timedelta(days=n) for n in range(days - 1, 0, -1)]
-    notes = []
-    missing = [d for d in before if d not in read]
-    if missing:
-        notes.append(f"{len(missing)} of the {len(before)} days before were not read yet (read once a day).")
+    notes = _health_notes(today, before, read, cut, said)
     what = " ".join(w for w in (severity, f"\"{name}\"" if name else None) if w)
     in_app = ""
     if app:
@@ -616,6 +631,7 @@ def _who_days(today: Today, now: datetime, used: dict, name, app, days: int) -> 
         hd = {d: v for d, v in today.health_days.items() if first <= d < t}
         ha = {d: v for d, v in today.health_apps.items() if first <= d < t}
         read = {d for d in today.health_read if first <= d < t}
+        cut, said = set(today.health_cut), today.notes.get("health")
     wanted, notes = _kinds_named({x[2] for x in rows} | {k for kinds in hd.values() for k in kinds}, name)
     apps = _match({x[5] for x in rows if x[2] in wanted} | {k[1] for kinds in ha.values() for k in kinds
                                                            if k[0] in wanted}, app) if app else None
@@ -641,9 +657,7 @@ def _who_days(today: Today, now: datetime, used: dict, name, app, days: int) -> 
     period = _period(today, t, days)
     what = _join_names(sorted({k[1] for k in wanted})) if wanted else f"\"{name or 'any'}\""
     of = f" of {', '.join(apps[:3])}" if apps else ""
-    missing = days - 1 - len(read)
-    if missing > 0:
-        notes.append(f"{missing} of the {days - 1} days before were not read yet (read once a day).")
+    notes += _health_notes(today, [t - timedelta(days=n) for n in range(days - 1, 0, -1)], read, cut, said)
     if not pcs:
         return _result("who", used, f"PCs with {what}{of}", period, [], [],
                        notes + [f"No PC had an event named like \"{name or 'any'}\"{of} in this period."])
@@ -831,7 +845,8 @@ def logins(today: Today, names, now: datetime, aternity_of=None, username: str |
                        say="Aternity is not set, so its logon records cannot be read.")
     mark = len(client.warnings)
     found = client.boots(start, end, username=user, device=pc)
-    if len(client.warnings) > mark:
+    short = len(client.warnings) > mark  # failed or cut short: never "recorded no logon"
+    if short:
         notes.append(f"Aternity's logon records could not be read in full ({client.warnings[-1]}).")
     # rows of one user and PC within an hour are one logon, with what Aternity recorded for it
     found.sort(key=lambda r: r.timestamp)
@@ -857,13 +872,18 @@ def logins(today: Today, names, now: datetime, aternity_of=None, username: str |
     if len(groups) > WHO_ROWS:
         notes.append(f"The latest {WHO_ROWS} are shown, of {len(groups):,}.")
     title = f"Logons of {who}" if user else f"Logons on {pc}"
+    if not groups and short:
+        return _result("logins", used, title, period, [], [], notes,
+                       say=f"Aternity's logon records {'of' if user else 'on'} {who} could not be read, so whether "
+                           "there were any is not known.")
     if not groups:
         return _result("logins", used, title, period, [], [], notes + [
             f"Aternity recorded no start-up or logon {'of' if user else 'on'} {who} in this period."],
             say=f"Aternity recorded no start-up or logon {'of' if user else 'on'} {who} in {period}.")
     g = groups[0]
-    say = (f"The latest logon on {pc}: {g['user'] or 'no user named'}, {today.local(g['at']):%a %b %d %H:%M}." if pc and not user
-           else f"{user} last logged in on {g['pc']}, {today.local(g['at']):%a %b %d %H:%M}.")
+    of_read = " (of the records that could be read)" if short else ""
+    say = (f"The latest logon on {pc}{of_read}: {g['user'] or 'no user named'}, {today.local(g['at']):%a %b %d %H:%M}."
+           if pc and not user else f"{user} last logged in on {g['pc']}, {today.local(g['at']):%a %b %d %H:%M}{of_read}.")
     return _result("logins", used, title, period, ["When", "User", "PC", "Aternity recorded"], rows, notes,
                    _n(len(groups), "logon"), runs=runs, label=(1, 2), say=say)
 
@@ -971,13 +991,23 @@ def run_block(name: str, args: dict, today: Today, names, now: datetime, aternit
 
 
 # -- the AI's sentence, held to our counts -----------------------------------------
+# numbers written as words are numbers too ("three PCs crashed" passed when the counts said 5);
+# "one" is left out: it is mostly a pronoun ("the one to look at")
+WORD_NUMBERS = {w: float(n) for n, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen "
+    "seventeen eighteen nineteen twenty".split()) if w not in ("zero", "one")}
+WORD_NUM = re.compile(r"\b(" + "|".join(WORD_NUMBERS) + r")\b", re.I)
+
+
 def numbers(text: str) -> set[float]:
+    """The numbers in a text: digits ("1,234", "4.5") and words ("three")."""
     out = set()
     for m in NUM.findall(text or ""):
         try:
             out.add(round(float(m.rstrip(",").replace(",", "")), 1))
         except ValueError:
             pass
+    out |= {WORD_NUMBERS[m.lower()] for m in WORD_NUM.findall(text or "")}
     return out
 
 

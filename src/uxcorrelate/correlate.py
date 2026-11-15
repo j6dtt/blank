@@ -36,6 +36,7 @@ from statistics import mean
 from typing import Protocol
 
 from .config import BACKGROUND_EVENT, NetimMetric, Settings
+from .http import ApiError
 from .after_start import AFTER_START_MIN, compare as compare_after_start
 from .answer import build_answer, problem_text
 from .cause import DISK_BACK, explain, is_disk
@@ -50,6 +51,10 @@ from .models import (
 log = logging.getLogger("uxcorrelate")
 
 KINDS = ("pc", "network", "server")  # where a problem is
+# a user's PCs read for problems when no PC is asked for: those with a slow action first, then the
+# most used. It was the 3 most used: a pooled virtual desktop user gets a new desktop at each logon,
+# and a crash on a 4th one of a day was not read, with nothing said
+MAX_PCS = 8
 ROLE_DOMAIN = {
     "client-gateway": "network",
     "site": "network",
@@ -140,10 +145,19 @@ def map_netim_objects(netim: NetimSource, endpoints: list[EndpointInfo], applica
     def add(obj: MappedObject) -> None:
         mapped.setdefault((obj.object_type, obj.object_id), obj)
 
+    unread: set[str] = set()  # devices whose interfaces NetIM did not give (once stopped the investigation)
+
+    def interfaces(dev: NetimDevice) -> list[NetimInterface]:
+        try:
+            return netim.interfaces(dev.id)
+        except ApiError:
+            unread.add(dev.id)
+            return []
+
     def add_device(dev: NetimDevice, role: str, reason: str, with_l3_interfaces: bool) -> None:
         add(MappedObject("DEVICE", dev.id, dev.name, dev.id, role, reason))
         if with_l3_interfaces:
-            for itf in netim.interfaces(dev.id):
+            for itf in interfaces(dev):
                 if itf.ip_addresses:
                     add(MappedObject("INTERFACE", itf.id, f"{dev.name}:{itf.name}", dev.id, role, reason))
 
@@ -152,7 +166,7 @@ def map_netim_objects(netim: NetimSource, endpoints: list[EndpointInfo], applica
         if hasattr(netim, "read_interfaces"):  # several at once; nothing to read once the index is ready
             netim.read_interfaces(devices, lambda n, total: log.info("NetIM: read %d of %d devices", n, total))
         for dev in devices:
-            for itf in netim.interfaces(dev.id):
+            for itf in interfaces(dev):
                 if _subnet_contains(itf.ip_addresses, ip):
                     # keep an earlier role for the device (e.g. the app server itself)
                     existing = mapped.get(("DEVICE", dev.id))
@@ -184,7 +198,9 @@ def map_netim_objects(netim: NetimSource, endpoints: list[EndpointInfo], applica
         dev = by_name.get(name.lower())
         if dev:
             add_device(dev, "always", "always included (topology.always_include)", True)
-
+    if unread and isinstance(getattr(netim, "warnings", None), list):
+        netim.warnings.append(f"NetIM interfaces of {plural(len(unread), 'device')} not checked: NetIM gave an "
+                              "error, so a gateway or subnet on them is not known.")
     return list(mapped.values())
 
 
@@ -488,11 +504,20 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
     samples = sorted(aternity.user_activity(req.start, req.end, username=req.username,
                                             device=req.device, application=req.application),
                      key=lambda s: s.timestamp)
+    slow = [s for s in samples if is_slow(s, settings)]
     if req.device:
         device_names = [req.device]
     else:
-        device_names = [d for d, _ in Counter(s.device for s in samples if s.device).most_common(3)]
-    slow = [s for s in samples if is_slow(s, settings)]
+        used, with_slow = Counter(s.device for s in samples if s.device), {s.device for s in slow if s.device}
+        ranked = sorted(used, key=lambda d: (d not in with_slow, -used[d], d))
+        device_names = ranked[:MAX_PCS]
+        if len(ranked) > MAX_PCS:
+            left = ranked[MAX_PCS:]
+            on = sum(1 for d in left if d in with_slow)
+            warnings.append(f"{plural(len(left), 'more PC')} of {req.username} not checked: "
+                            f"{', '.join(left[:5])}{' and others' if len(left) > 5 else ''} ("
+                            + (f"{on} with a slow action" if on else "no slow action on them")
+                            + f"; the {MAX_PCS} read: those with slow actions first, then the most used).")
     log.info("Aternity: %d actions, %d slow, device(s): %s", len(samples), len(slow),
              ", ".join(device_names) or "none")
     if settings.thresholds.slow_status and samples and not any(s.status for s in samples):
@@ -513,11 +538,19 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
                                                       ("Disk queue", h.disk_queue)) if v is not None)
     events: list[HealthEvent] = []
     uxi: list[float] = []
+    # PCs whose reads failed or were cut short, per source: "What was checked" said "0 in the window"
+    failed = {"events": 0, "crashes_hangs": 0, "start_ups": 0}
+    said = lambda: len(getattr(aternity, "warnings", None) or [])  # noqa: E731
     for d in device_names:
         if hasattr(aternity, "health_events"):
+            mark = said()
             events += aternity.health_events(d, req.start, req.end)
+            failed["events"] += said() > mark
         if hasattr(aternity, "app_usage"):
-            for u in aternity.app_usage(d, req.start, req.end, req.application):
+            mark = said()
+            rows = aternity.app_usage(d, req.start, req.end, req.application)
+            failed["crashes_hangs"] += said() > mark
+            for u in rows:
                 for what, value in (("crashed", u.crashes), ("not responding", u.hang_time)):
                     if value:
                         problems.append(_problem(u.timestamp, "pc", "Aternity", u.device,
@@ -528,12 +561,16 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
     problems += [_event_problem(e) for e in events]
     disks = _disk_state(aternity, events, req.start)
     log.info("Aternity: %d device health events", len(events))
-    warnings.extend(getattr(aternity, "warnings", []))
+    warnings.extend(w for w in dict.fromkeys(getattr(aternity, "warnings", [])) if w not in warnings)
 
     # 3/4. infrastructure
     mapped: list[MappedObject] = []
     if netim is not None:
-        mapped = map_netim_objects(netim, endpoints, req.application, settings)
+        try:  # NetIM's device list failing once stopped the whole investigation
+            mapped = map_netim_objects(netim, endpoints, req.application, settings)
+        except ApiError as exc:
+            netim.warnings.append(f"NetIM topology not checked: NetIM gave an error ({exc.short()}).")
+            log.warning("NetIM: %s", netim.warnings[-1])
         log.info("NetIM: %d objects on the user's path; reading %d metrics",
                  len(mapped), len(settings.netim.metrics))
         obj_index = {(m.object_type, m.object_id): m for m in mapped}
@@ -558,8 +595,10 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
         warnings.append("Aternity returned no activity for this user/device/application in the window.")
 
     warnings.extend(w for w in getattr(aternity, "warnings", []) if w not in warnings)
+    mark = said()
     logons = logon_report(aternity, req.start, req.end, username=req.username, device=req.device,
                           unit=settings.boot_unit)
+    failed["start_ups"] = int(said() > mark)
     warnings.extend(w for w in logons.pop("warnings", []) if w not in warnings)
     started_up = _startup_problems(logons, settings.boot_unit)
 
@@ -613,6 +652,7 @@ def investigate(req: InvestigationRequest, aternity: AternitySource, netim: Neti
                                     and p["slow"])],
         "crashes_hangs": [len(usage), sum(1 for p in usage if p["slow"])],
         "start_ups": [len(started_up), sum(1 for p in started_up if p["slow"])],
+        "failed": failed,
     }
     by_kind = {k: len({i for p in problems if p["kind"] == k for i in p["slow"]}) for k in KINDS}
 

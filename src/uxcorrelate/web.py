@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from .assess import Assessments
 from .care import Care
 from .chat import ask, chat_service
-from .config import Settings, load_settings
+from .config import Settings, config_notes, load_settings
 from .correlate import InvestigationRequest, investigate
 from .http import ApiError, short_error
 from .logons import logon_report
@@ -93,6 +93,15 @@ class LogonBody(BaseModel):
     location: str | None = None
     start: datetime
     end: datetime
+
+
+def _did_not_answer(exc: ApiError) -> str:
+    """ "Aternity did not answer (HTTP 504). Try again." — the source's name and its short words,
+    never the URL or the reply's body (the page shows this)."""
+    if exc.status is None and exc.__cause__ is None:  # our own words (base_url not set): as they are
+        return str(exc)
+    who = str(exc).split(":", 1)[0].strip() or "Aternity"
+    return f"{who} did not answer ({exc.short()}). Try again; `uxcorrelate verify` checks the connection."
 
 
 def create_app(config_path: str | None = None) -> FastAPI:
@@ -181,7 +190,8 @@ def create_app(config_path: str | None = None) -> FastAPI:
         if not status.started:
             status.started = True
             threading.Thread(target=keep_checking, args=(status, lambda: load_settings(config_path), time.sleep),
-                             daemon=True, name="status").start()
+                             kwargs={"notes_of": lambda: config_notes(config_path, zone=False)}, daemon=True,
+                             name="status").start()
         if not care.started:
             care.started = True
             threading.Thread(target=care.work, args=(care_investigate, time.sleep), daemon=True,
@@ -217,7 +227,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         if not today.ready:
             return  # the reader checks the list itself once it has read Aternity
         try:
-            care.check(aternity_client(), datetime.now(timezone.utc))
+            care.check(aternity_client(), datetime.now(timezone.utc), read=False)  # not a read: no alert read counted
         except Exception as exc:
             log.warning("Care list: the check after a change on the page failed (%s)", short_error(exc))
 
@@ -478,7 +488,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
                      f" ({answer['looked'][:200]})" if answer["steps"] else "",
                      f"; {answer['note']}" if answer["note"] else "")
             return answer
-        return start(work, body)
+        return start(work, body, "A question to Ask anything")
 
     @app.get("/api/assess")
     def assessment():
@@ -562,20 +572,23 @@ def create_app(config_path: str | None = None) -> FastAPI:
         return status.view()
 
     def run_investigation(body: InvestigateBody) -> dict:
-        try:
+        req = InvestigationRequest(
+            start=utc(body.start), end=utc(body.end),
+            username=body.username or None, device=body.device or None,
+            application=body.application or None,
+        )
+        try:  # only what was asked, or config.yaml, is the caller's to fix: a fault of ours is logged
+            req.validate()  # (any ValueError inside an investigation was a 400 with Python's words)
             settings, aternity, netim = sources()
-            if body.bucket_minutes:
-                settings.bucket_minutes = body.bucket_minutes
-            req = InvestigationRequest(
-                start=utc(body.start), end=utc(body.end),
-                username=body.username or None, device=body.device or None,
-                application=body.application or None,
-            )
-            return investigate(req, aternity, netim, settings)
         except ValueError as exc:
             raise HTTPException(400, str(exc))
-        except ApiError as exc:
-            raise HTTPException(502, str(exc))
+        if body.bucket_minutes:
+            settings.bucket_minutes = body.bucket_minutes
+        try:
+            return investigate(req, aternity, netim, settings)
+        except ApiError as exc:  # its own words, no URL or reply body on the page
+            log.warning("Investigation: %s", exc)
+            raise HTTPException(502, _did_not_answer(exc))
 
     @app.post("/api/investigate")
     def run(body: InvestigateBody):
@@ -598,16 +611,17 @@ def create_app(config_path: str | None = None) -> FastAPI:
                                 device=body.device or None, location=body.location or None,
                                 unit=settings.boot_unit)
         except ApiError as exc:
-            raise HTTPException(502, str(exc))
+            log.warning("Start-ups: %s", exc)
+            raise HTTPException(502, _did_not_answer(exc))
 
-    def run_job(job_id: str, job: dict, work, body) -> None:
+    def run_job(job_id: str, job: dict, work, body, what: str) -> None:
         job_log.by_thread[threading.get_ident()] = job["lines"]
         try:
             job["result"] = work(body)
         except HTTPException as exc:
             job["error"] = exc.detail
         except Exception as exc:  # shown in the UI instead of a silent hang
-            log.exception("Investigation failed")
+            log.exception("%s failed", what)
             job["error"] = f"{type(exc).__name__}: {exc}"
         finally:
             job_log.by_thread.pop(threading.get_ident(), None)
@@ -615,7 +629,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
                 done_at[job_id] = _clock()
             job["done"] = True
 
-    def start(work, body) -> dict:
+    def start(work, body, what: str = "An investigation") -> dict:
         """A job in its own thread. Jobs finished over KEEP_DONE_MIN ago are dropped; a running
         one never is (with 20 kept by count, a 21st start dropped one still running)."""
         job_id = uuid.uuid4().hex
@@ -625,7 +639,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
                 jobs.pop(old, None)
                 done_at.pop(old, None)
             jobs[job_id] = job = {"lines": [], "done": False, "result": None, "error": None}
-        threading.Thread(target=run_job, args=(job_id, job, work, body), daemon=True).start()
+        threading.Thread(target=run_job, args=(job_id, job, work, body, what), daemon=True).start()
         return {"id": job_id}
 
     @app.post("/api/jobs")
@@ -634,7 +648,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
     @app.post("/api/logon-jobs")
     def start_logon_job(body: LogonBody):
-        return start(run_logons, body)
+        return start(run_logons, body, "A start-ups report")
 
     @app.get("/api/jobs/{job_id}")
     def job_status(job_id: str):

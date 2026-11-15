@@ -24,7 +24,7 @@ class NameList:
     def __init__(self):
         self.seen: dict[str, dict[str, datetime]] = {k: {} for k in KINDS}  # name -> last seen
         self.read_from: datetime | None = None
-        self.partial = False
+        self.cut: set[tuple[datetime, datetime]] = set()  # spans Aternity cut short, not read whole since
         self.lock = threading.Lock()
 
     def read(self, aternity, start: datetime, end: datetime) -> int:
@@ -46,13 +46,22 @@ class NameList:
                     if name:
                         seen = self.seen[kind]
                         seen[name] = max(seen.get(name, end), end)
-            self.partial = self.partial or partial
+            if partial:
+                self.cut.add((start, end))
+            else:  # read whole: a span cut short before within it is complete now
+                self.cut = {(s, e) for s, e in self.cut if s < start or e > end}
             newest = max((t for s in self.seen.values() for t in s.values()), default=end)
-            cut = newest - timedelta(days=KEEP_DAYS)
+            oldest = newest - timedelta(days=KEEP_DAYS)
             for seen in self.seen.values():
-                for name in [n for n, t in seen.items() if t < cut]:
+                for name in [n for n, t in seen.items() if t < oldest]:
                     del seen[name]
-            self.read_from = max(min(self.read_from or start, start), cut)
+            self.read_from = max(min(self.read_from or start, start), oldest)
+            self.cut = {(s, e) for s, e in self.cut if e >= oldest}  # older than the names kept: nothing missing
+
+    @property
+    def partial(self) -> bool:
+        """A span of the names kept was cut short by Aternity: some names may be missing."""
+        return bool(self.cut)
 
     def match(self, kind: str, text: str, limit: int = MATCHES) -> dict:
         """Names containing the text (any case), those starting with it first."""

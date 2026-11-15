@@ -66,6 +66,14 @@ def test_a_cut_short_reply_is_said():
     c.http.get_json = lambda url: {"value": [{"USERNAME": "a", "DEVICE_NAME": "b"}], "@odata.nextLink": url}
     names.read(c, T - timedelta(hours=1), T)
     assert names.match("device", "b")["partial"] is True
+    # it was said for ever: a read of the same hour that comes back whole clears it,
+    names.read(client([{"USERNAME": "a", "DEVICE_NAME": "b"}]), T - timedelta(hours=1), T)
+    assert names.match("device", "b")["partial"] is False
+    # and so do the days: a span cut short older than the names kept no longer misses any
+    names.read(c, T - timedelta(hours=1), T)
+    later = T + timedelta(days=KEEP_DAYS, hours=2)
+    names.read(client([{"USERNAME": "a", "DEVICE_NAME": "b"}]), later - timedelta(hours=1), later)
+    assert names.match("device", "b")["partial"] is False
 
 
 def test_the_endpoint_answers_per_kind():
