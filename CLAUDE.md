@@ -363,6 +363,17 @@ demo mode: nothing in `src/` knows about it.
   rows it holds (`Hour.user_devs`/`user_runs`/`dev_kind`). Issue: an event
   in `TILE_SEVERITIES` with their username today, or more Major actions by
   this time of day than on any of their own days before with a PC in use
+  (each Major action judged by its own time of day, the whole day at every
+  check: `_replay`; judged only at the check against the usual by then,
+  which grows all day, a Major action no check judged in time was lost:
+  "1 rated Major" and no "Earlier today", stage, Nov 15 2026; an OK tile
+  with Major actions says "never more than their usual by the same time
+  of day" and the moment it came nearest, `nearest`; a slow issue is not
+  "back within their usual" while the usual is not known). Every tile
+  lists the user's Major actions of today, latest first (`majors`: time,
+  application · activity · seconds, the PC when more than one; the latest
+  3 on the tile, all under Show more): "1 rated Major" with nothing to
+  show which it was read as a bug (stage, Nov 15 2026)
   (the latest `USUAL_DAYS`, any day of the week: people on the Care list
   often work weekends, the user, Nov 15 2026; the working / weekend split
   stays for the fleet's Today tab and assessment, where a Saturday hour had

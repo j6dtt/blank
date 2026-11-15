@@ -206,7 +206,14 @@ is logged with the address it came from.
 An issue is an event Aternity rates Critical or Major, or more Major slow
 actions by this time of day than on any of the user's own latest 5 days
 with a PC in use, any day of the week (people on the list often work
-weekends).
+weekends). Each Major action is judged by its own time of day, whenever it
+is checked, so one found late (after a restart, or sent late by Aternity)
+is still an "Earlier today" line; an OK tile with Major actions says they
+were never more than their usual by the same time of day, and the moment
+they came nearest ("nearest: 1 by 10:12, their usual by then 0 to 1").
+Every tile lists the user's actions Aternity rated Major today, latest
+first ("10:12 Outlook · Send Mail · 9.4 s"): the latest 3 on the tile, all
+of them under Show more.
 What lights the tile (its alert): a read of Aternity that brings something
 new of an issue (Aternity sends rows late, so "new" is what that read saw
 first, whatever its time: the tile then says "Aternity sent it at 18:10."

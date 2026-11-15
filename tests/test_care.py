@@ -88,10 +88,16 @@ def test_more_major_actions_than_on_their_own_days_before_is_an_issue_and_queues
     assert (mq["status"], mq["level"], mq["since_local"], mq["username"]) == ("issue", "Major", "14:20", "MQ2208")
     # the latest 5 days with a PC in use, the weekend too: people on the Care list often work weekends
     assert mq["usual"] == {"enough": True, "days": 5, "low": 0, "high": 2, "kind": "days"}
-    assert mq["issues"][0]["text"].startswith("3 Major slow actions by 14:30, the last at 14:20; on the 5 "
-                                              "days before that "
-                                              "they used a PC: 0 to 2 by this time. Most in Mail (3).")
+    assert mq["issues"][0]["text"] == ("3 Major slow actions by 14:20; on the 5 days before that they used a PC: "
+                                       "0 to 2 by the same time. Most in Mail (3).")
+    assert care._said(mq["issues"][0], mq) == ("3 Major slow actions by 19:20 UTC (usual by then 0-2), the last at "
+                                               "19:20 UTC, most in Mail")  # the status summary
     assert mq["pcs"] == [{"device": "VD-7", "kind": "virtual"}] and (mq["actions"], mq["major"]) == (4, 3)
+    # each Major action listed, latest first: the count with nothing behind it read as a bug (stage)
+    assert [(m["at_local"], m["app"], m["activity"], m["secs"], m["pc"]) for m in mq["majors"]] == [
+        ("14:20", "Mail", "Open", 9.0, "VD-7"), ("14:10", "Mail", "Open", 9.0, "VD-7"),
+        ("14:00", "Mail", "Open", 9.0, "VD-7")]
+    assert len(v["users"][2]["majors"]) == v["users"][2]["major"] == 1  # an OK tile lists its one too
     assert mq["investigating"] == "waiting" and care.pending == ["mq2208"]
     assert v["users"][1]["status"] == "unknown" and "check the name" in v["users"][1]["note"]
     assert v["users"][2]["status"] == "ok"  # 1 Major, usual 1 to 3
@@ -255,7 +261,7 @@ def test_a_slow_spell_is_over_after_an_hour_with_no_major_action_and_a_later_one
     assert care.view(at(15, 40))["users"][0]["status"] == "issue"  # but a row this read saw first: lit
     for m in (55, 70, 80):  # the reads after it: off at the 3rd (16:20)
         care.check(client(), at(15, 0) + timedelta(minutes=m))
-    assert care.issues["mq2208"][0]["cleared"] == "2026-11-09T21:20:00Z"
+    assert care.issues["mq2208"][0]["cleared"] == "2026-11-09T21:15:00Z"  # an hour after 15:15, not the read
     # 17:00, still more than their usual: a new spell, a new issue, a new investigation (over an hour on)
     five = care.today.midnight(date(2026, 11, 9)) + 17 * HOUR
     care.today.add_hour(five, [act(at(17, 0), "MQ2208", "VD-7", "Major")], F, at(17, 5))
@@ -278,14 +284,55 @@ def test_an_open_slow_issue_saved_by_the_build_before_ends_at_its_last_major_act
 
 
 def test_a_slow_spell_is_over_when_they_are_back_within_their_usual():
+    def more(request):  # one more Major at 14:40 on each day before: their usual by 14:40 is 1 to 3
+        r = history(request)
+        if "'mq2208'" not in request.url.params["$filter"].lower():
+            return r
+        tz, rows = Today(ZONE), r.json()["value"]
+        rows += [act(tz.midnight(date(2026, 11, 9) - timedelta(days=b)) + 14 * HOUR + timedelta(minutes=40),
+                     "MQ2208", "VD-7", "Major") for b in range(1, 8)]
+        return httpx.Response(200, json={"value": rows})
+    cfg = AternityConfig(base_url="https://aternity.test/aternity.odata/v2.0", username="u", password="p")
+    aternity = AternityClient(cfg, transport=httpx.MockTransport(more))
     care = Care(today_with(3), lambda: USERS[:1])
-    care.check(client(), NOW)
+    care.check(aternity, NOW)  # 14:30: 3 against 0 to 2
+    assert care.view(NOW)["users"][0]["status"] == "issue"
     for k in (1, 2, 3):  # the 3 reads after it: the light goes off
-        care.check(client(), NOW + k * timedelta(minutes=15))
-    late = NOW + 8 * HOUR  # 22:30: their days before had one more Major at 22:00, so 3 is within 1 to 3
-    care.check(client(), late)
-    mq = care.view(late)["users"][0]
-    assert mq["status"] == "ok" and [i["over"] for i in mq["earlier"]] == ["back within their usual at 22:30"]
+        care.check(aternity, NOW + k * timedelta(minutes=15))
+    mq = care.view(NOW + 3 * timedelta(minutes=15))["users"][0]
+    assert mq["status"] == "ok" and [i["over"] for i in mq["earlier"]] == ["back within their usual at 14:40"]
+
+
+def test_a_major_action_is_judged_by_its_own_time_whenever_it_is_checked():
+    """Stage, Nov 15 2026: "1 rated Major" and no "Earlier today". The rule was judged only at each
+    check against their usual by then, which grows all day: 3 Major by 14:20 against 0 to 2 was an
+    issue when checked at 14:30, and nothing at all when first checked at 22:30 (their days before
+    had one more Major at 22:00: 1 to 3 by then), after a restart or a late read of their days."""
+    late = NOW + 8 * HOUR  # 22:30
+    on_time = Care(today_with(3), lambda: USERS[:1])
+    on_time.check(client(), NOW)
+    on_time.check(client(), late)
+    first_late = Care(today_with(3), lambda: USERS[:1])
+    first_late.check(client(), late)
+    for care in (on_time, first_late):
+        (i,) = care.issues["mq2208"]
+        assert (i["since"], i["last"], i["ended"]) == ("2026-11-09T19:20:00Z", "2026-11-09T19:20:00Z", "quiet")
+        assert i["text"].startswith("3 Major slow actions by 14:20; on the 5 days before that they used a PC: "
+                                    "0 to 2 by the same time.")
+    mq = first_late.view(late)["users"][0]
+    assert mq["status"] == "ok" and [e["since_local"] for e in mq["earlier"]] == ["14:20"]  # seen late: not lit
+    assert first_late.pending == ["mq2208"]  # and investigated
+
+
+def test_an_ok_tile_says_the_moment_its_major_actions_came_nearest_to_their_usual():
+    care = Care(today_with(2), lambda: USERS[:1])  # Major at 14:00 and 14:10; their usual by then 0 to 2
+    care.check(client(), NOW)
+    mq = care.view(NOW)["users"][0]
+    assert mq["status"] == "ok" and care.issues.get("mq2208", []) == []
+    assert {k: mq["nearest"][k] for k in ("had", "low", "high", "at_local")} == {"had": 2, "low": 0, "high": 2,
+                                                                                  "at_local": "14:10"}
+    assert care._ok_words(mq, []) == ("OK: 3 actions today, 2 Major, never above their usual (nearest: 2 by "
+                                      "19:10 UTC, usual 0-2)")  # the status summary, in UTC
 
 
 def test_every_user_has_a_tile_ok_with_what_was_checked():
@@ -962,3 +1009,15 @@ def test_their_days_before_cut_short_are_not_a_usual_and_are_read_again():
     assert all(d["cut"] for d in mq["days"][:-1]) and "cut short" in care.notes["history"]
     care.check(cut, NOW + timedelta(minutes=5))
     assert len(seen) == 2  # read again at the next check
+
+
+def test_an_open_slow_issue_is_not_back_within_a_usual_that_could_not_be_read():
+    care = Care(today_with(3), lambda: USERS[:1])
+    care.check(client(), NOW)  # 14:30: open since 14:20
+    care.history["mq2208"]["cut"] = True  # the next read of their days before was cut short
+    care.check(None, NOW + timedelta(minutes=15))
+    assert "cleared" not in care.issues["mq2208"][0]  # it said "back within their usual at 14:45"
+    care.check(None, NOW + HOUR)  # 15:30: an hour after 14:20 with no Major action
+    i = care.issues["mq2208"][0]
+    assert (i["ended"], i["cleared"]) == ("quiet", "2026-11-09T20:20:00Z")
+

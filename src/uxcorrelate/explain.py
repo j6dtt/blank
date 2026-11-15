@@ -103,10 +103,18 @@ GLOSSARY: dict[str, dict[str, str]] = {
     "care": {
         "Care list": "",  # set_refresh
         "issue": f"Either an event Aternity rated {_SEV} with that user's name today, or more {TOP_STATUS} slow "
-                 "actions by this time of day than on any of their own days before.",
+                 "actions by this time of day than on any of their own days before (each one judged by its own "
+                 "time of day, whenever it is checked).",
         "their usual by now": f"The fewest and the most {TOP_STATUS} slow actions that user had by this time "
                               f"of day on their own latest {care.USUAL_DAYS} days with a PC in use, any day of "
                               f"the week ({care.MIN_USUAL} needed).",
+        "Rated Major today": f"Each of that user's actions today that Aternity rated {TOP_STATUS}, latest first: "
+                             "the time, the application and activity, how long it took (and the PC when they "
+                             "used more than one). The tile shows the latest 3; Show more lists them all.",
+        "never more than their usual": f"At no time today did that user have more {TOP_STATUS} slow actions so "
+                                       "far than on any of their own days before by the same time of day; "
+                                       "\"nearest\" is the moment today came closest: how many they had by "
+                                       "then, against the fewest and the most by that time on those days.",
         "alert": "",  # set_refresh
         "Clears at": "",  # set_refresh
         "Earlier today": f"Today's issues of that user whose alert is off: no read of Aternity brought anything new "

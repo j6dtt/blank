@@ -840,16 +840,40 @@ const pcText = (u) => u.pcs.length ? u.pcs.map((p) => p.device + (p.kind && p.ki
   : "No PC in use today";
 // An OK tile's one line: what was measured today against their own usual
 // (Major actions not compared is said: too few days with a PC in the 8 days read)
+// Major actions and no slow issue today: never above their usual by the same time of day, and the
+// moment it came nearest ("usual by now: 0 to 4" read as a missing "Earlier today" for a Major
+// action at 10:12, stage, Nov 15 2026)
+const slowToday = (u) => u.issues.concat(u.earlier).some((i) => i.kind === "slow");
 const okText = (u) => (u.earlier.length ? "No alert now: " : "No issue: ") + (!u.actions ? "not seen using a PC today."
   : `${n(u.actions)} action${u.actions === 1 ? "" : "s"} today, ${n(u.major)} rated Major`
-    + (u.usual && u.usual.enough ? ` (usual by now: ${u.usual.low} to ${u.usual.high}).`
+    + (u.major && u.nearest && !slowToday(u) ? `, never more than their usual by the same time of day `
+        + `(nearest: ${u.nearest.had} by ${u.nearest.at_local}, their usual by then ${u.nearest.low} to ${u.nearest.high}).`
+      : u.usual && u.usual.enough ? ` (usual by now: ${u.usual.low} to ${u.usual.high}).`
       : !u.major ? "."
       : u.usual && u.usual.cut ? " (not compared with their usual: Aternity's reply for their days before was cut short; read again at the next check)."
       : u.usual ? ` (not compared with their usual: ${u.usual.days} ${u.usual.days === 1 ? u.usual.kind.replace(/s$/, "") : u.usual.kind} with a PC in the ${u.usual.read} days read, ${u.usual.need} needed).`
       : " (not compared: their days before are not read yet)."));
+// The two "Earlier today" lines a tile shows: the latest two, but always the latest slow spell when
+// there was one (it is what the tile's "N rated Major" refers to: two crashes later in the day hid
+// it under "+1 more", and the tile read as "1 rated Major" with no Earlier today, dev, Nov 15 2026)
+const earlierShown = (e) => {
+  const slow = e.filter((i) => i.kind === "slow");
+  if (!slow.length || e.slice(-2).includes(slow[slow.length - 1])) return e.slice(-2);
+  const other = e.filter((i) => i !== slow[slow.length - 1]);
+  return [slow[slow.length - 1], other[other.length - 1]].sort((a, b) => (a.since < b.since ? -1 : 1));
+};
+// One Major action of today: time, application · activity · seconds (the PC when they used more than one)
+const majorLine = (m, pcs) => `${m.at_local} ${m.app || "(no application)"}${m.activity ? ` · ${m.activity}` : ""}`
+  + `${m.secs != null ? ` · ${Number(m.secs).toFixed(1)} s` : ""}${pcs > 1 ? ` on ${m.pc}` : ""}`;
+// A tile's Major actions today, latest first: the latest 3, the rest under Show more
+const majorsHtml = (u) => !(u.majors && u.majors.length) ? ""
+  : `<div class="u">Rated Major today, latest first:</div>`
+    + u.majors.slice(0, 3).map((m) => `<div class="u">· ${esc(majorLine(m, u.pcs.length))}</div>`).join("")
+    + (u.majors.length > 3 ? `<div class="u">+${u.majors.length - 3} more (Show more)</div>` : "");
 // An issue of today whose alert is off (nothing new of it in the last reads)
 const earlierText = (i) => i.kind === "slow"
-  ? `Earlier today: more Major slow actions than usual from ${i.since_local}, the last at ${i.last_local}.`
+  ? `Earlier today: more Major slow actions than usual from ${i.since_local}, the last at ${i.last_local}`
+    + (i.then ? ` (${i.then.had} by ${i.then_local}, their usual by then ${i.then.low} to ${i.then.high}).` : ".")
     + (i.ended === "usual" ? ` Over: ${i.over}.` : "")
   : `Earlier today: ${i.text}`;
 const usualWords = (u) => !u ? "" : u.enough ? `their usual by this time: ${u.low} to ${u.high} (${u.days} ${u.kind} before)`
@@ -874,14 +898,15 @@ function renderCare(c) {
       : `<div>${sevTag(u.level)} <span class="muted" style="font-size:12px">since ${esc(u.since_local)}</span></div>`;
     const lines = u.status === "unknown" ? [u.note] : ok ? [okText(u)] : u.issues.slice(0, 2).map((i) => [i.text, i.clears]);
     const more = u.issues.length > 2 ? `<div class="u">+${u.issues.length - 2} more</div>` : "";
-    const gone = u.earlier.slice(-2).map((i) => `<div class="u">${esc(earlierText(i))}</div>`).join("")
-      + (u.earlier.length > 2 ? `<div class="u">+${u.earlier.length - 2} more earlier today</div>` : "");
+    const shownEarlier = earlierShown(u.earlier);
+    const gone = shownEarlier.map((i) => `<div class="u">${esc(earlierText(i))}</div>`).join("")
+      + (u.earlier.length > shownEarlier.length ? `<div class="u">+${u.earlier.length - shownEarlier.length} more earlier today</div>` : "");
     const why = ok ? (u.why && u.why.title ? `Why (earlier today): ${u.why.title}` : "") : whyText(u);
     return `<div class="tile click" role="button" tabindex="0" data-user="${esc(u.username)}">${head}`
       + `<div class="name">${esc(u.title)}</div>${u.label ? `<div class="u">${esc(u.username)}</div>` : ""}`
       + `<div class="u">${esc(pcText(u))}</div>` + lines.map((x) => Array.isArray(x)
         ? `<div class="u"><b>${esc(x[0])}</b>${x[1] ? ` <span class="muted">${esc(x[1])}</span>` : ""}</div>`
-        : `<div class="u"><b>${esc(x)}</b></div>`).join("") + more + gone
+        : `<div class="u"><b>${esc(x)}</b></div>`).join("") + more + (u.status === "unknown" ? "" : majorsHtml(u)) + gone
       + (why ? `<div class="u">${esc(why)}</div>` : "")
       + (u.status === "unknown" ? "" : `<div class="u">Major actions each day, by ${esc(u.by_local)}, last ${u.days.length} days (today last):</div>`
         + majorBars(u.days, u.by_local) + (u.before ? `<div class="u muted">Last issue before today: ${esc(u.before)}</div>` : ""))
@@ -906,6 +931,8 @@ async function openCare(username) {
       .concat(d.earlier.map((i) => `<li>${sevTag(i.level)} ${esc(i.text)} <span class="muted">No alert now`
         + `${i.over ? `; over: ${esc(i.over)}` : ""}.</span></li>`));
     html += `<h3>Today</h3>` + (today.length ? `<ul>${today.join("")}</ul>` : `<p class="muted">No issue today.</p>`);
+    if (d.majors && d.majors.length) html += `<h3>Rated Major today, latest first</h3><ul>`
+      + d.majors.map((m) => `<li>${esc(majorLine(m, d.pcs.length))}</li>`).join("") + `</ul>`;
     html += `<h3>Investigation</h3>`;
     if (rep && rep.result) html += `<p><b>${esc(rep.title)}</b> ${esc(rep.reason || "")}<br><span class="muted">Ran by itself ${esc(rep.at_local)}, over ${esc(rep.span_local)}.</span></p>`
       + `<button type="button" id="cOpen">Open the investigation ▸</button> `;

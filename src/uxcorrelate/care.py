@@ -16,7 +16,12 @@ of the Today reader, from rows already read:
   activity, by username, once a day). Not working days with working days,
   as the Today tab compares the whole fleet: people on the Care list often
   work weekends (the user, Nov 15 2026), and on a Saturday the 8 days read
-  held 2 weekend days, so slow actions could never light a tile then;
+  held 2 weekend days, so slow actions could never light a tile then.
+  Each Major action is judged against their usual by its own time of day,
+  the whole day at every check (`_replay`): judged only at the check, a
+  Major action no check judged in time (a restart, the days before read
+  late, rows sent late) met a usual grown since and was lost (stage, Nov 15
+  2026). An OK tile with Major actions says the moment it came nearest;
 - a slow-actions issue is a spell: it is over after QUIET with no Major
   action (the count is for the whole day, so it alone would hold all day:
   seen on stage), or when they are back within their usual by that time of
@@ -62,6 +67,7 @@ import os
 import re
 import threading
 import unicodedata
+from bisect import bisect_right
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -408,7 +414,9 @@ class Care:
             found = self.issues_now(u, now)
             first = user not in self.checked
             stale = self._restarted(user, now) if first else []
-            new, again, cleared = self._merge(user, found, t, now, first=first)
+            usual = self.usual(user, now)  # slow actions judged only against a usual known in full
+            new, again, cleared = self._merge(user, found, t, now, first=first,
+                                              judged=bool(usual and usual["enough"]))
             self.checked.add(user)
             off = self._count_read(user, now, new + again) if read else []
             for issue in new:
@@ -597,6 +605,85 @@ class Care:
             return {"enough": False, "days": len(past), "kind": "days", "need": MIN_USUAL, "read": HISTORY_DAYS}
         return {"enough": True, "days": len(past), "low": min(past), "high": max(past), "kind": "days"}
 
+    def _replay(self, user: str, major: list, now: datetime) -> tuple[list[dict], dict | None]:
+        """Today's slow spells, each Major action judged against their usual by its own time of day,
+        the whole day at every check: (the spells, the moment today came nearest to their usual).
+        It was judged only at each check, against their usual by then, which grows all day: a Major
+        action no check judged in time (the app restarted, the days before read later, rows Aternity
+        sent late, a user just added) was judged hours later and lost (stage, Nov 15 2026: "1 rated
+        Major" with no "Earlier today"). A spell starts at a Major action above their usual by its
+        time (more than on any of those days by then) and takes the Major actions less than QUIET
+        apart; it is over after QUIET with none ("quiet") or once their usual by that time of day
+        reaches today's count ("usual"); a later Major action still above starts a new spell."""
+        u_ = self.usual(user, now)
+        if not (u_ and u_["enough"]) or not major:
+            return [], None
+        today, t, h = self.today, self.today.day(now), self.history[user]
+        same = sorted((d for d in h["days"] if d < t), reverse=True)[:USUAL_DAYS]
+        times = {d: sorted(h["days"][d]) for d in same}
+        steps = sorted({s for d in same for s in times[d]})  # times of day where their usual can rise
+
+        def by(secs: float) -> tuple[int, int]:
+            got = [bisect_right(times[d], secs) for d in same]
+            return min(got), max(got)
+
+        midnight = datetime(t.year, t.month, t.day, tzinfo=today.zone)
+        at_clock = lambda s: (midnight + timedelta(seconds=s)).astimezone(timezone.utc)  # noqa: E731
+
+        def end(sp: dict, upto: datetime) -> None:
+            """Over before `upto`: QUIET after its last, or their usual reached its count, the earlier."""
+            a, b = today.clock_secs(sp["last_t"]), today.clock_secs(upto)
+            caught = next((s for s in steps if a < s <= b and by(s)[1] >= sp["count"]), None)
+            quiet = sp["last_t"] + QUIET
+            if caught is not None and at_clock(caught) < quiet:
+                sp["ended"], sp["ended_at"] = "usual", at_clock(caught)
+            elif quiet <= upto:
+                sp["ended"], sp["ended_at"] = "quiet", quiet
+
+        spells, cur, nearest, chain = [], None, None, None
+        for k, r in enumerate(major):
+            when, n = r[0], k + 1
+            chain = chain if chain is not None and when - major[k - 1][0] < QUIET else when
+            if cur is not None and cur["ended"] is None:
+                end(cur, when)
+            lo, hi = by(today.clock_secs(when))
+            if nearest is None or n - hi > nearest["had"] - nearest["high"]:
+                nearest = {"at": when, "had": n, "low": lo, "high": hi}
+            if cur is not None and cur["ended"] is None:
+                cur.update(last_t=when, count=n)
+            elif n > hi:
+                # where its run of Major actions starts: the chain's start, or after the spell before in it
+                prev = spells[-1]["last_t"] if spells and spells[-1]["last_t"] >= chain else None
+                start_t = chain if prev is None else next(x[0] for x in major if x[0] > prev)
+                cur = {"since_t": when, "from_t": start_t, "last_t": when, "count": n, "ended": None,
+                       "peak": (when, n, lo, hi)}
+                spells.append(cur)
+            if cur is not None and cur["ended"] is None and n - hi > cur["peak"][1] - cur["peak"][3]:
+                cur["peak"] = (when, n, lo, hi)
+        if cur is not None and cur["ended"] is None:
+            end(cur, now)
+        out = []
+        for sp in spells:
+            at, n, lo, hi = sp["peak"]
+            apps = Counter(r[3] for r in major[:sp["count"]]).most_common(2)  # as its count: the day's so far
+            out.append({"key": f"slow {t}", "kind": "slow", "level": TOP_STATUS, "since": _iso(sp["since_t"]),
+                        "from": _iso(sp["from_t"]), "last": _iso(sp["last_t"]), "day": t.isoformat(),
+                        "count": sp["count"], "ended": sp["ended"],
+                        "ended_at": _iso(sp["ended_at"]) if sp["ended"] else None, "apps": [a for a, _ in apps],
+                        "then": {"at": _iso(at), "had": n, "low": lo, "high": hi},
+                        "text": f"{n} {TOP_STATUS} slow actions by {today.local(at):%H:%M}"
+                                + (f", {sp['count']} by the last at {today.local(sp['last_t']):%H:%M}"
+                                   if sp["count"] > n else "")
+                                + f"; on the {u_['days']} {u_['kind']} before that they used a PC: {lo} to {hi} "
+                                  "by the same time. Most in " + ", ".join(f"{a} ({c})" for a, c in apps) + "."})
+        return out, nearest
+
+    def _major_rows(self, user: str, t: date) -> list:
+        today = self.today
+        with today.lock:
+            return sorted((r for h in today.hours.values() if h.day == t for r in h.top_rows
+                           if (r[2] or "").lower() == user), key=lambda r: r[0])
+
     def issues_now(self, u: CareUser, now: datetime) -> list[dict]:
         """Today's issues of one user, from what the Today reader holds."""
         user, today = u.username.lower(), self.today
@@ -607,24 +694,7 @@ class Care:
             events = sorted((x for x in today.health if today.day(x[0]) == t and (x[4] or "").lower() == user),
                             key=lambda x: x[0])
             sev = {k: c.most_common(1)[0][0] for k, c in today.health_sev.items() if c}
-        found = []
-        u_ = self.usual(user, now)
-        if u_ and u_["enough"] and len(major) > u_["high"]:
-            k = len(major) - 1  # the latest spell: Major actions less than QUIET apart
-            while k > 0 and major[k][0] - major[k - 1][0] < QUIET:
-                k -= 1
-            last = major[-1][0]
-            # from the action that made it more than on any day before, within this spell
-            since = max(major[k][0], major[u_["high"]][0])
-            apps = Counter(r[3] for r in major).most_common(2)
-            found.append({"key": f"slow {t}", "kind": "slow", "level": TOP_STATUS, "since": _iso(since),
-                          "last": _iso(last), "quiet": now - last >= QUIET, "day": t.isoformat(),
-                          "count": len(major), "apps": [a for a, _ in apps],
-                          "text": f"{len(major)} {TOP_STATUS} slow actions by {today.local(now):%H:%M}, the last "
-                                  f"at {today.local(last):%H:%M}; on the "
-                                  f"{u_['days']} {u_['kind']} before that they used a PC: {u_['low']} to "
-                                  f"{u_['high']} by this time. Most in "
-                                  + ", ".join(f"{a} ({n})" for a, n in apps) + "."})
+        found = self._replay(user, major, now)[0]
         kinds: dict = {}
         for x in events:
             if sev.get(x[2], x[3]) in TILE_SEVERITIES:
@@ -657,7 +727,7 @@ class Care:
         return found
 
     def _merge(self, user: str, found: list[dict], t: date, now: datetime,
-               first: bool = False) -> tuple[list, list, list]:
+               first: bool = False, judged: bool = True) -> tuple[list, list, list]:
         """Today's issues into the user's list: (the new ones, those a read brought more of, the
         spells that ended). first: the user's first check since the start or since they were
         added; then only an occurrence within the alert's time lights the alert."""
@@ -688,33 +758,49 @@ class Care:
         with self.lock:
             mine = [i for i in self.issues.get(user, []) if i["day"] > cut]
             new, again, cleared = [], [], []
+            # slow spells, judged over the whole day (_replay); each matched to the saved issues of its
+            # run of Major actions (the build before judged at each check, so its since is later)
             slow = [i for i in mine if i["kind"] == "slow" and i["day"] == t.isoformat()]
-            last = slow[-1] if slow else None
-            over = next((dict(f) for f in found if f["kind"] == "slow"), None)  # above their usual today
-            now_slow = over if over and not over.pop("quiet") else None  # ... with a Major action within QUIET
-            end = last.get("last", last["since"]) if last is not None else None
-            if last is not None and not last.get("cleared") and (now_slow is None or now_slow["since"] > end):
-                if over and now_slow is None:
-                    last["last"] = over["last"]  # every Major action since it opened was in it
-                last.update(cleared=_iso(now), ended="quiet" if over else "usual")
-                cleared.append(last)
-            if now_slow and last is not None and now_slow["since"] <= last.get("last", last["since"]):
-                for k in ("cleared", "ended"):  # the same spell: a late row joined it again
-                    last.pop(k, None)
-                last.update(text=now_slow["text"], last=now_slow["last"], apps=now_slow["apps"])
-                if seen(last, now_slow):
-                    again.append(last)
-            elif now_slow:  # the first today, or a new spell
-                now_slow["key"] = f"slow {t} {len(slow) + 1}"
-                mine.append(start(now_slow))
-                new.append(now_slow)
-            elif over and (last is None or over["since"] > end):
-                # a spell first seen when already over (the user just added, their usual known only now,
-                # or rows Aternity sent late): kept as "Earlier today", as an event is; it was dropped,
-                # and the tile said "No issue: 5 rated Major (usual by now: 0 to 3)" (dev, Nov 15 2026)
-                over.update(key=f"slow {t} {len(slow) + 1}", cleared=_iso(now), ended="quiet")
-                mine.append(start(over))
-                new.append(over)
+            matched: set[int] = set()
+            for f in (dict(f) for f in found if f["kind"] == "slow"):
+                ended, ended_at, start_of = f.pop("ended"), f.pop("ended_at"), f.pop("from")
+                mates = [i for i in slow if i["since"] <= f["last"] and i.get("last", i["since"]) >= start_of]
+                if not mates:  # a new spell; one first seen when already over (late rows, a restart, the
+                    # user just added, their usual known only now) is "Earlier today", as an event is
+                    f["key"] = f"slow {t} {len(slow) + 1}"
+                    if ended:
+                        f.update(cleared=ended_at, ended=ended)
+                    mine.append(start(f))
+                    slow.append(f)
+                    matched.add(id(f))
+                    new.append(f)
+                    continue
+                matched.update(id(i) for i in mates)
+                i = mates[0]
+                i.update(text=f["text"], since=min(i["since"], f["since"]), apps=f["apps"], then=f["then"],
+                         last=max(i.get("last", i["since"]), f["last"]))
+                if seen(i, f):
+                    again.append(i)
+                if ended:
+                    for m in mates:
+                        if not m.get("cleared"):
+                            m.update(cleared=ended_at, ended=ended)
+                            cleared.append(m)
+                elif i.get("cleared"):
+                    for k in ("cleared", "ended"):  # the same spell: a late row joined it again
+                        i.pop(k, None)
+            for i in slow:  # saved, and above their usual at no time of its own now
+                if id(i) in matched or i.get("cleared"):
+                    continue
+                end = _when(i.get("last") or i["since"]) + QUIET
+                if judged:
+                    i.update(cleared=_iso(now), ended="usual")
+                elif end <= now:  # their usual not known now (days before cut short, not read): it was
+                    # "back within their usual" all the same; over only when an hour passed with none
+                    i.update(cleared=_iso(end), ended="quiet")
+                else:
+                    continue
+                cleared.append(i)
             for f in found:
                 if f["kind"] != "event":
                     continue
@@ -837,7 +923,8 @@ class Care:
         mine = self._one_disk([dict(i, clears=self._clears(i)) for i in today_all if self.alert(i, now)])
         local = lambda k, i: today.local(_when(i[k])).strftime("%H:%M")  # noqa: E731
         earlier = sorted((dict(i, since_local=local("since", i), last_local=local("last", i) if i.get("last") else
-                               local("since", i), over=self._over(i) if i.get("cleared") else None)
+                               local("since", i), over=self._over(i) if i.get("cleared") else None,
+                               then_local=local("at", i["then"]) if i.get("then") else None)
                           for i in today_all if not self.alert(i, now)), key=lambda i: i["since"])
         rank = {s: i for i, s in enumerate(SEVERITY_ORDER)}
         h = self.history.get(user)
@@ -847,6 +934,17 @@ class Care:
             status, note = "unknown", f"Not seen in Aternity's activity in {HISTORY_DAYS} days: check the name " \
                                       "(click the tile to remove it, then add it again as Aternity writes it)."
         days = self._major_days(user, now, major, actions, issues)
+        # the moment today came nearest to their usual (each Major action against their usual by its
+        # time): an OK tile's "1 rated Major" says why it is no issue ("usual by now: 0 to 4" read as
+        # a missing "Earlier today" for a Major action at 10:12, stage, Nov 15 2026)
+        rows = self._major_rows(user, t)
+        near = self._replay(user, rows, now)[1]
+        # each Major action of today, latest first: the tile's "N rated Major" with nothing to show
+        # which they were read as a bug (stage, Nov 15 2026: "1 rated Major" and no line about it)
+        majors = [{"at": _iso(r[0]), "at_local": today.local(r[0]).strftime("%H:%M"), "pc": r[1], "app": r[3],
+                   "activity": r[4], "secs": r[5]} for r in reversed(rows)]
+        nearest = None if near is None else dict(near, at=_iso(near["at"]),
+                                                 at_local=today.local(near["at"]).strftime("%H:%M"))
         # the latest issue before today: what the small chart's bars were (an OK tile with bars and
         # "0 rated Major" read as a contradiction: stage, Nov 14 2026)
         past = [i for i in issues if i["day"] < t.isoformat()]
@@ -867,7 +965,7 @@ class Care:
                 "since_local": today.local(_when(min(i["since"] for i in mine))).strftime("%H:%M") if mine else None,
                 "start": _iso(_inv_start(today_all)) if today_all else None,  # "Investigate again now"
                 "pcs": [{"device": d, "kind": kinds.get(d)} for d in pcs], "actions": actions, "major": major,
-                "usual": self.usual(user, now),
+                "usual": self.usual(user, now), "nearest": nearest, "majors": majors,
                 # the most serious first (the tile shows the first two): a failing disk, then Critical,
                 # then Major, events before slow actions, then by time
                 "issues": sorted(mine, key=lambda i: (not i.get("disk"), rank.get(i["level"], 9), i["kind"] == "slow",
@@ -991,9 +1089,12 @@ class Care:
     def _said(self, i: dict, u: dict) -> str:
         """The most serious alert in one line: what, where, when (UTC)."""
         if i["kind"] == "slow":
+            then = i.get("then")  # by the moment it was most above their usual (_replay)
             usual = u.get("usual") or {}
-            return (f"{u['major']} {TOP_STATUS} slow actions today"
-                    + (f" (usual by now {usual['low']}-{usual['high']})" if usual.get("enough") else "")
+            return ((f"{then['had']} {TOP_STATUS} slow actions by {_utc(then['at'])} UTC (usual by then "
+                     f"{then['low']}-{then['high']})" if then else
+                     f"{u['major']} {TOP_STATUS} slow actions today"
+                     + (f" (usual by now {usual['low']}-{usual['high']})" if usual.get("enough") else ""))
                     + f", the last at {_utc(i.get('last') or i['since'])} UTC"
                     + (f", most in {i['apps'][0]}" if i.get("apps") else ""))
         apps, pcs, n = i.get("apps") or [], i.get("pcs") or [], i.get("seen") or 1
@@ -1022,9 +1123,11 @@ class Care:
             return f"{since} Earlier today: {len(e)} issues, the last {what} at {_utc(i.get('last') or i['since'])} UTC"
         if not u["actions"]:
             return "OK: no activity today yet"
-        usual = u.get("usual") or {}
+        usual, near = u.get("usual") or {}, u.get("nearest")
         return (f"OK: {u['actions']:,} action{'' if u['actions'] == 1 else 's'} today, {u['major']:,} {TOP_STATUS}"
-                + (f" (usual by now {usual['low']}-{usual['high']})" if usual.get("enough") else
+                + (f", never above their usual (nearest: {near['had']} by {_utc(near['at'])} UTC, usual "
+                   f"{near['low']}-{near['high']})" if u["major"] and near and near["had"] <= near["high"] else
+                   f" (usual by now {usual['low']}-{usual['high']})" if usual.get("enough") else
                    " (not compared: their days before were cut short)" if u["major"] and usual.get("cut") else
                    " (not compared: no usual yet)" if u["major"] and usual else
                    " (not compared: their days before not read yet)" if u["major"] else ""))
