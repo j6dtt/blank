@@ -119,10 +119,13 @@ GLOSSARY: dict[str, dict[str, str]] = {
                      "misspelled.",
         "Why": "The headline of the investigation that ran by itself for that user's issues of today (at most one "
                "an hour per user; it runs again for an issue it did not cover, such as one Aternity sent late).",
-        "Issues per day": f"Small bars: that user's issues on each of the last {care.KEEP_DAYS} days, today last. "
-                          "An issue is an event or more slow actions than usual, so a day with bars can have 0 "
-                          f"rated {TOP_STATUS}.",
-        "Last before today": "The latest issue of that user before today, with its day: what the bars were.",
+        "Major actions each day": (
+            f"Small bars: that user's actions Aternity rated {TOP_STATUS} by this time of day on each of the last "
+            f"{care.KEEP_DAYS} days, today last, from Aternity's own records. Today's bar is the tile's \"rated "
+            f"{TOP_STATUS}\"; the dark bars before it are the days their usual comes from (the lowest to the "
+            f"highest of them is the usual range), faded bars are older days. A red dot: a day the Care list "
+            f"raised an issue (an event, or more {TOP_STATUS} actions than usual). Dashed: not read."),
+        "Last issue before today": "The latest issue the Care list raised for that user before today, with its day.",
         "not compared with their usual": (
             f"Today's {TOP_STATUS} actions could not be compared: their usual needs {care.MIN_USUAL} days with "
             f"a PC in use among the {care.HISTORY_DAYS} days of activity read (Aternity keeps about 8), as "
@@ -420,16 +423,16 @@ SAMPLES = (
     ], "Which application should I look at first, and why?", ("sample erp", "sample mail")),
     ("care", "Tile: Front desk (ab1234)", [
         "Major since 09:40", "Front desk", "ab1234", "VD-31 (virtual)",
-        "More Major slow actions than usual: 14 by 10:15 (their usual by now: 0 to 3, 4 working days before)",
+        "More Major slow actions than usual: 14 by 10:15 (their usual by now: 0 to 3, 4 days before)",
         "Why: Sample Mail Open took 21.4 s on VD-31 (Major). Likely: Sample Mail hung on VD-31 at 2 of them",
-        "Issues per day, last 8 days: 0 0 1 0 0 0 0 1",
+        "Major actions each day, by 10:15, last 8 days (today last): 0, 1, 0, 3, 2, 0, 1, 14; an issue on the last",
     ], "Why does this user have an issue?", ("14", "0 to 3", "usual")),
     ("care", "Tile: Shift lead (cd5678)", [
         "✓ OK", "Shift lead", "cd5678", "PC-204 (physical)",
         "No alert now: 212 actions today, 2 rated Major (usual by now: 0 to 4).",
         "Earlier today: more Major slow actions than usual from 08:10, the last at 09:05. Over: back within their "
         "usual at 09:35.",
-        "Issues per day, last 8 days: 0 0 0 0 0 0 0 1",
+        "Major actions each day, by 10:15, last 8 days (today last): 1, 0, 2, 4, 3, 1, 0, 2; an issue on the last",
     ], "What does Earlier today mean on this tile?", ("earlier", "alert", "08:10", "09:05", "09:35")),
     ("investigate", "Headline and What to do", [
         "Sample Mail Launch took 89.2 s on PC-77 (Major). Likely: PC-77's disk is failing (Aternity recorded "

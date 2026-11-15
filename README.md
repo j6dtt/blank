@@ -226,8 +226,12 @@ disk, then Critical, then Major), then names not seen in 8 days, then green
 "✓ OK" tiles (actions today, how many Major, their usual by now, or "not
 compared" when there are too few days with a PC in the 8 days Aternity
 keeps to know it (3 needed);
-what was earlier today, and the latest issue before today under the small
-bars). Inside each of those, the tiles keep the list's own
+what was earlier today). Under each, small bars: their Major actions by this
+time of day on each of the last 8 days, today last, from Aternity's own
+records, so today's bar is the tile's "rated Major" and the dark bars before
+it are the days their usual comes from (its range is their lowest to
+highest; faded: older days; dashed: not read); a red dot marks a day with an
+issue, and "Last issue before today" says the latest one. Inside each of those, the tiles keep the list's own
 order: "⠿ Arrange tiles" shows a small tile per user in that order; drag one
 by ⠿ (a mouse can take it anywhere, a finger only by ⠿ so the page still
 scrolls) or move it with ↑ ↓ or the arrow keys, then "Save order" (PIN);

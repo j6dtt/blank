@@ -408,8 +408,16 @@ demo mode: nothing in `src/` knows about it.
   "Stays on today: a failing disk is the PC's state"; a PC's lit disk
   events are one line, `_one_disk`), the most serious first (disk,
   Critical, Major, events before slow), then `earlier` ("Earlier
-  today: ..."), `before` (the latest issue before today: what the small
-  bars were). An OK tile with Major actions their usual could not judge
+  today: ..."), `before` (the latest issue before today, "Last issue before
+  today"). The tile's bars (`_major_days`, the user's choice of Nov 15
+  2026): their Major actions by this time of day on each of the last
+  `KEEP_DAYS` days, today last, from the days read for the usual
+  (`history`), so today's bar is "N rated Major" and the days of the
+  usual (dark) give its range; a red dot is a day with a saved issue,
+  dashed is not read. They were the issues this app saved: none for a
+  day it did not check or a Major action within the usual ("3 rated
+  Major" with nothing behind it, stage). A history read cut short is
+  no usual (`cut`: not judged, read again at the next check). An OK tile with Major actions their usual could not judge
   says "not compared" and why (`usual`'s `need`, `read`: too few days
   with a PC in the 8 days read; it was every Saturday while weekends were
   compared with weekends only, stage, Nov 14).

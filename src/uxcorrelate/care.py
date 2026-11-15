@@ -403,7 +403,7 @@ class Care:
         for u in self.users:
             user = u.username.lower()
             h = self.history.get(user)
-            if client is not None and (h is None or h["for"] != t):
+            if client is not None and (h is None or h["for"] != t or h.get("cut")):
                 self._read_history(client, u, now)
             found = self.issues_now(u, now)
             first = user not in self.checked
@@ -549,6 +549,7 @@ class Care:
         start, end = self.today.midnight(t - timedelta(days=HISTORY_DAYS)), self.today.midnight(t)
         f, entity = client.cfg.fields["activities"], client.cfg.entities["activities"]
         ts = f["timestamp"]
+        mark = len(client.warnings)
         try:
             rows = client.query(entity, f"{ts} ge {odata_time(start)} and {ts} le {odata_time(end)} and "
                                         f"{f['username']} eq {odata_quote(name)}",
@@ -558,6 +559,10 @@ class Care:
                                  f"({short_error(exc)}); trying again at the next check.")
             return
         self.notes.pop("history", None)
+        cut = len(client.warnings) > mark  # cut short: its days' counts are low (the usual too low)
+        if cut:
+            self.note("history", f"Aternity's reply for {u.username}'s days before was cut short: their usual "
+                                 "is not judged until it is read whole (tried again at the next check).")
         days: dict[date, list] = {}
         for r in rows:
             when = parse_time(r.get(ts))
@@ -569,7 +574,7 @@ class Care:
                 major.append(self.today.clock_secs(when))
             if r.get(f["username"]):
                 self.names[u.username.lower()] = r[f["username"]]
-        self.history[u.username.lower()] = {"for": t, "days": days, "rows": len(rows)}
+        self.history[u.username.lower()] = {"for": t, "days": days, "rows": len(rows), "cut": cut}
         log.info("Care list: read %d actions of %s over the %d days before (%d days with a PC in use)",
                  len(rows), self._who(u), HISTORY_DAYS, len(days))
 
@@ -583,6 +588,9 @@ class Care:
         secs = self.today.clock_secs(now)
         same = sorted((d for d in h["days"] if d < t), reverse=True)[:USUAL_DAYS]
         past = [sum(1 for s in h["days"][d] if s <= secs) for d in same]
+        if h.get("cut"):  # counts of a reply cut short: not a usual (it would light too often)
+            return {"enough": False, "cut": True, "days": len(past), "kind": "days", "need": MIN_USUAL,
+                    "read": HISTORY_DAYS}
         # "need" and "read" for the words when there are too few (a user new to Aternity or seldom
         # on a PC): the tile said "No issue: 3 rated Major" with no word that they were not compared
         if len(past) < MIN_USUAL:
@@ -838,10 +846,7 @@ class Care:
         if not today_all and h is not None and not h["rows"] and not actions:
             status, note = "unknown", f"Not seen in Aternity's activity in {HISTORY_DAYS} days: check the name " \
                                       "(click the tile to remove it, then add it again as Aternity writes it)."
-        days = []
-        for n in range(KEEP_DAYS - 1, -1, -1):
-            d = (t - timedelta(days=n)).isoformat()
-            days.append({"date": d, "issues": sum(1 for i in issues if i["day"] == d)})
+        days = self._major_days(user, now, major, actions, issues)
         # the latest issue before today: what the small chart's bars were (an OK tile with bars and
         # "0 rated Major" read as a contradiction: stage, Nov 14 2026)
         past = [i for i in issues if i["day"] < t.isoformat()]
@@ -868,8 +873,36 @@ class Care:
                 "issues": sorted(mine, key=lambda i: (not i.get("disk"), rank.get(i["level"], 9), i["kind"] == "slow",
                                                       i["since"])),
                 "earlier": earlier, "before": before,
-                "days": days, "why": why, "investigating": "now" if self.running == user else
+                "days": days, "by_local": today.local(now).strftime("%H:%M"),
+                "why": why, "investigating": "now" if self.running == user else
                 "waiting" if waiting else None}
+
+    def _major_days(self, user: str, now: datetime, major: int, actions: int, issues: list[dict]) -> list[dict]:
+        """The tile's bars: their Major actions by this time of day on each of the last KEEP_DAYS days,
+        today last, from Aternity's own records (the days read for their usual, so the bars before
+        today are the usual's numbers and today's is "N rated Major"). Each day says whether the
+        Care list raised an issue then and whether it is one of the days of the usual. The bars were
+        the issues this app saved: none for a day it did not check, and none for Major actions within
+        the usual, so "3 rated Major" had nothing behind it (stage, Nov 15 2026).
+        major None: not read (the read failed, or not yet today); pc False: no action measured."""
+        t = self.today.day(now)
+        secs = self.today.clock_secs(now)
+        h = self.history.get(user)
+        usual = sorted((d for d in (h or {}).get("days", {}) if d < t), reverse=True)[:USUAL_DAYS]
+        raised = {i["day"] for i in issues}
+        out = []
+        for n in range(KEEP_DAYS - 1, -1, -1):
+            d = t - timedelta(days=n)
+            if d == t:
+                got, pc = major, actions > 0
+            elif h is None or d >= h["for"]:  # not read yet, or the read failed today
+                got, pc = None, None
+            else:
+                times = h["days"].get(d)
+                got, pc = (sum(1 for s in times if s <= secs), True) if times is not None else (0, False)
+            out.append({"date": d.isoformat(), "major": got, "pc": pc, "issue": d.isoformat() in raised,
+                        "usual": d in usual, "today": d == t, "cut": bool(h and h.get("cut")) and d != t})
+        return out
 
     def _one_disk(self, lit: list[dict]) -> list[dict]:
         """A failing disk is the PC's state: its lit events are one line, not one per kind and spell
@@ -992,5 +1025,6 @@ class Care:
         usual = u.get("usual") or {}
         return (f"OK: {u['actions']:,} action{'' if u['actions'] == 1 else 's'} today, {u['major']:,} {TOP_STATUS}"
                 + (f" (usual by now {usual['low']}-{usual['high']})" if usual.get("enough") else
+                   " (not compared: their days before were cut short)" if u["major"] and usual.get("cut") else
                    " (not compared: no usual yet)" if u["major"] and usual else
                    " (not compared: their days before not read yet)" if u["major"] else ""))

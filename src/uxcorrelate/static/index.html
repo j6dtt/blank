@@ -55,6 +55,9 @@
   .spark .hit { fill: transparent; }
   .spark .hit:hover + rect { opacity: 1; }
   .sparkWrap { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .spark .old { opacity: .25; }
+  .spark .unread { fill: none; stroke: var(--muted); stroke-dasharray: 2 1; }
+  .spark .issue { fill: var(--bad); }
   .types div { border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; }
   .muted { color: var(--muted); }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -347,7 +350,9 @@
         Major slow actions by this time of day than on any of their own days before. A tile is lit while reads of Aternity
         bring something new of it, until <span id="cAlertFor">3 reads</span> after the last one that did (a failing disk
         all day); then it is "Earlier today". An investigation runs by itself for issues the latest one did not cover (one
-        an hour per user). Click a tile for more.</p>
+        an hour per user). A tile's bars: their Major actions by this time of day on each of the last 8 days, today
+        last, from Aternity (the dark ones are the days of their usual; faded: older days; dashed: not read); a red dot
+        marks a day with an issue. Point at a bar for its day and count. Click a tile for more.</p>
       <div class="exRow noExplain"><button type="button" class="link explain" data-tab="care">Explain ▸</button></div>
     </section>
     <section class="panel" id="cDetail" hidden style="margin-top:16px">
@@ -839,6 +844,7 @@ const okText = (u) => (u.earlier.length ? "No alert now: " : "No issue: ") + (!u
   : `${n(u.actions)} action${u.actions === 1 ? "" : "s"} today, ${n(u.major)} rated Major`
     + (u.usual && u.usual.enough ? ` (usual by now: ${u.usual.low} to ${u.usual.high}).`
       : !u.major ? "."
+      : u.usual && u.usual.cut ? " (not compared with their usual: Aternity's reply for their days before was cut short; read again at the next check)."
       : u.usual ? ` (not compared with their usual: ${u.usual.days} ${u.usual.days === 1 ? u.usual.kind.replace(/s$/, "") : u.usual.kind} with a PC in the ${u.usual.read} days read, ${u.usual.need} needed).`
       : " (not compared: their days before are not read yet)."));
 // An issue of today whose alert is off (nothing new of it in the last reads)
@@ -847,6 +853,7 @@ const earlierText = (i) => i.kind === "slow"
     + (i.ended === "usual" ? ` Over: ${i.over}.` : "")
   : `Earlier today: ${i.text}`;
 const usualWords = (u) => !u ? "" : u.enough ? `their usual by this time: ${u.low} to ${u.high} (${u.days} ${u.kind} before)`
+  : u.cut ? "their usual: not judged, Aternity's reply for their days before was cut short"
   : `their usual: ${u.days} of the ${u.need || 3} ${u.kind} needed so far`;
 function whyText(u) {
   if (u.investigating === "now") return "Investigating now…";
@@ -870,16 +877,14 @@ function renderCare(c) {
     const gone = u.earlier.slice(-2).map((i) => `<div class="u">${esc(earlierText(i))}</div>`).join("")
       + (u.earlier.length > 2 ? `<div class="u">+${u.earlier.length - 2} more earlier today</div>` : "");
     const why = ok ? (u.why && u.why.title ? `Why (earlier today): ${u.why.title}` : "") : whyText(u);
-    const days = u.days.map((d, k) => ({ day: d.date, pcs: d.issues, window: k === u.days.length - 1 }));
     return `<div class="tile click" role="button" tabindex="0" data-user="${esc(u.username)}">${head}`
       + `<div class="name">${esc(u.title)}</div>${u.label ? `<div class="u">${esc(u.username)}</div>` : ""}`
       + `<div class="u">${esc(pcText(u))}</div>` + lines.map((x) => Array.isArray(x)
         ? `<div class="u"><b>${esc(x[0])}</b>${x[1] ? ` <span class="muted">${esc(x[1])}</span>` : ""}</div>`
         : `<div class="u"><b>${esc(x)}</b></div>`).join("") + more + gone
       + (why ? `<div class="u">${esc(why)}</div>` : "")
-      + (u.status === "unknown" ? "" : !days.some((d) => d.pcs) ? `<div class="u">No issue in the last ${days.length} days.</div>`
-        : `<div class="u">Issues per day, last ${days.length} days (today last):</div>` + spark(days, "issues", "Issues per day")
-          + (u.before ? `<div class="u muted">Last before today: ${esc(u.before)}</div>` : ""))
+      + (u.status === "unknown" ? "" : `<div class="u">Major actions each day, by ${esc(u.by_local)}, last ${u.days.length} days (today last):</div>`
+        + majorBars(u.days, u.by_local) + (u.before ? `<div class="u muted">Last issue before today: ${esc(u.before)}</div>` : ""))
       + `<div class="more">Show more ▸</div></div>`;
   }).join("");
   $("cNotes").innerHTML = (c.notes || []).map((x) => `<li>${esc(x)}</li>`).join("");
@@ -1625,6 +1630,32 @@ function render(d) {
     : `<tr><td class="muted">No NetIM object on the path of ${esc(d.endpoints.map((e) => e.device).join(" and ") || "the PC")}: the network was not checked.</td></tr>`;
 }
 // Other PCs per day as small bars: one row's own scale, its highest day labelled.
+// A Care tile's bars: their Major actions by this time of day on each of the last 8 days, today
+// last, from Aternity (the days before are the numbers of their usual; today's is "N rated Major").
+// Red dot: a day the Care list raised an issue; faded: a day older than those of their usual;
+// dashed: not read (said once, in the tab's note). They were the issues this app saved, so "3 rated
+// Major" had nothing behind it.
+function majorBars(days, by) {
+  const step = 9, h = 28, top = Math.max(...days.map((d) => d.major || 0), 1);
+  const day = (d) => new Date(d.date + "T00:00:00Z").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+  const words = (d) => d.major === null ? "not read"
+    : !d.pc ? (d.today ? "no action measured yet today" : "no action measured (no PC in use)")
+    : `${n(d.major)}${d.cut ? " or more" : ""} rated Major by ${by}`;
+  const bars = days.map((d, i) => {
+    const v = d.major || 0, y = v ? Math.max(2, Math.round(v / top * (h - 6))) : 1, x = i * step;
+    const title = `${day(d)}: ${words(d)}${d.today ? " (today)" : d.usual ? ", one of the days of their usual" : ""}`
+      + `${d.issue ? "; an issue that day" : ""}${d.cut ? " (Aternity's reply was cut short)" : ""}`;
+    return `<g><title>${esc(title)}</title><rect class="hit" x="${x}" y="0" width="${step}" height="${h}"/>`
+      + (d.major === null ? `<rect class="unread" x="${x + .5}" y="${h - 4}" width="${step - 3}" height="3"/>`
+        : `<rect class="${d.today ? "now" : d.usual ? "past" : "past old"}" x="${x}" y="${h - y}" width="${step - 2}" height="${y}" rx="1"/>`)
+      + (d.issue ? `<circle class="issue" cx="${x + (step - 2) / 2}" cy="2.5" r="2.5"/>` : "") + "</g>";
+  }).join("");
+  const read = days.filter((d) => d.major !== null);
+  const hi = read.length ? Math.max(...read.map((d) => d.major)) : null;
+  return `<div class="sparkWrap"><svg class="spark" width="${days.length * step}" height="${h}" role="img" `
+    + `aria-label="${esc(`Major actions each day, by ${by}, ${days.length} days, today last`)}">${bars}</svg>`
+    + `<span class="num">${hi === null ? "not read" : `max ${n(hi)}`}</span></div>`;  // the key: once, in the tab's note
+}
 function spark(days, unit = "PCs", what = "Other PCs per day") {
   if (!days.length) return `<span class="muted" style="font-size:12px">not read</span>`;
   const step = 6, h = 24, top = Math.max(...days.map((d) => d.pcs), 1);

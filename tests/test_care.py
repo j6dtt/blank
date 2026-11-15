@@ -919,3 +919,46 @@ def test_a_slow_spell_first_seen_when_already_over_is_kept_as_earlier_today():
     assert [(i["since_local"], i["over"]) for i in mq["earlier"]] == [("14:20", "none in the hour after 14:20")]
     care.check(client(), later + timedelta(minutes=15))
     assert len(care.issues["mq2208"]) == 1  # kept once
+
+
+def test_the_tile_bars_are_their_major_actions_each_day_from_aternity_today_last():
+    """The bars were the issues this app saved: none for a day it did not check and none for Major
+    actions within the usual, so "3 rated Major" had nothing behind it (stage, Nov 15 2026)."""
+    care = Care(today_with(2), lambda: USERS[:1])
+    care.check(None, NOW)  # no Aternity: the days before are not read (dashed), today from the reader
+    assert [d["major"] for d in care.view(NOW)["users"][0]["days"]] == [None] * 7 + [2]
+    care.check(client(), NOW)
+    mq = care.view(NOW)["users"][0]
+    days = mq["days"]
+    assert [d["date"] for d in days][0] == "2026-11-02" and days[-1]["date"] == "2026-11-09" and days[-1]["today"]
+    assert [d["major"] for d in days] == [9, 9, 0, 2, 1, 2, 1, 2]  # by 14:30: their 22:00 one is left out
+    assert days[-1]["major"] == mq["major"]  # today's bar is the tile's "2 rated Major"
+    mine = [d["major"] for d in days if d["usual"]]  # the dark bars are the usual's days: its range
+    assert (min(mine), max(mine)) == (mq["usual"]["low"], mq["usual"]["high"]) == (0, 2)
+    assert [d["usual"] for d in days] == [False, False, True, True, True, True, True, False]
+    assert mq["by_local"] == "14:30" and not any(d["issue"] for d in days)
+    care.issues["mq2208"].append({"day": "2026-11-06", "kind": "slow", "level": "Major", "key": "slow 2026-11-06 1",
+                                  "since": "2026-11-06T15:00:00Z", "last": "2026-11-06T15:20:00Z", "text": "x"})
+    mq = care.view(NOW)["users"][0]
+    assert [d["issue"] for d in mq["days"]] == [False, False, False, False, True, False, False, False]
+    assert mq["before"] == "Fri Nov 06: Major slow actions"
+
+
+def test_their_days_before_cut_short_are_not_a_usual_and_are_read_again():
+    """A reply cut short has low counts: as a usual it would light the tile too often."""
+    seen = []
+
+    def handler(request):  # every page says there is more: max_pages stops it
+        seen.append(1)
+        body = history(request).json()
+        return httpx.Response(200, json={**body, "@odata.nextLink": str(request.url)})
+    cfg = AternityConfig(base_url="https://aternity.test/aternity.odata/v2.0", username="u", password="p",
+                         max_pages=1)
+    cut = AternityClient(cfg, transport=httpx.MockTransport(handler))
+    care = Care(today_with(3), lambda: USERS[:1])
+    care.check(cut, NOW)
+    mq = care.view(NOW)["users"][0]
+    assert mq["usual"]["enough"] is False and mq["usual"]["cut"] and mq["status"] == "ok"  # not judged
+    assert all(d["cut"] for d in mq["days"][:-1]) and "cut short" in care.notes["history"]
+    care.check(cut, NOW + timedelta(minutes=5))
+    assert len(seen) == 2  # read again at the next check
