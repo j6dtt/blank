@@ -328,7 +328,10 @@ class Usage:
         def who(e: dict) -> dict:
             p = self._person(e)
             if p is None:
-                return {"key": f"addr {e.get('a') or '?'}", "who": None, "addr": e.get("a")}
+                a = e.get("a")
+                if "p" not in e and a and now - _when(e["t"]) < GIVE_UP:  # looked up again at each read
+                    return {"key": f"wait {a}", "who": None, "addr": a, "waiting": True}
+                return {"key": f"addr {a or '?'}", "who": None, "addr": a}
             return {"key": p["u"].lower(), "who": p["u"], "pc": p.get("d"), "kind": p.get("k"), "others": p.get("n")}
 
         people: dict[str, dict] = {}
@@ -352,7 +355,8 @@ class Usage:
                 x["pcs"].add(w["pc"])
         rows = []
         for x in sorted(people.values(), key=lambda x: x["last"], reverse=True):
-            rows.append({"who": x["who"], "addr": x.get("addr"), "pcs": sorted(x["pcs"]), "kind": x.get("kind"),
+            rows.append({"who": x["who"], "addr": x.get("addr"), "waiting": bool(x.get("waiting")),
+                         "pcs": sorted(x["pcs"]), "kind": x.get("kind"),
                          "others": x.get("others"), "first_local": local(x["first"]), "last_local": local(x["last"]),
                          "last": x["last"], "tabs": [TABS[k] for k, _ in x["tabs"].most_common() if k in TABS],
                          "tab_now": TABS.get(x.get("tab_now")), "investigations": x["runs"]["investigation"],
@@ -396,6 +400,8 @@ class Usage:
         return {
             "date": d, "today": d == t, "dates": self.dates(now), "zone": today.zone_label,
             "as_of_local": today.local(now).strftime("%H:%M"), "note": note, "now_min": NOW_MIN, "match_min": 60,
+            "give_up_h": round(GIVE_UP.total_seconds() / 3600),
+            "next_read_local": today.local(today.next_read).strftime("%H:%M") if today.next_read else None,
             "active": active, "people": rows,
             "pages": {"total": len(day["visits"]), "by_hour": [by_hour.get(h, 0) for h in range(24)],
                       "by_tab": [{"tab": TABS[k], "n": n} for k, n in Counter(v["tab"] for v in day["visits"]).most_common()
@@ -415,10 +421,12 @@ class Usage:
                     "failed_lookups": sum(r.get("failed", 0) for r in asks),
                     "flagged": sum(1 for r in asks if r.get("flagged")), "seconds": secs(asks),
                     "questions": [{"at_local": local(r["t"]), "who": who(r)["who"], "addr": r.get("a"),
+                                   "waiting": bool(who(r).get("waiting")),
                                    "q": r.get("q", ""), "steps": r.get("steps", 0), "ok": r.get("ok", True)}
                                   for r in reversed(asks)]},
             "care": {"listed": day["care"]["listed"], "lit": day["care"]["lit"], "runs": day["care"]["runs"],
                      "changes": [{"at_local": local(c["t"]), "who": who(c)["who"], "addr": c.get("a"),
+                                  "waiting": bool(who(c).get("waiting")),
                                   "what": c["what"], "ok": c["ok"]} for c in reversed(day["care"]["changes"])],
                      "wrong_pins": sum(1 for c in day["care"]["changes"] if not c["ok"]),
                      "polls": {"n": polls["n"], "last": polls["last"], "last_local": local(polls["last"]) if polls["last"] else None,
@@ -439,7 +447,8 @@ class Usage:
             if not day:
                 continue
             keys = {self._key(e) for e in day.get("visits", [])}
-            out.append({"date": d, "people": len(keys), "pages": len(day.get("visits", [])),
+            named = sum(1 for k in keys if not k.startswith("addr "))  # an address with no name is not a person
+            out.append({"date": d, "people": named, "unnamed": len(keys) - named, "pages": len(day.get("visits", [])),
                         "investigations": sum(1 for r in day.get("runs", []) if r["what"] == "investigation"),
                         "questions": sum(1 for r in day.get("runs", []) if r["what"] == "ask")})
         return sorted(out, key=lambda x: x["date"])

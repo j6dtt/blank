@@ -403,9 +403,11 @@ line with the caller's address.
 updates every minute):
 - **People using the app**: Now (a visit in the last 15 minutes: person,
   desktop, tab, last visit); then the day: each person's first and last
-  visit, tabs used and what they ran. "Not known (address)": Aternity had
-  no action from that address (no agent, a VPN address, no action in that
-  hour); decided 2 hours after the visit, as Aternity sends rows late.
+  visit, tabs used and what they ran. "Waiting for Aternity (address)":
+  looked up again at each read (every 15 minutes; Aternity sends rows
+  late). "Not known (address)": still no action from that address 2 hours
+  after the visit (no agent, a VPN address, no action near the visit).
+  Only named people are counted as people.
   "One of N on it then": a desktop many users share. When every visit
   comes from one address, a note says something in front of the app
   hides the desktops.

@@ -20,7 +20,7 @@ things; each decision is dated.
   visit comes from one address (a proxy in front of the app),
   so people cannot be told apart. Nothing is guessed.
 
-## First version (built 2026-11-15, "Build it"; dev, not committed)
+## First version (built 2026-11-15, "Build it"; 16d699b)
 
 How it works: the app counts each use as it happens and saves
 the counts of a day in `data/usage/<date>.json`; `/admin` reads
@@ -34,9 +34,14 @@ checking on dev:
 - The read at start (24 hours) is shown apart from the regular
   reads.
 
-Waiting: a stage check (the step in the latest reply). On dev
-every visit is "not known": the made-up Aternity has no row from
-the Docker gateway's address; the tests place people.
+On prod (copied by the user, 2026-11-15): first "not known",
+then the user's own name once a read had looked ("it works
+now"): the app sees the desktops' own addresses on prod's
+Docker. Bug found: the page said "not known" from the first
+second, before the next read of Aternity had looked; now
+"waiting for Aternity" until 2 hours after the visit. Also
+fixed: rows with no name were counted as people (the heading
+and the days strip). Not committed yet.
 
 1. **Login.** One password, `ADMIN_PASSWORD` in `.env` (never
    in config.yaml). In-page form, a cookie for 8 h, Log out.

@@ -225,8 +225,10 @@ function hlist(rows) {  // [label, n] as horizontal bars
 function nums(items) {
   return `<div class="nums">${items.map(([v, l, cls]) => `<div><b class="${cls || ""}">${v}</b><span>${esc(l)}</span></div>`).join("")}</div>`;
 }
+// no one found on the address: still looked up at each read (Aternity sends rows late), or not known for good
+const nobody = x => `<span class="muted">${x.waiting ? "waiting for Aternity" : "not known"}</span> <span class="small muted">(${esc(x.addr || "no address")})</span>`;
 function person(p) {
-  if (!p.who) return `<span class="muted">not known</span> <span class="small muted">(${esc(p.addr || "no address")})</span>`;
+  if (!p.who) return nobody(p);
   let s = `<b>${esc(p.who)}</b>`;
   if (p.others && p.others.length > 1) s += ` <span class="small muted">one of ${p.others.length} on it then: ${esc(p.others.join(", "))}</span>`;
   return s;
@@ -254,7 +256,12 @@ function peoplePanel(j) {
     s += j.active.length ? `<ul class="plain">${j.active.map(p => `<li>${[person(p), p.pcs.length ? desk(p) : "", p.tab_now ? esc(p.tab_now) + " tab" : "", "last at " + esc(p.last_local)].filter(Boolean).join(" · ")}</li>`).join("")}</ul>`
       : `<p class="muted">No one in the last ${j.now_min} minutes.</p>`;
   }
-  s += `<h3>${j.today ? "Today" : esc(dayWord)}: ${plural(j.people.length, "person", "people")}</h3>`;
+  // named people only: a row with no name is an address (waiting for Aternity, or not known), not a person
+  const named = j.people.filter(p => p.who).length, waiting = j.people.filter(p => !p.who && p.waiting).length,
+    unknown = j.people.filter(p => !p.who && !p.waiting).length;
+  s += `<h3>${j.today ? "Today" : esc(dayWord)}: ${plural(named, "person", "people")}`
+    + `${waiting ? `, ${plural(waiting, "address", "addresses")} waiting for Aternity` : ""}`
+    + `${unknown ? `, ${plural(unknown, "address", "addresses")} not known` : ""}</h3>`;
   if (j.people.length) {
     s += `<div class="tableWrap"><table><thead><tr><th>Person</th><th>Desktop</th><th>Visits</th><th>Tabs used</th><th>Did</th></tr></thead><tbody>`
       + j.people.map(p => `<tr><td>${person(p)}</td><td>${desk(p)}</td><td class="n">${esc(p.first_local)}–${esc(p.last_local)}</td>`
@@ -262,8 +269,10 @@ function peoplePanel(j) {
       + `</tbody></table></div>`;
   } else s += `<p class="muted">No one opened the app${j.today ? " yet today" : " that day"}.</p>`;
   s += `<p class="muted small">A person is the user Aternity saw on the visit's address, its action nearest the visit within ${j.match_min} min `
-    + `(read with Today's every ${j.reads.every_min} min). "Not known": Aternity had no action from that address then (no agent, `
-    + `a VPN address, or no action in that hour). Times in ${esc(j.zone)}.</p></section>`;
+    + `(read with Today's every ${j.reads.every_min} min). "Waiting for Aternity": looked up again at each read`
+    + `${j.today && j.next_read_local ? ` (the next at ${esc(j.next_read_local)})` : ""}; Aternity sends rows late, so it can take a read or two. `
+    + `"Not known": ${j.give_up_h} hours after the visit, still no action from that address (no agent, a VPN address, or no action `
+    + `near the visit). Times in ${esc(j.zone)}.</p></section>`;
   return s;
 }
 
@@ -296,7 +305,7 @@ function askPanel(j) {
     [fmt(a.flagged), "answers with a number flagged", a.flagged ? "warn" : ""], [fmt(a.failed), "questions with no answer", a.failed ? "bad" : ""]]);
   if (a.seconds) s += `<p class="small">Time to answer: typical ${dur(a.seconds.typical)}, ${dur(a.seconds.least)} to ${dur(a.seconds.most)}.</p>`;
   s += `<h3>The questions <span class="muted small">(latest first; kept ${30} days, admin only)</span></h3>`;
-  s += a.questions.length ? `<div class="q"><ul class="plain">${a.questions.map(q => `<li class="${q.ok ? "" : "bad"}"><span class="small muted">${esc(q.at_local)} · ${q.who ? esc(q.who) : "not known (" + esc(q.addr || "?") + ")"} · ${plural(q.steps, "look-up")}${q.ok ? "" : " · no answer"}</span><br>${esc(q.q)}</li>`).join("")}</ul></div>`
+  s += a.questions.length ? `<div class="q"><ul class="plain">${a.questions.map(q => `<li class="${q.ok ? "" : "bad"}"><span class="small muted">${esc(q.at_local)} · ${q.who ? esc(q.who) : nobody(q)} · ${plural(q.steps, "look-up")}${q.ok ? "" : " · no answer"}</span><br>${esc(q.q)}</li>`).join("")}</ul></div>`
     : `<p class="muted small">None.</p>`;
   return s + `</section>`;
 }
@@ -307,7 +316,7 @@ function carePanel(j) {
   s += nums([[fmt(c.listed), "users listed"], [fmt(c.lit), "times a tile lit"], [fmt(c.runs), "investigations it ran"],
     [fmt(c.changes.length - c.wrong_pins), "changes"], [fmt(c.wrong_pins), "wrong PINs", c.wrong_pins ? "bad" : ""]]);
   s += `<h3>Changes on the page</h3>`;
-  s += c.changes.length ? `<ul class="plain">${c.changes.map(x => `<li class="${x.ok ? "" : "bad"}"><span class="small muted">${esc(x.at_local)} · ${x.who ? esc(x.who) : "not known (" + esc(x.addr || "?") + ")"}</span><br>${x.ok ? "" : "Wrong PIN: "}${esc(x.what)}</li>`).join("")}</ul>`
+  s += c.changes.length ? `<ul class="plain">${c.changes.map(x => `<li class="${x.ok ? "" : "bad"}"><span class="small muted">${esc(x.at_local)} · ${x.who ? esc(x.who) : nobody(x)}</span><br>${x.ok ? "" : "Wrong PIN: "}${esc(x.what)}</li>`).join("")}</ul>`
     : `<p class="muted small">None.</p>`;
   s += `<h3>The other platform's status polls</h3>`;
   if (!p.n) s += `<p class="${j.today ? "warn" : "muted"}">No poll of /api/MSS/care/status ${j.today ? "today" : "that day"}.</p>`;
@@ -347,7 +356,9 @@ function daysPanel(j) {
   if (!ds.length) return "";
   const today = j.dates[0];
   const sel = ds.findIndex(d => d.date === j.date);
-  const label = (i) => { const d = ds[i]; return `${dayName(d.date, today)}: ${plural(d.people, "person", "people")}, ${plural(d.pages, "tab")} opened, ${plural(d.investigations, "investigation")}, ${plural(d.questions, "question")}`; };
+  const label = (i) => { const d = ds[i]; return `${dayName(d.date, today)}: ${plural(d.people, "person", "people")}`
+    + `${d.unnamed ? ` (+ ${plural(d.unnamed, "address", "addresses")} with no name)` : ""}, ${plural(d.pages, "tab")} opened, `
+    + `${plural(d.investigations, "investigation")}, ${plural(d.questions, "question")}`; };
   const every = Math.max(1, Math.ceil(ds.length / 8));
   return `<section class="panel"><h2>Days kept <span class="muted small">(people per day; click a day to open it)</span></h2>`
     + bars(ds.map(d => d.people), label, { click: true, sel, aria: "People per day", unit: "people", slots: 31,

@@ -745,7 +745,10 @@ demo mode: nothing in `src/` knows about it.
   (`Hour.addr`, `Today.at_address`; `DEVICE_IP_ADDRESS` added to the
   hour's select); `Usage._who`: the user nearest the visit within `MATCH`
   (several at once: "one of N"), for good when Aternity has a row at
-  that time, else `GIVE_UP` (2 h) after it ("not known"); every visit
+  that time, else `GIVE_UP` (2 h) after it ("not known"; before that
+  "waiting for Aternity": it said "not known" from the first second,
+  before any read had looked, prod Nov 15); only named people are
+  counted as people (`_days` `unnamed`); every visit
   from one address: a note, never a guess. Investigations by where they
   started (`InvestigateBody.source`: the page's `invFrom`, a tab or
   "ask"; "care-auto" is the Care list's own). Every call through

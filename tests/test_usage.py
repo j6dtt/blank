@@ -72,12 +72,16 @@ def test_several_users_on_one_address_at_once_are_one_of_them_and_no_row_is_not_
     assert people["sample21"]["others"] == ["sample21", "sample22"]  # "one of 2 on it then"
     unknown = people[None]
     assert unknown["addr"] == "192.0.2.99" and unknown["pcs"] == []
-    # not known for good only GIVE_UP after the visit (Aternity sends rows late)
+    # "waiting for Aternity" until GIVE_UP after the visit (Aternity sends rows late): it said "not known"
+    # from the first second, before the next read had looked (prod, Nov 15 2026)
+    assert unknown["waiting"] is True
     day = use.days[today.day(NOW).isoformat()]
     later = [v for v in day["visits"] if v["a"] == "192.0.2.99"][0]
     assert "p" not in later
     use.read_done(t + GIVE_UP)
     assert later["p"] == {"x": True}
+    v = use.view(t + GIVE_UP)
+    assert [(p["addr"], p["waiting"]) for p in v["people"] if p["who"] is None] == [("192.0.2.99", False)]
 
 
 def test_a_late_row_still_places_a_visit_and_a_placed_one_stays(tmp_path):
@@ -86,7 +90,8 @@ def test_a_late_row_still_places_a_visit_and_a_placed_one_stays(tmp_path):
     t = NOW - timedelta(minutes=30)
     use.seen(VD_IP, "software", t)
     use.read_done(NOW)  # nothing from that address yet
-    assert use.view(NOW)["people"][0]["who"] is None
+    first = use.view(NOW)["people"][0]
+    assert first["who"] is None and first["waiting"] is True
     read(today, [row(t + timedelta(minutes=20), "sample07", "VD-03", VD_IP)])  # sent late
     use.read_done(NOW)  # within MATCH, not at the visit: for now
     assert use.view(NOW)["people"][0]["who"] == "sample07"
@@ -260,3 +265,14 @@ def test_the_read_at_start_is_told_apart_from_the_regular_reads(tmp_path):
     r = use.view(NOW + timedelta(minutes=30))["reads"]
     assert (r["n"], r["longest"], r["over"]) == (2, 1000.0, 1)
     assert r["starts"] == [{"at_local": "10:00", "seconds": 1500.0}]
+
+
+def test_an_address_with_no_name_is_not_counted_as_a_person(tmp_path):
+    today = Today(ZONE)
+    use = Usage(today, tmp_path)
+    use.seen(VD_IP, "today", NOW - timedelta(minutes=5))
+    use.seen("192.0.2.99", "today", NOW - timedelta(minutes=5))  # no Aternity agent on it
+    read(today, [row(NOW - timedelta(minutes=6), "sample07", "VD-03", VD_IP)])
+    use.read_done(NOW)
+    [d] = use.view(NOW)["days"]
+    assert (d["people"], d["unnamed"], d["pages"]) == (1, 1, 2)

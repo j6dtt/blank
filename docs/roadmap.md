@@ -15,16 +15,15 @@ Status words:
 
 ### Admin page (`/admin`)
 Usage statistics and active users, behind a login, no link from
-the main app. First version built on dev (2026-11-15, not
-committed). Its own roadmap: `docs/admin-roadmap.md` (decided,
-first version, limits, later ideas, the discussion so far).
+the main app. First version committed 16d699b (2026-11-15).
+Its own roadmap: `docs/admin-roadmap.md` (decided, first
+version, limits, later ideas, the discussion so far).
 
 ## Waiting on you
 
-- **Admin page on stage**: `ADMIN_PASSWORD` in stage's `.env`,
-  copy the files, `docker compose up -d`, log in at
-  `https://<stage>:8444/admin`: are people named, or "not
-  known", or one address for all?
+- **Admin page fix on prod**: "waiting for Aternity" instead
+  of an early "not known"; unnamed addresses not counted as
+  people (`usage.py`, `static/admin.html`).
 - **Stage copy of 13a023b**: `care.py`, `explain.py`,
   `static/index.html`; restart; a tile with "1 rated Major"
   lists it under "Rated Major today".
