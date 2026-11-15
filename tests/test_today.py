@@ -201,7 +201,7 @@ def test_the_reader_fills_today_and_the_name_list_then_waits(tmp_path):
                      lambda s: (_ for _ in ()).throw(Stop()), clock=lambda: NOW)
     acts = [x for x in seen if x[0] == "BUSINESS_ACTIVITIES_RAW"]
     assert len(acts) == 25 and acts[0][1] == ("TIMEFRAME,USERNAME,DEVICE_NAME,APPLICATION_NAME,SLA_STATUS,"
-                                              "ACTIVITY_NAME,ACTIVITY_RESPONSE_TIME,VIRTUALIZATION")
+                                              "ACTIVITY_NAME,ACTIVITY_RESPONSE_TIME,VIRTUALIZATION,DEVICE_IP_ADDRESS")
     assert acts[0][2] == "TIMEFRAME ge 2026-11-09T19:00:00Z and TIMEFRAME lt 2026-11-09T20:00:00Z"  # newest first
     health = [x for x in seen if x[0] == "DEVICE_HEALTH_RAW"]
     assert {"USERNAME", "APPLICATION_NAME"} <= set(health[0][1].split(","))

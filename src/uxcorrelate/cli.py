@@ -86,8 +86,9 @@ def cmd_logons(args) -> int:
     return 0
 
 
-# left out of the access log: Kubernetes' checks, and every open page asking for the top bar's lights
-QUIET = ("/api/health", "/api/status")
+# left out of the access log: Kubernetes' checks, every open page asking for the top bar's lights, and
+# the page's beacon of each tab opened (counted for the admin page)
+QUIET = ("/api/health", "/api/status", "/api/seen")  # /api/seen: the admin page's tab beacon
 
 
 class NoHealthCheck(logging.Filter):

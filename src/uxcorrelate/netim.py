@@ -12,6 +12,7 @@ The alerts path is not in any public Riverbed source, so it is off by default.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
@@ -220,7 +221,9 @@ class NetimClient:
         when it is asked for."""
         todo = [d.id for d in devices if d.id not in self._interfaces]
         with ThreadPoolExecutor(max(1, self.cfg.parallel_reads)) as pool:
-            jobs = [pool.submit(self.interfaces, i) for i in todo]
+            # each in a copy of this thread's context: the pool's threads do not inherit it, and the admin
+            # page counts the calls under what the app is doing (http.PURPOSE)
+            jobs = [pool.submit(contextvars.copy_context().run, self.interfaces, i) for i in todo]
             for n, job in enumerate(jobs, 1):
                 try:
                     job.result()

@@ -114,6 +114,9 @@ class Hour:
     user_devs: dict = field(default_factory=dict)  # username (lower case) -> PCs used (for the Care list)
     user_runs: Counter = field(default_factory=Counter)  # username (lower case) -> actions measured
     dev_kind: dict = field(default_factory=dict)  # PC -> PC kind
+    # the admin page's active users: address -> username (lower case) -> [username, PC, PC kind,
+    # first, last], only for the addresses that opened the app (Today.watch)
+    addr: dict = field(default_factory=dict)
     read_at: datetime | None = None
     partial: bool = False
     final: bool = False  # read LATE_MIN or more after it ended
@@ -143,6 +146,9 @@ class Today:
         self.read_ok: datetime | None = None  # the last read in which every read of Aternity worked in full
         self.failures = 0  # reads of Aternity that failed or were cut short, since the start
         self.next_read: datetime | None = None  # when the next read starts (the reader's schedule)
+        self.watch: set[str] = set()  # addresses that opened the app today (usage.py): rows of theirs are kept
+        self.read_took: float | None = None  # seconds the last read took (the admin page)
+        self.start_took: float | None = None  # seconds the first read (24 hours, at start) took
         self.lock = threading.Lock()
         self.load()
 
@@ -191,6 +197,11 @@ class Today:
                 h.user_runs[user.lower()] += 1
                 if dev:
                     h.user_devs.setdefault(user.lower(), set()).add(dev)
+                ip = r.get(f["ip_address"]) if self.watch and f.get("ip_address") else None
+                if ip in self.watch:
+                    when = parse_time(r.get(f["timestamp"])) or start
+                    e = h.addr.setdefault(ip, {}).setdefault(user.lower(), [user, dev, pc, when, when])
+                    e[3], e[4] = min(e[3], when), max(e[4], when)
             runs = h.apps.setdefault(app, Counter())
             runs["runs"] += 1
             by_kind = h.kinds.setdefault((app, pc), Counter())
@@ -212,6 +223,20 @@ class Today:
             old = self.hours.get(start)
             self.hours[start] = h
         return old.rows if old else None
+
+    def at_address(self, addr: str, start: datetime, end: datetime) -> dict:
+        """Who Aternity saw at an address from start to end (the admin page's active users):
+        username (lower case) -> [username, PC, PC kind, first, last], from the hours read."""
+        out: dict = {}
+        with self.lock:
+            hours = [h for s, h in self.hours.items() if s + HOUR > start and s <= end]
+        for h in hours:
+            for key, (user, dev, kind, first, last) in h.addr.get(addr, {}).items():
+                if last < start or first > end:
+                    continue
+                e = out.setdefault(key, [user, dev, kind, first, last])
+                e[3], e[4] = min(e[3], first), max(e[4], last)
+        return out
 
     def hours_due(self, now: datetime) -> list[datetime]:
         """The hours to read now: the current one, those not yet read again after they
@@ -556,7 +581,8 @@ def _read_hour(today: Today, names, client, start: datetime, now: datetime) -> N
     try:
         rows = client.query(entity, f"{ts} ge {odata_time(start)} and {ts} lt {odata_time(start + HOUR)}",
                             select=[f[k] for k in ("timestamp", "username", "device", "application", "status",
-                                                   "activity", "response_time", "virtualization") if f.get(k)])
+                                                   "activity", "response_time", "virtualization", "ip_address")
+                                    if f.get(k)])
     except Exception as exc:  # Aternity down: the next read tries again
         today.failures += 1
         today.note("activity", f"Aternity activity could not be read ({short_error(exc)}); trying again in "
@@ -636,6 +662,7 @@ def keep_reading(today: Today, names, make_client, sleep, clock=lambda: datetime
     today.status = "Reading Aternity's health events"
     _read_health(today, client, clock())
     today.as_of = clock()
+    today.start_took = (today.as_of - now).total_seconds()
     if today.failures == mark:
         today.read_ok = today.as_of
     today.ready = True
@@ -681,6 +708,7 @@ def _read_all(today: Today, names, make_client, client, care, after, now: dateti
         _read_hour(today, names, client, start, now)
     today.finish(now)
     _read_health(today, client, now)
+    today.read_took = (clock() - now).total_seconds()
     today.as_of = now
     if today.failures == mark:
         today.read_ok = now

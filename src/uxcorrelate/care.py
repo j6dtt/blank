@@ -170,6 +170,7 @@ class Care:
         self.notes: dict[str, str] = {}
         self.as_of: datetime | None = None
         self.started = False
+        self.counts = None  # usage.care_counts (web.py): tiles lit, for the admin page
         self.lock = threading.Lock()
         self.load()
 
@@ -419,6 +420,9 @@ class Care:
                                               judged=bool(usual and usual["enough"]))
             self.checked.add(user)
             off = self._count_read(user, now, new + again) if read else []
+            lit = sum(1 for i in new if self.alert(i, now)) + len(again)
+            if lit and self.counts is not None:  # the admin page: tiles lit today
+                self.counts(now, lit=lit)
             for issue in new:
                 log.info("Care list: new issue for %s: %s%s", self._who(u), issue["text"],
                          " It was already over when first seen." if issue.get("cleared") else "")

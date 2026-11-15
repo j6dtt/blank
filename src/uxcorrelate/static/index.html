@@ -626,7 +626,16 @@ const TAB_LINK = { today: "today", care: "care", inv: "investigate", log: "start
 let tabNow = "today";  // the tab open (Ask anything sends what it shows)
 const scrollOf = {};  // where each tab was scrolled to: a tab opens where it was left
 // top: open the tab at its top (a result is put in it now); clicking the tab that is open goes to its top too
+// The admin page counts the tabs opened (at load and at each switch; not a click on the tab already open)
+let tabSeen = null;
+function seenTab(tab) {
+  if (tab === tabSeen) return;
+  tabSeen = tab;
+  fetch("api/seen", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tab: TAB_LINK[tab] }) }).catch(() => {});
+}
 function mode(tab, top = false) {
+  seenTab(tab);
   if (tab !== tabNow) scrollOf[tabNow] = scrollY;
   const back = top || tab === tabNow ? 0 : scrollOf[tab] || 0;
   tabNow = tab;
@@ -805,7 +814,10 @@ for (const id of ["tTiles", "tApps", "tEvents"]) {
 }
 $("tWhoClose").addEventListener("click", () => { $("tWho").hidden = true; });
 // Investigate ▸ (Today lists and the chat): fill the Investigate form and run it at once.
-function investigateNow(p) {
+// from: where it was clicked (the admin page counts investigations by where they start)
+let invFrom = null;
+function investigateNow(p, from) {
+  invFrom = from || TAB_LINK[tabNow];
   const f = $("f");
   f.username.value = p.username || "";
   f.device.value = p.device || "";
@@ -1348,7 +1360,7 @@ $("askAnswers").addEventListener("click", (ev) => {
   }
   const b = ev.target.closest("button[data-a]");
   if (!b) return;
-  investigateNow(askState.answers[Number(b.dataset.a)].steps[Number(b.dataset.s)].runs[Number(b.dataset.k)]);
+  investigateNow(askState.answers[Number(b.dataset.a)].steps[Number(b.dataset.s)].runs[Number(b.dataset.k)], "ask");
 });
 function askChips() {  // the examples of the tab open
   $("askChips").innerHTML = (ASK_EXAMPLES[TAB_LINK[tabNow]] || []).map((q) => `<button type="button">${esc(q)}</button>`).join("");
@@ -1457,6 +1469,7 @@ $("f").addEventListener("submit", (ev) => {
   ev.preventDefault();
   const body = formBody(ev.target, ["username", "device", "application"]);
   body.bucket_minutes = Number(ev.target.bucket_minutes.value) || null;
+  body.source = invFrom || "investigate"; invFrom = null;
   $("out").hidden = true; delete $("out").dataset.has;  // the last investigation's results go
   runJob("api/jobs", body, $("go"), render);
 });

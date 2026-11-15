@@ -733,6 +733,29 @@ demo mode: nothing in `src/` knows about it.
   once; verify prints them first, with a wrong time zone, which the page
   leaves to the Today tab). State changes are logged. No URL on the page. It proves
   connection and login, not the model's answers (`verify --ai`).
+- `usage.py` + `static/admin.html`: the admin page (`/admin`, no link
+  from the main page; docs/admin-roadmap.md, the user's request and
+  choices, 2026-11-15). Login: `ADMIN_PASSWORD` in .env, HTTPS only
+  (`admin_https`: the scheme, X-Forwarded-Proto behind the ingress),
+  cookie `uxadmin` Path=/admin 8 h (`ADMIN_HOURS`), in memory (a restart
+  logs out), `ADMIN_TRIES` 5 wrong from one address lock it
+  `ADMIN_LOCK_MIN`; logged. Who: the page posts each tab opened
+  (`/api/seen`, `seenTab` in `mode()`, left out of the log); the address
+  goes into `Today.watch` and the reader keeps that address's rows
+  (`Hour.addr`, `Today.at_address`; `DEVICE_IP_ADDRESS` added to the
+  hour's select); `Usage._who`: the user nearest the visit within `MATCH`
+  (several at once: "one of N"), for good when Aternity has a row at
+  that time, else `GIVE_UP` (2 h) after it ("not known"); every visit
+  from one address: a note, never a guess. Investigations by where they
+  started (`InvestigateBody.source`: the page's `invFrom`, a tab or
+  "ask"; "care-auto" is the Care list's own). Every call through
+  `RestClient.get_json`/`post_json` is told to `http.METER` under
+  `http.PURPOSE` (a ContextVar: the middleware sets it by path,
+  `PURPOSES`; threads by `as_doing`; NetIM's pool copies it); a read
+  cut short to `http.CUT`. The Today reader's read times
+  (`Today.read_took`, the start read apart: `start_took`). A day is
+  `<data>/usage/<date>.json` (local), written at most every minute,
+  after each read and at shutdown; `KEEP_DAYS` 30, then deleted.
 - `http.py` is the shared REST client (basic auth, retries on 429/5xx);
   `models.py` holds the dataclasses and `parse_time`.
 - `report.py` renders the text report, `cli.py` is the argparse entry point,
@@ -888,4 +911,5 @@ demo mode: nothing in `src/` knows about it.
   On a phone the tabs slide sideways. The lights show `ai.services`'
   `name` as written; `ai.chat` matches it whatever the capitals.
 - The web UI has no authentication. Don't add features that assume it does.
+  Only `/admin` has a login (its own password; the main page stays open).
 - Keep secrets out of `config.yaml` (it is gitignored). Pass them as env vars.

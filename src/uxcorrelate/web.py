@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import hmac
 import html
 import logging
 import os
+import secrets
 import threading
 import time
 import uuid
@@ -14,8 +16,10 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
+
+from . import http as _http
 
 from .assess import Assessments
 from .care import Care
@@ -32,12 +36,22 @@ from .software import keep_reading as keep_reading_software
 from .software import summary as software_summary
 from .status import Status, keep_checking
 from .today import NO_APP, Today, keep_reading
+from .usage import Usage, addr_of
 
 STATIC = Path(__file__).parent / "static"
 BRAND = "J6 Preservation Society"  # index.html's <title>; config.yaml's title goes after it
 KEEP_DONE_MIN = 10  # a finished job is kept this long for its tab (it asks every second); a running one always
 _clock = time.monotonic  # the jobs' clock (a test moves it)
 NETIM_REFRESH_S = 3600  # rebuild the NetIM device/interface index this often
+# the admin page's login (docs/admin-roadmap.md): one password, ADMIN_PASSWORD in .env
+ADMIN_ENV = "ADMIN_PASSWORD"
+ADMIN_COOKIE = "uxadmin"
+ADMIN_HOURS = 8  # a login lasts this long (Log out ends it; a restart too)
+ADMIN_TRIES = 5  # wrong passwords from one address before it is locked ...
+ADMIN_LOCK_MIN = 15  # ... for this long
+# what the calls to Riverbed are for, by the page's request (the admin page's "Load on Riverbed")
+PURPOSES = (("/api/software", "Software tab"), ("/api/explain", "Explain"), ("/api/care", "Care list (page)"),
+            ("/api/today", "Today tab"), ("/api/investigate", "investigations"), ("/api/names", "name boxes"))
 log = logging.getLogger("uxcorrelate")
 
 
@@ -61,6 +75,7 @@ class InvestigateBody(BaseModel):
     start: datetime
     end: datetime
     bucket_minutes: int | None = None
+    source: str | None = None  # where it was started: the Investigate tab, or a tab's Investigate ▸ (admin page)
 
 
 class ChatBody(BaseModel):
@@ -85,6 +100,14 @@ class CareBody(BaseModel):
 class CareOrder(BaseModel):
     usernames: list[str]  # every user on the Care list, in the new order
     pin: str = ""
+
+
+class SeenBody(BaseModel):
+    tab: str
+
+
+class LoginBody(BaseModel):
+    password: str = ""
 
 
 class LogonBody(BaseModel):
@@ -133,7 +156,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
                 log.warning("NetIM index could not be read (%s); trying again in an hour", short_error(exc))
             time.sleep(NETIM_REFRESH_S)
 
-    threading.Thread(target=index_netim, daemon=True, name="netim-index").start()
+    threading.Thread(target=_http.as_doing("NetIM index", index_netim), daemon=True, name="netim-index").start()
 
     # Usernames and device names for the boxes, and the "Today" overview: one background
     # reader of Aternity (started with the server, not in tests that never start it).
@@ -151,6 +174,10 @@ def create_app(config_path: str | None = None) -> FastAPI:
                                  os.environ.get("UXCORRELATE_DATA") or None, names)
     software = app.state.software = Software(zone, os.environ.get("UXCORRELATE_DATA") or None)
     status = app.state.status = Status()  # the connection lights in the top bar
+    # the admin page's counts: each use, and every call to Riverbed and the AI services (http.METER)
+    usage = app.state.usage = Usage(today, os.environ.get("UXCORRELATE_DATA") or None)
+    _http.METER, _http.CUT = usage.call, usage.cut
+    care.counts = usage.care_counts
     assess = app.state.assess = Assessments(today, care, status, os.environ.get("UXCORRELATE_DATA") or None,
                                             aternity_of=lambda: aternity_client(),
                                             unit_of=lambda: load_settings(config_path).boot_unit)
@@ -165,9 +192,18 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
     def care_investigate(username: str, start: datetime, end: datetime) -> dict:
         """A Care list user's investigation, as the Investigate tab would run it."""
-        settings, aternity, netim = sources()
-        req = InvestigationRequest(start=start, end=end, username=username)
-        return jsonable_encoder(investigate(req, aternity, netim, settings))
+        began = time.monotonic()
+        try:
+            settings, aternity, netim = sources()
+            req = InvestigationRequest(start=start, end=end, username=username)
+            result = jsonable_encoder(investigate(req, aternity, netim, settings))
+        except Exception as exc:
+            usage.investigation(None, "care-auto", time.monotonic() - began, error=short_error(exc))
+            usage.care_counts(ran=1)
+            raise
+        usage.investigation(None, "care-auto", time.monotonic() - began, result)
+        usage.care_counts(ran=1)
+        return result
 
     def aternity_client():
         from .aternity import AternityClient
@@ -179,26 +215,50 @@ def create_app(config_path: str | None = None) -> FastAPI:
         # the HTTP and HTTPS servers share this app and both start it: read Aternity once
         if not today.started:
             today.started = True
-            threading.Thread(target=keep_reading, args=(today, names, aternity_client, time.sleep),
-                             kwargs={"care": care, "after": lambda now: assess.tick(now, assess_ai)},
+            def after(now):
+                assess.tick(now, assess_ai)
+                usage.care_counts(now, listed=len(care.users))
+                usage.read_done(now)  # the read's time, who is placed now, the day's file
+            threading.Thread(target=_http.as_doing("Today reader, Care list checks, assessments", keep_reading),
+                             args=(today, names, aternity_client, time.sleep), kwargs={"care": care, "after": after},
                              daemon=True, name="today").start()
         if not software.started:  # once a day: the installed list and application versions
             software.started = True
-            threading.Thread(target=keep_reading_software, args=(software, aternity_client,
+            threading.Thread(target=_http.as_doing("Software reader", keep_reading_software),
+                             args=(software, aternity_client,
                                                                  lambda: load_settings(config_path).aternity, time.sleep),
                              daemon=True, name="software").start()
         if not status.started:
             status.started = True
-            threading.Thread(target=keep_checking, args=(status, lambda: load_settings(config_path), time.sleep),
+            threading.Thread(target=_http.as_doing("connection lights", keep_checking),
+                             args=(status, lambda: load_settings(config_path), time.sleep),
                              kwargs={"notes_of": lambda: config_notes(config_path, zone=False)}, daemon=True,
                              name="status").start()
         if not care.started:
             care.started = True
-            threading.Thread(target=care.work, args=(care_investigate, time.sleep), daemon=True,
+            threading.Thread(target=_http.as_doing("Care list investigations", care.work),
+                             args=(care_investigate, time.sleep), daemon=True,
                              name="care").start()
         yield
+        usage.save(force=True)  # a restart: the admin page's counts since the last write (at most a minute's)
 
     app.router.lifespan_context = lifespan
+
+    @app.middleware("http")
+    async def purpose(request: Request, call_next):
+        """What the calls a request makes to Riverbed are for (http.PURPOSE: the admin page)."""
+        path = request.url.path
+        with _http.doing(next((p for prefix, p in PURPOSES if path.startswith(prefix)), "page")):
+            response = await call_next(request)
+        if path.startswith("/api/software/"):  # a click on the Software tab (or its old chat)
+            usage.run("software", addr_of(request), by=path.split("/")[3], ok=response.status_code < 400)
+        return response
+
+    @app.post("/api/seen")
+    def tab_seen(body: SeenBody, request: Request):
+        """The page's beacon: a tab opened (at load and at each switch), for the admin page."""
+        usage.seen(addr_of(request), body.tab)
+        return {"ok": True}
 
     @app.get("/api/today")
     def today_view():
@@ -217,9 +277,10 @@ def create_app(config_path: str | None = None) -> FastAPI:
         return got
 
     @app.get("/api/MSS/care/status")
-    def care_status():
+    def care_status(request: Request):
         """Every Care list tile for another platform that asks every few minutes: username, label,
         alert / ok / unknown, level, since and a short summary, all in UTC (care.status)."""
+        usage.poll(addr_of(request))
         return care.status(datetime.now(timezone.utc))
 
     def care_check_now() -> None:
@@ -235,6 +296,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         """Every change of the Care list needs its PIN (care.pin); a wrong one is logged."""
         if (pin or "").strip() != care.pin(datetime.now(timezone.utc)):
             log.warning("Care list: a wrong PIN to %s, from %s", what, request.client.host if request.client else "?")
+            usage.care_change(addr_of(request), what, False)
             raise HTTPException(403, "Wrong PIN: the Care list was not changed.")
 
     @app.post("/api/care/users")
@@ -248,7 +310,9 @@ def create_app(config_path: str | None = None) -> FastAPI:
         except OSError as exc:
             raise HTTPException(500, f"The Care list could not be changed ({short_error(exc)}). Its file is "
                                      "care_list.json in the data folder, writable by the container (uid 1000).")
-        threading.Thread(target=care_check_now, daemon=True, name="care-add").start()
+        threading.Thread(target=_http.as_doing("Care list (page)", care_check_now), daemon=True,
+                         name="care-add").start()
+        usage.care_change(addr_of(request), f"add {user.username}", True)
         return {"username": user.username, "label": user.label}
 
     @app.put("/api/care/users")
@@ -264,6 +328,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
                                      "care_list.json in the data folder, writable by the container (uid 1000).")
         if user is None:
             raise HTTPException(404, f"{body.username} is not on the Care list.")
+        usage.care_change(addr_of(request), f"change the label of {user.username}", True)
         return {"username": user.username, "label": user.label}
 
     @app.delete("/api/care/users")
@@ -277,6 +342,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
                                      "care_list.json in the data folder, writable by the container (uid 1000).")
         if gone is None:
             raise HTTPException(404, f"{username} is not on the Care list.")
+        usage.care_change(addr_of(request), f"remove {gone.username}", True)
         return {"username": gone.username, "label": gone.label}
 
     @app.put("/api/care/order")
@@ -291,6 +357,8 @@ def create_app(config_path: str | None = None) -> FastAPI:
         except OSError as exc:
             raise HTTPException(500, f"The Care list could not be changed ({short_error(exc)}). Its file is "
                                      "care_list.json in the data folder, writable by the container (uid 1000).")
+        if changed:
+            usage.care_change(addr_of(request), "change the order of the tiles", True)
         return {"changed": changed}
 
     @app.get("/api/software")
@@ -442,14 +510,22 @@ def create_app(config_path: str | None = None) -> FastAPI:
                  if r else " with no building block", f"; {answer['note']}" if answer["note"] else "")
         return answer
 
-    def ask_investigate(username, device, application, start: datetime, end: datetime) -> dict:
+    def ask_investigate(addr, username, device, application, start: datetime, end: datetime) -> dict:
         """An investigation asked for in Ask anything, as the Investigate tab runs it."""
-        settings, aternity, netim = sources()
-        req = InvestigationRequest(start=start, end=end, username=username, device=device, application=application)
-        return investigate(req, aternity, netim, settings)
+        began = time.monotonic()
+        try:
+            settings, aternity, netim = sources()
+            req = InvestigationRequest(start=start, end=end, username=username, device=device,
+                                       application=application)
+            result = investigate(req, aternity, netim, settings)
+        except Exception as exc:
+            usage.investigation(addr, "ask", time.monotonic() - began, error=short_error(exc))
+            raise
+        usage.investigation(addr, "ask", time.monotonic() - began, result)
+        return result
 
     @app.post("/api/ask")
-    def ask_anything(body: ChatBody):
+    def ask_anything(body: ChatBody, request: Request):
         """Ask anything (agent.py): the AI looks things up, as many steps as it needs, and answers.
         Run as a job (some look-ups read Aternity now, an investigation takes minutes): the page
         asks /api/jobs/{id} every second and shows each look-up as it starts."""
@@ -469,26 +545,35 @@ def create_app(config_path: str | None = None) -> FastAPI:
         with today.lock:
             known |= {x[5] for x in today.health if x[5]}
             known |= {k[1] for kinds in today.health_apps.values() for k in kinds if k[1]}
+        addr = addr_of(request)
         reach = agent.Reach(aternity_of=aternity_client, cfg=settings.aternity, software=software,
-                            known=sorted(known), investigate=ask_investigate, boot_unit=settings.boot_unit)
+                            known=sorted(known), investigate=lambda *a: ask_investigate(addr, *a),
+                            boot_unit=settings.boot_unit)
 
         def work(body: ChatBody) -> dict:
             tab = _explain.TABS.get(str((body.page or {}).get("tab")))
             log.info("Ask anything: \"%s\", asked of %s%s", " ".join(body.question.split())[:80], service.name,
                      f" on the {tab} tab" if tab else "")
+            began = time.monotonic()
+            page_tab = str((body.page or {}).get("tab") or "") or None
             try:
                 answer = agent.ask(body.question, body.history, client, today, names, datetime.now(timezone.utc),
                                    reach, body.page)
             except ApiError as exc:
                 log.warning("Ask anything: the AI service %s did not answer (%s)", service.name, exc.short())
+                usage.asked(addr, body.question, time.monotonic() - began, error=exc.short(), tab=page_tab)
                 raise HTTPException(502, f"The AI service {service.name} did not answer ({exc.short()}). Try "
                                          "again; `uxcorrelate verify --ai` checks it.")
+            except Exception as exc:
+                usage.asked(addr, body.question, time.monotonic() - began, error=short_error(exc), tab=page_tab)
+                raise
+            usage.asked(addr, body.question, time.monotonic() - began, answer, tab=page_tab)
             log.info("Ask anything: \"%s\" answered in %.1f s by %s after %d look-up(s)%s%s",
                      answer["question"][:80], answer["seconds"], service.name, len(answer["steps"]),
                      f" ({answer['looked'][:200]})" if answer["steps"] else "",
                      f"; {answer['note']}" if answer["note"] else "")
             return answer
-        return start(work, body, "A question to Ask anything")
+        return start(work, body, "A question to Ask anything", "Ask anything")
 
     @app.get("/api/assess")
     def assessment():
@@ -496,7 +581,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         return assess.view(datetime.now(timezone.utc))
 
     @app.post("/api/explain")
-    def explain_panel(body: ExplainBody):
+    def explain_panel(body: ExplainBody, request: Request):
         """ "Explain ▸" on a panel: the AI words the panel's own lines (sent by the page, as
         shown) with our meaning of each term. Nothing is read from Aternity, nothing is saved."""
         from . import explain
@@ -508,6 +593,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         service = chat_service(load_settings(config_path))
         client = AiClient(service, os.environ.get(service.key_env, "") if service.key_env else "") if service else None
         a = explain.explain(client, body.tab, body.panel, body.lines, body.question, service.name if service else "")
+        usage.run("explain", addr_of(request), tab=body.tab, s=a.get("seconds"))
         log.info("Explain: \"%s\" on %s, \"%s\": %s in %.1f s%s", a["question"][:80], explain.TABS[body.tab],
                  a["panel"][:60], "our own meanings" if a["ours"] else f"answered by {a['service']}", a["seconds"],
                  f"; {a['note']}" if a["note"] else "")
@@ -590,9 +676,23 @@ def create_app(config_path: str | None = None) -> FastAPI:
             log.warning("Investigation: %s", exc)
             raise HTTPException(502, _did_not_answer(exc))
 
+    def counted(body: InvestigateBody, addr: str | None, by: str) -> dict:
+        """An investigation, counted for the admin page: who, from where, how long, what it found first."""
+        began = time.monotonic()
+        try:
+            result = run_investigation(body)
+        except HTTPException as exc:
+            usage.investigation(addr, by, time.monotonic() - began, error=str(exc.detail))
+            raise
+        except Exception as exc:
+            usage.investigation(addr, by, time.monotonic() - began, error=short_error(exc))
+            raise
+        usage.investigation(addr, by, time.monotonic() - began, result)
+        return result
+
     @app.post("/api/investigate")
-    def run(body: InvestigateBody):
-        return run_investigation(body)
+    def run(body: InvestigateBody, request: Request):
+        return counted(body, addr_of(request), body.source or "API")
 
     # The UI runs investigations as jobs so it can show progress while NetIM is searched.
     job_log = JobLog()
@@ -629,9 +729,10 @@ def create_app(config_path: str | None = None) -> FastAPI:
                 done_at[job_id] = _clock()
             job["done"] = True
 
-    def start(work, body, what: str = "An investigation") -> dict:
+    def start(work, body, what: str = "An investigation", purpose: str = "investigations") -> dict:
         """A job in its own thread. Jobs finished over KEEP_DONE_MIN ago are dropped; a running
-        one never is (with 20 kept by count, a 21st start dropped one still running)."""
+        one never is (with 20 kept by count, a 21st start dropped one still running). purpose:
+        what its calls to Riverbed are for (the admin page)."""
         job_id = uuid.uuid4().hex
         with jobs_lock:
             gone = [i for i, t in done_at.items() if _clock() - t > KEEP_DONE_MIN * 60]
@@ -639,21 +740,128 @@ def create_app(config_path: str | None = None) -> FastAPI:
                 jobs.pop(old, None)
                 done_at.pop(old, None)
             jobs[job_id] = job = {"lines": [], "done": False, "result": None, "error": None}
-        threading.Thread(target=run_job, args=(job_id, job, work, body, what), daemon=True).start()
+        threading.Thread(target=_http.as_doing(purpose, run_job), args=(job_id, job, work, body, what),
+                         daemon=True).start()
         return {"id": job_id}
 
     @app.post("/api/jobs")
-    def start_job(body: InvestigateBody):
-        return start(run_investigation, body)
+    def start_job(body: InvestigateBody, request: Request):
+        addr = addr_of(request)
+        return start(lambda b: counted(b, addr, b.source or "investigate"), body)
 
     @app.post("/api/logon-jobs")
-    def start_logon_job(body: LogonBody):
-        return start(run_logons, body, "A start-ups report")
+    def start_logon_job(body: LogonBody, request: Request):
+        addr = addr_of(request)
+
+        def work(b: LogonBody) -> dict:
+            began = time.monotonic()
+            try:
+                result = run_logons(b)
+            except Exception:
+                usage.run("startups", addr, s=round(time.monotonic() - began, 1), ok=False)
+                raise
+            usage.run("startups", addr, s=round(time.monotonic() - began, 1), ok=True)
+            return result
+        return start(work, body, "A start-ups report", "start-ups reports")
 
     @app.get("/api/jobs/{job_id}")
     def job_status(job_id: str):
         if job_id not in jobs:
             raise HTTPException(404, "Unknown job (the app may have restarted); run it again.")
         return jobs[job_id]
+
+    # -- the admin page (docs/admin-roadmap.md): no link from the main app, a login ---------------
+    admin = {"sessions": {}, "fails": {}}  # token -> expiry; address -> [wrong tries, locked until]
+    admin_lock = threading.Lock()
+
+    def admin_in(request: Request) -> bool:
+        token = request.cookies.get(ADMIN_COOKIE) or ""
+        with admin_lock:
+            until = admin["sessions"].get(token)
+            if until is None:
+                return False
+            if until < time.time():
+                admin["sessions"].pop(token, None)
+                return False
+            return True
+
+    def admin_https(request: Request) -> bool:
+        """The password only over HTTPS (on plain HTTP it can be read on the network): the scheme
+        the browser used (behind a trusted proxy, its X-Forwarded-Proto)."""
+        return request.url.scheme == "https"
+
+    @app.get("/admin")
+    def admin_page():
+        text = (STATIC / "admin.html").read_text(encoding="utf-8")
+        try:
+            title = load_settings(config_path).title
+        except Exception:
+            title = ""
+        if title:
+            t = html.escape(title)
+            text = text.replace("<title>Admin</title>", f"<title>Admin | {t}</title>", 1).replace(
+                "<!--title-->", f"<i></i><h1>{t}</h1>", 1)
+        return HTMLResponse(text, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/admin/api/me")
+    def admin_me(request: Request):
+        return {"in": admin_in(request), "https": admin_https(request), "set": bool(os.environ.get(ADMIN_ENV)),
+                "host": request.url.hostname or "this host"}
+
+    @app.post("/admin/api/login")
+    def admin_login(body: LoginBody, request: Request):
+        addr = addr_of(request) or "?"
+        password = os.environ.get(ADMIN_ENV, "")
+        if not password:
+            raise HTTPException(503, f"No admin password is set: put {ADMIN_ENV}=... in .env, then "
+                                     "docker compose up -d (a restart does not read .env again).")
+        if not admin_https(request):
+            raise HTTPException(400, "Log in on the HTTPS address (https://…:8444/admin on Docker): on plain "
+                                     "HTTP the password can be read on the network.")
+        now = time.time()
+        with admin_lock:
+            tries, until = admin["fails"].get(addr, [0, 0.0])
+            if until > now:
+                raise HTTPException(423, f"Locked after {ADMIN_TRIES} wrong passwords: try again after "
+                                         f"{max(1, round((until - now) / 60))} min.")
+            if not hmac.compare_digest(body.password.encode(), password.encode()):
+                tries += 1
+                if tries >= ADMIN_TRIES:
+                    admin["fails"][addr] = [0, now + ADMIN_LOCK_MIN * 60]
+                    log.warning("Admin: locked for %d min after %d wrong passwords from %s", ADMIN_LOCK_MIN,
+                                ADMIN_TRIES, addr)
+                    raise HTTPException(423, f"Locked after {ADMIN_TRIES} wrong passwords: try again after "
+                                             f"{ADMIN_LOCK_MIN} min.")
+                admin["fails"][addr] = [tries, 0.0]
+                log.warning("Admin: a wrong password from %s (%d of %d before a %d-minute lock)", addr, tries,
+                            ADMIN_TRIES, ADMIN_LOCK_MIN)
+                raise HTTPException(403, f"Wrong password ({ADMIN_TRIES - tries} more tries before a "
+                                         f"{ADMIN_LOCK_MIN}-minute lock).")
+            admin["fails"].pop(addr, None)
+            token = secrets.token_urlsafe(32)
+            admin["sessions"] = {k: v for k, v in admin["sessions"].items() if v > now}
+            admin["sessions"][token] = now + ADMIN_HOURS * 3600
+        log.info("Admin: logged in from %s (for %d hours)", addr, ADMIN_HOURS)
+        response = JSONResponse({"in": True})
+        response.set_cookie(ADMIN_COOKIE, token, max_age=ADMIN_HOURS * 3600, path="/admin", httponly=True,
+                            secure=True, samesite="strict")
+        return response
+
+    @app.post("/admin/api/logout")
+    def admin_logout(request: Request):
+        with admin_lock:
+            admin["sessions"].pop(request.cookies.get(ADMIN_COOKIE) or "", None)
+        log.info("Admin: logged out from %s", addr_of(request) or "?")
+        response = JSONResponse({"in": False})
+        response.delete_cookie(ADMIN_COOKIE, path="/admin")
+        return response
+
+    @app.get("/admin/api/usage")
+    def admin_usage(request: Request, day: str = ""):
+        if not admin_in(request):
+            raise HTTPException(401, "Log in first.")
+        if day and not (len(day) == 10 and day[4] == "-" and day[7] == "-" and day.replace("-", "").isdigit()):
+            raise HTTPException(400, "day must be YYYY-MM-DD")
+        return usage.view(datetime.now(timezone.utc), day or None)
 
     return app

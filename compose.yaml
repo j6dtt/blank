@@ -30,11 +30,14 @@ x-settings:
 # Before the first start:
 #   1. cp config.example.yaml config.yaml, fill <REQUIRED>
 #   2. put ATERNITY_PASSWORD / NETIM_PASSWORD in ./.env
+#      (ADMIN_PASSWORD too, for the admin page /admin)
 #      and: mkdir -p data && chmod a+rwx data
 #   3. docker compose up -d, then check the connection:
 #      docker compose exec uxcorrelate uxcorrelate verify
 # Code fix: edit ./src/uxcorrelate/*.py, then
 #   docker compose restart
+# .env changed: docker compose up -d (a restart
+#   does not read .env again)
 # Full steps: README.md, "Connect to Riverbed".
 # ====================================================
 

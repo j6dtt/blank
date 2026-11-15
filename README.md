@@ -372,6 +372,62 @@ flags. Top to bottom:
 Each chart has "Table ▾" with its numbers. Counts and names are saved in
 `$UXCORRELATE_DATA/software/<date>.json` (no PC or user names), 90 days.
 
+## The admin page
+
+Who uses the app and how, at `/admin`. No link from the main page: you
+need the address and the password.
+
+How it works: the main page tells the app each tab opened (at load and at
+each switch). The app keeps each use with the caller's address and time.
+The main app has no login, so the address is looked up in Aternity: the
+Today reader already reads every action, now with `DEVICE_IP_ADDRESS`, and
+keeps the rows of the addresses that opened the app. The user Aternity saw
+on that address, nearest the visit within an hour, is the person.
+
+```
+desktop VD-03 opens Today ─► app keeps: 10:02, 192.0.2.11, Today
+Aternity row: 10:01 sample07 on VD-03 at 192.0.2.11
+next Today read (≤15 min) ─► 10:02 sample07, VD-03
+```
+
+**Log in.** Put `ADMIN_PASSWORD=...` in `.env`, then
+`docker compose up -d` (a restart does not read `.env` again). Open
+`https://<docker-host>:8444/admin` (on Kubernetes, the ingress address
++ `/admin`). Plain HTTP shows a link to the HTTPS address instead of the
+form: the password could be read on the network. A login lasts 8 hours,
+ends with **Log out** or a restart. 5 wrong passwords from one address
+lock it for 15 minutes. Each login, wrong password and lock is a log
+line with the caller's address.
+
+**What it shows** (one day; **Day** at the top picks another, today
+updates every minute):
+- **People using the app**: Now (a visit in the last 15 minutes: person,
+  desktop, tab, last visit); then the day: each person's first and last
+  visit, tabs used and what they ran. "Not known (address)": Aternity had
+  no action from that address (no agent, a VPN address, no action in that
+  hour); decided 2 hours after the visit, as Aternity sends rows late.
+  "One of N on it then": a desktop many users share. When every visit
+  comes from one address, a note says something in front of the app
+  hides the desktops.
+- **Use of the app**: tabs opened by hour and by tab; investigations
+  (where they were started, how long they took, what each found first);
+  start-ups reports, Software clicks, Explain uses.
+- **Ask anything**: questions, look-ups, failed look-ups, answers with a
+  number flagged, time to answer, and the questions themselves.
+- **Care list**: users listed, times a tile lit (a read that brought
+  something new of an issue), investigations it ran, changes
+  on the page and wrong PINs; the other platform's status polls (about
+  288 a day) and the last one, with a warning after 15 minutes without.
+- **Days kept**: people per day; click a day to open it.
+- **Load on Riverbed and the AI services**: calls, rows, seconds waiting,
+  retries, failed and cut short, per system, by hour, by what the app was
+  doing and by data source; how long the Today reader's reads take
+  against the minutes between them, and each start of the app.
+
+Kept in `$UXCORRELATE_DATA/usage/<date>.json`, 30 days, then deleted:
+usernames, desktop names, addresses and Ask anything's questions. Not
+counted: the Software reader's daily `$metadata` read.
+
 ## Quick start
 
 The tool needs a live Aternity and NetIM; see "Connect to Riverbed" below.
@@ -655,7 +711,8 @@ src/uxcorrelate/
   verify.py      checks the config against live Aternity / NetIM
   report.py      text report
   cli.py         command line
-  web.py         FastAPI app;  static/index.html  UI
+  usage.py       the admin page's counts and who used the app
+  web.py         FastAPI app;  static/index.html  UI, static/admin.html  /admin
 tests/           pytest suite (HTTP mocked with httpx.MockTransport;
                  synthetic.py is a fake Aternity/NetIM for engine tests)
 dev/             made-up Aternity + NetIM for the dev app (not bundled)

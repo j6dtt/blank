@@ -16,7 +16,7 @@ from urllib.parse import quote
 import httpx
 
 from .config import NO_VALUE, UNKNOWN_VALUE, VIRTUAL_VALUES, AternityConfig
-from .http import ApiError, RestClient
+from .http import ApiError, RestClient, cut_short
 from .models import (
     AppUsageSample, BootComponent, BootSample, DeviceHealthSample, EndpointInfo, HealthEvent, ProcessSample,
     SoftwareChange, UserSample, parse_time, to_float,
@@ -93,6 +93,7 @@ class AternityClient:
             if top and len(rows) >= top:
                 return rows[:top]
         if url:
+            cut_short("Aternity", entity)
             self.warnings.append(f"Aternity {entity}: stopped after {pages} pages "
                                  f"({len(rows)} rows); the result is partial. Narrow the window "
                                  "or raise aternity.max_pages.")

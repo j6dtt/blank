@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Admin</title>
+<style>
+  /* The admin page (docs/admin-roadmap.md): the main app's look (parchment, archive green, brass) */
+  :root {
+    --bg: #f3eddf; --panel: #fffcf4; --text: #2a261f; --muted: #6b6252; --border: #e2d7c0;
+    --accent: #2f5d46; --bad: #a8382d; --warn: #b26f12; --ok: #3d7a4f;
+    --head: #1f3b2e; --head-text: #f4ead2; --head-muted: #c8bb98; --brass: #b08d45;
+    --serif: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #15140f; --panel: #1e1c16; --text: #ece3cf; --muted: #a99f88; --border: #363228;
+            --accent: #4e8a69; --head: #10231a; --head-muted: #b3a682; --brass: #c9a55a; color-scheme: dark; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; background: var(--bg); color: var(--text); }
+  header { padding: 12px max(16px, env(safe-area-inset-left, 0px)) 12px; border-bottom: 3px solid var(--brass);
+           background: var(--head); color: var(--head-text); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .brand { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .brand small { color: var(--head-muted); font: 600 16px/1.1 var(--serif); font-variant: small-caps; letter-spacing: .03em; }
+  .brand i { width: 2px; align-self: stretch; min-height: 24px; background: var(--brass); }
+  .brand h1 { font: 600 22px/1.1 var(--serif); margin: 0; }
+  .tag { font: 600 12px/18px var(--serif); letter-spacing: .12em; text-transform: uppercase; color: var(--head); background: var(--brass);
+         border-radius: 4px; padding: 1px 8px; }
+  #bar { margin-left: auto; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  #bar[hidden], #page[hidden] { display: none; }  /* a CSS display wins over hidden without its own rule */
+  #page { display: contents; }
+  #bar select { padding: 5px 8px; border-radius: 6px; border: 1px solid var(--brass); background: var(--head); color: var(--head-text); font: inherit; }
+  #bar button { background: transparent; color: var(--head-text); border: 1px solid var(--brass); }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px max(16px, env(safe-area-inset-right, 0px)) 48px max(16px, env(safe-area-inset-left, 0px));
+         display: grid; gap: 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-top: 2px solid var(--brass); border-radius: 4px;
+           padding: 16px; box-shadow: 0 1px 2px rgba(60, 45, 20, .06); min-width: 0; }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr)); gap: 16px; }
+  .grid2 > * { min-width: 0; }
+  h2 { font: 600 17px var(--serif); margin: 0 0 10px; color: var(--accent); }
+  h3 { font: 600 14px var(--serif); margin: 14px 0 6px; }
+  h3:first-child { margin-top: 0; }
+  button { padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: wait; }
+  input { padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .tableWrap { overflow-x: auto; }
+  a { color: var(--accent); }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  .bad { color: var(--bad); }
+  .warn { color: var(--warn); }
+  .note { border-left: 4px solid var(--warn); background: var(--bg); padding: 8px 12px; margin: 0 0 12px; }
+  .err { color: var(--bad); white-space: pre-wrap; }
+  .err:empty { display: none; }
+  .nums { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 0 0 8px; }
+  .nums div { display: grid; }
+  .nums b { font: 700 22px/1.15 var(--serif); }
+  .nums span { font-size: 12px; color: var(--muted); }
+  /* bars: one series each, the accent; numbers in text colours */
+  svg.bars { display: block; width: 100%; height: auto; }
+  svg.bars rect.v { fill: var(--accent); }
+  svg.bars rect.hit { fill: transparent; }
+  svg.bars rect.hit:hover + rect.v, svg.bars rect.sel { fill: var(--brass); }
+  svg.bars text { fill: var(--muted); font-size: 10px; }
+  svg.bars line { stroke: var(--border); }
+  svg.bars g.day { cursor: pointer; }
+  .hl { display: grid; grid-template-columns: minmax(110px, 42%) 1fr auto; gap: 4px 10px; align-items: center; font-size: 13px; }
+  .hl i { display: block; height: 10px; border-radius: 0 3px 3px 0; background: var(--accent); min-width: 2px; }
+  .hl .n { text-align: right; font-variant-numeric: tabular-nums; }
+  ul.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  ul.plain li { border-left: 3px solid var(--border); padding: 1px 0 1px 10px; }
+  ul.plain li.bad { border-color: var(--bad); color: var(--text); }
+  .q { max-height: 420px; overflow-y: auto; }
+  #login { max-width: 460px; justify-self: center; width: 100%; }
+  #login form { display: grid; gap: 10px; }
+</style>
+</head>
+<body>
+<header>
+  <svg width="30" height="34" viewBox="0 0 30 34" aria-hidden="true">
+    <path d="M15 1 L28 5 V16 C28 25 22 30 15 33 C8 30 2 25 2 16 V5 Z" fill="none" stroke="var(--brass)" stroke-width="2"/>
+    <text x="15" y="21" text-anchor="middle" font-family="Georgia, serif" font-size="11" font-weight="700"
+      fill="var(--brass)" style="fill:var(--brass)">J6</text></svg>
+  <div class="brand"><small>J6 Preservation Society</small><!--title--></div>
+  <span class="tag">Admin</span>
+  <div id="bar" hidden>
+    <label class="small">Day <select id="day" aria-label="Day"></select></label>
+    <span class="small" id="asOf" style="color: var(--head-muted)"></span>
+    <button id="out">Log out</button>
+  </div>
+</header>
+<main id="main">
+  <section class="panel" id="login" hidden>
+    <h2>Log in</h2>
+    <div id="loginBody"></div>
+    <p class="err" id="loginErr"></p>
+  </section>
+  <p class="err" id="err"></p>
+  <div id="page" hidden></div>
+</main>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const fmt = n => Number(n || 0).toLocaleString("en-US");
+const plural = (n, one, many) => `${fmt(n)} ${n === 1 ? one : (many || one + "s")}`;
+function dur(s) {  // seconds in words: 45 s, 12 min, 1 h 05 min
+  if (s == null) return "–";
+  s = Math.round(s);
+  if (s < 120) return `${s} s`;
+  const m = Math.round(s / 60);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min`;
+}
+async function readJson(r) {
+  const text = await r.text();
+  try { return JSON.parse(text); } catch (e) {
+    return { detail: `UX Correlator answered HTTP ${r.status}${r.status >= 502 ? ": the app may be restarting" : ""}.` };
+  }
+}
+// Where an investigation was started (InvestigateBody.source; the Care list's own runs are "care-auto")
+const BY = { investigate: "Investigate tab", today: "Investigate ▸ on Today", care: "Investigate again on the Care list",
+  "care-auto": "Care list, by itself", ask: "Ask anything", software: "Investigate ▸ on Software",
+  startups: "Investigate ▸ on Start-ups", API: "The API (no page)" };
+const KIND = { virtual: "virtual desktop", physical: "physical PC" };
+
+let state = { day: "", data: null, timer: null };
+
+async function me() {
+  const r = await fetch("admin/api/me", { cache: "no-store" });
+  return readJson(r);
+}
+
+function showLogin(m) {
+  $("bar").hidden = true; $("page").hidden = true; $("login").hidden = false;
+  const box = $("loginBody");
+  if (!m.set) {
+    box.innerHTML = `<p>No admin password is set. Put <code>ADMIN_PASSWORD=…</code> in the app's <code>.env</code>, then <code>docker compose up -d</code> (a restart does not read <code>.env</code> again; on Kubernetes, load the Secret again and restart the pod).</p>`;
+    return;
+  }
+  if (!m.https) {
+    const url = `https://${location.hostname}:8444/admin`;
+    box.innerHTML = `<p>Log in on the HTTPS address: on plain HTTP the password can be read on the network.</p>
+      <p><a href="${esc(url)}">${esc(url)}</a> <span class="muted small">(Docker's HTTPS port)</span></p>`;
+    return;
+  }
+  box.innerHTML = `<form id="lf"><label class="small muted" for="pw">Admin password</label>
+    <input id="pw" type="password" autocomplete="current-password" required>
+    <button type="submit">Log in</button></form>`;
+  $("pw").focus();
+  $("lf").addEventListener("submit", async ev => {
+    ev.preventDefault();
+    const b = ev.target.querySelector("button");
+    b.disabled = true; $("loginErr").textContent = "";
+    try {
+      const r = await fetch("admin/api/login", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: $("pw").value }) });
+      const j = await readJson(r);
+      if (!r.ok) { $("loginErr").textContent = j.detail || `HTTP ${r.status}`; $("pw").select(); return; }
+      $("login").hidden = true;
+      load();
+    } catch (e) {
+      $("loginErr").textContent = "UX Correlator did not answer: " + e.message;
+    } finally { b.disabled = false; }
+  });
+}
+
+async function load(day = state.day) {
+  clearTimeout(state.timer);
+  let r, j;
+  try {
+    r = await fetch("admin/api/usage" + (day ? "?day=" + encodeURIComponent(day) : ""), { cache: "no-store" });
+    j = await readJson(r);
+  } catch (e) {
+    $("err").textContent = "UX Correlator did not answer: " + e.message + ". Trying again in a minute.";
+    state.timer = setTimeout(load, 60000);
+    return;
+  }
+  if (r.status === 401) { showLogin(await me()); return; }
+  if (!r.ok) { $("err").textContent = j.detail || `HTTP ${r.status}`; return; }
+  $("err").textContent = "";
+  state.day = j.date; state.data = j;
+  draw(j);
+  if (j.today) state.timer = setTimeout(() => { if (!document.hidden) load(); else state.timer = setTimeout(load, 60000); }, 60000);
+}
+
+function dayName(d, today) {
+  const t = new Date(d + "T12:00:00Z");
+  const words = t.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+  return d === today ? `Today, ${words}` : words;
+}
+
+// 24 (or any number of) vertical bars; labels every `every`; a title on each bar is its hover text
+function bars(values, label, opts = {}) {
+  const W = 480, H = opts.h || 84, top = 12, base = H - 16, n = Math.max(values.length, opts.slots || 0, 1), w = W / n;
+  const off = n - values.length;  // empty slots at the left
+  const max = Math.max(1, ...values);
+  let s = `<svg class="bars" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.aria || "")}">`;
+  s += `<line x1="0" x2="${W}" y1="${base + .5}" y2="${base + .5}"/>`;
+  s += `<text x="0" y="9">${esc(opts.unit ? `most: ${fmt(max)} ${opts.unit}` : `most: ${fmt(max)}`)}</text>`;
+  values.forEach((v, i) => {
+    const h = v ? Math.max(2, (base - top) * v / max) : 0, x = (i + off) * w;
+    const sel = opts.sel === i ? " sel" : "";
+    s += `<g${opts.click ? ` class="day" data-i="${i}"` : ""}><title>${esc(label(i, v))}</title>`
+      + `<rect class="hit" x="${x}" y="0" width="${w}" height="${base}"/>`
+      + (h ? `<rect class="v${sel}" x="${x + 1}" y="${base - h}" width="${Math.max(1, w - 2)}" height="${h}" rx="2"/>` : "")
+      + `</g>`;
+    const tick = opts.tick ? opts.tick(i) : (i % (opts.every || 3) === 0 ? String(i).padStart(2, "0") : "");
+    const mid = x + w / 2, at = mid > W - 16 ? `x="${W}" text-anchor="end"` : mid < 16 ? `x="0" text-anchor="start"` : `x="${mid}" text-anchor="middle"`;
+    if (tick) s += `<text ${at} y="${H - 3}">${esc(tick)}</text>`;  // a label at an edge stays inside
+  });
+  return s + "</svg>";
+}
+const hourBars = (v, what, aria) => bars(v, (h, n) => `${String(h).padStart(2, "0")}:00–${String(h).padStart(2, "0")}:59: ${plural(n, what)}`, { aria });
+
+function hlist(rows) {  // [label, n] as horizontal bars
+  if (!rows.length) return `<p class="muted small">None.</p>`;
+  const max = Math.max(1, ...rows.map(r => r[1]));
+  return `<div class="hl">${rows.map(([l, n]) => `<span>${esc(l)}</span><i style="width:${(100 * n / max).toFixed(1)}%"></i><span class="n">${fmt(n)}</span>`).join("")}</div>`;
+}
+function nums(items) {
+  return `<div class="nums">${items.map(([v, l, cls]) => `<div><b class="${cls || ""}">${v}</b><span>${esc(l)}</span></div>`).join("")}</div>`;
+}
+function person(p) {
+  if (!p.who) return `<span class="muted">not known</span> <span class="small muted">(${esc(p.addr || "no address")})</span>`;
+  let s = `<b>${esc(p.who)}</b>`;
+  if (p.others && p.others.length > 1) s += ` <span class="small muted">one of ${p.others.length} on it then: ${esc(p.others.join(", "))}</span>`;
+  return s;
+}
+function desk(p) {
+  if (!p.pcs || !p.pcs.length) return `<span class="muted">–</span>`;
+  return esc(p.pcs.join(", ")) + (KIND[p.kind] ? ` <span class="small muted">${KIND[p.kind]}</span>` : "");
+}
+function did(p) {
+  const parts = [];
+  if (p.investigations) parts.push(plural(p.investigations, "investigation"));
+  if (p.questions) parts.push(plural(p.questions, "question"));
+  if (p.startups) parts.push(plural(p.startups, "start-ups report"));
+  if (p.software) parts.push(plural(p.software, "Software click"));
+  if (p.explains) parts.push(plural(p.explains, "Explain"));
+  return parts.length ? esc(parts.join(", ")) : `<span class="muted">looked only</span>`;
+}
+
+function peoplePanel(j) {
+  const dayWord = j.today ? "today" : dayName(j.date, "");
+  let s = `<section class="panel"><h2>People using the app</h2>`;
+  if (j.note) s += `<p class="note">${esc(j.note)}</p>`;
+  if (j.today) {
+    s += `<h3>Now <span class="muted small">(a visit in the last ${j.now_min} min)</span></h3>`;
+    s += j.active.length ? `<ul class="plain">${j.active.map(p => `<li>${[person(p), p.pcs.length ? desk(p) : "", p.tab_now ? esc(p.tab_now) + " tab" : "", "last at " + esc(p.last_local)].filter(Boolean).join(" · ")}</li>`).join("")}</ul>`
+      : `<p class="muted">No one in the last ${j.now_min} minutes.</p>`;
+  }
+  s += `<h3>${j.today ? "Today" : esc(dayWord)}: ${plural(j.people.length, "person", "people")}</h3>`;
+  if (j.people.length) {
+    s += `<div class="tableWrap"><table><thead><tr><th>Person</th><th>Desktop</th><th>Visits</th><th>Tabs used</th><th>Did</th></tr></thead><tbody>`
+      + j.people.map(p => `<tr><td>${person(p)}</td><td>${desk(p)}</td><td class="n">${esc(p.first_local)}–${esc(p.last_local)}</td>`
+        + `<td>${esc(p.tabs.join(", ") || "–")}</td><td>${did(p)}</td></tr>`).join("")
+      + `</tbody></table></div>`;
+  } else s += `<p class="muted">No one opened the app${j.today ? " yet today" : " that day"}.</p>`;
+  s += `<p class="muted small">A person is the user Aternity saw on the visit's address, its action nearest the visit within ${j.match_min} min `
+    + `(read with Today's every ${j.reads.every_min} min). "Not known": Aternity had no action from that address then (no agent, `
+    + `a VPN address, or no action in that hour). Times in ${esc(j.zone)}.</p></section>`;
+  return s;
+}
+
+function usePanel(j) {
+  const inv = j.investigations, sec = inv.seconds;
+  let s = `<section class="panel"><h2>Use of the app</h2>`;
+  s += nums([[fmt(j.pages.total), "tabs opened"], [fmt(inv.n), "investigations"], [fmt(j.startups.n), "start-ups reports"],
+    [fmt(j.software.n), "Software clicks"], [fmt(j.explain.n), "Explain uses"]]);
+  s += `<h3>Tabs opened by hour</h3>` + hourBars(j.pages.by_hour, "tab opened", "Tabs opened by hour");
+  s += `<h3>By tab</h3>` + hlist(j.pages.by_tab.map(t => [t.tab, t.n]));
+  s += `<h3>Investigations</h3>`;
+  if (inv.n) {
+    s += `<p class="small">${plural(inv.n, "investigation")}${inv.failed ? `, <span class="bad">${fmt(inv.failed)} failed</span>` : ""}`
+      + (sec ? `; time taken: typical ${dur(sec.typical)}, ${dur(sec.least)} to ${dur(sec.most)}` : "") + `.</p>`;
+    s += `<p class="muted small">Started from</p>` + hlist(inv.by.map(([b, n]) => [BY[b] || b, n]));
+    s += `<p class="muted small" style="margin-top:10px">What each found first</p>` + hlist(inv.found);
+  } else s += `<p class="muted small">None.</p>`;
+  const su = j.startups;
+  s += `<h3>Start-ups reports</h3><p class="small">${su.n ? plural(su.n, "report") + (su.failed ? `, <span class="bad">${fmt(su.failed)} failed</span>` : "")
+    + (su.seconds ? `; typical ${dur(su.seconds.typical)}, longest ${dur(su.seconds.most)}` : "") + "." : `<span class="muted">None.</span>`}</p>`;
+  s += `<h3>Software clicks</h3>` + hlist(j.software.by);
+  s += `<h3>Explain ▸</h3>` + hlist(j.explain.by);
+  return s + `</section>`;
+}
+
+function askPanel(j) {
+  const a = j.ask;
+  let s = `<section class="panel"><h2>Ask anything</h2>`;
+  s += nums([[fmt(a.n), "questions"], [fmt(a.steps), "look-ups"], [fmt(a.failed_lookups), "look-ups failed", a.failed_lookups ? "bad" : ""],
+    [fmt(a.flagged), "answers with a number flagged", a.flagged ? "warn" : ""], [fmt(a.failed), "questions with no answer", a.failed ? "bad" : ""]]);
+  if (a.seconds) s += `<p class="small">Time to answer: typical ${dur(a.seconds.typical)}, ${dur(a.seconds.least)} to ${dur(a.seconds.most)}.</p>`;
+  s += `<h3>The questions <span class="muted small">(latest first; kept ${30} days, admin only)</span></h3>`;
+  s += a.questions.length ? `<div class="q"><ul class="plain">${a.questions.map(q => `<li class="${q.ok ? "" : "bad"}"><span class="small muted">${esc(q.at_local)} · ${q.who ? esc(q.who) : "not known (" + esc(q.addr || "?") + ")"} · ${plural(q.steps, "look-up")}${q.ok ? "" : " · no answer"}</span><br>${esc(q.q)}</li>`).join("")}</ul></div>`
+    : `<p class="muted small">None.</p>`;
+  return s + `</section>`;
+}
+
+function carePanel(j) {
+  const c = j.care, p = c.polls;
+  let s = `<section class="panel"><h2>Care list</h2>`;
+  s += nums([[fmt(c.listed), "users listed"], [fmt(c.lit), "times a tile lit"], [fmt(c.runs), "investigations it ran"],
+    [fmt(c.changes.length - c.wrong_pins), "changes"], [fmt(c.wrong_pins), "wrong PINs", c.wrong_pins ? "bad" : ""]]);
+  s += `<h3>Changes on the page</h3>`;
+  s += c.changes.length ? `<ul class="plain">${c.changes.map(x => `<li class="${x.ok ? "" : "bad"}"><span class="small muted">${esc(x.at_local)} · ${x.who ? esc(x.who) : "not known (" + esc(x.addr || "?") + ")"}</span><br>${x.ok ? "" : "Wrong PIN: "}${esc(x.what)}</li>`).join("")}</ul>`
+    : `<p class="muted small">None.</p>`;
+  s += `<h3>The other platform's status polls</h3>`;
+  if (!p.n) s += `<p class="${j.today ? "warn" : "muted"}">No poll of /api/MSS/care/status ${j.today ? "today" : "that day"}.</p>`;
+  else {
+    const late = j.today && p.last && (Date.now() - Date.parse(p.last)) > 15 * 60000;
+    s += `<p class="small">${plural(p.n, "poll")} (one every 5 min is 288 a day); the last at ${esc(p.last_local)} from ${esc(p.from || "?")}.</p>`;
+    if (late) s += `<p class="warn small">No poll for ${dur((Date.now() - Date.parse(p.last)) / 1000)}: the other platform may have stopped asking.</p>`;
+  }
+  return s + `</section>`;
+}
+
+function loadPanel(j) {
+  let s = `<section class="panel"><h2>Load on Riverbed and the AI services</h2>`;
+  const rd = j.reads;
+  const starts = (rd.starts || []).map(x => `${dur(x.seconds)} at ${esc(x.at_local)}`);
+  s += `<p class="small">Today reader: ${rd.n ? `${plural(rd.n, "read")} every ${rd.every_min} min, typical ${dur(rd.typical)}, longest ${dur(rd.longest)}` : "no regular read yet"}`
+    + (rd.over ? `; <span class="warn">${plural(rd.over, "read")} took longer than the ${rd.every_min} min between reads</span>` : rd.n ? `; none longer than the ${rd.every_min} min between reads` : "")
+    + (starts.length ? `. ${starts.length === 1 ? "The app started once" : `The app started ${starts.length} times`}; its first read (the last 24 hours) took ${starts.join("; ")}` : "") + `.</p>`;
+  if (!j.load.length) return s + `<p class="muted">No call counted ${j.today ? "yet today" : "that day"}.</p></section>`;
+  s += `<div class="grid2">` + j.load.map(x => {
+    const bad = [x.retries && `${plural(x.retries, "retry", "retries")}`, x.failed && `<span class="bad">${fmt(x.failed)} failed</span>`,
+      x.cut && `<span class="warn">${fmt(x.cut)} cut short</span>`].filter(Boolean);
+    return `<div><h3>${esc(x.system)}</h3><p class="small">${plural(x.calls, "call")}, ${plural(x.rows, "row")}, ${dur(x.seconds)} waiting`
+      + `${bad.length ? "; " + bad.join(", ") : "; no retry, none failed"}.</p>`
+      + hourBars(x.by_hour, "call", `${x.system} calls by hour`)
+      + `<div class="tableWrap"><table><thead><tr><th>What for</th><th class="n">Calls</th><th class="n">Rows</th><th class="n">Waiting</th><th class="n">Failed</th></tr></thead><tbody>`
+      + x.purposes.map(p => `<tr><td>${esc(p.purpose)}</td><td class="n">${fmt(p.calls)}</td><td class="n">${fmt(p.rows)}</td><td class="n">${dur(p.seconds)}</td>`
+        + `<td class="n${p.failed || p.cut ? " bad" : ""}">${fmt(p.failed)}${p.cut ? ` (+${fmt(p.cut)} cut)` : ""}</td></tr>`).join("")
+      + `</tbody></table></div><p class="muted small" style="margin:8px 0 4px">Most called</p>`
+      + hlist(x.sources.map(o => [o.source, o.calls])) + `</div>`;
+  }).join("") + `</div>`;
+  return s + `<p class="muted small">Every call the app made, counted under what it was doing; "waiting" adds up the seconds each call took.</p></section>`;
+}
+
+function daysPanel(j) {
+  const ds = j.days;
+  if (!ds.length) return "";
+  const today = j.dates[0];
+  const sel = ds.findIndex(d => d.date === j.date);
+  const label = (i) => { const d = ds[i]; return `${dayName(d.date, today)}: ${plural(d.people, "person", "people")}, ${plural(d.pages, "tab")} opened, ${plural(d.investigations, "investigation")}, ${plural(d.questions, "question")}`; };
+  const every = Math.max(1, Math.ceil(ds.length / 8));
+  return `<section class="panel"><h2>Days kept <span class="muted small">(people per day; click a day to open it)</span></h2>`
+    + bars(ds.map(d => d.people), label, { click: true, sel, aria: "People per day", unit: "people", slots: 31,
+      tick: i => (i % every === 0 || i === ds.length - 1) ? ds[i].date.slice(5) : "" })
+    + `<p class="muted small">Kept 30 days, then deleted.</p></section>`;
+}
+
+function draw(j) {
+  $("login").hidden = true; $("bar").hidden = false;
+  const sel = $("day");
+  sel.innerHTML = j.dates.map(d => `<option value="${esc(d)}"${d === j.date ? " selected" : ""}>${esc(dayName(d, j.dates[0]))}</option>`).join("");
+  $("asOf").textContent = j.today ? `as of ${j.as_of_local} ${j.zone}` : "";
+  const page = $("page");
+  page.hidden = false;
+  if (j.missing) { page.innerHTML = `<section class="panel"><p class="muted">Nothing was recorded on ${esc(dayName(j.date, j.dates[0]))}.</p></section>`; return; }
+  page.innerHTML = peoplePanel(j) + `<div class="grid2">${usePanel(j)}${askPanel(j)}</div>`
+    + `<div class="grid2">${carePanel(j)}${daysPanel(j)}</div>` + loadPanel(j);
+  page.querySelectorAll("svg.bars g.day").forEach(g => g.addEventListener("click", () => load(j.days[Number(g.dataset.i)].date)));
+}
+
+$("day").addEventListener("change", ev => load(ev.target.value));
+$("out").addEventListener("click", async () => {
+  clearTimeout(state.timer);
+  try { await fetch("admin/api/logout", { method: "POST" }); } catch (e) { /* the cookie goes with the session anyway */ }
+  state = { day: "", data: null, timer: null };
+  showLogin(await me());
+});
+
+(async () => {
+  try {
+    const m = await me();
+    if (m.in) load(); else showLogin(m);
+  } catch (e) { $("err").textContent = "UX Correlator did not answer: " + e.message; }
+})();
+</script>
+</body>
+</html>
