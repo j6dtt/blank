@@ -49,6 +49,7 @@
   th { color: var(--muted); font-weight: 600; }
   td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .tableWrap { overflow-x: auto; }
+  table.people { min-width: 640px; }  /* a phone scrolls it in its frame: the desktops' AD lines stay readable */
   a { color: var(--accent); }
   .muted { color: var(--muted); }
   .small { font-size: 12px; }
@@ -76,6 +77,7 @@
   ul.plain li { border-left: 3px solid var(--border); padding: 1px 0 1px 10px; }
   ul.plain li.bad { border-color: var(--bad); color: var(--text); }
   .q { max-height: 420px; overflow-y: auto; }
+  .ad [title]:not([title=""]) { border-bottom: 1px dotted var(--muted); cursor: help; }
   #login { max-width: 460px; justify-self: center; width: 100%; }
   #login form { display: grid; gap: 10px; }
 </style>
@@ -227,15 +229,76 @@ function nums(items) {
 }
 // no one found on the address: still looked up at each read (Aternity sends rows late), or not known for good
 const nobody = x => `<span class="muted">${x.waiting ? "waiting for Aternity" : "not known"}</span> <span class="small muted">(${esc(x.addr || "no address")})</span>`;
+// Active Directory (ad.Lookup): each username and desktop on the page looked up once a day, in
+// memory only; asked after the page is drawn, so the page never waits on AD
+const AD = { users: {}, pcs: {}, res: null, busy: false, keptH: 24 };
+function adGot(kept, name) {
+  const x = kept[name];
+  return x && Date.now() - x.at < AD.keptH * 3600e3 ? x.v : null;
+}
+function adUser(name) {
+  const x = adGot(AD.users, name);
+  if (!x) return "";
+  if (!x.found) return ` <span class="small muted">not in AD</span>`;
+  let main = [x.name, x.department].filter(Boolean), more = [x.title, x.office].filter(Boolean);
+  if (!main.length) [main, more] = [more, []];
+  return (main.length ? ` · <span title="${esc(more.join(" · "))}">${esc(main.join(" · "))}</span>` : "")
+    + (x.disabled ? ` <span class="bad small">disabled in AD</span>` : "");
+}
+function adPc(name) {
+  const x = adGot(AD.pcs, name);
+  if (!x) return "";
+  if (!x.found) return ` <span class="small muted">not in AD</span>`;
+  const parts = [x.ou && "in " + x.ou, x.description].filter(Boolean);
+  return (parts.length ? `<br><span class="small muted" title="${esc(x.os || "")}">${esc(parts.join(" · "))}</span>` : "")
+    + (x.disabled ? ` <span class="bad small">disabled in AD</span>` : "");
+}
+function adLine() {
+  const x = AD.res;
+  if (!x || x.state === "ok") return "";
+  if (x.state === "off") return `<p class="muted small">Names from Active Directory: not set (${esc(x.why)}; then docker compose up -d).</p>`;
+  if (x.state === "refused") return `<p class="note"><span class="bad">Active Directory refused the login of AD_USERNAME (${esc(x.why)}).</span> `
+    + `It is not tried again until the app restarts: correct .env, then docker compose up -d.</p>`;
+  return `<p class="note">Active Directory did not answer (${esc(x.why)}). It is tried again in up to ${x.retry_min || 5} min; names already looked up are shown.</p>`;
+}
+function adFill() {
+  document.querySelectorAll("[data-adu]").forEach(el => { el.innerHTML = adUser(el.dataset.adu); });
+  document.querySelectorAll("[data-adp]").forEach(el => { el.innerHTML = adPc(el.dataset.adp); });
+  const line = $("adLine");
+  if (line) line.innerHTML = adLine();
+}
+async function adLook(j) {
+  if (AD.busy || (AD.res && (AD.res.state === "off" || AD.res.state === "refused"))) return;  // known until a restart
+  const users = [...new Set(j.people.filter(p => p.who).map(p => p.who))].filter(n => !adGot(AD.users, n));
+  const pcs = [...new Set(j.people.flatMap(p => p.pcs || []))].filter(n => !adGot(AD.pcs, n));
+  if (!users.length && !pcs.length) return;
+  AD.busy = true;
+  try {
+    const r = await fetch("admin/api/ad", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ users, pcs }) });
+    const x = await readJson(r);
+    if (r.status === 401) return;  // the next load shows the login
+    if (!r.ok) { AD.res = { state: "down", why: x.detail || `HTTP ${r.status}` }; return; }
+    AD.res = x; AD.keptH = x.kept_h || 24;
+    const now = Date.now();
+    for (const [k, v] of Object.entries(x.users || {})) AD.users[k] = { at: now, v };
+    for (const [k, v] of Object.entries(x.pcs || {})) AD.pcs[k] = { at: now, v };
+  } catch (e) {
+    AD.res = { state: "down", why: "UX Correlator did not answer: " + e.message };
+  } finally { AD.busy = false; adFill(); }
+}
+
 function person(p) {
   if (!p.who) return nobody(p);
-  let s = `<b>${esc(p.who)}</b>`;
+  let s = `<b>${esc(p.who)}</b><span class="ad" data-adu="${esc(p.who)}">${adUser(p.who)}</span>`;
   if (p.others && p.others.length > 1) s += ` <span class="small muted">one of ${p.others.length} on it then: ${esc(p.others.join(", "))}</span>`;
   return s;
 }
-function desk(p) {
+function desk(p, ad) {  // ad: with each desktop's AD details (the table; the Now list is short)
   if (!p.pcs || !p.pcs.length) return `<span class="muted">–</span>`;
-  return esc(p.pcs.join(", ")) + (KIND[p.kind] ? ` <span class="small muted">${KIND[p.kind]}</span>` : "");
+  const kind = KIND[p.kind] ? ` <span class="small muted">${KIND[p.kind]}</span>` : "";
+  if (!ad) return esc(p.pcs.join(", ")) + kind;
+  return p.pcs.map((c, i) => `<div>${esc(c)}${i ? "" : kind}<span class="ad" data-adp="${esc(c)}">${adPc(c)}</span></div>`).join("");
 }
 function did(p) {
   const parts = [];
@@ -249,7 +312,7 @@ function did(p) {
 
 function peoplePanel(j) {
   const dayWord = j.today ? "today" : dayName(j.date, "");
-  let s = `<section class="panel"><h2>People using the app</h2>`;
+  let s = `<section class="panel"><h2>People using the app</h2><div id="adLine">${adLine()}</div>`;
   if (j.note) s += `<p class="note">${esc(j.note)}</p>`;
   if (j.today) {
     s += `<h3>Now <span class="muted small">(a visit in the last ${j.now_min} min)</span></h3>`;
@@ -263,8 +326,8 @@ function peoplePanel(j) {
     + `${waiting ? `, ${plural(waiting, "address", "addresses")} waiting for Aternity` : ""}`
     + `${unknown ? `, ${plural(unknown, "address", "addresses")} not known` : ""}</h3>`;
   if (j.people.length) {
-    s += `<div class="tableWrap"><table><thead><tr><th>Person</th><th>Desktop</th><th>Visits</th><th>Tabs used</th><th>Did</th></tr></thead><tbody>`
-      + j.people.map(p => `<tr><td>${person(p)}</td><td>${desk(p)}</td><td class="n">${esc(p.first_local)}–${esc(p.last_local)}</td>`
+    s += `<div class="tableWrap"><table class="people"><thead><tr><th>Person</th><th>Desktop</th><th>Visits</th><th>Tabs used</th><th>Did</th></tr></thead><tbody>`
+      + j.people.map(p => `<tr><td>${person(p)}</td><td>${desk(p, true)}</td><td class="n">${esc(p.first_local)}–${esc(p.last_local)}</td>`
         + `<td>${esc(p.tabs.join(", ") || "–")}</td><td>${did(p)}</td></tr>`).join("")
       + `</tbody></table></div>`;
   } else s += `<p class="muted">No one opened the app${j.today ? " yet today" : " that day"}.</p>`;
@@ -272,7 +335,8 @@ function peoplePanel(j) {
     + `(read with Today's every ${j.reads.every_min} min). "Waiting for Aternity": looked up again at each read`
     + `${j.today && j.next_read_local ? ` (the next at ${esc(j.next_read_local)})` : ""}; Aternity sends rows late, so it can take a read or two. `
     + `"Not known": ${j.give_up_h} hours after the visit, still no action from that address (no agent, a VPN address, or no action `
-    + `near the visit). Times in ${esc(j.zone)}.</p></section>`;
+    + `near the visit). Name and department, and each desktop's OU and description: Active Directory, looked up once a day `
+    + `(title, office and the desktop's Windows on hover). Times in ${esc(j.zone)}.</p></section>`;
   return s;
 }
 
@@ -329,7 +393,7 @@ function carePanel(j) {
 }
 
 function loadPanel(j) {
-  let s = `<section class="panel"><h2>Load on Riverbed and the AI services</h2>`;
+  let s = `<section class="panel"><h2>Load on Riverbed, the AI services${j.load.some(x => x.system === "Active Directory") ? " and Active Directory" : ""}</h2>`;
   const rd = j.reads;
   const starts = (rd.starts || []).map(x => `${dur(x.seconds)} at ${esc(x.at_local)}`);
   s += `<p class="small">Today reader: ${rd.n ? `${plural(rd.n, "read")} every ${rd.every_min} min, typical ${dur(rd.typical)}, longest ${dur(rd.longest)}` : "no regular read yet"}`
@@ -377,6 +441,7 @@ function draw(j) {
   page.innerHTML = peoplePanel(j) + `<div class="grid2">${usePanel(j)}${askPanel(j)}</div>`
     + `<div class="grid2">${carePanel(j)}${daysPanel(j)}</div>` + loadPanel(j);
   page.querySelectorAll("svg.bars g.day").forEach(g => g.addEventListener("click", () => load(j.days[Number(g.dataset.i)].date)));
+  adLook(j);  // names from AD, filled in when it answers
 }
 
 $("day").addEventListener("change", ev => load(ev.target.value));
@@ -384,6 +449,7 @@ $("out").addEventListener("click", async () => {
   clearTimeout(state.timer);
   try { await fetch("admin/api/logout", { method: "POST" }); } catch (e) { /* the cookie goes with the session anyway */ }
   state = { day: "", data: null, timer: null };
+  Object.assign(AD, { users: {}, pcs: {}, res: null });  // what AD said goes with the session
   showLogin(await me());
 });
 

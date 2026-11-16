@@ -115,7 +115,11 @@ def cmd_serve(args) -> int:
                         "The page is on http port %s only.", args.tls_port, ", ".join(map(str, unreadable)),
                         args.port)
         else:
-            configs.append(uvicorn.Config(app, host=args.host, port=args.tls_port,
+            # the HTTPS port is reached directly (Docker, a Kubernetes load balancer): a forwarded
+            # address or scheme is taken only from the container itself. FORWARDED_ALLOW_IPS is for
+            # the http port behind a proxy (the ingress); on this port a browser could claim any
+            # address, or HTTPS on plain http (the admin login)
+            configs.append(uvicorn.Config(app, host=args.host, port=args.tls_port, forwarded_allow_ips="127.0.0.1",
                                           ssl_certfile=args.cert, ssl_keyfile=args.key))
             log.info("HTTPS on port %s with %s", args.tls_port, args.cert)
 

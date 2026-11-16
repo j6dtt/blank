@@ -8,16 +8,27 @@
 #                    folder with src/, data/,
 #                    config.yaml, .env, certs/
 #   <MEMORY>         memory limit (step 1)
-#   <HOST>           the name users type in the
-#                    browser; the certificate in
-#                    certs/ must be for this name
-#   <INGRESS_CLASS>  kubectl get ingressclass
+# The way in has its own file, one of (SWITCH below):
+#   k8s/ingress.yaml       ingress-nginx; its <HOST>,
+#                          <INGRESS_CLASS>
+#   k8s/loadbalancer.yaml  a load balancer straight to
+#                          the pod's HTTPS
+# The certificate in certs/ must be for the name
+# users type in the browser.
 # ====================================================
 #
 # ------------------- HOW IT RUNS --------------------
-# browser ─https─▶ Ingress (<HOST>, certificate)
-#   ─▶ Service :80 ─▶ ONE pod :8080, which mounts
-#   the app folder on NFS:
+# ONE pod serves two ports, as compose does:
+#   :8080 http, for the ingress (it trusts the
+#         ingress's X-Forwarded-For: the user's PC)
+#   :8444 https, the certificate from the Secret
+#         "uxcorrelate-tls" (a browser's own
+#         X-Forwarded-For is never trusted here)
+# Ingress way:
+#   browser ─https─▶ Ingress ─▶ Service :80 ─▶ :8080
+# Load-balancer way:
+#   browser ─https─▶ LB :8444 ─▶ :8444 (TLS in the pod)
+# The pod mounts the app folder on NFS:
 #     src/        → /app/src   code, read-only
 #     the folder  → /srv/app   config.yaml, read-only
 #     data/       → /data      daily counts, Care list
@@ -46,12 +57,12 @@
 #    (docker images | grep uxcorrelate-runtime):
 #      tar xf uxcorrelate-<version>.tar
 #      docker load < uxcorrelate-<version>/image.tar.xz
-#      docker tag uxcorrelate-runtime:3 <REGISTRY>/uxcorrelate-runtime:3
-#      docker push <REGISTRY>/uxcorrelate-runtime:3
+#      docker tag uxcorrelate-runtime:4 <REGISTRY>/uxcorrelate-runtime:4
+#      docker push <REGISTRY>/uxcorrelate-runtime:4
 #
 # 3. Fill in the SETTINGS values. Then nothing should
 #    be printed by:
-#      grep -n "<" k8s/uxcorrelate.yaml | grep -v "#"
+#      grep -n "<" k8s/*.yaml | grep -v "#"
 #
 # 4. .env: one KEY=value per line, no quotes around
 #    values (kubectl keeps quotes; compose drops them).
@@ -64,13 +75,33 @@
 #      kubectl -n uxcorrelate create secret generic uxcorrelate-env --from-env-file=.env
 #      kubectl -n uxcorrelate create secret tls uxcorrelate-tls --cert=certs/<name>.crt --key=certs/<name>.key
 #      kubectl apply -f k8s/uxcorrelate.yaml
+#    and the way in, one of:
+#      kubectl apply -f k8s/ingress.yaml
+#      kubectl apply -f k8s/loadbalancer.yaml
 #
 # 7. Check it runs:
 #      kubectl -n uxcorrelate get pods
 #    shows 1/1 Running; within minutes
 #      kubectl -n uxcorrelate logs deploy/uxcorrelate --tail=20
-#    shows "Today ready". Then open https://<HOST>/
-#    (the Today tab fills once the last 24 h are read).
+#    shows "Today ready" and "HTTPS on port 8444".
+#    Then open https://<HOST>/ (ingress) or
+#    https://<HOST>:8444/ (load balancer). The Today
+#    tab fills once the last 24 h are read.
+#
+# ---------------- SWITCH THE WAY IN -----------------
+# Nothing to edit: the pod serves both ports always.
+# To the load balancer:
+#   kubectl apply -f k8s/loadbalancer.yaml
+#   kubectl delete -f k8s/ingress.yaml
+#   kubectl -n uxcorrelate get svc uxcorrelate-lb
+#     (EXTERNAL-IP: point <HOST> at it in DNS)
+# Back to the ingress:
+#   kubectl apply -f k8s/ingress.yaml
+#   kubectl delete -f k8s/loadbalancer.yaml
+# Both at once also works (moving users over).
+# Check either way: the admin page (/admin) names
+# each visitor; "every visit from one address" means
+# the way in hides the users' PCs.
 #
 # ------------------- DAY TO DAY ---------------------
 # Code fix: copy the files into src/ in the app
@@ -82,7 +113,8 @@
 # Password or AI key changed in .env: load it again,
 # then rollout restart:
 #   kubectl -n uxcorrelate create secret generic uxcorrelate-env --from-env-file=.env --dry-run=client -o yaml | kubectl apply -f -
-# New certificate (the app needs no restart):
+# New certificate, then rollout restart (the pod's own
+# HTTPS reads it at start; the ingress needs none):
 #   kubectl -n uxcorrelate create secret tls uxcorrelate-tls --cert=certs/<name>.crt --key=certs/<name>.key --dry-run=client -o yaml | kubectl apply -f -
 # New image tag (x-image in compose.yaml changed):
 # step 2 with the new tag, change "image:" below, then
@@ -98,6 +130,7 @@
 #   kubectl -n uxcorrelate scale deploy/uxcorrelate --replicas=0
 #   docker compose up -d
 # Remove it from the cluster (the NFS folder is kept):
+#   kubectl delete -f k8s/ingress.yaml -f k8s/loadbalancer.yaml --ignore-not-found
 #   kubectl delete -f k8s/uxcorrelate.yaml
 #   kubectl delete namespace uxcorrelate
 # ====================================================
@@ -155,20 +188,24 @@ spec:
         - name: uxcorrelate
           image: "<REGISTRY>/uxcorrelate-runtime:4"
           imagePullPolicy: IfNotPresent
-          # http only: TLS ends at the ingress
-          args: ["serve", "--host", "0.0.0.0", "--port", "8080"]
+          # http for the ingress, https for the load balancer
+          # (both always: SWITCH above needs no edit here)
+          args: ["serve", "--host", "0.0.0.0", "--port", "8080",
+                 "--tls-port", "8444", "--cert", "/certs/tls.crt", "--key", "/certs/tls.key"]
           ports:
             - name: http
               containerPort: 8080
+            - name: https
+              containerPort: 8444
           env:
             - name: UXCORRELATE_CONFIG
               value: /srv/app/config.yaml
             - name: UXCORRELATE_DATA
               value: /data
-            # every request comes through the ingress: take the
-            # user's address from its X-Forwarded-For header, so the
-            # Care list's change and PIN log lines name their PC
-            # (the pod is reached only through its Service)
+            # port 8080 is reached only through the ingress: take
+            # the user's address from its X-Forwarded-For header, so
+            # the admin page and the Care list's log lines name their
+            # PC. Port 8444 never takes it from a browser (cli.py).
             - name: FORWARDED_ALLOW_IPS
               value: "*"
           envFrom:
@@ -188,6 +225,11 @@ spec:
             - name: app
               mountPath: /data
               subPath: data
+            # the certificate (Secret "uxcorrelate-tls", step 6):
+            # tls.crt and tls.key; a new one needs a rollout restart
+            - name: tls
+              mountPath: /certs
+              readOnly: true
           # /api/health: answers at once, left out of the log
           readinessProbe:
             httpGet:
@@ -217,7 +259,12 @@ spec:
         - name: app
           persistentVolumeClaim:
             claimName: uxcorrelate-app
+        - name: tls
+          secret:
+            secretName: uxcorrelate-tls
 ---
+# Inside the cluster only (ClusterIP): the ingress's way
+# to the pod (k8s/ingress.yaml). Harmless when unused.
 apiVersion: v1
 kind: Service
 metadata:
@@ -230,25 +277,3 @@ spec:
     - name: http
       port: 80
       targetPort: http
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: uxcorrelate
-  namespace: uxcorrelate
-spec:
-  ingressClassName: "<INGRESS_CLASS>"
-  tls:
-    - hosts: ["<HOST>"]
-      secretName: uxcorrelate-tls  # the certificate in certs/
-  rules:
-    - host: "<HOST>"
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: uxcorrelate
-                port:
-                  name: http

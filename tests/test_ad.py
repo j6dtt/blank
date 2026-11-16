@@ -326,3 +326,104 @@ def test_verify_ad_command_line(monkeypatch):
     monkeypatch.setattr(cli, "cmd_verify", lambda args: seen.append(args) or 0)
     assert cli.main(["verify", "--ad", "--user", "CORP\\alice", "--pc", "PC-001"]) == 0
     assert (seen[0].ad, seen[0].user, seen[0].pc) == (True, "CORP\\alice", "PC-001")
+
+
+# -- the admin page's look-up (ad.Lookup) ---------------------------------------------
+class CountingDirectory(FakeDirectory):
+    searches = 0
+
+    def search(self, conn, base, flt, attrs, size=0):
+        CountingDirectory.searches += 1
+        return super().search(conn, base, flt, attrs, size)
+
+
+def lookup(**ad_keys):
+    cfg = settings(**ad_keys).ad
+    made = []
+
+    def directory(c):
+        made.append(CountingDirectory(mock_ad(), root=ROOT, **made_with))
+        return made[-1]
+    made_with: dict = {}
+    return ad.Lookup(lambda: cfg, directory), made, made_with
+
+
+def test_lookup_reads_each_name_once_a_day_in_memory(stubs, monkeypatch):
+    from datetime import datetime, timedelta
+    from uxcorrelate import http
+    told = []
+    monkeypatch.setattr(http, "METER", lambda *a: told.append(a))
+    look, made, _ = lookup(domain="corp.example", username="svc", password=PASSWORD)
+    now = datetime(2026, 11, 16, 15, tzinfo=timezone.utc)
+    CountingDirectory.searches = 0
+    got = look.look(["CORP\\alice", "zed", "carol"], ["PC-001", "PC-404"], now)
+    assert got["state"] == "ok" and got["kept_h"] == 24
+    assert got["users"]["CORP\\alice"] == {"found": True, "name": "Alice Archer", "title": "Planner",
+                                           "department": "Finance", "office": "Building 2", "disabled": False}
+    assert got["users"]["zed"] == {"found": False} and got["users"]["carol"]["disabled"] is True
+    assert got["pcs"]["PC-001"]["ou"] == "Desktops / Virtual desktops" and got["pcs"]["PC-404"] == {"found": False}
+    assert CountingDirectory.searches == 2  # one search for the users, one for the PCs
+    assert [t[:3] for t in told] == [("Active Directory", "other", "login"), ("Active Directory", "other", "users"),
+                                     ("Active Directory", "other", "computers")]
+    assert told[1][4] == 2  # rows: the users found
+    # asked again within the day: nothing read, the DC that answered is kept
+    again = look.look(["CORP\\alice"], ["PC-001"], now + timedelta(hours=23))
+    assert CountingDirectory.searches == 2 and again["users"]["CORP\\alice"]["found"]
+    assert look.look(["CORP\\alice"], [], now + timedelta(hours=25))["users"]["CORP\\alice"]["found"]
+    assert CountingDirectory.searches == 3 and look.dc[0].host == "dc1.corp.example"
+
+
+def test_lookup_not_set_reads_nothing(stubs):
+    look, made, _ = lookup(domain="corp.example")
+    got = look.look(["alice"], ["PC-001"], datetime_now())
+    assert got["state"] == "off" and "AD_USERNAME and AD_PASSWORD" in got["why"] and not made
+
+
+def test_lookup_never_tries_a_refused_password_again(stubs):
+    cfg = settings(domain="corp.example", username="svc", password="wrong").ad
+    made = []
+
+    def directory(c):
+        made.append(FakeDirectory(refuse={"result": 49, "message": "data 52e"}, root=ROOT))
+        return made[-1]
+    look = ad.Lookup(lambda: cfg, directory)
+    got = look.look(["alice"], [], datetime_now())
+    assert got["state"] == "refused" and got["why"] == "the name or password is wrong (AD's code 52e)"
+    logins = [t for t in made[0].tries if t[1]]
+    assert len(logins) == 1  # one try, on the first DC only: the second would count against the account too
+    assert look.look(["alice", "bob"], [], datetime_now())["state"] == "refused" and len(made) == 1
+
+
+def test_lookup_when_ad_does_not_answer_waits_before_trying_again(stubs, monkeypatch):
+    from datetime import timedelta
+    monkeypatch.setattr(ad, "srv_dcs", lambda d, dns, t: ([], "", [f"_ldap._tcp.dc._msdcs.{d}: no answer in 5 s"]))
+    look, made, _ = lookup(domain="corp.example", username="svc", password=PASSWORD)
+    now = datetime_now()
+    got = look.look(["alice"], [], now)
+    assert got["state"] == "down" and got["why"].startswith("no domain controller found in DNS") and got["users"] == {}
+    look.look(["alice"], [], now + timedelta(minutes=4))
+    assert len(made) == 1  # within RETRY_MIN: not tried
+    monkeypatch.setattr(ad, "srv_dcs", lambda d, dns, t: ([ad.Dc("dc1.corp.example")], "x", []))
+    got = look.look(["alice"], [], now + timedelta(minutes=6))
+    assert got["state"] == "ok" and got["users"]["alice"]["found"] and len(made) == 2
+
+
+def test_admin_ad_route_needs_the_login(stubs, monkeypatch):
+    from fastapi.testclient import TestClient
+    from uxcorrelate import web
+    monkeypatch.setenv(web.ADMIN_ENV, "s3cret-test")
+    monkeypatch.delenv("UXCORRELATE_DATA", raising=False)
+    monkeypatch.delenv("AD_USERNAME", raising=False)
+    app = web.create_app()
+    https = TestClient(app, base_url="https://testserver")
+    assert https.post("/admin/api/ad", json={"users": ["alice"]}).status_code == 401
+    assert https.post("/admin/api/login", json={"password": "s3cret-test"}).status_code == 200
+    got = https.post("/admin/api/ad", json={"users": ["alice"], "pcs": ["PC-001"]}).json()
+    assert got["state"] == "off" and got["users"] == {}
+    page = https.get("/admin").text
+    assert 'fetch("admin/api/ad"' in page and "data-adu" in page and "data-adp" in page
+
+
+def datetime_now():
+    from datetime import datetime
+    return datetime(2026, 11, 16, 15, tzinfo=timezone.utc)

@@ -21,17 +21,10 @@ version, limits, later ideas, the discussion so far).
 
 ## Waiting on you
 
-- **Image 4 on prod**: `dist/uxcorrelate-0.1.0.tar` (16 MB):
-  load the image, `x-image` to `uxcorrelate-runtime:4`,
-  `docker compose up -d`.
-- **`verify --ad` on prod** (needs image 4): part 1 with no
-  account (domain, DCs, ports, the DC's header); then
-  `AD_USERNAME` / `AD_PASSWORD` from the AD team in `.env` for
-  the login and the "N of 50" counts.
-
 - **Admin page fix on prod**: "waiting for Aternity" instead
   of an early "not known"; unnamed addresses not counted as
-  people (`usage.py`, `static/admin.html`).
+  people (`usage.py`, `static/admin.html`). It was in the copy
+  list with image 4 (2026-11-16): to be confirmed.
 - **Stage copy of 13a023b**: `care.py`, `explain.py`,
   `static/index.html`; restart; a tile with "1 rated Major"
   lists it under "Rated Major today".
@@ -44,9 +37,10 @@ version, limits, later ideas, the discussion so far).
 
 - **AD lookup of users and computers** (2026-11-15, the user:
   "next step in roadmap"): image 4 has the libraries (ldap3,
-  dnspython, pycryptodome); `verify --ad` built on dev
-  (2026-11-15). Next, after prod's answers: names on the admin
-  page. See `docs/admin-roadmap.md`.
+  dnspython, pycryptodome); `verify --ad` passed on prod
+  with and without the account (2026-11-16, the user). Names on
+  the admin page built on dev (2026-11-16, "build it"); prod copy
+  next. Later: the Care list. See `docs/admin-roadmap.md`.
 
 - **Care list step 2**: slow start-ups as an issue; alerts out
   of the app (needs a mail relay or chat webhook: not known
@@ -74,11 +68,19 @@ version, limits, later ideas, the discussion so far).
 
 - **Kubernetes**: prod runs on Docker for now (user,
   2026-11-15); `k8s/uxcorrelate.yaml` is kept in step with
-  `compose.yaml`. Open there: the load balancer's address in
-  the log, cpu / memory numbers, only one user could connect.
+  `compose.yaml`. The way in switches between the ingress and
+  a load balancer with the pod's own TLS (2026-11-16):
+  `k8s/ingress.yaml`, `k8s/loadbalancer.yaml`, one apply + one
+  delete. Not used until the users' real addresses reach the
+  pod (the user, 2026-11-16: "I'm not using k8s til I figure
+  out passing real client IPs"); the admin page is the check
+  (each visitor named, or "every visit from one address").
+  Also open: cpu / memory numbers, only one user could connect.
 
 ## Done (latest)
 
+- c4435b0: image 4 and `verify --ad`; on prod 2026-11-16,
+  all passed with and without the account.
 - 13a023b: Care list judges each Major action by its own time
   of day; every tile lists its Major actions today.
 - 1c291e0: Care tile bars are Major actions per day from

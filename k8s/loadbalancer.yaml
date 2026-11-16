@@ -1,0 +1,38 @@
+# ===================== SETTINGS =====================
+# The load-balancer way in (k8s/uxcorrelate.yaml,
+# SWITCH): no settings. The pod serves HTTPS itself
+# (port 8444, the certificate in Secret
+# "uxcorrelate-tls"), so the load balancer only passes
+# the connection through: https://<HOST>:8444/, the
+# same address shape as on Docker. For https://<HOST>/
+# with no port, change "port: 8444" to 443 below.
+# ====================================================
+# browser ─https─▶ LB :8444 ─▶ the pod's 8444
+#   kubectl apply -f k8s/loadbalancer.yaml
+#   kubectl -n uxcorrelate get svc uxcorrelate-lb
+#     (EXTERNAL-IP: point <HOST> at it in DNS)
+#   kubectl delete -f k8s/loadbalancer.yaml
+# Only 8444 is offered: the http port 8080 trusts the
+# ingress's X-Forwarded-For, so it stays inside the
+# cluster.
+# The users' own addresses reach the pod only when
+# neither the nodes nor the load balancer rewrite them:
+# externalTrafficPolicy Local keeps the nodes from it.
+# The admin page shows the result: each visitor named,
+# or "every visit from one address" (the load
+# balancer's own: ask whoever runs it to pass the
+# client address through).
+apiVersion: v1
+kind: Service
+metadata:
+  name: uxcorrelate-lb
+  namespace: uxcorrelate
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Local  # the users' addresses, not a node's
+  selector:
+    app: uxcorrelate
+  ports:
+    - name: https
+      port: 8444
+      targetPort: https

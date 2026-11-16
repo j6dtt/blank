@@ -138,11 +138,20 @@ Known limits of the first version:
     last hour in AD, and how Aternity writes them. Counts only;
     `--user` / `--pc` for one. NTLM not proven on dev (Samba has
     no Microsoft NTLM bind for LDAP).
-  - To find out on prod with it: the answers to the points
-    above, first with no account (part 1 needs none), then with
-    the service account.
-  - Next, once prod's answers are in: the look-up on the admin
-    page (name and department beside each person), kept a day.
+  - On prod (2026-11-16, the user): "verify --ad all passed
+    without and with credentials" (image 4 loaded, the account
+    in prod's `.env`).
+  - The look-up on the admin page, built on dev (2026-11-16, the
+    user: "build it"): each person and desktop on it looked up at
+    most once a day (memory only, not saved), asked after the page
+    is drawn so it never waits on AD: name and department beside
+    the username (title and office on hover), each desktop's OU
+    and description in the day's table, "disabled in AD" / "not in
+    AD" said; one line when AD is not set, does not answer (tried
+    again after 5 min) or refused the login (not tried again until
+    a restart: AD's lockout). AD's searches on the Load panel.
+  - Later (agreed in the roadmap): the Care list's Add a user by
+    name, labels from AD, Care list users disabled in AD.
   - Needs from the AD team: a read-only service account (its
     password in `.env`), the domain name or a DC address.
 - **Tools for prod** (no paste there): run `verify` (or
@@ -219,3 +228,6 @@ Known limits of the first version:
     tools". Image 4 (ldap3, dnspython, pycryptodome).
 11. User: "should we start on verify --ad?", then "build it".
     Built on dev (AD lookup, above).
+12. User (2026-11-16): "verify --ad all passed without and with
+    credentials". Proposed next: names on the admin page.
+13. User: "build it". Built on dev (AD lookup, above).

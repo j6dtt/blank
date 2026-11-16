@@ -51,7 +51,8 @@ ADMIN_TRIES = 5  # wrong passwords from one address before it is locked ...
 ADMIN_LOCK_MIN = 15  # ... for this long
 # what the calls to Riverbed are for, by the page's request (the admin page's "Load on Riverbed")
 PURPOSES = (("/api/software", "Software tab"), ("/api/explain", "Explain"), ("/api/care", "Care list (page)"),
-            ("/api/today", "Today tab"), ("/api/investigate", "investigations"), ("/api/names", "name boxes"))
+            ("/api/today", "Today tab"), ("/api/investigate", "investigations"), ("/api/names", "name boxes"),
+            ("/admin/api", "admin page"))
 log = logging.getLogger("uxcorrelate")
 
 
@@ -108,6 +109,12 @@ class SeenBody(BaseModel):
 
 class LoginBody(BaseModel):
     password: str = ""
+
+
+class AdBody(BaseModel):
+    """The usernames and desktops on the admin page, to look up in Active Directory."""
+    users: list[str] = []
+    pcs: list[str] = []
 
 
 class LogonBody(BaseModel):
@@ -177,6 +184,8 @@ def create_app(config_path: str | None = None) -> FastAPI:
     # the admin page's counts: each use, and every call to Riverbed and the AI services (http.METER)
     usage = app.state.usage = Usage(today, os.environ.get("UXCORRELATE_DATA") or None)
     _http.METER, _http.CUT = usage.call, usage.cut
+    from .ad import Lookup
+    ad_lookup = app.state.ad = Lookup(lambda: load_settings(config_path).ad)  # the admin page's names from AD
     care.counts = usage.care_counts
     assess = app.state.assess = Assessments(today, care, status, os.environ.get("UXCORRELATE_DATA") or None,
                                             aternity_of=lambda: aternity_client(),
@@ -863,5 +872,13 @@ def create_app(config_path: str | None = None) -> FastAPI:
         if day and not (len(day) == 10 and day[4] == "-" and day[7] == "-" and day.replace("-", "").isdigit()):
             raise HTTPException(400, "day must be YYYY-MM-DD")
         return usage.view(datetime.now(timezone.utc), day or None)
+
+    @app.post("/admin/api/ad")
+    def admin_ad(body: AdBody, request: Request):
+        """The page's usernames and desktops in Active Directory: each looked up once a day, in
+        memory only (ad.Lookup)."""
+        if not admin_in(request):
+            raise HTTPException(401, "Log in first.")
+        return ad_lookup.look(body.users, body.pcs, datetime.now(timezone.utc))
 
     return app

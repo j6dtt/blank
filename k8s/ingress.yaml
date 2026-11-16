@@ -1,0 +1,33 @@
+# ===================== SETTINGS =====================
+# The ingress way in (k8s/uxcorrelate.yaml, SWITCH):
+#   <HOST>           the name users type in the
+#                    browser; the certificate in
+#                    certs/ must be for this name
+#   <INGRESS_CLASS>  kubectl get ingressclass
+# ====================================================
+# browser ─https─▶ this Ingress (TLS ends here, Secret
+#   "uxcorrelate-tls") ─▶ Service uxcorrelate :80
+#   ─▶ the pod's http port 8080
+#   kubectl apply -f k8s/ingress.yaml
+#   kubectl delete -f k8s/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: uxcorrelate
+  namespace: uxcorrelate
+spec:
+  ingressClassName: "<INGRESS_CLASS>"
+  tls:
+    - hosts: ["<HOST>"]
+      secretName: uxcorrelate-tls  # the certificate in certs/
+  rules:
+    - host: "<HOST>"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: uxcorrelate
+                port:
+                  name: http

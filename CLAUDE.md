@@ -675,8 +675,22 @@ demo mode: nothing in `src/` knows about it.
   from the same read whether one row holds several times
   (`_times_in_a_row`: `HEALTH_EVENT_VOLUME` above 1, by event).
 - `ad.py` + `verify --ad` (`verify.verify_ad`, the user's "build it",
-  2026-11-15; docs/admin-roadmap.md): Active Directory, read only, not
-  yet used by the app. Domain: `ad.domain` (config.yaml `ad:`,
+  2026-11-15; docs/admin-roadmap.md): Active Directory, read only.
+  verify and the app's look-up share `find_dcs`, `ports_of`, `best`,
+  `usable` (one rule). The admin page's names (`ad.Lookup`, the user's
+  "build it", 2026-11-16; passed on prod first: verify --ad with and
+  without the account): `POST /admin/api/ad` (admin login) with the
+  page's usernames and desktops, asked after the page is drawn; each
+  name read at most once in `KEEP_H` (24), in memory only (`user_view`,
+  `pc_view`), the DC that answered kept (`Lookup.dc`); not answering:
+  `RETRY_MIN` (5) before the next try, whatever the page asks; a refused
+  login (`Directory.refused`, a 49) never tried again in that process;
+  searches told to http.METER as "Active Directory" (purpose "admin
+  page"); `ASK_MAX`, `NAME_MAX`. The page (`adLook`, `adFill`, `adLine`):
+  name · department after the username (title, office on hover), each
+  desktop's OU and description in the day's table only, "disabled in
+  AD" / "not in AD", one line for not set / did not answer / refused.
+  Domain: `ad.domain` (config.yaml `ad:`,
   `AdConfig`), else the host's resolv.conf search domain and those
   above it (`candidates`); DCs: `ad.servers`, else DNS SRV
   (`SRV_NAMES`: `_ldap._tcp.dc._msdcs.<domain>`, then `_ldap._tcp`),
@@ -920,14 +934,22 @@ demo mode: nothing in `src/` knows about it.
   is deleted); bundle 16 MB. `ad.py` (verify --ad) uses ldap3 and
   dnspython; pycryptodome is ldap3's MD4 for NTLM.
 - Kubernetes: `k8s/uxcorrelate.yaml` (one pod, `Recreate`; code, data and
-  config.yaml on an NFS volume as with compose; Secret from `.env`; TLS at
-  the ingress). Keep it in step with `compose.yaml`: stage runs on Docker
+  config.yaml on an NFS volume as with compose; Secret from `.env`). The
+  pod serves 8080 and 8444 (TLS, Secret `uxcorrelate-tls` at /certs) as
+  compose does; the way in is its own file, switched by apply + delete
+  with no edit (the user, 2026-11-16: "switch back and forth between
+  ingress and lb"): `k8s/ingress.yaml` (TLS at the ingress, to 8080) or
+  `k8s/loadbalancer.yaml` (`uxcorrelate-lb`, LoadBalancer 8444 to 8444,
+  externalTrafficPolicy Local), both at once allowed. The TLS port's
+  uvicorn Config takes forwarded headers from 127.0.0.1 only (`cli.py`):
+  with "*" a browser could claim any address, or HTTPS on plain http and
+  log in to /admin in the clear. Keep it in step with `compose.yaml`: stage runs on Docker
   compose, prod on Kubernetes (the user, 2026-11-13); every change works
   on both. Its checks ask `/api/health` (no config read, left out of the
   log: `cli.QUIET`; Docker's HEALTHCHECK still asks for "/" from inside),
   and `FORWARDED_ALLOW_IPS` "*" makes the caller the user's address from
-  the ingress's X-Forwarded-For (Care list change and PIN log lines);
-  compose leaves it unset (the direct caller, as before).
+  the ingress's X-Forwarded-For on 8080 (the admin page, Care list change
+  and PIN log lines); compose leaves it unset (the direct caller).
 - The bundle (`dist/uxcorrelate-<version>.tar`) must stay under 25 MB
   (prod transfer limit; the script refuses bigger). It is made only when
   every test passes. Adding a dependency means checking that size.

@@ -393,7 +393,7 @@ next Today read (≤15 min) ─► 10:02 sample07, VD-03
 **Log in.** Put `ADMIN_PASSWORD=...` in `.env`, then
 `docker compose up -d` (a restart does not read `.env` again). Open
 `https://<docker-host>:8444/admin` (on Kubernetes, the ingress address
-+ `/admin`). Plain HTTP shows a link to the HTTPS address instead of the
++ `/admin`, or `https://<load balancer>:8444/admin`). Plain HTTP shows a link to the HTTPS address instead of the
 form: the password could be read on the network. A login lasts 8 hours,
 ends with **Log out** or a restart. 5 wrong passwords from one address
 lock it for 15 minutes. Each login, wrong password and lock is a log
@@ -411,6 +411,11 @@ updates every minute):
   "One of N on it then": a desktop many users share. When every visit
   comes from one address, a note says something in front of the app
   hides the desktops.
+  With `AD_USERNAME` / `AD_PASSWORD` in `.env`, each person's name and
+  department from Active Directory follow their username (title and
+  office on hover), and in the day's table each desktop's OU and
+  description (its Windows on hover). "Disabled in AD" and "not in AD"
+  are said. See "Names from Active Directory" below.
 - **Use of the app**: tabs opened by hour and by tab; investigations
   (where they were started, how long they took, what each found first);
   start-ups reports, Software clicks, Explain uses.
@@ -421,7 +426,8 @@ updates every minute):
   on the page and wrong PINs; the other platform's status polls (about
   288 a day) and the last one, with a warning after 15 minutes without.
 - **Days kept**: people per day; click a day to open it.
-- **Load on Riverbed and the AI services**: calls, rows, seconds waiting,
+- **Load on Riverbed and the AI services** (and Active Directory, once it
+  has been read): calls, rows, seconds waiting,
   retries, failed and cut short, per system, by hour, by what the app was
   doing and by data source; how long the Today reader's reads take
   against the minutes between them, and each start of the app.
@@ -429,6 +435,32 @@ updates every minute):
 Kept in `$UXCORRELATE_DATA/usage/<date>.json`, 30 days, then deleted:
 usernames, desktop names, addresses and Ask anything's questions. Not
 counted: the Software reader's daily `$metadata` read.
+
+**Names from Active Directory.** How it works: once the page is drawn,
+it asks the app for the AD details of the usernames and desktops on it.
+The app looks each one up with the read-only service account at most
+once in 24 hours. The details stay in memory, never on disk, so a
+restart looks them up again. The page never waits on AD: the names fill
+in when it answers.
+
+```
+/admin drawn ─► /admin/api/ad: names not known yet
+app: not read in 24 h? ─► AD: one search for users, one for PCs
+─► sample40 · Pat Lee · Finance;  VD-04 in Desktops / Virtual
+```
+
+The domain controllers are found as `verify --ad` finds them (one
+rule), and the DC that answered is kept for the next look-up. One line
+at the top of the panel says when it cannot work:
+- **not set**: no `AD_USERNAME` / `AD_PASSWORD` in `.env`;
+- **did not answer** (and why): tried again after 5 minutes, however
+  often the page asks; names already looked up stay;
+- **refused the login** (a wrong name or password): not tried again
+  until the app restarts, because each wrong try counts towards AD's
+  lockout of the account. Correct `.env`, then `docker compose up -d`.
+
+Each look-up is a log line ("Active Directory: looked up 4 users and 4
+PCs on dc1… (3 and 3 found)").
 
 ## Quick start
 
@@ -491,13 +523,28 @@ has the install, code-fix and upgrade steps.
 ### Kubernetes
 
 `k8s/uxcorrelate.yaml` runs the same image as one pod, with `src/`, `data/`
-and `config.yaml` in the app folder on NFS, passwords in a Secret made from
-`.env`, and TLS at the ingress. Kubernetes checks the pod at `/api/health`
-(left out of the log), and the user's address in the log comes from the
-ingress (`FORWARDED_ALLOW_IPS`). The top of the file has the full steps:
-what to fill in, first time, day to day (code fix, passwords, certificate,
-logs, verify) and going back to compose. One pod only: a second would read
-Aternity twice.
+and `config.yaml` in the app folder on NFS, and passwords in a Secret made
+from `.env`. The pod serves both ports, as compose does: 8080 (http) and
+8444 (https, with the certificate from the Secret `uxcorrelate-tls`). The
+way in is a file of its own, and switching is one `apply` and one `delete`,
+with nothing to edit:
+
+```
+k8s/ingress.yaml       browser ─https─▶ ingress ─▶ :8080
+k8s/loadbalancer.yaml  browser ─https─▶ LB :8444 ─▶ :8444
+```
+
+Port 8080 takes the user's address from the ingress's X-Forwarded-For
+(`FORWARDED_ALLOW_IPS`). Port 8444 never takes one from a browser
+(`cli.py`): there a browser could claim any address, or HTTPS on plain
+http. On the load balancer, `externalTrafficPolicy: Local` keeps the
+nodes from replacing the users' addresses; the admin page shows whether
+the load balancer itself does ("every visit from one address").
+Kubernetes checks the pod at `/api/health` (left out of the log). The
+top of `k8s/uxcorrelate.yaml` has the full steps: what to fill in, first
+time, switching the way in, day to day (code fix, passwords, certificate,
+logs, verify) and going back to compose. One pod only: a second would
+read Aternity twice.
 
 ### Sample data for the dev app
 

@@ -19,8 +19,11 @@ of 2026-11-15, "AD users/computers lookup tools", then "verify --ad").
 
 from __future__ import annotations
 
+import logging
 import socket
 import ssl
+import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -28,6 +31,7 @@ from pathlib import Path
 LDAPS_PORT, LDAP_PORT = 636, 389
 SRV_NAMES = ("_ldap._tcp.dc._msdcs.{}", "_ldap._tcp.{}")  # Microsoft's DC locator records, then plain LDAP's
 RESOLV_CONF = "/etc/resolv.conf"
+DCS = 3  # domain controllers whose ports are checked (verify) or tried (the admin page's look-up)
 BATCH = 50  # names in one search (an OR filter)
 SIMILAR_MAX = 200  # names read for "names close to it" (a typed name not found)
 DISABLED = 0x2  # userAccountControl ACCOUNTDISABLE (Microsoft)
@@ -178,11 +182,67 @@ def reachable(host: str, port: int, timeout: float) -> str | None:
 
 
 # -- LDAP ------------------------------------------------------------------------
+def search_names(cfg, host: list[str]) -> list[str]:
+    """The domains whose DCs are looked for: ad.domain, else each of this host's DNS search
+    domains and those above it (on Kubernetes the first ones are the cluster's own)."""
+    return [cfg.domain] if cfg.domain else list(dict.fromkeys(n for h in host for n in candidates(h)))
+
+
+def find_dcs(cfg, host: list[str]) -> tuple[list[Dc], str, str, list[str]]:
+    """(the DCs, the domain they are of, the DNS record that gave them, what was tried and why it
+    gave none). ad.servers when set (their domain: ad.domain, else the DC's own, read later)."""
+    if cfg.servers:
+        return [Dc(h, addr=address_of(h, cfg.dns, cfg.timeout)) for h in cfg.servers], cfg.domain, "", []
+    tried: list[str] = []
+    for name in search_names(cfg, host):
+        dcs, record, t = srv_dcs(name, cfg.dns, cfg.timeout)
+        tried += t
+        if dcs:
+            return dcs, name, record, tried
+    return [], "", "", tried
+
+
+def target(dc: Dc) -> str:
+    """Where to connect: its address from ad.dns, else its name for this host's DNS."""
+    return dc.addr or dc.host
+
+
+def ports_of(d: "Directory", dc: Dc, timeout: float) -> dict:
+    """{636: None or why not, 389: None or why not, "starttls": None or why not}. TLS itself is
+    tried with no login: a DC with no certificate takes the connection on 636 and fails TLS. An
+    answer of AD's (a result code, a refused anonymous bind) means TLS worked."""
+    t = target(dc)
+    ports = {LDAPS_PORT: reachable(t, LDAPS_PORT, timeout), LDAP_PORT: reachable(t, LDAP_PORT, timeout)}
+    if ports[LDAPS_PORT] is None:
+        ports[LDAPS_PORT] = _tls_said(d, t, "ldaps", "the port answers, its TLS does not")
+    ports["starttls"] = _tls_said(d, t, "starttls", "StartTLS fails") if ports[LDAP_PORT] is None \
+        else "389 does not answer"
+    return ports
+
+
+def _tls_said(d: "Directory", host: str, how: str, words: str) -> str | None:
+    conn, why, code = d.open(host, how)
+    if conn is not None:
+        conn.unbind()
+        return None
+    return None if code is not None else f"{words} ({why})"
+
+
+def best(ports: dict) -> str:
+    """The way to read with no login: LDAPS, StartTLS, else plain 389."""
+    return "ldaps" if ports[LDAPS_PORT] is None else "starttls" if ports.get("starttls") is None else "ldap"
+
+
+def usable(ports: dict) -> bool:
+    return ports[LDAPS_PORT] is None or ports[LDAP_PORT] is None
+
+
 class Directory:
     """The LDAP side. _server and _connection are where tests put a made-up AD (ldap3's mock)."""
 
     def __init__(self, timeout: float = 5.0):
         self.timeout = timeout
+        self.refused = False  # the last login(): AD refused the name or password
 
     def _server(self, host: str, port: int, use_ssl: bool):
         from ldap3 import NONE, Server, Tls
@@ -265,6 +325,7 @@ class Directory:
         tries = [("ldaps", False, upn, "LDAPS (636), simple bind"), ("starttls", False, upn, "StartTLS on 389, simple bind"),
                  ("ldaps", True, down, "LDAPS (636), NTLM"), ("ldap", True, down, "389 with no TLS, NTLM")]
         failed: list[str] = []
+        self.refused = False
         for how, ntlm, name, words in tries:
             if ports.get(LDAPS_PORT if how == "ldaps" else LDAP_PORT, "not checked") is not None:
                 continue  # the port does not answer (None: it does): not tried
@@ -278,6 +339,7 @@ class Directory:
                 return conn, words, failed
             failed.append(f"{words}: {why}")
             if code == 49:  # the name or password is wrong: every other try would count against the account too
+                self.refused = True
                 break
         return None, "", failed
 
@@ -424,3 +486,158 @@ def base_of(domain: str) -> str:
 def domain_of(dn: str) -> str:
     """The DNS domain of a base DN: DC=corp,DC=example -> corp.example."""
     return ".".join(p.split("=", 1)[1] for p in dn.split(",") if p.strip().upper().startswith("DC="))
+
+
+# -- the admin page's look-up (docs/admin-roadmap.md; the user's "build it", 2026-11-16) ---------
+KEEP_H = 24  # a name looked up is kept this long, in memory only (a restart looks it up again)
+RETRY_MIN = 5  # AD did not answer: the next try waits this long, however often the page asks
+ASK_MAX = 200  # names of each kind in one request
+NAME_MAX = 256  # characters of one name
+SYSTEM = "Active Directory"  # its name on the admin page's "Load" panel
+log = logging.getLogger("uxcorrelate")
+
+
+def user_view(e: dict | None) -> dict:
+    if not e:
+        return {"found": False}
+    return {"found": True, "name": _one(e.get("displayName")), "title": _one(e.get("title")),
+            "department": _one(e.get("department")), "office": _one(e.get("physicalDeliveryOfficeName")),
+            "disabled": disabled(e)}
+
+
+def pc_view(e: dict | None) -> dict:
+    if not e:
+        return {"found": False}
+    return {"found": True, "os": _one(e.get("operatingSystem")), "ou": ou_of(e.get("dn", "")),
+            "description": _one(e.get("description")), "disabled": disabled(e)}
+
+
+class Lookup:
+    """Usernames and PCs on the admin page, looked up in AD with the read-only account: each at
+    most once in KEEP_H, kept in memory only, one look-up at a time, the DC that answered kept
+    for the next. AD not answering is tried again after RETRY_MIN, however often the page asks.
+    A login AD refused (a wrong name or password) is not tried again until the app restarts
+    (.env changed: docker compose up -d): each try would count towards AD's lockout of the
+    account. Searches are told to http.METER (the admin page's "Load")."""
+
+    def __init__(self, cfg_of, directory_of=None):
+        self.cfg_of = cfg_of  # () -> AdConfig (config.yaml's ad: and .env's account, as now)
+        self.directory_of = directory_of or (lambda cfg: Directory(cfg.timeout))
+        self.lock = threading.Lock()
+        self.users: dict[str, tuple[datetime, dict]] = {}  # name -> (when, user_view)
+        self.pcs: dict[str, tuple[datetime, dict]] = {}
+        self.dc: tuple | None = None  # (Dc, ports, domain, base) that answered last
+        self.down: tuple[datetime, str] | None = None  # (when, why) AD did not answer
+        self.refused = ""  # AD refused the account's login: why, and never again in this process
+
+    def look(self, users: list[str], pcs: list[str], now: datetime) -> dict:
+        """{"state": ok / off / down / refused, "why", "users": {name: user_view}, "pcs": {...},
+        "kept_h", "retry_min"}: what is known of the names asked (those not yet read are left out)."""
+        cfg = self.cfg_of()
+        users = list(dict.fromkeys(str(u)[:NAME_MAX] for u in users if u))[:ASK_MAX]
+        pcs = list(dict.fromkeys(str(p)[:NAME_MAX] for p in pcs if p))[:ASK_MAX]
+        out = {"kept_h": KEEP_H, "retry_min": RETRY_MIN}
+        if not (cfg.username and cfg.password):
+            return out | {"state": "off", "why": "AD_USERNAME and AD_PASSWORD are not set in .env",
+                          "users": {}, "pcs": {}}
+        with self.lock:
+            old = now - timedelta(hours=KEEP_H)
+            for kept in (self.users, self.pcs):
+                for k in [k for k, (t, _) in kept.items() if t < old]:
+                    del kept[k]
+            need_u = [u for u in users if u not in self.users]
+            need_p = [p for p in pcs if p not in self.pcs]
+            waiting = self.down and now - self.down[0] < timedelta(minutes=RETRY_MIN)
+            if (need_u or need_p) and not self.refused and not waiting:
+                try:
+                    self._read(cfg, need_u, need_p, now)
+                    self.down = None
+                except _Refused as exc:
+                    self.refused = str(exc)
+                    log.warning("Active Directory refused the login of AD_USERNAME (%s): not tried again until "
+                                "the app restarts (correct .env, then docker compose up -d)", exc)
+                except Exception as exc:  # AD not answering never stops the admin page
+                    self.down, self.dc = (now, " ".join(str(exc).split())[:200] or type(exc).__name__), None
+                    log.warning("Active Directory did not answer (%s): tried again in %d min", self.down[1], RETRY_MIN)
+            state, why = (("refused", self.refused) if self.refused else
+                          ("down", self.down[1]) if self.down else ("ok", ""))
+            return out | {"state": state, "why": why,
+                          "users": {u: self.users[u][1] for u in users if u in self.users},
+                          "pcs": {p: self.pcs[p][1] for p in pcs if p in self.pcs}}
+
+    def _read(self, cfg, need_u: list[str], need_p: list[str], now: datetime) -> None:
+        d = self.directory_of(cfg)
+        conn, base, host = self._login(d, cfg)
+        try:
+            if need_u:
+                found = self._timed("users", lambda: users(d, conn, base, need_u))
+                for u in need_u:
+                    self.users[u] = (now, user_view(found.get(u)))
+            if need_p:
+                found = self._timed("computers", lambda: computers(d, conn, base, need_p))
+                for p in need_p:
+                    self.pcs[p] = (now, pc_view(found.get(p)))
+        finally:
+            conn.unbind()
+        hit_u = sum(1 for u in need_u if self.users[u][1]["found"])
+        hit_p = sum(1 for p in need_p if self.pcs[p][1]["found"])
+        log.info("Active Directory: looked up %d users and %d PCs on %s for the admin page (%d and %d found)",
+                 len(need_u), len(need_p), host, hit_u, hit_p)
+
+    def _login(self, d: "Directory", cfg) -> tuple:
+        """(a connection, the base to look under, the DC's name). The DC that answered last first;
+        else found again (ad.servers or DNS), up to DCS of them."""
+        if self.dc:
+            dc, ports, domain, base = self.dc
+            conn, _, failed = self._timed("login", lambda: d.login(target(dc), cfg.username, cfg.password, domain, ports))
+            if conn is not None:
+                return conn, base, dc.host
+            if d.refused:
+                raise _Refused(_reason(failed))
+            self.dc = None
+        dcs, domain, _, tried = find_dcs(cfg, host_domains())
+        if not dcs:
+            raise LookupError(f"no domain controller found in DNS ({'; '.join(tried[-2:]) or 'no domain to look in'})")
+        why: list[str] = []
+        for dc in dcs[:DCS]:
+            ports = ports_of(d, dc, cfg.timeout)
+            if not usable(ports):
+                why.append(f"{dc.host}: {ports[LDAPS_PORT]}")
+                continue
+            root, _ = d.root(target(dc), best(ports))
+            dom = domain or domain_of(root.get("defaultNamingContext") or "")
+            base = cfg.base_dn or root.get("defaultNamingContext") or base_of(dom)
+            conn, _, failed = self._timed("login", lambda: d.login(target(dc), cfg.username, cfg.password, dom, ports))
+            if conn is not None:
+                self.dc = (dc, ports, dom, base)
+                return conn, base, dc.host
+            if d.refused:
+                raise _Refused(_reason(failed))
+            why.append(f"{dc.host}: {failed[-1] if failed else 'no way to log in'}")
+        raise LookupError("; ".join(why[-2:]) or "no domain controller answered")
+
+    @staticmethod
+    def _timed(source: str, run):
+        """A read, told to http.METER: seconds, entries, answered or not."""
+        from . import http
+        start, ok, rows = time.monotonic(), False, None
+        try:
+            got = run()
+            ok = got[0] is not None if isinstance(got, tuple) else True
+            rows = sum(1 for v in got.values() if v) if isinstance(got, dict) else None
+            return got
+        finally:
+            if http.METER is not None:
+                try:
+                    http.METER(SYSTEM, http.PURPOSE.get(), source, time.monotonic() - start, rows, 0, ok)
+                except Exception:  # counting never stops a read
+                    pass
+
+
+def _reason(failed: list[str]) -> str:
+    """AD's reason of the last try ("the name or password is wrong (AD's code 52e)")."""
+    return failed[-1].split(": ", 1)[-1].removeprefix("login refused: ") if failed else "no reason given"
+
+
+class _Refused(Exception):
+    """AD refused the account's name or password."""

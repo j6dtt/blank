@@ -2006,7 +2006,6 @@ def _right(call, want) -> bool:
 
 # ---------------------------------------------------------------- Active Directory
 AD = "Active Directory"
-AD_DCS = 3  # domain controllers whose ports are checked
 AD_SAMPLE = 50  # Aternity's most active usernames and PCs of the last hour, looked up in AD
 AD_ROWS = 5000  # activity rows read for them (the check's limit)
 
@@ -2040,15 +2039,6 @@ def _ad_pc_text(e: dict) -> str:
              "DISABLED in AD" if disabled(e) else "enabled",
              f"last logon {last.date().isoformat()} (AD keeps it within about 2 weeks)" if last else None]
     return " · ".join(str(x) for x in parts if x)
-
-
-def _tls_said(d, target: str, how: str, words: str) -> str | None:
-    """None when TLS works on this DC (ldaps or starttls), else why not."""
-    conn, why, code = d.open(target, how)
-    if conn is not None:
-        conn.unbind()
-        return None
-    return None if code is not None else f"{words} ({why})"
 
 
 def _is(n: int) -> str:
@@ -2101,47 +2091,30 @@ def verify_ad(settings: Settings, aternity=None, user: str | None = None, pc: st
     else:
         checks.append(Check(AD, "domain", None, "Not known (ad.domain is empty): a login by name alone needs it."))
 
-    # its domain controllers
+    # its domain controllers (ad.find_dcs: the app's look-up finds them the same way)
+    dcs, found_in, record, tried = ad.find_dcs(cfg, host)
     if cfg.servers:
-        dcs = [ad.Dc(h, addr=ad.address_of(h, cfg.dns, cfg.timeout)) for h in cfg.servers]
         checks.append(Check(AD, "domain controllers", True, f"{len(dcs)} in ad.servers: {', '.join(cfg.servers)}."))
     else:
-        dcs, record, tried = [], "", []
-        # every search domain and those above it (on Kubernetes the first ones are the cluster's own)
-        names = [domain] if cfg.domain else list(dict.fromkeys(n for h in host for n in ad.candidates(h)))
-        for name in names:
-            dcs, record, t = ad.srv_dcs(name, cfg.dns, cfg.timeout)
-            tried += t
-            if dcs:
-                if name != domain:
-                    checks.append(Check(AD, "domain", None, f"The DCs are those of {name}, found through this "
-                                        f"host's DNS search list. Set ad.domain to it to say so.",
-                                        paste=paste("domain", name)))
-                    domain = name
-                break
+        if dcs and found_in != domain:
+            checks.append(Check(AD, "domain", None, f"The DCs are those of {found_in}, found through this "
+                                f"host's DNS search list. Set ad.domain to it to say so.", paste=paste("domain", found_in)))
+            domain = found_in
         asked = f"asked of {', '.join(cfg.dns)} (ad.dns)" if cfg.dns else "asked of this host's DNS"
         if not dcs:
             checks.append(Check(AD, "domain controllers", False, f"None found in DNS ({asked}).",
                                 "Set ad.dns to a DNS server that knows the AD (a DC's address often is one), "
                                 "or ad.servers to the DCs' names.", rows=tried))
             return checks
-        shown = [x.host for x in dcs[:AD_DCS]]
+        shown = [x.host for x in dcs[:ad.DCS]]
         checks.append(Check(AD, "domain controllers", True,
                             f"{len(dcs)} found in DNS ({record}, {asked}): {', '.join(shown)}"
-                            f"{f' and {len(dcs) - AD_DCS} more' if len(dcs) > AD_DCS else ''}."))
+                            f"{f' and {len(dcs) - ad.DCS} more' if len(dcs) > ad.DCS else ''}."))
 
     # their ports, StartTLS, and a DC's own header (no login)
     usable: list[tuple[ad.Dc, dict]] = []
-    for dc in dcs[:AD_DCS]:
-        target = dc.addr or dc.host  # its address from ad.dns, else its name for this host's DNS
-        ports = {ad.LDAPS_PORT: ad.reachable(target, ad.LDAPS_PORT, cfg.timeout),
-                 ad.LDAP_PORT: ad.reachable(target, ad.LDAP_PORT, cfg.timeout)}
-        # TLS itself, with no login: a DC with no certificate takes the connection on 636 and fails
-        # TLS. An answer of AD's (a result code, a refused anonymous bind) means TLS worked.
-        if ports[ad.LDAPS_PORT] is None:
-            ports[ad.LDAPS_PORT] = _tls_said(d, target, "ldaps", "the port answers, its TLS does not")
-        ports["starttls"] = _tls_said(d, target, "starttls", "StartTLS fails") if ports[ad.LDAP_PORT] is None \
-            else "389 does not answer"
+    for dc in dcs[:ad.DCS]:
+        ports = ad.ports_of(d, dc, cfg.timeout)  # TLS itself tried, with no login
         said = [f"LDAPS (636) {'works' if ports[ad.LDAPS_PORT] is None else ports[ad.LDAPS_PORT]}",
                 f"389 {'answers' if ports[ad.LDAP_PORT] is None else ports[ad.LDAP_PORT]}"]
         if ports[ad.LDAP_PORT] is None:
@@ -2152,7 +2125,7 @@ def verify_ad(settings: Settings, aternity=None, user: str | None = None, pc: st
             "" if tls else " With no TLS only an NTLM login can be tried (a password never goes over plain LDAP)."
             if ok is None else ""), "Nothing answers from this host: a firewall between it and the DC? "
                                     "The AD team can say which ports are open to this host."))
-        if ports[ad.LDAPS_PORT] is None or ports[ad.LDAP_PORT] is None:
+        if ad.usable(ports):
             usable.append((dc, ports))
     if any("its TLS does not" in str(p[ad.LDAPS_PORT]) for _, p in usable):
         checks.append(Check(AD, "TLS", None, "A DC takes the connection on 636 but its TLS fails: often a DC with no "
@@ -2161,9 +2134,8 @@ def verify_ad(settings: Settings, aternity=None, user: str | None = None, pc: st
     if not usable:
         return checks
     dc, ports = usable[0]
-    target = dc.addr or dc.host
-    how = "ldaps" if ports[ad.LDAPS_PORT] is None else "starttls" if ports["starttls"] is None else "ldap"
-    root, why = d.root(target, how)
+    target = ad.target(dc)
+    root, why = d.root(target, ad.best(ports))
     base = cfg.base_dn or root.get("defaultNamingContext") or (ad.base_of(domain) if domain else "")
     if not domain and root.get("defaultNamingContext"):  # ad.servers with no domain: the DC's own
         domain = ad.domain_of(root["defaultNamingContext"])
