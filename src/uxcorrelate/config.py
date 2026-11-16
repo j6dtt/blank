@@ -147,10 +147,17 @@ VIRTUAL_VALUES = ("true", "1")
 # not its cause, so the program they ran in is looked at instead.
 NO_PROGRAM = ("bad_module_info",)
 # Aternity's own label on a health event's failing part (HEALTH_EVENT_COMPONENT ends with it,
-# as "<disk model> (Disk)" or "\\Device\\Harddisk0\\DR0 (Drive)", live Nov 2026): the PC's disk
-# is failing. That is the PC's state, not a moment (correlate._disk_state). verify --overview
-# lists every label Aternity uses, so other hardware is added from what it shows.
+# as "<disk model> (Disk)" or "\\Device\\Harddisk0\\DR0 (Drive)", live Nov 2026) and its own
+# category of the event (DISK_CATEGORIES), both: the PC's disk is failing (models.failing_disk).
+# That is the PC's state, not a moment (correlate._disk_state). verify --overview lists every
+# label Aternity uses with the events under it, so other hardware is added from what it shows.
 DISK_PARTS = ("Disk", "Drive")
+# Under "(Drive)" Aternity also files a full or damaged file system, category System (verify
+# --overview on stage, Nov 16 2026, 7 days: Low Disk Space 8 PCs and Corrupted FS 2 PCs, System,
+# Major; HD Failure 1 PC and, under "(Disk)", Faulty HD S.M.A.R.T. Status 1 PC, Hardware). The
+# label alone had read all 11 PCs as a failing disk: lit all day on the Care list, the lead of an
+# investigation. Those System events are events like any other.
+DISK_CATEGORIES = ("Hardware",)
 WINDOWS_MODULES = ("kernelbase.dll", "ntdll.dll", "kernel32.dll")
 # a health event of this kind runs in the background: the user may not feel it
 BACKGROUND_EVENT = "background"

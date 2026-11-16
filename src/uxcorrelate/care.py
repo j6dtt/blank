@@ -40,7 +40,8 @@ of the Today reader, from rows already read:
   "Earlier today". The tile says when Aternity sent it when that was more
   than a read after it happened, and which read clears it (the reader's
   schedule, `Today.next_read`). A failing disk (Aternity's "(Disk)" /
-  "(Drive)" label on the failing part, DISK_PARTS) is the PC's state: on all
+  "(Drive)" label on the failing part and its category Hardware,
+  models.failing_disk) is the PC's state: on all
   day. What each issue has seen and its reads left are saved ("seen",
   "left"), so a restart does not light it again (one lit before a restart
   goes on counting, unless ALERT_READS reads' time passed); at a user's
@@ -817,7 +818,8 @@ class Care:
                 if i is not None:
                     i.update(text=f["text"], level=f["level"], last=f["last"], what=f["what"],
                              since=min(i["since"], f["since"]), pcs=f["pcs"], apps=f["apps"],
-                             disk=bool(i.get("disk") or f["disk"]))
+                             disk=f["disk"])  # from today's rows at each check: a mark saved by an older
+                    # rule goes (Low Disk Space under "(Drive)" was saved as a failing disk, lit all day)
                     if seen(i, f):
                         again.append(i)
                     if quiet and not i.get("cleared"):

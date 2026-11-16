@@ -53,8 +53,12 @@ demo mode: nothing in `src/` knows about it.
   space / inventory size), health events, app crashes/hangs, NetIM
   values and alerts) and counts the slow actions each one was within
   `bucket_minutes` of. An app's crash/hang/event counts only for that app.
-  A failing disk (`DISK_PARTS`: Aternity's "(Disk)"/"(Drive)" label on a
-  health event's failing part) is the PC's state, not a moment: its
+  A failing disk (`models.failing_disk`: Aternity's "(Disk)"/"(Drive)"
+  label on a health event's failing part, `DISK_PARTS`, and its category
+  Hardware, `DISK_CATEGORIES`: under "(Drive)" Aternity also files Low
+  Disk Space and Corrupted FS, category System, which the label alone
+  read as a failing disk; verify --overview, stage, Nov 16 2026) is the
+  PC's state, not a moment: its
   records are one issue per PC (`DISK_WHAT`), counted from its first
   record (window, or that PC's 14 days before: `_disk_state`) for the
   PC's slow actions that Aternity's split does not put mostly on the
@@ -405,8 +409,8 @@ demo mode: nothing in `src/` knows about it.
   reads not minutes: 15 minutes held 2 reads when reads were slow,
   stage, Nov 14; `check(..., read=False)` after a change on the page is
   not a read and does not move `as_of`; `off`: the read that put it out,
-  logged "no longer lit"); a failing disk (`disk`: `DISK_PARTS` label on the
-  failing part, the Today reader's 7th field) all day. A restart does not
+  logged "no longer lit"); a failing disk (`disk`: `models.failing_disk`,
+  the Today reader's 7th field) all day. A restart does not
   light again (`seen`, `left` saved; one lit before a restart goes on
   counting unless `ALERT_READS` reads' time passed, `_restarted`; an issue
   saved before has no `seen`: what it had is not new, none with `left`:
@@ -668,10 +672,11 @@ demo mode: nothing in `src/` knows about it.
   Aternity's own status and severity words with counts, and whether its
   incidents and alerts (`OVERVIEW_SOURCES` in `config.py`) are published,
   and Aternity's label on each failing part over 7 days (`part_label`;
-  those in `DISK_PARTS` marked, each event under them with Aternity's
-  category and severity: stage showed Low Disk Space and Corrupted FS
-  under "(Drive)" with HD Failure, all read as a failing disk; the rule
-  waits for that evidence), so other hardware is added from it, and
+  under those in `DISK_PARTS` each event with Aternity's category and
+  severity, said "a failing disk" or "not a failing disk: category …"
+  by `models.failing_disk`; stage, Nov 16: Low Disk Space and Corrupted
+  FS under "(Drive)" are System, HD Failure and Faulty HD S.M.A.R.T.
+  Status Hardware), so other hardware is added from it, and
   from the same read whether one row holds several times
   (`_times_in_a_row`: `HEALTH_EVENT_VOLUME` above 1, by event).
 - `ad.py` + `verify --ad` (`verify.verify_ad`, the user's "build it",

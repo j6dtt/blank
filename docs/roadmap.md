@@ -21,26 +21,9 @@ version, limits, later ideas, the discussion so far).
 
 ## Waiting on you
 
-- **Admin page fix on prod**: "waiting for Aternity" instead
-  of an early "not known"; unnamed addresses not counted as
-  people (`usage.py`, `static/admin.html`). It was in the copy
-  list with image 4 (2026-11-16): to be confirmed.
-- **Stage copy of 13a023b**: `care.py`, `explain.py`,
-  `static/index.html`; restart; a tile with "1 rated Major"
-  lists it under "Rated Major today".
-- **`verify --overview` on stage**: the failing-disk rule waits
-  for this evidence (stage showed Low Disk Space and Corrupted
-  FS under Aternity's "(Drive)" label with HD Failure).
 - **`verify --ai` on stage**: the Care list samples changed.
 
 ## Agreed
-
-- **AD lookup of users and computers** (2026-11-15, the user:
-  "next step in roadmap"): image 4 has the libraries (ldap3,
-  dnspython, pycryptodome); `verify --ad` passed on prod
-  with and without the account (2026-11-16, the user). Names on
-  the admin page built on dev (2026-11-16, "build it"); prod copy
-  next. Later: the Care list. See `docs/admin-roadmap.md`.
 
 - **Care list step 2**: slow start-ups as an issue; alerts out
   of the app (needs a mail relay or chat webhook: not known
@@ -66,6 +49,14 @@ version, limits, later ideas, the discussion so far).
 
 ## Parked
 
+- **AD lookup of users and computers** (2026-11-15, the user:
+  "next step in roadmap"): image 4 has the libraries (ldap3,
+  dnspython, pycryptodome); `verify --ad` passed on prod
+  with and without the account (2026-11-16, the user). Names on
+  the admin page on prod (912aeab, 2026-11-16). The Care list
+  (name search at Add, labels from AD, "disabled in AD" on the
+  tiles) on hold (the user, 2026-11-16: "Let's hold AD
+  integration for now"). See `docs/admin-roadmap.md`.
 - **Kubernetes**: prod runs on Docker for now (user,
   2026-11-15); `k8s/uxcorrelate.yaml` is kept in step with
   `compose.yaml`. The way in switches between the ingress and
@@ -79,10 +70,21 @@ version, limits, later ideas, the discussion so far).
 
 ## Done (latest)
 
+- Failing disk needs Aternity's category Hardware, not only its
+  "(Disk)" / "(Drive)" label (built on dev 2026-11-16, from
+  `verify --overview` on stage: Low Disk Space 8 PCs and
+  Corrupted FS 2 PCs under "(Drive)" are System; they had led
+  investigations and lit Care tiles all day). Uncommitted.
+
+- 912aeab: AD names on the admin page; on prod 2026-11-16 (the
+  user: the display name shows under "People using the app").
+  With it the admin page fix of 5c9a735.
+
 - c4435b0: image 4 and `verify --ad`; on prod 2026-11-16,
   all passed with and without the account.
 - 13a023b: Care list judges each Major action by its own time
   of day; every tile lists its Major actions today.
+  On stage (2026-11-16: its three files match there).
 - 1c291e0: Care tile bars are Major actions per day from
   Aternity.
 - 3d0f674: gap review: a read that failed or was cut short is

@@ -510,7 +510,8 @@ def test_verify_overview_shows_aternitys_own_status_severity_and_incidents():
                 "HEALTH_EVENT_NAME": name, "HEALTH_EVENT_COMPONENT": part, "HEALTH_EVENT_VOLUME": n}
             return httpx.Response(200, json={"value": [ev("PC1", "High", "App Crash"), ev("PC2", "High", "App Crash", n=3),
                                                        ev("PC2", "Low", "App Hang"),
-                                                       ev("PC3", "Low", "HD Failure", "\\Device\\Harddisk0\\DR0 (Drive)"),
+                                                       dict(ev("PC3", "Critical", "HD Failure", "\\Device\\Harddisk0\\DR0 (Drive)"),
+                                                            HEALTH_EVENT_CATEGORY="Hardware"),
                                                        dict(ev("PC4", "Medium", "Low Disk Space", "C: (Drive)"),
                                                             HEALTH_EVENT_CATEGORY="System")]})
         if path.endswith("/INCIDENTS"):
@@ -531,15 +532,15 @@ def test_verify_overview_shows_aternitys_own_status_severity_and_incidents():
     assert "INCIDENT_STATE: 'Open' 1" in text
     assert "SERVICE_DESK_ALERTS_RAW Published. 0 rows in the last 7 days: nothing to show from it." in flat
     assert "ANOMALY_DETECTION_INCIDENTS Not published by this Aternity" in flat
-    # Aternity's label on each failing part: the disk ones are read as a failing disk
-    assert ("by Aternity's label on the failing part (HEALTH_EVENT_COMPONENT). Read as a failing disk: Disk, Drive, "
-            "each event under them with its category and severity.") in flat
+    # Aternity's label on each failing part: under a disk one, only a Hardware event is a failing disk
+    assert ("by Aternity's label on the failing part (HEALTH_EVENT_COMPONENT). A failing disk: an event under Disk, "
+            "Drive whose category is Hardware; each event under them with its category and severity.") in flat
     assert "Process: 2 PCs, events 'App Crash' 2, 'App Hang' 1" in flat
     # every event under a disk label with Aternity's category and severity: the evidence for which is a
-    # failing disk (stage, Nov 14 2026: Low Disk Space and Corrupted FS were under "(Drive)")
-    assert "Drive: 2 PCs, events 'HD Failure' 1, 'Low Disk Space' 1 (read as a failing disk)" in flat
-    assert ("· ↳ Application / HD Failure: 1 PCs, severity 'Low' 1 · ↳ System / Low Disk Space: 1 PCs, "
-            "severity 'Medium' 1") in flat
+    # failing disk (stage, Nov 16 2026: Low Disk Space and Corrupted FS under "(Drive)", category System)
+    assert "Drive: 2 PCs, events 'HD Failure' 1, 'Low Disk Space' 1 (a disk or drive)" in flat
+    assert ("· ↳ Hardware / HD Failure: 1 PCs, severity 'Critical' 1 (a failing disk) · ↳ System / Low Disk "
+            "Space: 1 PCs, severity 'Medium' 1 (not a failing disk: category System)") in flat
     # can one row be several events? (the Care list and investigations add the column up)
     assert "1 of 5 health event rows in the last 7 days say more than 1 time (HEALTH_EVENT_VOLUME)" in flat
     assert "App Crash: 1 rows, up to 3 times" in flat

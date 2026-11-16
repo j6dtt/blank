@@ -25,14 +25,14 @@ from statistics import median
 from typing import Any
 
 from .aternity import AternityClient, is_virtual, odata_quote, odata_time
-from .config import (DISK_FREE_COLUMNS, DISK_PARTS, OS_COLUMNS, OVERVIEW_SOURCES, PROCESS_COLUMN, SOFTWARE_COLUMNS,
+from .config import (DISK_CATEGORIES, DISK_FREE_COLUMNS, DISK_PARTS, OS_COLUMNS, OVERVIEW_SOURCES, PROCESS_COLUMN, SOFTWARE_COLUMNS,
                      SOFTWARE_OS_UPDATE,
                      SOFTWARE_REMOVED, SOFTWARE_SOURCE, SOFTWARE_USER_SCOPE, SOFTWARE_UPDATE_GAP_MIN, TIME_COLUMNS,
                      NO_VALUE, TOP_STATUS, VDI_COLUMNS, VERSION_OPTIONAL, VERSION_SOURCES, Settings)
 from .after_start import AFTER_START_MIN  # "right after a start-up", as investigations
 from .correlate import slow_rule
 from .http import ApiError, short_error
-from .models import clock, day, local, local_date, parse_time, part_label, to_float
+from .models import clock, day, failing_disk, local, local_date, parse_time, part_label, to_float
 from .netim import NetimClient, _items
 
 CODE_FIX = "edit {file} in ./src/uxcorrelate, then: docker compose restart"
@@ -1849,8 +1849,9 @@ def _overview(settings: Settings, client: AternityClient, schema: dict[str, set[
         except ApiError as exc:
             checks.append(Check("Aternity", "overview: health events", None, f"error: {exc.short()}"))
 
-    # Aternity's label on each failing part ("OUTLOOK.EXE (Process)", "<model> (Disk)"): the ones
-    # read as the PC's disk failing (DISK_PARTS), and every other, so other hardware is added from them;
+    # Aternity's label on each failing part ("OUTLOOK.EXE (Process)", "<model> (Disk)"): under a
+    # disk or drive (DISK_PARTS), each event with its category, said a failing disk or not
+    # (models.failing_disk: Hardware only); every other label, so other hardware is added from them;
     # and whether one row holds several times (its count column, HEALTH_EVENT_VOLUME), from the same read
     labels = ev in schema and h.get("component") in schema[ev]
     times = ev in schema and h.get("count") in schema[ev]
@@ -1874,21 +1875,24 @@ def _overview(settings: Settings, client: AternityClient, schema: dict[str, set[
             out = []
             for label, rs in sorted(by.items(), key=lambda kv: -len(kv[1])):
                 out.append(f"{label}: {len({r.get(h['device']) for r in rs})} PCs, events {_values(rs, h['name'], 3)}"
-                           + (" (read as a failing disk)" if label.lower() in disk else ""))
+                           + (" (a disk or drive)" if label.lower() in disk else ""))
                 if label.lower() in disk:  # every event under it, with Aternity's own category and severity:
-                    # the evidence for which of them is a failing disk (stage, Nov 14 2026: Low Disk
-                    # Space and Corrupted FS were under "(Drive)" with HD Failure)
+                    # the evidence for which of them is a failing disk (stage, Nov 16 2026: Low Disk
+                    # Space and Corrupted FS were under "(Drive)" with HD Failure, category System)
                     kinds: dict = {}
                     for r in rs:
                         kinds.setdefault((r.get(h["category"]) if h.get("category") else None, r.get(h["name"])),
                                          []).append(r)
                     out += [f"↳ {cat} / {name}: {len({r.get(h['device']) for r in ks})} PCs, severity "
                             + (_values(ks, h["severity"], 3) if h.get("severity") in schema[ev] else "not published")
+                            + (" (a failing disk)" if failing_disk(ks[0].get(h["component"]), cat)
+                               else f" (not a failing disk: category {cat or 'not given'})")
                             for (cat, name), ks in sorted(kinds.items(), key=lambda kv: -len(kv[1]))]
             checks.append(Check("Aternity", "overview: failing-part labels", None,
                                 f"{len(rows)} health event rows in the last 7 days, by Aternity's label on the "
-                                f"failing part ({h['component']}). Read as a failing disk: "
-                                f"{', '.join(DISK_PARTS)}, each event under them with its category and severity. "
+                                f"failing part ({h['component']}). A failing disk: an event under "
+                                f"{', '.join(DISK_PARTS)} whose category is {', '.join(DISK_CATEGORIES)}; each "
+                                "event under them with its category and severity. "
                                 "Send this list if another label is hardware:", rows=out + cut))
         if rows is not None and times:
             checks.append(_times_in_a_row(rows, h, cut))

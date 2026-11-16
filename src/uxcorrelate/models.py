@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .config import DISK_CATEGORIES, DISK_PARTS
+
 
 @dataclass
 class UserSample:
@@ -197,6 +199,15 @@ def plain(text: str | None) -> str:
     """A value without Aternity's label: "OUTLOOK.EXE (Process)" -> "OUTLOOK.EXE"."""
     return re.sub(r"\s*\((?:Process|Dll|Process Version|Dll Version|Exception)\)", "", text or "",
                   flags=re.IGNORECASE).strip()
+
+
+def failing_disk(component: str | None, category: str | None) -> bool:
+    """Aternity says the PC's disk is failing: its label on the failing part is a disk or drive
+    (DISK_PARTS) and its category of the event is hardware (DISK_CATEGORIES); a full or damaged
+    file system under "(Drive)" is category System."""
+    label = part_label(component)
+    return (bool(label) and label.lower() in {p.lower() for p in DISK_PARTS}
+            and (category or "").strip().lower() in {c.lower() for c in DISK_CATEGORIES})
 
 
 def part_label(component: str | None) -> str | None:

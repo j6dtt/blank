@@ -60,7 +60,9 @@ Other users of these apps:
    `bucket_minutes` (5) before or after it. A crash, hang or health event
    of one application counts only for that application's slow actions.
    A failing disk is the PC's state, not a moment: when Aternity labels a
-   health event's failing part "(Disk)" or "(Drive)", the PC's disk counts
+   health event's failing part "(Disk)" or "(Drive)" and files the event
+   under Hardware (HD Failure, Faulty HD S.M.A.R.T. Status; Low Disk Space
+   and Corrupted FS, filed under System, are ordinary events), the PC's disk counts
    from its first record (in the window, or in the 14 days before on that
    PC) for every slow action there whose time Aternity put mostly on the
    PC. Its records are one issue, it leads ("Likely: VD-41's disk is
@@ -222,7 +224,8 @@ the 3rd read after the last read that brought a new one ("Clears at the
 14:20 read if no new Application Hang"; reads start every refresh_minutes,
 so 15 minutes at a 5-minute refresh); a repeat, or another event, keeps the
 tile on. A failing disk (Aternity's "(Disk)" or "(Drive)" label on the
-failing part, as HD Failure) stays on all day: "Stays on today". Then the
+failing part and its category Hardware, as HD Failure; not Low Disk Space,
+category System) stays on all day: "Stays on today". Then the
 issue is an "Earlier today" line on the tile. Repeats of one kind less than
 an hour apart are one issue (one count, one investigation); after an hour
 with none it is over (slow actions also once the user is back within their

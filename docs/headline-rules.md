@@ -74,8 +74,11 @@ The headline counts what the user hit:
 Details:
 
 - **A, a failing disk:** a health event whose failing part Aternity
-  labels "(Disk)" or "(Drive)" (`DISK_PARTS`) is the PC's state, not a
-  moment. From its first record (in the window, or in the 14 days before
+  labels "(Disk)" or "(Drive)" (`DISK_PARTS`) and whose category Aternity
+  gives as Hardware (`DISK_CATEGORIES`: HD Failure, Faulty HD S.M.A.R.T.
+  Status; Low Disk Space and Corrupted FS under "(Drive)" are System,
+  ordinary events: verify --overview, stage, Nov 16 2026) is the PC's
+  state, not a moment. From its first record (in the window, or in the 14 days before
   on that PC) it counts for every slow action on that PC, except one whose
   time Aternity put mostly on the network or the server. The PC's disk
   records are one issue; it says what it covers (other issues there from

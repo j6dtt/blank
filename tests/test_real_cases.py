@@ -538,9 +538,10 @@ class FailingDisk:
         notes = dict(application="Microsoft.Notes", username="user7", name="Application Crash (After Hang)",
                      component="Microsoft.Notes.exe (Process)", component_version="6.0.2.0", count=1)
         return [HealthEvent(self.SMART, "PC-77", name="Faulty HD S.M.A.R.T. Status", component=self.DISK,
-                            details="Index: 0"),
+                            category="Hardware", details="Index: 0"),  # Aternity's own category (live, Nov 2026)
                 HealthEvent(self.SMART, "PC-77", **notes),
-                HealthEvent(self.HD, "PC-77", name="HD Failure", component="\\Device\\Harddisk0\\DR0 (Drive)")] + self.BEFORE
+                HealthEvent(self.HD, "PC-77", name="HD Failure", component="\\Device\\Harddisk0\\DR0 (Drive)",
+                            category="Hardware")] + self.BEFORE
 
     def health_events(self, device, start, end):
         return [e for e in self._events() if e.device == device and start <= e.timestamp <= end]
@@ -653,7 +654,7 @@ def test_a_failing_disk_leads_and_no_microsoft_update_is_blamed_for_notes():
 class FailingDiskBefore(FailingDisk):
     """The same PC, with the disk already recorded failing on Nov 3."""
     BEFORE = [HealthEvent(datetime(2026, 11, 3, 14, 0, tzinfo=timezone.utc), "PC-77", name="Faulty HD S.M.A.R.T. Status",
-                          component=FailingDisk.DISK)]
+                          component=FailingDisk.DISK, category="Hardware")]
 
 
 def test_a_disk_failing_before_the_window_covers_all_of_it():

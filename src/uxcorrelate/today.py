@@ -38,9 +38,9 @@ from statistics import median
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .aternity import is_virtual, odata_time
-from .config import DISK_PARTS, SEVERITY_ORDER, TILE_SEVERITIES, TOP_STATUS
+from .config import SEVERITY_ORDER, TILE_SEVERITIES, TOP_STATUS
 from .http import short_error
-from .models import parse_time, part_label, to_float
+from .models import failing_disk, parse_time, to_float
 
 log = logging.getLogger("uxcorrelate")
 REFRESH_MIN = 15  # minutes between reads unless config.yaml has refresh_minutes (Today.refresh_min)
@@ -369,8 +369,7 @@ class Today:
             if sev:
                 sevs.setdefault(kind, Counter())[sev] += 1
             app = (r.get(f["application"]) if f.get("application") else None) or NO_APP
-            label = part_label(r.get(f["component"])) if f.get("component") else None  # "... (Disk)"
-            disk = bool(label) and label.lower() in {p.lower() for p in DISK_PARTS}
+            disk = failing_disk(r.get(f["component"]) if f.get("component") else None, kind[0])  # "... (Disk)", Hardware
             times = int(to_float(r.get(f["count"])) or 1) if f.get("count") else 1  # as investigations count
             parsed.append((t, dev, kind, sev, r.get(f["username"]) if f.get("username") else None, app, disk, times))
             secs = self.clock_secs(t)

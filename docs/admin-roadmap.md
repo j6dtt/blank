@@ -150,8 +150,14 @@ Known limits of the first version:
     AD" said; one line when AD is not set, does not answer (tried
     again after 5 min) or refused the login (not tried again until
     a restart: AD's lockout). AD's searches on the Load panel.
-  - Later (agreed in the roadmap): the Care list's Add a user by
-    name, labels from AD, Care list users disabled in AD.
+  - On prod (912aeab, 2026-11-16, the user): the display name
+    shows under "People using the app". A first copy of
+    `admin.html` came through the one-way transfer with its
+    script and styles stripped (the page showed bare text); the
+    user got it through.
+  - Later, on hold (the user, 2026-11-16: "Let's hold AD
+    integration for now"): the Care list's Add a user by name,
+    labels from AD, Care list users disabled in AD.
   - Needs from the AD team: a read-only service account (its
     password in `.env`), the domain name or a DC address.
 - **Tools for prod** (no paste there): run `verify` (or
@@ -231,3 +237,7 @@ Known limits of the first version:
 12. User (2026-11-16): "verify --ad all passed without and with
     credentials". Proposed next: names on the admin page.
 13. User: "build it". Built on dev (AD lookup, above).
+14. User: "adin page show user display name under 'People using
+    the app'. What's next?" Proposed: AD on the Care list.
+15. User: "Let's hold AD integration for now." On hold; the
+    admin page's names stay.

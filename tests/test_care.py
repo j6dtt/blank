@@ -12,6 +12,7 @@ from uxcorrelate import web
 from uxcorrelate.aternity import AternityClient
 from uxcorrelate.care import CARE_MAX, Care
 from uxcorrelate.config import AternityConfig, CareUser, load_settings
+from uxcorrelate.models import failing_disk
 from uxcorrelate.today import HOUR, Today
 
 ZONE = "America/New_York"
@@ -591,7 +592,7 @@ def test_the_order_endpoint(tmp_path, monkeypatch):
     # lit: a failing disk first, then Critical, then Major, whatever the list's order
     care.today.set_health([ev(AT(14, 0), "MQ2208", "VD-7", "Application Crash", "Major", "Application", "Mail"),
                            ev(AT(14, 1), "ghost1", "VD-9", "System Crash", "Critical"),
-                           dict(ev(AT(14, 2), "tz9013", "PC-3", "Faulty HD S.M.A.R.T. Status", "Major"),
+                           dict(ev(AT(14, 2), "tz9013", "PC-3", "Faulty HD S.M.A.R.T. Status", "Major", "Hardware"),
                                 HEALTH_EVENT_COMPONENT="WDC WD10EZEX (Disk)")], H2, today=True)
     care.check(client(), NOW)
     assert [(u["username"], u["level"]) for u in care.view(NOW)["users"]] == [
@@ -690,17 +691,52 @@ def test_a_row_aternity_sends_late_lights_the_tile_and_its_day_is_investigated_a
 
 
 def test_a_failing_disk_stays_on_all_day():
-    disk = event(8, 0, "Faulty HD S.M.A.R.T. Status", "Major", "System", None, part="WDC WD10EZEX (Disk)")
+    disk = event(8, 0, "Faulty HD S.M.A.R.T. Status", "Major", "Hardware", None, part="WDC WD10EZEX (Disk)")
     care = care_at([disk, event(15, 0, "System Crash", "Critical", "System", None)], refresh=5)
     care.check(client(), AT(15, 2))
     for at in (AT(15, 7), AT(15, 12), AT(15, 17), AT(17, 55)):  # the System Crash goes off at 15:17
         care.check(client(), at)
         mq = care.view(at)["users"][0]
-        assert mq["status"] == "issue" and mq["issues"][0]["what"] == "System/Faulty HD S.M.A.R.T. Status"
+        assert mq["status"] == "issue" and mq["issues"][0]["what"] == "Hardware/Faulty HD S.M.A.R.T. Status"
     assert mq["issues"][0]["clears"] == "Stays on today: a failing disk is the PC's state."
     assert [i["what"] for i in mq["earlier"]] == ["System/System Crash"]  # its 3 reads are over
     tomorrow = AT(8, 0) + timedelta(days=1)
     assert care.view(tomorrow)["users"][0]["status"] != "issue"
+
+
+def test_a_full_drive_is_an_event_not_a_failing_disk():
+    """Aternity files Low Disk Space and Corrupted FS under "(Drive)" too, category System (verify
+    --overview, stage, Nov 16 2026; the label alone kept them lit all day): lit for its reads like
+    any event. Only a Hardware event under a disk or drive is a failing disk (models.failing_disk)."""
+    assert failing_disk("\\Device\\Harddisk0\\DR0 (Drive)", "Hardware")
+    assert failing_disk("WDC WD10EZEX (Disk)", " hardware ")
+    assert not failing_disk("C: (Drive)", "System") and not failing_disk("C: (Drive)", None)
+    assert not failing_disk("OUTLOOK.EXE (Process)", "Hardware")
+    care = care_at([event(15, 0, "Low Disk Space", "Major", "System", None, part="C: (Drive)"),
+                    event(15, 1, "Corrupted FS", "Major", "System", None, part="C: (Drive)")], refresh=5)
+    care.check(client(), AT(15, 2))
+    assert care.view(AT(15, 2))["users"][0]["status"] == "issue"
+    for at in (AT(15, 7), AT(15, 12), AT(15, 17)):  # off at the 3rd read after it, as any event
+        care.check(client(), at)
+    mq = care.view(AT(15, 17))["users"][0]
+    assert mq["status"] == "ok" and {i["what"] for i in mq["earlier"]} == {"System/Low Disk Space",
+                                                                          "System/Corrupted FS"}
+
+
+def test_a_failing_disk_mark_saved_by_the_label_alone_goes_at_the_next_check(tmp_path):
+    """The rule before Nov 16 2026 saved Low Disk Space under "(Drive)" as a failing disk, on all day:
+    after the update the mark is worked out again from today's rows, so it goes off as any event."""
+    full = event(15, 0, "Low Disk Space", "Major", "System", None, part="C: (Drive)")
+    care = care_at([full], store=tmp_path)
+    care.check(client(), AT(15, 2))
+    for i in care.issues["mq2208"]:
+        i["disk"] = True  # as the older rule saved it
+    care.save("mq2208")
+    again = care_at([full], store=tmp_path)
+    for at in (AT(15, 7), AT(15, 12), AT(15, 17), AT(15, 22)):
+        again.check(client(), at)
+    mq = again.view(AT(15, 22))["users"][0]
+    assert mq["status"] == "ok" and not any(i.get("disk") for i in again.issues["mq2208"])
 
 
 def test_a_restart_does_not_light_again_what_was_seen(tmp_path):
@@ -756,7 +792,7 @@ def test_the_status_for_another_platform(tmp_path):
     care.today.set_health([
         ev(AT(14, 5), "MQ2208", "VD-7", "Application Crash", "Major", "Application", "Mail"),
         ev(AT(14, 25), "MQ2208", "VD-7", "Application Crash", "Major", "Application", "Mail"),
-        dict(ev(AT(8, 0), "tz9013", "PC-3", "Faulty HD S.M.A.R.T. Status", "Major"),
+        dict(ev(AT(8, 0), "tz9013", "PC-3", "Faulty HD S.M.A.R.T. Status", "Major", "Hardware"),
              HEALTH_EVENT_COMPONENT="WDC WD10EZEX (Disk)")], H2, today=True)
     care.check(client(), NOW)
     assert care.status(NOW)["ready"] is False  # no read of Aternity has worked yet

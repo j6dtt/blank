@@ -27,10 +27,10 @@ import re
 from collections import Counter
 from datetime import timedelta
 
-from .config import (DISK_PARTS, NO_PROGRAM, PROCESS_ROW_SPAN_MIN, SOFTWARE_REMOVED, SOFTWARE_UPDATE_GAP_MIN,
+from .config import (NO_PROGRAM, PROCESS_ROW_SPAN_MIN, SOFTWARE_REMOVED, SOFTWARE_UPDATE_GAP_MIN,
                      WINDOWS_MODULES)
 from .models import day as _local_day
-from .models import clock, local_date, parse_time, part_label, plain, plural
+from .models import clock, failing_disk, local_date, parse_time, part_label, plain, plural
 
 log = logging.getLogger("uxcorrelate")
 CHANGES_BEFORE = timedelta(days=14)  # how far back "what changed" looks
@@ -73,9 +73,8 @@ def _parts(names) -> list[tuple[str, ...]]:
 
 
 def is_disk(e) -> bool:
-    """A health event whose failing part Aternity labels a disk or drive (DISK_PARTS)."""
-    label = part_label(e.component)
-    return bool(label) and label.lower() in {p.lower() for p in DISK_PARTS}
+    """A health event of the PC's disk failing (models.failing_disk: label and category)."""
+    return failing_disk(e.component, e.category)
 
 
 def _unlabelled(component: str | None) -> str:
