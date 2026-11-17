@@ -324,6 +324,12 @@ demo mode: nothing in `src/` knows about it.
   `<data>/assess/<date>.json`, `KEEP_DAYS`. The day before gets one
   summary (`_yesterday`, from `Today.saved` and `health_days`), shown as
   "Yesterday": written once, so evening and morning never differ.
+  Under it the week (`week`, `drawWeek`, `#asWeek`; the user's pick A
+  of three mocked, Nov 17 2026): this week and last, Monday to Sunday,
+  PCs a day, each once, with a Critical / Major event
+  (`TILE_SEVERITIES`, each kind's severity, `health_days` of days read
+  whole) and `TOP_STATUS` slow actions (saved `top_pcs`, complete days
+  only); today so far; a day not read in full is None, a gap, never 0.
   `verify --ai`: "writes the assessment" (`SAMPLE`; it counts the
   points with their label). Layout (Proposal 1, the user's pick,
   2026-11-12): the box is the banner in the verdict's colour (`--as`)
@@ -436,8 +442,10 @@ demo mode: nothing in `src/` knows about it.
   2026): their Major actions by this time of day on each of the last
   `KEEP_DAYS` days, today last, from the days read for the usual
   (`history`), so today's bar is "N rated Major" and the days of the
-  usual (dark) give its range; a red dot is a day with a saved issue,
-  dashed is not read. They were the issues this app saved: none for a
+  usual (dark) give its range, dashed is not read. No red dots (the
+  user, Nov 17 2026: "makes no sense": a dot marked any saved issue of
+  a day, a crash on a day with no Major action, at any hour on a bar
+  counted up to now). They were the issues this app saved: none for a
   day it did not check or a Major action within the usual ("3 rated
   Major" with nothing behind it, stage). A history read cut short is
   no usual (`cut`: not judged, read again at the next check). An OK tile with Major actions their usual could not judge

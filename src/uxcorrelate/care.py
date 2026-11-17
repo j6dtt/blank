@@ -1089,7 +1089,7 @@ class Care:
         if not today_all and h is not None and not h["rows"] and not actions:
             status, note = "unknown", f"Not seen in Aternity's activity in {HISTORY_DAYS} days: check the name " \
                                       "(click the tile to remove it, then add it again as Aternity writes it)."
-        days = self._major_days(user, now, major, actions, issues)
+        days = self._major_days(user, now, major, actions)
         # the moment today came nearest to their usual (each Major action against their usual by its
         # time): an OK tile's "1 rated Major" says why it is no issue ("usual by now: 0 to 4" read as
         # a missing "Earlier today" for a Major action at 10:12, stage, Nov 15 2026)
@@ -1132,11 +1132,14 @@ class Care:
                 "why": why, "investigating": "now" if self.running == user else
                 "waiting" if waiting else None}
 
-    def _major_days(self, user: str, now: datetime, major: int, actions: int, issues: list[dict]) -> list[dict]:
+    def _major_days(self, user: str, now: datetime, major: int, actions: int) -> list[dict]:
         """The tile's bars: their Major actions by this time of day on each of the last KEEP_DAYS days,
         today last, from Aternity's own records (the days read for their usual, so the bars before
-        today are the usual's numbers and today's is "N rated Major"). Each day says whether the
-        Care list raised an issue then and whether it is one of the days of the usual. The bars were
+        today are the usual's numbers and today's is "N rated Major"). Each day says whether it is one
+        of the days of the usual. A red dot marked a day with a saved issue: any kind (a crash on a day
+        with no Major action) at any hour (on a bar counted only up to now), and none before this app
+        kept issues, so it sat on bars it had nothing to do with (the user, Nov 17 2026: "makes no
+        sense"); the days' issues are in Show more and "Last issue before today". The bars were
         the issues this app saved: none for a day it did not check, and none for Major actions within
         the usual, so "3 rated Major" had nothing behind it (stage, Nov 15 2026).
         major None: not read (the read failed, or not yet today); pc False: no action measured."""
@@ -1144,7 +1147,6 @@ class Care:
         secs = self.today.clock_secs(now)
         h = self.history.get(user)
         usual = sorted((d for d in (h or {}).get("days", {}) if d < t), reverse=True)[:USUAL_DAYS]
-        raised = {i["day"] for i in issues}
         out = []
         for n in range(KEEP_DAYS - 1, -1, -1):
             d = t - timedelta(days=n)
@@ -1155,8 +1157,7 @@ class Care:
             else:
                 times = h["days"].get(d)
                 got, pc = (sum(1 for s in times if s <= secs), True) if times is not None else (0, False)
-            out.append({"date": d.isoformat(), "major": got, "pc": pc, "issue": d.isoformat() in raised,
-                        "usual": d in usual, "today": d == t, "cut": bool(h and h.get("cut")) and d != t})
+            out.append({"date": d.isoformat(), "major": got, "pc": pc, "usual": d in usual, "today": d == t, "cut": bool(h and h.get("cut")) and d != t})
         return out
 
     def _one_disk(self, lit: list[dict]) -> list[dict]:

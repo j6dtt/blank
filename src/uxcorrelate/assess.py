@@ -17,6 +17,8 @@ first at" line are by fixed rules (`verdict`, `first`), never the AI's.
 
 Layout (Proposal 1, the user's pick, Nov 12 2026): the box is the banner and the words, with
 yesterday beside them; the three charts (`charts`) are a row of their own in Today's issues.
+Under yesterday, the week (`week`, the user's pick A, Nov 17 2026): PCs a day with a Critical
+event, a Major event and Major slow actions, Monday to Sunday, this week and last week.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from .chat import RATIO, allowed, clean, numbers
-from .config import SEVERITY_ORDER, TOP_STATUS
+from .config import SEVERITY_ORDER, TILE_SEVERITIES, TOP_STATUS
 from .http import ApiError, short_error
 from .models import plural
 from .today import MIN_USUAL, USUAL_DAYS, kind_of
@@ -801,6 +803,46 @@ class Assessments:
             c["now"] = last
         return out
 
+    def week(self, now: datetime) -> dict:
+        """The chart under Yesterday (the user, Nov 17 2026: "a lines chart under 'Yesterday, the day
+        in short', showing issues counts by day from Mon-Sun"; mockup A): this week and last week,
+        Monday to Sunday, local days, in PCs a day, each PC once: with a Critical event, with a Major
+        event (the Today tiles' severities, `TILE_SEVERITIES`; Aternity's severity of each kind of
+        event) and with `TOP_STATUS` slow actions (each day's saved counts). Today is so far. A day
+        whose events were not read in full, or whose counts are not saved whole, is None (a gap,
+        never 0), as are the days after today. From what the Today reader holds: no read of Aternity."""
+        today = self.today
+        t = today.day(now)
+        days = [t - timedelta(days=t.weekday() - i) for i in range(7)]
+        last = [d - timedelta(days=7) for d in days]
+        with today.lock:
+            sev = {k: c.most_common(1)[0][0] for k, c in today.health_sev.items() if c}
+            before = {d: v for d, v in today.health_days.items()
+                      if d < t and d in today.health_read and d not in today.health_cut}
+            mine = [(x[1], x[2], x[3]) for x in today.health if today.day(x[0]) == t]  # device, kind, severity
+            saved = dict(today.saved)
+            hours = [h for h in today.hours.values() if h.day == t]
+
+        def events(d: date, level: str) -> int | None:
+            if d == t:
+                return len({dev for dev, kind, s in mine if (sev.get(kind) or s) == level})
+            if d > t or d not in before:
+                return None
+            return len({dev for kind, devs in before[d].items() if sev.get(kind) == level for dev in devs})
+
+        def slow(d: date) -> int | None:
+            if d == t:
+                return len(set().union(*(h.top_devs for h in hours))) if hours else None
+            s = saved.get(d) if d < t else None
+            return s.get("top_pcs") if s and s.get("complete") else None
+        rows = [{"key": level.lower(), "name": f"PCs with a {level} event", "level": level,
+                 "this": [events(d, level) for d in days], "last": [events(d, level) for d in last]}
+                for level in TILE_SEVERITIES]
+        rows.append({"key": "slow", "name": f"PCs with {TOP_STATUS} slow actions", "level": None,
+                     "this": [slow(d) for d in days], "last": [slow(d) for d in last]})
+        return {"days": [d.isoformat() for d in days], "last": [d.isoformat() for d in last], "today": t.weekday(),
+                "by": today.local(today.as_of or now).strftime("%H:%M"), "rows": rows}
+
     # -- the page ---------------------------------------------------------------
     def view(self, now: datetime) -> dict:
         """What /api/assess returns: today's assessments (latest first), yesterday's summary, and
@@ -812,11 +854,12 @@ class Assessments:
             periods = [{k: v for k, v in p.items() if k != "snap"} for p in rec.get("periods", [])][::-1]
         nxt = next((h for h in HOURS if self.today.local(now).hour < h), None)
         charts = self.charts(now) if self.today.ready else []
+        week = self.week(now) if self.today.ready else None
         return {"date": t.isoformat(), "zone": self.today.zone_label, "periods": periods,
                 "yesterday": y.get("summary"), "hours": list(HOURS), "labels": list(LABELS),
                 "next": f"{nxt:02d}:00" if nxt is not None else None, "note": self.note,
                 # the charts are as of the Today reader's last read, not of the text's hour
-                "now": self.today.local(self.today.as_of or now).strftime("%H:%M"), "charts": charts,
+                "now": self.today.local(self.today.as_of or now).strftime("%H:%M"), "charts": charts, "week": week,
                 "days": len(self._same_days(t)), "kind": kind_of(t)}
 
 

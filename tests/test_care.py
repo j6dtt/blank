@@ -1022,12 +1022,11 @@ def test_the_tile_bars_are_their_major_actions_each_day_from_aternity_today_last
     mine = [d["major"] for d in days if d["usual"]]  # the dark bars are the usual's days: its range
     assert (min(mine), max(mine)) == (mq["usual"]["low"], mq["usual"]["high"]) == (0, 2)
     assert [d["usual"] for d in days] == [False, False, True, True, True, True, True, False]
-    assert mq["by_local"] == "14:30" and not any(d["issue"] for d in days)
+    assert mq["by_local"] == "14:30" and not any("issue" in d for d in days)  # no red dots (the user, Nov 17)
     care.issues["mq2208"].append({"day": "2026-11-06", "kind": "slow", "level": "Major", "key": "slow 2026-11-06 1",
                                   "since": "2026-11-06T15:00:00Z", "last": "2026-11-06T15:20:00Z", "text": "x"})
     mq = care.view(NOW)["users"][0]
-    assert [d["issue"] for d in mq["days"]] == [False, False, False, False, True, False, False, False]
-    assert mq["before"] == "Fri Nov 06: Major slow actions"
+    assert mq["before"] == "Fri Nov 06: Major slow actions"  # the latest issue before today, in words
 
 
 def test_their_days_before_cut_short_are_not_a_usual_and_are_read_again():

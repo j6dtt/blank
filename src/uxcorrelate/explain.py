@@ -63,6 +63,12 @@ GLOSSARY: dict[str, dict[str, str]] = {
                       f"range on {VERDICT_PCS} PCs or more), \"A normal day so far\", or \"No usual to compare with "
                       "yet\". A count above its usual range on fewer PCs is isolated: listed, but it does not make "
                       "the verdict.",
+        "This week, Mon to Sun": (
+            "The small lines under Yesterday: for each day of this week, Monday to Sunday, the PCs with an "
+            "event Aternity rated Critical, with one rated Major, and with actions it rated "
+            f"{TOP_STATUS}, each PC once a day. The solid line is this week, the hollow point today so far, "
+            "the dashed line last week on the same days. Each row has its own scale. A day not read in full "
+            "is a gap, never 0. Point at a day for both numbers."),
         "isolated": _REACH, "limited": _REACH, "widespread": _REACH,
         "usual range": "The lowest to the highest count of the same kind of day before (working days with "
                        f"working days), up to {today.USUAL_DAYS} days, by the same time of day. Above it: more "
@@ -134,8 +140,8 @@ GLOSSARY: dict[str, dict[str, str]] = {
             f"Small bars: that user's actions Aternity rated {TOP_STATUS} by this time of day on each of the last "
             f"{care.KEEP_DAYS} days, today last, from Aternity's own records. Today's bar is the tile's \"rated "
             f"{TOP_STATUS}\"; the dark bars before it are the days their usual comes from (the lowest to the "
-            f"highest of them is the usual range), faded bars are older days. A red dot: a day the Care list "
-            f"raised an issue (an event, or more {TOP_STATUS} actions than usual). Dashed: not read."),
+            f"highest of them is the usual range), faded bars are older days. Dashed: not read. The issues of "
+            "the days before are under Show more, the latest in \"Last issue before today\"."),
         "Last issue before today": "The latest issue the Care list raised for that user before today, with its day.",
         "not compared with their usual": (
             f"Today's {TOP_STATUS} actions could not be compared: their usual needs {care.MIN_USUAL} days with "

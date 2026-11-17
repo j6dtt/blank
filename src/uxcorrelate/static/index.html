@@ -57,7 +57,6 @@
   .sparkWrap { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
   .spark .old { opacity: .25; }
   .spark .unread { fill: none; stroke: var(--muted); stroke-dasharray: 2 1; }
-  .spark .issue { fill: var(--bad); }
   .types div { border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; }
   .muted { color: var(--muted); }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -255,6 +254,21 @@
   #asMore ul { margin: 4px 0; padding-left: 20px; } #asMore .old { margin: 8px 0; padding-left: 10px; border-left: 2px solid var(--border); }
   .asY { padding: 10px 12px; border: 1px solid var(--border); border-radius: 4px; background: rgba(0, 0, 0, .025); font-size: 13px; }
   .asY h3 { margin: 0 0 4px; font: 600 14px var(--serif); color: var(--accent); }
+  /* the week under Yesterday (the user's pick A): a row per count, each its own scale */
+  .asWk { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+  .asWk h4 { margin: 0; font-size: 13px; } .asWk .sub { font-size: 11px; color: var(--muted); }
+  .asWk .leg { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 11px; color: var(--muted); margin: 2px 0 4px; }
+  .asWk .leg span { display: inline-flex; align-items: center; gap: 4px; }
+  .asWk .rh { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-top: 4px; }
+  .asWk svg { display: block; overflow: visible; }
+  .asWk .grid { stroke: var(--border); } .asWk .base { stroke: var(--muted); stroke-opacity: .35; }
+  .asWk text { font-size: 10px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+  .asWk text.now { fill: var(--text); font-weight: 600; } .asWk text.end { font-size: 11px; font-weight: 600; fill: var(--text); }
+  .asWk .ln { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .asWk .gh { fill: none; stroke: var(--muted); stroke-opacity: .8; stroke-width: 1.5; stroke-dasharray: 3 3; }
+  .asWk .pt { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
+  .asWk .pt.so { fill: var(--panel); stroke: var(--accent); }
+  .asWk .hit { fill: transparent; } .asWk .hit:hover { fill: rgba(0, 0, 0, .04); }
   /* the three charts, a row of their own in Today's issues: today up to the hour against the days before */
   .minis { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin: 8px 0 2px; }
   .minis:empty { display: none; }
@@ -355,8 +369,8 @@
         bring something new of it, until <span id="cAlertFor">3 reads</span> after the last one that did (a failing disk
         all day). An investigation runs by itself for issues the latest one did not cover (one
         an hour per user). A tile's bars: their Major actions by this time of day on each of the last 8 days, today
-        last, from Aternity (the dark ones are the days of their usual; faded: older days; dashed: not read); a red dot
-        marks a day with an issue. Point at a bar for its day and count. Click a tile for more.</p>
+        last, from Aternity (the dark ones are the days of their usual; faded: older days; dashed: not read). Point at a
+        bar for its day and count. Click a tile for more.</p>
       <div class="exRow noExplain"><button type="button" class="link explain" data-tab="care">Explain ▸</button></div>
     </section>
     <section class="panel" id="cDetail" hidden style="margin-top:16px">
@@ -1250,9 +1264,12 @@ function renderAssess(a) {
     + `<div class="muted" style="font-size:12px;margin-top:6px">${esc(p.note || `Written by the AI (${p.service}); every number and word checked against the counts of ${p.label}.`)}</div>`
     : `<div class="muted">The first assessment of today is written at ${String(a.hours[0]).padStart(2, "0")}:00. Today's numbers are under Today's issues, below.</div>`;
   // yesterday's summary: written once after midnight, always in view (the end of day and the next morning are one text)
-  $("asYest").innerHTML = y ? `<div class="asY"><h3>Yesterday, ${esc(y.label)}: the day in short</h3>`
-    + (y.text ? answerHtml(y.text) : `<ul>${y.lines.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`) + "</div>"
-    : `<div class="asY muted">Yesterday's summary is written once, after midnight, when that day's counts are saved; none is saved for yesterday.</div>`;
+  $("asYest").innerHTML = (y ? `<div class="asY"><h3>Yesterday, ${esc(y.label)}: the day in short</h3>`
+    + (y.text ? answerHtml(y.text) : `<ul>${y.lines.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>`)
+    : `<div class="asY"><div class="muted">Yesterday's summary is written once, after midnight, when that day's counts are saved; none is saved for yesterday.</div>`)
+    + `<div class="asWk" id="asWeek"></div></div>`;
+  asWeekData = a.week || null;
+  drawWeek();
   let more = "";
   if (p) {  // (the counts it was written from are not shown: they are of its hour, and read as a mismatch beside the live numbers)
     const old = a.periods.slice(1);
@@ -1267,6 +1284,59 @@ function renderAssess(a) {
   $("tMinisLeg").textContent = charts.length
     ? `Line: today, up to ${a.now || "now"}. Shaded: the same hour on the ${a.days ? `${a.days} ` : ""}${a.kind || "days"} before, lowest to highest.` : "";
 }
+// The week under Yesterday (the user's pick A, Nov 17 2026): PCs a day, a row per count with its own
+// scale; this week solid (today hollow: so far), last week dashed; a day not read in full is a gap.
+let asWeekData = null, asWeekW = 0;
+function drawWeek() {
+  const el = $("asWeek"), w = asWeekData;
+  if (!el) return;
+  el.hidden = !w;  // (an empty box was display: none, so it had no width to be drawn to)
+  if (!w) return;
+  const width = Math.floor(el.clientWidth);
+  asWeekW = width;
+  if (!width) return;  // the Today tab is not open: drawn when it is (the observer below)
+  const L = 24, R = 30, T = 8, B = 5, H = 52, t = w.today, step = (width - L - R) / 6, x = (i) => L + i * step;
+  const day = (iso) => new Date(iso + "T12:00:00Z");
+  const words = (iso) => day(iso).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+  const short = (iso) => `${day(iso).toLocaleDateString(undefined, { weekday: "short", timeZone: "UTC" })} ${day(iso).getUTCDate()}`;
+  const some = (v) => v !== null && v !== undefined;
+  const count = (v) => (some(v) ? pcs(v) : "not read in full");
+  const top = (m) => (m <= 5 ? Math.max(1, m) : Math.ceil(m / 5) * 5);
+  const line = (vals, y) => {  // a gap where a day is not read in full
+    let d = "", on = false;
+    vals.forEach((v, i) => { if (!some(v)) { on = false; return; } d += `${on ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`; on = true; });
+    return d;
+  };
+  const sw = (cls) => `<svg width="22" height="10" aria-hidden="true">${cls === "so" ? `<circle class="pt so" cx="11" cy="5" r="3.5"/>`
+    : `<line class="${cls}" x1="1" x2="21" y1="5" y2="5"/>`}</svg>`;
+  const span = (a) => `${words(a[0])} to ${words(a[6])}`;
+  let html = `<h4>This week, Mon to Sun</h4><div class="sub">PCs a day; each row has its own scale</div>`
+    + `<div class="leg"><span>${sw("ln")}this week</span><span>${sw("gh")}last week, ${esc(span(w.last))}</span>`
+    + `<span>${sw("so")}today, so far</span></div>`;
+  for (const r of w.rows) {
+    const mine = r.this.slice(0, t + 1), all = [...mine, ...r.last].filter(some);
+    const hi = top(all.length ? Math.max(...all) : 0), y = (v) => T + (1 - v / hi) * (H - T - B);
+    let s = `<svg width="${width}" height="${H}" role="img" aria-label="${esc(`${r.name}, this week and last week`)}">`
+      + `<line class="grid" x1="${L}" x2="${width - R}" y1="${y(hi)}" y2="${y(hi)}"/><line class="base" x1="${L}" x2="${width - R}" y1="${y(0)}" y2="${y(0)}"/>`
+      + `<text x="${L - 6}" y="${y(hi) + 3.5}" text-anchor="end">${n(hi)}</text><text x="${L - 6}" y="${y(0) + 3.5}" text-anchor="end">0</text>`
+      + `<path class="gh" d="${line(r.last, y)}"/><path class="ln" d="${line(mine, y)}"/>`;
+    mine.forEach((v, i) => { if (some(v)) s += `<circle class="pt${i === t ? " so" : ""}" cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="3.5"/>`; });
+    const end = mine.map((v, i) => [v, i]).filter(([v]) => some(v)).pop();
+    if (end) s += `<text class="end" x="${(x(end[1]) + 7).toFixed(1)}" y="${(y(end[0]) + 4).toFixed(1)}">${n(end[0])}</text>`;
+    w.days.forEach((iso, i) => {
+      const was = `Last week, ${words(w.last[i])}: ${count(r.last[i])}.`;
+      const now = i < t ? `${words(iso)}: ${count(r.this[i])}.` : i === t ? `${words(iso)}, today by ${w.by}: ${some(r.this[i]) ? `${pcs(r.this[i])} so far` : "not read yet"}.`
+        : `${words(iso)}: not yet.`;
+      s += `<rect class="hit" x="${(x(i) - step / 2).toFixed(1)}" y="0" width="${step.toFixed(1)}" height="${H}"><title>${esc(`${r.name}. ${now} ${was}`)}</title></rect>`;
+    });
+    html += `<div class="rh">${esc(r.name)}${r.level ? ` ${sevTag(r.level)}` : ""}</div>${s}</svg>`;
+  }
+  html += `<svg width="${width}" height="16" aria-hidden="true">` + w.days.map((iso, i) =>
+    `<text${i === t ? ' class="now"' : ""} x="${x(i).toFixed(1)}" y="11" text-anchor="middle">${esc(short(iso))}</text>`).join("") + "</svg>";
+  el.innerHTML = html;
+}
+// drawn to the box's width: again when it changes (a phone turned, the Today tab opened)
+new ResizeObserver(() => { const el = $("asWeek"); if (el && Math.floor(el.clientWidth) !== asWeekW) drawWeek(); }).observe($("asYest"));
 async function loadAssess() {
   try {
     const r = await fetch("api/assess");
@@ -1754,11 +1824,11 @@ function majorBars(days, by) {
   const bars = days.map((d, i) => {
     const v = d.major || 0, y = v ? Math.max(2, Math.round(v / top * (h - 6))) : 1, x = i * step;
     const title = `${day(d)}: ${words(d)}${d.today ? " (today)" : d.usual ? ", one of the days of their usual" : ""}`
-      + `${d.issue ? "; an issue that day" : ""}${d.cut ? " (Aternity's reply was cut short)" : ""}`;
+      + `${d.cut ? " (Aternity's reply was cut short)" : ""}`;
     return `<g><title>${esc(title)}</title><rect class="hit" x="${x}" y="0" width="${step}" height="${h}"/>`
       + (d.major === null ? `<rect class="unread" x="${x + .5}" y="${h - 4}" width="${step - 3}" height="3"/>`
         : `<rect class="${d.today ? "now" : d.usual ? "past" : "past old"}" x="${x}" y="${h - y}" width="${step - 2}" height="${y}" rx="1"/>`)
-      + (d.issue ? `<circle class="issue" cx="${x + (step - 2) / 2}" cy="2.5" r="2.5"/>` : "") + "</g>";
+      + "</g>";
   }).join("");
   const read = days.filter((d) => d.major !== null);
   const hi = read.length ? Math.max(...read.map((d) => d.major)) : null;

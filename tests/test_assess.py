@@ -344,6 +344,33 @@ def test_the_charts_are_today_up_to_the_hour_against_the_days_before():
     assert "kpis" not in a.view(NOW)  # Proposal 1: no row of numbers; the charts carry them, in Today's issues
 
 
+def test_the_week_under_yesterday_counts_pcs_a_day_this_week_and_last():
+    """The user's pick A (Nov 17 2026): Monday to Sunday, PCs a day (each PC once) with a Critical
+    event, a Major event and Major slow actions; today so far; a day not read in full is a gap."""
+    t = filled()  # Monday Nov 09 14:30: today's events VD-1 (twice), PC3 Major; PC4 Critical
+    sun, sat, fri = date(2026, 11, 8), date(2026, 11, 7), date(2026, 11, 6)
+    t.set_health([ev(t.midnight(sun) + 9 * HOUR, "PC1", "Application Crash", "Major"),
+                  ev(t.midnight(sun) + 10 * HOUR, "PC1", "Application Crash", "Major"),  # once a day
+                  ev(t.midnight(sun) + 9 * HOUR, "PC1", "System Crash", "Critical", cat="System"),
+                  ev(t.midnight(sun) + 9 * HOUR, "PC2", "Low Memory", "Minor", cat="System")], H, today=False,
+                 days_read=(sun,))
+    t.set_health([], H, today=False, days_read=(sat,), partial=True)  # cut short: a gap, never 0
+    t.saved[sun] = {"complete": True, "top_pcs": 7}
+    t.saved[sat] = {"complete": False, "top_pcs": 3}  # not saved whole: a gap
+    w = A.Assessments(t).week(NOW)
+    assert w["days"][0] == "2026-11-09" and w["days"][6] == "2026-11-15" and w["today"] == 0
+    assert w["last"] == [(date(2026, 11, 2) + timedelta(days=i)).isoformat() for i in range(7)]
+    crit, major, slow = w["rows"]
+    assert [r["name"] for r in w["rows"]] == ["PCs with a Critical event", "PCs with a Major event",
+                                              "PCs with Major slow actions"]
+    assert crit["this"] == [1] + [None] * 6 and major["this"] == [2] + [None] * 6  # today so far; none after it
+    assert slow["this"][0] == 4  # VD-1, VD-2, PC3 at 09:00, PC4 at 14:00
+    assert crit["last"] == [None] * 4 + [0, None, 1]  # Fri read: none; Sat cut short; Sun: PC1's System Crash
+    assert major["last"][4:] == [2, None, 1]  # Fri: PC8, PC9; Sat cut short; Sun: PC1 once (the Minor one left out)
+    assert slow["last"][4:] == [5, None, 7]  # Fri, Sun saved whole; Sat not
+    assert A.Assessments(t).view(NOW)["week"]["rows"][0]["key"] == "critical"
+
+
 def test_a_saturday_keeps_the_weekend_days_its_start_ups_are_compared_with(tmp_path):
     """Found with the dev app's sample data, Nov 14 2026 (a Saturday): the weekend days before reach
     14 days back, past the 8 days kept, so each was deleted before it was saved (KeyError: no chart)."""

@@ -178,7 +178,13 @@ executives, written at 06:00, 09:00, 12:00, 15:00 and 18:00, under a banner
 means for people working, then points labelled Changed (since the one
 before), Watch (above its usual range now), Earlier (above it earlier
 today, not now) and Start-ups, and what to look at first. Yesterday's
-summary is beside it. The words that rate a count are fixed: isolated
+summary is beside it, and under it a small chart of this week, Monday to
+Sunday: PCs a day with a Critical event, with a Major event and with
+Major slow actions (each PC once a day, each row its own scale); this
+week is the solid line, today a hollow point (so far), last week dashed;
+a day not read in full is a gap, never 0; point at a day for both
+numbers. It reads nothing more from Aternity: the health events the Today
+reader keeps and each day's saved counts. The words that rate a count are fixed: isolated
 (under 5 PCs), limited (5 to 49), widespread (50 or more); above,
 within or below its usual range (the lowest to the highest of the same
 kind of day before, by this time); rose, fell, steady, new, cleared.
@@ -285,8 +291,10 @@ list). Under each, small bars: their Major actions by this
 time of day on each of the last 8 days, today last, from Aternity's own
 records, so today's bar is the tile's "rated Major" and the dark bars before
 it are the days their usual comes from (its range is their lowest to
-highest; faded: older days; dashed: not read); a red dot marks a day with an
-issue, and "Last issue before today" says the latest one. Inside each of those, the tiles keep the list's own
+highest; faded: older days; dashed: not read); "Last issue before today" says
+the latest issue, Show more lists those of the 7 days before (no red dots: a
+dot marked any issue of a day, a crash too, on a bar of Major actions counted
+only up to now, so it sat on bars it had nothing to do with). Inside each of those, the tiles keep the list's own
 order: "⠿ Arrange tiles" shows a small tile per user in that order; drag one
 by ⠿ (a mouse can take it anywhere, a finger only by ⠿ so the page still
 scrolls) or move it with ↑ ↓ or the arrow keys, then "Save order" (PIN);

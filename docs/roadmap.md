@@ -47,6 +47,12 @@ data, then its daily data with the people and desktops. See
   start-ups Aternity keeps, which types carry the username), slow
   start-ups a day; with `ad:` set, the names and departments on the
   tiles, Add by name.
+- **Stage copy of the week under "Yesterday"** and **no red dots
+  on Care tiles** (both built on dev 2026-11-17): `assess.py`,
+  `care.py`, `explain.py`, `static/index.html`, with the step 2
+  copy above. To look at on stage: the Today tab's assessment box,
+  under Yesterday: three rows, last week dashed, gaps where a day
+  was not read in full.
 - Done (the user, 2026-11-17: "1-5 are all good, stage/prod are
   same version now"): the stage copy of SecureView's history of
   people and times (f905606); `verify --ai` on stage; the prod
@@ -56,6 +62,19 @@ data, then its daily data with the people and desktops. See
   `LOCATION_ON_VPN` 'false' on every action; decided: SecureView).
 
 ## Agreed
+
+- **A week of issues under "Yesterday"** (the user, 2026-11-17:
+  "a lines chart under 'Yesterday, the day in short', showing
+  issues counts by day from Mon-Sun"; three mocked, the user
+  picked A; "build it"): built on dev 2026-11-17. PCs a day with
+  a Critical event, a Major event and Major slow actions, Monday
+  to Sunday; a row per count with its own scale; this week solid,
+  today hollow (so far), last week dashed; no new Aternity read.
+  Not chosen: B (a line per kind of event, this week), C (the
+  last full week only).
+- **No red dots on Care tiles** (the user, 2026-11-17: "makes no
+  sense": a dot marked any saved issue of a day, a crash too, on
+  a bar of Major actions counted up to now): removed on dev.
 
 - **Care list step 2, built on dev 2026-11-17** ("build it A and
   B, all three"): slow start-ups as an issue (A and B: longer than
