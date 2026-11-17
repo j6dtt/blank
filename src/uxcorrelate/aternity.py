@@ -227,8 +227,10 @@ class AternityClient:
         return out
 
     def boots(self, start: datetime, end: datetime, username: str | None = None,
-              device: str | None = None, location: str | None = None) -> list[BootSample]:
-        """Boots and logons in the window, for one user/device/location or everyone."""
+              device: str | None = None, location: str | None = None,
+              usernames: list[str] | None = None) -> list[BootSample]:
+        """Boots and logons in the window, for one user/device/location, several users (usernames:
+        one read, the Care list's) or everyone."""
         key = "boots"
         f = self.cfg.fields.get(key, {})
         if not f:
@@ -237,6 +239,8 @@ class AternityClient:
         for logical, value in (("username", username), ("device", device), ("location", location)):
             if value:
                 clauses.append(f"{f[logical]} eq {odata_quote(value)}")
+        if usernames:
+            clauses.append("(" + " or ".join(f"{f['username']} eq {odata_quote(u)}" for u in usernames) + ")")
         out = []
         for row in self._optional(key, "boot/logon data", " and ".join(clauses),
                                   select=[c for c in f.values() if c]):

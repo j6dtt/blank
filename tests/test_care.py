@@ -63,8 +63,11 @@ def history(request: httpx.Request):
     return httpx.Response(200, json={"value": rows})
 
 
-def client(seen=None):
+def client(seen=None, boots=None):
+    """Aternity: activity by username (`seen`: their filters); start-ups from `boots` (none when not given)."""
     def handler(request):
+        if request.url.path.endswith("WINDOWS_MACHINE_BOOTS"):
+            return boots(request) if boots else httpx.Response(200, json={"value": []})
         if seen is not None:
             seen.append(request.url.params["$filter"])
         return history(request)
@@ -1032,7 +1035,8 @@ def test_their_days_before_cut_short_are_not_a_usual_and_are_read_again():
     seen = []
 
     def handler(request):  # every page says there is more: max_pages stops it
-        seen.append(1)
+        if not request.url.path.endswith("WINDOWS_MACHINE_BOOTS"):  # their activity only
+            seen.append(1)
         body = history(request).json()
         return httpx.Response(200, json={**body, "@odata.nextLink": str(request.url)})
     cfg = AternityConfig(base_url="https://aternity.test/aternity.odata/v2.0", username="u", password="p",
@@ -1057,3 +1061,143 @@ def test_an_open_slow_issue_is_not_back_within_a_usual_that_could_not_be_read():
     i = care.issues["mq2208"][0]
     assert (i["ended"], i["cleared"]) == ("quiet", "2026-11-09T20:20:00Z")
 
+
+
+# -- slow start-ups (the user's choice "A and B", 2026-11-17) ------------------------------------------------
+def boot(t, user, pc, kind, secs):
+    return {"TIMEFRAME": (t + timedelta(seconds=secs)).isoformat(), "MEASUREMENT_START_TIMESTAMP": t.isoformat(),
+            "USERNAME": user, "DEVICE_NAME": pc, "MEASUREMENT_TYPE": kind, "MEASUREMENT_DURATION_AVG": secs}
+
+
+def boots_of(today_rows, before=None, asked=None):
+    """Aternity's start-ups: `before` (their days before: MQ2208's logons 27 to 37 s on 6 days) and
+    `today_rows`, each answered when its time is inside the read's window."""
+    tz = Today(ZONE)
+    if before is None:
+        before = [boot(tz.midnight(date(2026, 11, 9) - timedelta(days=k)) + 8 * HOUR, "MQ2208", "VD-7", "User Logon",
+                       25.0 + 2 * k) for k in range(1, 7)]
+
+    def handler(request):
+        flt = request.url.params["$filter"]
+        if asked is not None:
+            asked.append(flt)
+        lo = datetime.fromisoformat(flt.split("ge ")[1].split(" and")[0].replace("Z", "+00:00"))
+        hi = datetime.fromisoformat(flt.split("le ")[1].split(" and")[0].replace("Z", "+00:00"))
+        rows = [r for r in before + today_rows if lo <= datetime.fromisoformat(r["TIMEFRAME"]) <= hi]
+        return httpx.Response(200, json={"value": rows})
+    return handler
+
+
+EVERYONE = {"User Logon": {"n": 40, "p90": 60.0}, "Machine Boot": {"n": 4, "p90": None}}
+
+
+def test_a_slow_start_up_is_longer_than_all_of_theirs_before_and_than_1_in_10_of_everyones_today():
+    rows = [boot(AT(8, 0), "MQ2208", "VD-7", "User Logon", 90.0),  # A and B: slow
+            boot(AT(8, 0) - timedelta(seconds=40), "MQ2208", "VD-7", "Machine Boot", 300.0),  # everyone's: too few
+            boot(AT(12, 0), "MQ2208", "VD-7", "User Logon", 50.0)]  # A only: 37 s at most before, 60 s everyone's
+    care = Care(today_with(0), lambda: USERS[:1])
+    care.fleet_of = lambda now: EVERYONE
+    asked = []
+    care.check(client(boots=boots_of(rows, asked=asked)), AT(7, 0))  # before it: nothing yet
+    # their 30 days before, then today's of every user in one read, as Aternity writes the names
+    assert "USERNAME eq 'MQ2208'" in asked[0] and "TIMEFRAME ge 2026-10-10T04:00:00Z" in asked[0]
+    assert "(USERNAME eq 'MQ2208')" in asked[1] and "TIMEFRAME ge 2026-11-09T05:00:00Z" in asked[1]
+    care.check(client(boots=boots_of(rows)), AT(8, 5))
+    mq = care.view(AT(8, 5))["users"][0]
+    assert (mq["status"], mq["level"], mq["tag"], mq["since_local"]) == ("issue", None, "Slow start-up", "07:59")
+    i = mq["issues"][0]
+    assert i["text"] == ("Slow start-up on VD-7 at 07:59: User Logon 90 s (their 6 before: 27 s to 37 s; 1 in 10 of "
+                         "everyone's today over 60 s).")
+    assert i["clears"] == "Clears at about 08:50 if no new slow start-up."  # 3 reads of 15 min
+    assert care._said(i, mq) == "Slow start-up at 12:59 UTC on VD-7: User Logon 90 s (their usual 27-37 s)"
+    assert care.pending == ["mq2208"]  # it is investigated as any issue
+    care.check(client(boots=boots_of(rows)), AT(12, 5))  # the 12:00 logon: under everyone's 1 in 10
+    d = care.detail("mq2208", AT(12, 5))
+    assert [(s["at_local"], [(x["type"], x["slow"], x["why"]) for x in s["parts"]]) for s in d["starts"]] == [
+        ("12:00", [("User Logon", False, None)]),
+        ("07:59", [("Machine Boot", False, "0 of theirs in the 30 days before, 5 needed"), ("User Logon", True, None)])]
+    assert d["starts_about"] == {"days": 30, "need": 5, "unit": "s", "with": 6, "first": "2026-11-03"}
+    assert len([i for i in d["history"] if i["kind"] == "startup"]) == 1  # one issue for the one start-up
+
+
+def test_a_start_up_not_compared_says_why_and_lights_nothing():
+    rows = [boot(AT(8, 0), "MQ2208", "VD-7", "User Logon", 90.0)]
+    tz = Today(ZONE)
+    few = [boot(tz.midnight(date(2026, 11, 5)) + 8 * HOUR, "MQ2208", "VD-7", "User Logon", 30.0)]
+    for before, fleet, why in ((few, EVERYONE, "1 of theirs in the 30 days before, 5 needed"),
+                               (None, {}, "everyone's start-ups of today are not read yet"),
+                               (None, {"User Logon": {"n": 4, "p90": None}}, "4 of everyone's today, 10 needed for 1 in 10")):
+        care = Care(today_with(0), lambda: USERS[:1])
+        care.fleet_of = lambda now, f=fleet: f
+        care.check(client(boots=boots_of(rows, before)), AT(8, 5))
+        assert care.view(AT(8, 5))["users"][0]["status"] == "ok"
+        assert care.detail("mq2208", AT(8, 5))["starts"][0]["parts"][0]["why"] == why
+    # their days before cut short: no comparison (the longest could be missing), read again at the next check
+    care = Care(today_with(0), lambda: USERS[:1])
+    care.fleet_of = lambda now: EVERYONE
+    cut = boots_of(rows)
+
+    def paged(request):
+        got = cut(request)
+        if "2026-10-10" in request.url.params["$filter"]:
+            return httpx.Response(200, json={**got.json(), "@odata.nextLink": str(request.url)})
+        return got
+    c = client(boots=paged)
+    c.cfg.max_pages = 1
+    care.check(c, AT(8, 5))
+    assert care.view(AT(8, 5))["users"][0]["status"] == "ok" and care.boot_history["mq2208"]["cut"]
+    assert care.detail("mq2208", AT(8, 5))["starts"][0]["parts"][0]["why"] == ("their start-ups of the days before "
+                                                                               "could not be read in full")
+    care.check(client(boots=boots_of(rows)), AT(8, 10))  # read whole: judged, and lit
+    assert care.view(AT(8, 10))["users"][0]["tag"] == "Slow start-up"
+
+
+def test_a_slow_start_up_found_at_the_first_check_after_a_restart_is_not_lit():
+    rows = [boot(AT(8, 0), "MQ2208", "VD-7", "User Logon", 90.0)]
+    care = Care(today_with(0), lambda: USERS[:1])
+    care.fleet_of = lambda now: EVERYONE
+    care.check(client(boots=boots_of(rows)), AT(14, 0))
+    mq = care.view(AT(14, 0))["users"][0]
+    assert mq["status"] == "ok" and mq["earlier"][0]["kind"] == "startup"  # over, in Show more
+
+
+def test_the_care_lists_active_directory_routes(tmp_path, monkeypatch):
+    monkeypatch.setenv("UXCORRELATE_DATA", str(tmp_path))
+    path = tmp_path / "config.yaml"
+    path.write_text("care_list:\n  - username: mq2208\n    label: Payroll lead\n  - username: tz9013\n")
+    app = web.create_app(str(path))
+    http = TestClient(app)
+    app.state.care.today.__dict__.update(today_with(3).__dict__)
+    app.state.care.check(None, NOW, read=False)
+    asked = []
+
+    def look(users, pcs, now, page="the admin page"):
+        asked.append((users, page))
+        return {"state": "ok", "why": "", "retry_min": 5, "kept_h": 24, "pcs": {},
+                "users": {"MQ2208": {"found": True, "name": "Pat Lee", "title": "Payroll", "department": "Finance",
+                                     "office": "B2", "disabled": True}, "tz9013": {"found": False}}}
+    app.state.ad.look = look
+    got = http.get("/api/care/ad").json()
+    # only the list's own users, as Aternity writes them; only what a tile shows (no title, no office)
+    assert asked == [(["MQ2208", "tz9013"], "the Care list")]
+    assert got["users"] == {"mq2208": {"found": True, "name": "Pat Lee", "department": "Finance", "disabled": True},
+                            "tz9013": {"found": False, "name": None, "department": None, "disabled": None}}
+    pin = app.state.care.pin(datetime.now(timezone.utc))
+    named = []
+    app.state.ad.named = lambda q, now, page="the admin page": named.append((q, page)) or {
+        "state": "ok", "why": "", "people": [{"sam": "mq2208", "found": True, "name": "Pat Lee", "title": "Payroll",
+                                              "department": "Finance", "office": "B2", "disabled": False},
+                                             {"sam": "plee2", "found": True, "name": "Pat Leeds", "title": None,
+                                              "department": None, "office": None, "disabled": True}]}
+    assert http.post("/api/care/find", json={"q": "pat lee"}).status_code == 403  # no PIN: AD is not searched
+    assert http.post("/api/care/find", json={"q": "pa", "pin": pin}).status_code == 400
+    assert named == []
+    app.state.care.name_list.add([{"USERNAME": "CORP\\MQ2208", "DEVICE_NAME": "VD-7"}], F, NOW - HOUR, NOW)
+    got = http.post("/api/care/find", json={"q": " pat  lee ", "pin": pin}).json()
+    assert named == [("pat lee", "the Care list")] and got["state"] == "ok"
+    assert got["people"] == [{"sam": "mq2208", "name": "Pat Lee", "department": "Finance", "disabled": False,
+                              "aternity": "CORP\\MQ2208"},
+                             {"sam": "plee2", "name": "Pat Leeds", "department": None, "disabled": True,
+                              "aternity": None}]
+    page = (web.STATIC / "index.html").read_text(encoding="utf-8")
+    assert 'fetch("api/care/ad")' in page and 'fetch("api/care/find"' in page and "disabled in AD" in page

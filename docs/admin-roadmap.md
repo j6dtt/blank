@@ -283,9 +283,13 @@ by the hour. Stage copy: `config.py`, `secureview.py`,
     `admin.html` came through the one-way transfer with its
     script and styles stripped (the page showed bare text); the
     user got it through.
-  - Later, on hold (the user, 2026-11-16: "Let's hold AD
-    integration for now"): the Care list's Add a user by name,
-    labels from AD, Care list users disabled in AD.
+  - Held (the user, 2026-11-16: "Let's hold AD integration for
+    now"), then built on dev 2026-11-17 (the user: "build it ...
+    all three"): the Care list's Add a user by name (PIN needed:
+    the main page has no login), AD's name on a tile with no
+    label, the department, "disabled in AD" / "not in AD". Only
+    the list's own users are looked up (`GET /api/care/ad`); the
+    status feed is unchanged.
   - Needs from the AD team: a read-only service account (its
     password in `.env`), the domain name or a DC address.
 - **Tools for prod** (no paste there): run `verify` (or

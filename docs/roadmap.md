@@ -40,34 +40,32 @@ data, then its daily data with the people and desktops. See
 
 ## Waiting on you
 
-- **Stage copy of SecureView's history of people and times**
-  (built 2026-11-17 after "build it": the user found Search showed
-  only today, as the days before the records were read for devices
-  only): `config.py`, `secureview.py`, `static/admin.html`, restart.
-  At the next start the 90 days are read once more: Aternity's
-  hourly data while it has rows (first and last hour), then its
-  daily data (people and desktops, day only). To learn on stage:
-  History's line (how far back the hourly data goes, how long the
-  read took in the log), and a search by a username.
-- **`verify --clients --except WT` in a working hour**, `--hours
-  4` (built 2026-11-16, 9c8ed8d; the user: track virtual desktops
-  used from devices not starting with WT, and does
-  `LOCATION_ON_VPN` mark the same ones?). First run on stage
-  (2026-11-17, a quiet hour, 691 actions): 52 devices behind 52
-  virtual desktops, 44 starting with WT (WT, WTC, WTE, WTB, WTD,
-  WTA), 8 not, each 1 desktop and 1 user; the 8 begin with a
-  7-character code, then a name ending THIN / THINE / THINVM;
-  `CLIENT_DEVICE_TYPE` 'Remote Device' on all; `LOCATION_ON_VPN`
-  'false' on every action (virtual and physical): no VPN in that
-  hour, so it does not mark the 8. Decided (2026-11-17): track
-  the THIN devices' first and last heard: SecureView, above.
-- **`verify --ai` on stage**: the Care list samples changed.
+- **Stage copy of Care list step 2** (built on dev 2026-11-17):
+  `aternity.py`, `assess.py`, `care.py`, `ad.py`, `web.py`,
+  `explain.py`, `static/index.html`, restart. To learn on stage:
+  each Care user's Show more, "Start-ups today" (how many days of
+  start-ups Aternity keeps, which types carry the username), slow
+  start-ups a day; with `ad:` set, the names and departments on the
+  tiles, Add by name.
+- Done (the user, 2026-11-17: "1-5 are all good, stage/prod are
+  same version now"): the stage copy of SecureView's history of
+  people and times (f905606); `verify --ai` on stage; the prod
+  copy of a807a50; `verify --clients --except WT` (first run on
+  stage, a quiet hour: 52 devices behind 52 virtual desktops, 8
+  not starting with WT, ending THIN / THINE / THINVM;
+  `LOCATION_ON_VPN` 'false' on every action; decided: SecureView).
 
 ## Agreed
 
-- **Care list step 2**: slow start-ups as an issue; alerts out
-  of the app (needs a mail relay or chat webhook: not known
-  yet). Then a week on stage to judge how noisy it is.
+- **Care list step 2, built on dev 2026-11-17** ("build it A and
+  B, all three"): slow start-ups as an issue (A and B: longer than
+  every one of theirs of that type in the 30 days before, and than
+  1 in 10 of everyone's today), and Active Directory on the tab
+  (add a user by name, AD's name when no label, "disabled in AD").
+  Alerts out of the app: not for now (the user, 2026-11-17). Stage
+  copy, then a week on stage to judge how noisy it is: how many
+  slow start-ups a day, and how long Aternity keeps start-ups (Show
+  more says "N days with one, from …").
 
 ## Ideas
 

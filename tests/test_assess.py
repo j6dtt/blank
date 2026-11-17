@@ -279,7 +279,11 @@ def test_start_ups_are_in_the_facts_and_software_is_not():
     rows += [BootSample(day0 + HOUR * 9, "PC1", type="User Logon", duration=90.0),  # one alone in its hour: no point
              BootSample(day0 + HOUR * 8, "PC2", type="Machine Boot", duration=70.0)]
     b = A.boots_of(rows, t.local)
-    assert b["User Logon"] == {"n": 8, "typical": 43.5, "hours": {"8": 43.0}} and b["Machine Boot"]["n"] == 1
+    assert b["User Logon"] == {"n": 8, "typical": 43.5, "p90": None, "hours": {"8": 43.0}} and b["Machine Boot"]["n"] == 1
+    # 1 in 10 over (the Care list's slow start-ups) from 10 measured, as the Start-ups tab
+    more = A.boots_of(rows + [BootSample(day0 + HOUR * 10, "PC9", type="User Logon", duration=d) for d in (41.0, 44.0)],
+                      t.local)
+    assert more["User Logon"]["n"] == 10 and more["User Logon"]["p90"] == 85.6
     a = A.Assessments(t)
     a.days["2026-11-09"] = {"date": "2026-11-09", "periods": [], "summary": None, "boots": b}
     for d, typical in (("2026-11-06", 41.0), ("2026-11-05", 44.0), ("2026-11-04", 39.5)):

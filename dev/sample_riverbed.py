@@ -18,6 +18,8 @@ The story (local times, today):
 - Sample Branch South (PC-027..PC-036): Sample ERP slow 10:30-11:15; the
   branch's WAN link in NetIM (south-br-rtr1 Gi0/1) over 90%.
 - PC-019: CPU 88-98% from 11:00 to 13:00 (sampleindexer.exe).
+- sample07 on PC-007: a slow logon this morning (100-120 s; about 20 s
+  on every day before), on the failing disk.
 - sample12 on PC-012: a System Crash at 14:05, then a start-up (a driver
   pack was updated on that PC 2 days ago).
 - sample23 on PC-023: Sample Chat hangs every 20 minutes, every second one
@@ -474,6 +476,8 @@ class Sample:
             if dev == "PC-007" and T - timedelta(days=3) <= d <= T:
                 boot = r.uniform(105, 130)  # the failing disk
             logon = r.gauss(20 + pc["n"] % 7, 2.5)
+            if dev == "PC-007" and d == T:
+                logon = r.uniform(100, 120)  # the failing disk: today's logon is slow too
         out = [Session(user, dev, d, start, end, max(logon, 8), max(boot, 20) if boot else None)]
         crash = _at(T, 14 + 5 / 60)
         if d == T and dev == "PC-012" and start < crash < end:  # the System Crash, then a start-up

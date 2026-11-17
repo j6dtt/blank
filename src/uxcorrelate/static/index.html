@@ -277,6 +277,9 @@
   .dlgWrap { position: fixed; inset: 0; background: rgba(20, 16, 8, .45); display: grid; place-items: center; z-index: 20; padding: 16px; }
   .dlg { max-width: 640px; width: 100%; max-height: 80vh; overflow: auto; }
   .cFields { display: grid; gap: 10px; } .cFields[hidden] { display: none; } #cUserField[hidden] { display: none; }
+  .cFind { display: flex; gap: 6px; } .cFind input { flex: 1; min-width: 0; } #cFindRow[hidden] { display: none; }
+  #cFound { display: grid; gap: 4px; } #cFound button { text-align: left; }
+  .tile .adOff { color: var(--bad); font-weight: 600; }
   .dlgBtns { display: flex; gap: 10px; justify-content: flex-end; margin-top: 12px; }
 </style>
 </head>
@@ -346,8 +349,9 @@
           <button type="button" class="link" id="cArrCancel">Cancel</button></span></div>
       <div class="tiles" id="cTiles"></div>
       <ul class="muted notes" id="cNotes"></ul>
-      <p class="muted" style="font-size:12px;margin:8px 0 0">An issue: an event Aternity rates Critical or Major, or more
-        Major slow actions by this time of day than on any of their own days before. A tile is lit while reads of Aternity
+      <p class="muted" style="font-size:12px;margin:8px 0 0">An issue: an event Aternity rates Critical or Major, more
+        Major slow actions by this time of day than on any of their own days before, or a slow start-up: a logon or boot
+        longer than every one of theirs of that type in the 30 days before and than 1 in 10 of everyone's today. A tile is lit while reads of Aternity
         bring something new of it, until <span id="cAlertFor">3 reads</span> after the last one that did (a failing disk
         all day). An investigation runs by itself for issues the latest one did not cover (one
         an hour per user). A tile's bars: their Major actions by this time of day on each of the last 8 days, today
@@ -556,7 +560,11 @@
     <label id="cUserField">Username, as Aternity writes it (type part of it)
       <input name="username" list="cNames" maxlength="100" required></label>
     <datalist id="cNames"></datalist>
-    <label>Label, shown big on the tile (optional: a name or a role)
+    <div id="cFindRow" hidden><label for="cFindQ">Or find them by name in Active Directory (type the PIN below first)</label>
+      <div class="cFind"><input id="cFindQ" maxlength="100" placeholder="e.g. pat lee">
+        <button type="button" id="cFindGo">Find</button></div>
+      <div id="cFound"></div></div>
+    <label><span id="cLabelHint">Label, shown big on the tile (optional: a name or a role)</span>
       <input name="label" maxlength="60"></label>
   </div>
   <p id="cDlgText" style="margin:0"></p>
@@ -845,6 +853,7 @@ async function loadCare() {
     careData = c;
     $("careCount").hidden = !c.count; $("careCount").textContent = c.count || "";
     if (!$("careBox").hidden && !arranging) renderCare(c);
+    if (c.ready && c.users.length) loadCareAd();
   } catch (e) { if (!$("careBox").hidden) $("cStatus").textContent = "Could not load the Care list: " + e.message; }
   careTimer = setTimeout(loadCare, (careData && !careData.ready ? 5 : 300) * 1000);
 }
@@ -873,6 +882,32 @@ const majorsHtml = (u) => !(u.majors && u.majors.length) ? ""
   : `<div class="u">Rated Major today, latest first:</div>`
     + u.majors.slice(0, 3).map((m) => `<div class="u">· ${esc(majorLine(m, u.pcs.length))}</div>`).join("")
     + (u.majors.length > 3 ? `<div class="u">+${u.majors.length - 3} more (Show more)</div>` : "");
+// a slow start-up has no severity (Aternity rates none): its own tag
+const startTag = () => `<span class="sev" style="background:var(--warn)">Slow start-up</span>`;
+const issueTag = (i) => i.kind === "startup" ? startTag() : sevTag(i.level);
+// Active Directory on the tiles (GET api/care/ad, asked after the tiles are drawn, so they never wait on AD):
+// the name when no label was typed, the department, "disabled in AD" (the user's "build it", 2026-11-17)
+let careAd = null;
+const adOf = (u) => careAd && careAd.users[u.username.toLowerCase()] || null;
+const careTitle = (u) => { const a = adOf(u); return u.label || (a && a.found && a.name) || u.username; };
+function careSub(u) {
+  const a = adOf(u), title = careTitle(u);
+  const bits = [title !== u.username ? u.username : null, a && a.found && a.name && a.name !== title ? a.name : null,
+    a && a.found ? a.department : null].filter(Boolean);
+  return (bits.length ? `<div class="u">${esc(bits.join(" · "))}</div>` : "")
+    + (a && a.found && a.disabled ? `<div class="u adOff">disabled in AD</div>` : "")
+    + (a && !a.found ? `<div class="u">not in AD</div>` : "");
+}
+async function loadCareAd() {
+  try {
+    const r = await fetch("api/care/ad");
+    const a = await readJson(r);
+    if (!r.ok) throw new Error(detail(a));
+    const was = JSON.stringify(careAd);
+    careAd = a;
+    if (JSON.stringify(a) !== was && careData && careData.ready && !$("careBox").hidden && !arranging) renderCare(careData);
+  } catch (e) { /* the tiles stay as they are, with usernames and labels */ }
+}
 const usualWords = (u) => !u ? "" : u.enough ? `their usual by this time: ${u.low} to ${u.high} (${u.days} ${u.kind} before)`
   : u.cut ? "their usual: not judged, Aternity's reply for their days before was cut short"
   : `their usual: ${u.days} of the ${u.need || 3} ${u.kind} needed so far`;
@@ -889,11 +924,11 @@ function renderCare(c) {
     const ok = u.status === "ok";
     const head = u.status === "unknown" ? `<span class="sev" style="background:var(--muted)">not found</span>`
       : ok ? `<span class="sev" style="background:var(--ok)">✓ OK</span>`
-      : `<div>${sevTag(u.level)} <span class="muted" style="font-size:12px">since ${esc(u.since_local)}</span></div>`;
+      : `<div>${u.level ? sevTag(u.level) : startTag()} <span class="muted" style="font-size:12px">since ${esc(u.since_local)}</span></div>`;
     const lines = u.status === "unknown" ? [u.note] : ok ? [okText(u)] : u.issues.slice(0, 2).map((i) => [i.text, i.clears]);
     const more = u.issues.length > 2 ? `<div class="u">+${u.issues.length - 2} more</div>` : "";
     return `<div class="tile click" role="button" tabindex="0" data-user="${esc(u.username)}">${head}`
-      + `<div class="name">${esc(u.title)}</div>${u.label ? `<div class="u">${esc(u.username)}</div>` : ""}`
+      + `<div class="name">${esc(careTitle(u))}</div>${careSub(u)}`
       + `<div class="u">${esc(pcText(u))}</div>` + lines.map((x) => Array.isArray(x)
         ? `<div class="u"><b>${esc(x[0])}</b>${x[1] ? ` <span class="muted">${esc(x[1])}</span>` : ""}</div>`
         : `<div class="u"><b>${esc(x)}</b></div>`).join("") + more + (u.status === "unknown" ? "" : majorsHtml(u))
@@ -901,7 +936,25 @@ function renderCare(c) {
         + majorBars(u.days, u.by_local) + (u.before ? `<div class="u muted">Last issue before today: ${esc(u.before)}</div>` : ""))
       + `<div class="more">Show more ▸</div></div>`;
   }).join("");
-  $("cNotes").innerHTML = (c.notes || []).map((x) => `<li>${esc(x)}</li>`).join("");
+  const adNote = careAd && careAd.state === "down" ? `Active Directory did not answer (${careAd.why}): names from AD are not shown; tried again in ${careAd.retry_min} min.`
+    : careAd && careAd.state === "refused" ? `Active Directory refused the login (${careAd.why}): names from AD are not shown until the app restarts.` : "";
+  $("cNotes").innerHTML = (c.notes || []).concat(adNote ? [adNote] : []).map((x) => `<li>${esc(x)}</li>`).join("");
+}
+// Show more: today's start-ups, each type against theirs before and everyone's today (why not, when not compared)
+const secs = (v, unit) => `${Number(v.toFixed(1))} ${unit}`;
+function startsHtml(d) {
+  const a = d.starts_about, unit = a.unit;
+  const part = (x) => `${esc(x.type)} <b>${esc(secs(x.secs, unit))}</b>` + (x.why ? ` <span class="muted">(not compared: ${esc(x.why)})</span>`
+    : ` <span class="muted">(their ${x.n} before: ${esc(secs(x.low, unit))} to ${esc(secs(x.high, unit))}; 1 in 10 of everyone's today over `
+      + `${esc(secs(x.p90, unit))})</span>${x.slow ? " " + startTag() : ""}`);
+  const from = a.first ? new Date(a.first + "T12:00:00Z").toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" }) : "";
+  const read = a.with === null ? "not read yet" : a.with ? `${a.with} ${a.with === 1 ? "day" : "days"} with one, from ${from}` : "none found";
+  return `<h3>Start-ups today, latest first</h3>` + (d.starts.length
+    ? `<ul>${d.starts.map((s) => `<li>${esc(s.at_local)} on ${esc(s.device)}: ${s.parts.map(part).join("; ")}</li>`).join("")}</ul>`
+    : `<p class="muted">None of theirs recorded by Aternity today.</p>`)
+    + `<p class="muted" style="font-size:12px">Slow: longer than every one of that type of theirs in the ${a.days} days before `
+    + `(${a.need} needed; their days before: ${esc(read)}) and than 1 in 10 of everyone's today. `
+    + `<button type="button" class="link" id="cStarts">Open in Start-ups ▸</button></p>`;
 }
 let careUser = null;
 async function openCare(username) {
@@ -913,14 +966,15 @@ async function openCare(username) {
     const d = await readJson(r);
     if (!r.ok) throw new Error(detail(d));
     careUser = d;
-    $("cDetailTitle").textContent = d.label ? `${d.label} (${d.username})` : d.username;
+    $("cDetailTitle").textContent = careTitle(d) === d.username ? d.username : `${careTitle(d)} (${d.username})`;
     const rep = d.report;
     let html = `<p>${esc(pcText(d))}. Today: ${n(d.actions)} actions measured, ${n(d.major)} rated Major; ${esc(usualWords(d.usual))}.</p>`;
-    const today = d.issues.map((i) => `<li>${sevTag(i.level)} ${esc(i.text)}${i.clears ? ` <span class="muted">${esc(i.clears)}</span>` : ""}</li>`)
-      .concat(d.earlier.map((i) => `<li>${sevTag(i.level)} ${esc(i.text)} <span class="muted">(over)</span></li>`));
+    const today = d.issues.map((i) => `<li>${issueTag(i)} ${esc(i.text)}${i.clears ? ` <span class="muted">${esc(i.clears)}</span>` : ""}</li>`)
+      .concat(d.earlier.map((i) => `<li>${issueTag(i)} ${esc(i.text)} <span class="muted">(over)</span></li>`));
     html += `<h3>Today</h3>` + (today.length ? `<ul>${today.join("")}</ul>` : `<p class="muted">No issue today.</p>`);
     if (d.majors && d.majors.length) html += `<h3>Rated Major today, latest first</h3><ul>`
       + d.majors.map((m) => `<li>${esc(majorLine(m, d.pcs.length))}</li>`).join("") + `</ul>`;
+    html += startsHtml(d);
     html += `<h3>Investigation</h3>`;
     if (rep && rep.result) html += `<p><b>${esc(rep.title)}</b> ${esc(rep.reason || "")}<br><span class="muted">Ran by itself ${esc(rep.at_local)}, over ${esc(rep.span_local)}.</span></p>`
       + `<button type="button" id="cOpen">Open the investigation ▸</button> `;
@@ -931,7 +985,7 @@ async function openCare(username) {
       + ` <button type="button" class="link" id="cEdit" style="float:right;margin-right:16px">Change label…</button>`;
     const before = d.history.filter((i) => i.day !== d.days[d.days.length - 1].date);  // today's are above
     html += `<h3>The ${d.days.length - 1} days before</h3>` + (before.length
-      ? `<ul>${before.map((i) => `<li>${esc(i.when_local)} ${sevTag(i.level)} ${esc(i.text)}`
+      ? `<ul>${before.map((i) => `<li>${esc(i.when_local)} ${issueTag(i)} ${esc(i.text)}`
         + `</li>`).join("")}</ul>` : `<p class="muted">None.</p>`);
     $("cDetailBody").innerHTML = html;
   } catch (e) { $("cDetailTitle").textContent = "Could not load: " + e.message; }
@@ -951,9 +1005,9 @@ let drag = null, arrScrolling = false;
 function renderArrange() {
   $("cTiles").innerHTML = arranging.map((u, k) => `<div class="tile arr" data-arr="${esc(u.username)}" tabindex="0" `
     + `title="Drag to move, or use the arrow keys"><span class="arrNo">${k + 1}</span><span class="grip">⠿</span>`
-    + `<span class="arrName"><b>${esc(u.title)}</b><span class="u">${u.label ? esc(u.username) : "&nbsp;"}</span></span>`
-    + `<span class="arrMove"><button type="button" class="link" data-move="-1" aria-label="Move ${esc(u.title)} earlier">↑</button>`
-    + `<button type="button" class="link" data-move="1" aria-label="Move ${esc(u.title)} later">↓</button></span></div>`).join("");
+    + `<span class="arrName"><b>${esc(careTitle(u))}</b><span class="u">${careTitle(u) !== u.username ? esc(u.username) : "&nbsp;"}</span></span>`
+    + `<span class="arrMove"><button type="button" class="link" data-move="-1" aria-label="Move ${esc(careTitle(u))} earlier">↑</button>`
+    + `<button type="button" class="link" data-move="1" aria-label="Move ${esc(careTitle(u))} later">↓</button></span></div>`).join("");
 }
 const arrTiles = () => [...$("cTiles").querySelectorAll("[data-arr]")];
 const arrOrder = () => arrTiles().map((el) => el.dataset.arr);
@@ -1033,7 +1087,7 @@ function careDialog(user, edit, order) {
   const remove = user && !edit ? user : null;
   cDlgRemove = remove; cDlgEdit = user && edit ? user : null; cDlgOrder = order || null;
   const f = $("cForm"), full = !user && !order && careData && careData.checked >= careData.max;
-  const who = user ? (user.label ? `${user.label} (${user.username})` : user.username) : "";
+  const who = user ? (careTitle(user) !== user.username ? `${careTitle(user)} (${user.username})` : user.username) : "";
   $("cDlgTitle").textContent = order ? "Save the order of the tiles" : remove ? "Remove from the Care list"
     : cDlgEdit ? `Change the label of ${user.username}` : "Add a user to the Care list";
   $("cAddFields").hidden = !!remove || full || !!order; $("cUserField").hidden = !!cDlgEdit;
@@ -1048,6 +1102,10 @@ function careDialog(user, edit, order) {
   $("cDlgOk").textContent = remove ? "Remove" : cDlgEdit || order ? "Save" : "Add"; $("cDlgOk").hidden = full; $("cDlgOk").disabled = false;
   $("cDlgOk").style.background = remove ? "var(--bad)" : "";
   $("cDlgError").hidden = true; f.reset(); $("cNames").innerHTML = "";
+  const adOn = !!careAd && careAd.state !== "off";  // AD set: find by name, and the label may stay empty
+  $("cFindRow").hidden = !adOn || !!user || full || !!order; $("cFindQ").value = ""; $("cFound").innerHTML = "";
+  $("cLabelHint").textContent = adOn ? "Label, shown big on the tile (optional: when empty, the name in Active Directory)"
+    : "Label, shown big on the tile (optional: a name or a role)";
   if (cDlgEdit) f.label.value = user.label || "";
   $("cDlg").hidden = false;
   (full ? $("cDlgCancel") : remove || order ? f.pin : cDlgEdit ? f.label : f.username).focus();
@@ -1069,6 +1127,35 @@ $("cForm").username.addEventListener("input", (ev) => {  // usernames seen in At
       $("cNames").innerHTML = list.map((x) => `<option value="${esc(typeof x === "string" ? x : x.name)}">`).join("");
     } catch (e) { /* any name can still be typed */ }
   }, 200);
+});
+// Add a user by name: the people AD has with every word typed (PIN needed), each with the username Aternity
+// writes for them; a click puts it in the Username box (the label can stay empty: AD's name is shown)
+async function careFind() {
+  const f = $("cForm"), q = $("cFindQ").value.trim(), out = $("cFound");
+  if (!f.pin.value.trim()) { out.innerHTML = `<span class="muted">Type the PIN below first.</span>`; f.pin.focus(); return; }
+  if (q.length < 3) { out.innerHTML = `<span class="muted">Type at least 3 characters of the name.</span>`; return; }
+  out.innerHTML = `<span class="muted">Looking in Active Directory…</span>`;
+  try {
+    const r = await fetch("api/care/find", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ q, pin: f.pin.value.trim() }) });
+    const d = await readJson(r);
+    if (!r.ok) throw new Error(detail(d));
+    if (d.state !== "ok") { out.innerHTML = `<span class="muted">Active Directory ${d.state === "down" ? "did not answer" : d.state === "refused" ? "refused the login" : "is not set"}`
+      + `${d.why ? ` (${esc(d.why)})` : ""}: type the username instead.</span>`; return; }
+    out.innerHTML = d.people.length ? d.people.map((p) => `<button type="button" class="link" data-pick="${esc(p.aternity || p.sam)}">`
+        + `<b>${esc(p.name || p.sam)}</b>${p.department ? ` · ${esc(p.department)}` : ""} · ${esc(p.aternity || p.sam)}`
+        + `${p.aternity ? "" : " (not seen in Aternity in 8 days)"}${p.disabled ? " · disabled in AD" : ""}</button>`).join("")
+        + (d.people.length >= d.max ? `<span class="muted">The first ${d.max}: type more of the name.</span>` : "")
+      : `<span class="muted">No one in Active Directory has every word of "${esc(q)}".</span>`;
+  } catch (e) { out.innerHTML = `<span style="color:var(--bad)">${esc(e.message)}</span>`; }
+}
+$("cFindGo").addEventListener("click", careFind);
+$("cFindQ").addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); careFind(); } });
+$("cFound").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-pick]");
+  if (!b) return;
+  $("cForm").username.value = b.dataset.pick;
+  $("cFound").innerHTML = `<span class="muted">${esc(b.dataset.pick)} is in the Username box: press Add.</span>`;
 });
 $("cForm").addEventListener("submit", async (ev) => {
   ev.preventDefault();
@@ -1103,6 +1190,13 @@ $("cDetailBody").addEventListener("click", (ev) => {
     careDialog(careUser, true);
   } else if (ev.target.id === "cRemove") {
     careDialog({ username: careUser.username, label: careUser.label });
+  } else if (ev.target.id === "cStarts") {  // their start-ups of today on the Start-ups tab: what took the time, why
+    const f = $("lf"), midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    f.username.value = careUser.username; f.device.value = ""; f.location.value = "";
+    f.start.value = toLocalInput(midnight); f.end.value = toLocalInput(new Date());
+    mode("log", true);
+    f.requestSubmit();
   } else if (ev.target.id === "cRun") {
     // the server's window: from before their first issue of the day, open or over (as the one that ran by itself)
     const start = careUser.start || new Date(Date.now() - 4 * 3600e3).toISOString();

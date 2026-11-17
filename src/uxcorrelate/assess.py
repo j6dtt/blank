@@ -497,9 +497,12 @@ def word(client, f: dict, label: str, service: str = "") -> tuple[str | None, st
 
 def boots_of(rows: list, local) -> dict:
     """Start-ups of a day (or of today so far) per Aternity type: how many, the typical time
-    (the middle value), and the typical time of each local hour with `MIN_STARTS` or more.
+    (the middle value), 1 in 10 over (`logons.P90_MIN` measured, else None: the Care list's slow
+    start-ups) and the typical time of each local hour with `MIN_STARTS` or more.
     Names and numbers only: no PC, no user."""
-    from statistics import median
+    from statistics import median, quantiles
+
+    from .logons import P90_MIN
     per: dict[str, dict] = {}
     for r in rows:
         if r.type is None or r.duration is None:
@@ -508,6 +511,7 @@ def boots_of(rows: list, local) -> dict:
         x["all"].append(r.duration)
         x["hours"].setdefault(local(r.timestamp).hour, []).append(r.duration)
     return {name: {"n": len(x["all"]), "typical": round(median(x["all"]), 1),
+                   "p90": round(quantiles(x["all"], n=10)[-1], 1) if len(x["all"]) >= P90_MIN else None,
                    "hours": {str(h): round(median(v), 1) for h, v in sorted(x["hours"].items()) if len(v) >= MIN_STARTS}}
             for name, x in per.items()}
 
@@ -670,8 +674,9 @@ class Assessments:
     def _boots(self, now: datetime) -> None:
         """Read today's start-ups again when the last read is old, and once each day before
         that the usual needs. Aternity not set, or not answering: left as it is, tried again."""
-        if self.aternity_of is None or (self.boots_at and now - self.boots_at < BOOTS_EVERY):
-            return
+        if self.aternity_of is None or (self.boots_at and now - self.boots_at < BOOTS_EVERY
+                                        and self.today.day(self.boots_at) == self.today.day(now)):
+            return  # a new day is read at its first read (its start-ups were missing for up to BOOTS_EVERY)
         client = self.aternity_of()
         if client is None:
             self.boots_note = "Aternity is not set, so no start-ups are read."
@@ -697,6 +702,22 @@ class Assessments:
             f"Aternity has {sum(x['n'] for x in got.values())} start-ups for today so far: too few for a typical time.")
         log.info("Assessment: start-ups read up to %s (%d today)", self.today.local(now).strftime("%H:%M"),
                  sum(x["n"] for x in self.days[t.isoformat()]["boots"].values()))
+
+    def fleet_boots(self, now: datetime) -> dict:
+        """Everyone's start-ups of today per Aternity type: {type: {"n", "p90"}} (the Care list's
+        slow start-ups: among the slowest 1 in 10 of today's). The Care list is checked before the
+        assessment's own turn after a read, so today's are read here when not read since the start."""
+        with self.lock:
+            if self.boots_at is None or self.today.day(self.boots_at) != self.today.day(now):
+                try:
+                    self._boots(now)
+                except Exception as exc:  # not read: the Care list does not judge start-ups until it is
+                    self.boots_note = f"The start-ups could not be read ({short_error(exc)}); tried again with the next read."
+                    log.warning("Assessment: %s", self.boots_note)
+            if self.boots_at is None or self.today.day(self.boots_at) != self.today.day(now):
+                return {}
+            got = self.days.get(self.today.day(now).isoformat(), {}).get("boots") or {}
+            return {k: {"n": x["n"], "p90": x.get("p90")} for k, x in got.items()}
 
     def boots_view(self, now: datetime) -> dict | None:
         """Today's start-ups per type, most first, each with the days before: the lowest and

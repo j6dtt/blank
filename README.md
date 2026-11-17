@@ -197,7 +197,28 @@ Aternity (every 15 minutes, or `refresh_minutes` in config.yaml).
 "+ Add a user" (top right of the tab) opens a box: the username as
 Aternity writes it (names seen in Aternity are offered as you type) and
 an optional label shown big on the tile; the tile is there at once and
-fills in within seconds. Click a tile, then "Remove from the Care
+fills in within seconds. With Active Directory set (`ad:` in config.yaml,
+the account in `.env`), the box also finds a person by name: type the PIN,
+then part of their name ("pat lee") and **Find**; it lists who AD has
+(name · department · the username Aternity writes for them, "not seen in
+Aternity in 8 days", "disabled in AD"); a click puts the username in the
+box, then **Add**. The label can stay empty: the tile then shows AD's
+name.
+
+```
++ Add a user ─► "pat lee" + PIN ─► Find
+   └─► Pat Lee · Finance · CORP\plee  (click)
+        └─► Username box: CORP\plee ─► Add
+             └─► tile "Pat Lee", under it "CORP\plee · Finance"
+```
+
+Each tile (with AD set) shows under its title the username, AD's name
+(when a label is the title) and department, "disabled in AD" in red (the
+account is disabled: they may have left) or "not in AD". Looked up once a
+day, in memory only, after the tiles are drawn (the page never waits on
+AD); only the list's own users. AD not answering or refusing the login is
+a line under the tiles. The status for other platforms is unchanged
+(its label is the typed one). Click a tile, then "Remove from the Care
 list…": after a confirm, the tile, the user's saved issues and their
 latest investigation are deleted. The list is `data/care_list.json`
 (`[{"username": …, "label": …}]`; it can also be edited by hand, seen at
@@ -205,10 +226,32 @@ the next check). It is made once from `care_list` in config.yaml, where
 the list was before; config.yaml's list is not read after that. The page
 has no login, so anyone who can open it can change the list; each change
 is logged with the address it came from.
-An issue is an event Aternity rates Critical or Major, or more Major slow
-actions by this time of day than on any of the user's own latest 5 days
-with a PC in use, any day of the week (people on the list often work
-weekends). Each Major action is judged by its own time of day, whenever it
+An issue is an event Aternity rates Critical or Major, a slow start-up,
+or more Major slow actions by this time of day than on any of the user's
+own latest 5 days with a PC in use, any day of the week (people on the
+list often work weekends).
+A slow start-up (Aternity rates start-ups with no severity; the tile's tag
+is "Slow start-up"): a start-up of theirs today with a type (Aternity's
+own: a logon, a boot) that took longer than every one of that type of
+theirs in the 30 days before (5 needed) and longer than 1 in 10 of
+everyone's of that type today. Both: a few seconds over their own
+longest is not one, nor a morning slow for everyone.
+
+```
+08:29 PC-007 User Logon 113 s
+  their 20 before: 14.5 to 25.7 s   longer ✓
+  everyone's today: 1 in 10 > 85 s  longer ✓
+  └─► "Slow start-up on PC-007 at 08:29: …"
+```
+
+Today's start-ups of every user on the list are read at each check (one
+read); their 30 days before once a day per user; everyone's of today
+come from the hourly read for the logon chart. Show more lists each
+start-up of today with both comparisons, or why it was not compared
+("3 of theirs in the 30 days before, 5 needed"), and **Open in
+Start-ups ▸** runs the Start-ups tab for that user from midnight: what
+took the time and what changed before. Only rows Aternity writes with
+their username count (on the dev data, logons; boots have none). Each Major action is judged by its own time of day, whenever it
 is checked, so one found late (after a restart, or sent late by Aternity)
 still counts. An OK tile says the day's counts against one usual, their
 usual by now ("176 actions today, 3 rated Major (usual by now: 0 to 4)");

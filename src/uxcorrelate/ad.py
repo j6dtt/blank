@@ -525,7 +525,7 @@ def pc_view(e: dict | None) -> dict:
 
 
 class Lookup:
-    """Usernames and PCs on the admin page, looked up in AD with the read-only account: each at
+    """Usernames and PCs on the admin page and the Care list's users, looked up in AD with the read-only account: each at
     most once in KEEP_H, kept in memory only, one look-up at a time, the DC that answered kept
     for the next. AD not answering is tried again after RETRY_MIN, however often the page asks.
     A login AD refused (a wrong name or password) is not tried again until the app restarts
@@ -542,7 +542,7 @@ class Lookup:
         self.down: tuple[datetime, str] | None = None  # (when, why) AD did not answer
         self.refused = ""  # AD refused the account's login: why, and never again in this process
 
-    def look(self, users: list[str], pcs: list[str], now: datetime) -> dict:
+    def look(self, users: list[str], pcs: list[str], now: datetime, page: str = "the admin page") -> dict:
         """{"state": ok / off / down / refused, "why", "users": {name: user_view}, "pcs": {...},
         "kept_h", "retry_min"}: what is known of the names asked (those not yet read are left out)."""
         cfg = self.cfg_of()
@@ -562,7 +562,7 @@ class Lookup:
             waiting = self.down and now - self.down[0] < timedelta(minutes=RETRY_MIN)
             if (need_u or need_p) and not self.refused and not waiting:
                 try:
-                    self._read(cfg, need_u, need_p, now)
+                    self._read(cfg, need_u, need_p, now, page)
                     self.down = None
                 except _Refused as exc:
                     self.refused = str(exc)
@@ -577,7 +577,7 @@ class Lookup:
                           "users": {u: self.users[u][1] for u in users if u in self.users},
                           "pcs": {p: self.pcs[p][1] for p in pcs if p in self.pcs}}
 
-    def named(self, text: str, now: datetime) -> dict:
+    def named(self, text: str, now: datetime, page: str = "the admin page") -> dict:
         """{"state", "why", "people": [{"sam", **user_view}]}: AD's users whose name has every word of
         text (SecureView's search by a real name, the user's "build it", 2026-11-17). One search, under
         the same rules as look (not set, refused, RETRY_MIN after AD did not answer); nothing kept."""
@@ -597,8 +597,8 @@ class Lookup:
                     finally:
                         conn.unbind()
                     self.down = None
-                    log.info("Active Directory: a search by name on the admin page found %d people on %s",
-                             len(found), host)
+                    log.info("Active Directory: a search by name on %s found %d people on %s",
+                             page, len(found), host)
                 except _Refused as exc:
                     self.refused = str(exc)
                     log.warning("Active Directory refused the login of AD_USERNAME (%s): not tried again until "
@@ -611,7 +611,7 @@ class Lookup:
         people = [{"sam": str(_one(e.get("sAMAccountName")) or "")} | user_view(e) for e in found]
         return {"state": state, "why": why, "people": [x for x in people if x["sam"]][:NAMED_MAX]}
 
-    def _read(self, cfg, need_u: list[str], need_p: list[str], now: datetime) -> None:
+    def _read(self, cfg, need_u: list[str], need_p: list[str], now: datetime, page: str = "the admin page") -> None:
         d = self.directory_of(cfg)
         conn, base, host = self._login(d, cfg)
         try:
@@ -627,8 +627,8 @@ class Lookup:
             conn.unbind()
         hit_u = sum(1 for u in need_u if self.users[u][1]["found"])
         hit_p = sum(1 for p in need_p if self.pcs[p][1]["found"])
-        log.info("Active Directory: looked up %d users and %d PCs on %s for the admin page (%d and %d found)",
-                 len(need_u), len(need_p), host, hit_u, hit_p)
+        log.info("Active Directory: looked up %d users and %d PCs on %s for %s (%d and %d found)",
+                 len(need_u), len(need_p), host, page, hit_u, hit_p)
 
     def _login(self, d: "Directory", cfg) -> tuple:
         """(a connection, the base to look under, the DC's name). The DC that answered last first;

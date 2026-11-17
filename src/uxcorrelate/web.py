@@ -98,6 +98,11 @@ class CareBody(BaseModel):
     pin: str = ""
 
 
+class CareFind(BaseModel):
+    q: str  # part of a person's real name ("pat lee")
+    pin: str = ""
+
+
 class CareOrder(BaseModel):
     usernames: list[str]  # every user on the Care list, in the new order
     pin: str = ""
@@ -193,6 +198,8 @@ def create_app(config_path: str | None = None) -> FastAPI:
     assess = app.state.assess = Assessments(today, care, status, os.environ.get("UXCORRELATE_DATA") or None,
                                             aternity_of=lambda: aternity_client(),
                                             unit_of=lambda: load_settings(config_path).boot_unit)
+    # the Care list's slow start-ups: against everyone's of today, from the assessment's read of them
+    care.fleet_of, care.unit_of = assess.fleet_boots, lambda: load_settings(config_path).boot_unit
 
     def assess_ai():
         """The AI service that words an assessment (the chats' one), and its name; (None, "") when none is set."""
@@ -361,6 +368,39 @@ def create_app(config_path: str | None = None) -> FastAPI:
             raise HTTPException(404, f"{username} is not on the Care list.")
         usage.care_change(addr_of(request), f"remove {gone.username}", True)
         return {"username": gone.username, "label": gone.label}
+
+    @app.get("/api/care/ad")
+    def care_ad():
+        """The Care list's users in Active Directory (the user's "build it", 2026-11-17): name,
+        department, disabled or not found, for the tiles. Only the list's own users (the page has no
+        login: it cannot ask for other names); each looked up once a day, in memory only (ad.Lookup)."""
+        names = [care.aternity_name(u) for u in care.users]
+        got = ad_lookup.look(names, [], datetime.now(timezone.utc), page="the Care list")
+        users = {}
+        for u, name in zip(care.users, names):
+            v = got["users"].get(name)
+            if v is not None:  # only what the tile shows (no title, no office)
+                users[u.username.lower()] = {k: v.get(k) for k in ("found", "name", "department", "disabled")}
+        return {"state": got["state"], "why": got["why"], "retry_min": got["retry_min"], "users": users}
+
+    @app.post("/api/care/find")
+    def care_find(body: CareFind, request: Request):
+        """Add a user by their real name: the people AD has with every word of it (read only), each
+        with the username Aternity writes for them. The PIN is needed (the page has no login: no
+        searching AD without it); logged with the caller's address."""
+        from .ad import NAMED_MAX as ad_max
+        from .secureview import _sam
+        care_pin(body.pin, request, "search AD by name")
+        q = " ".join(body.q.split())[:100]
+        if len(q) < 3 or not any(c.isalpha() for c in q):
+            raise HTTPException(400, "Type at least 3 characters of the name.")
+        got = ad_lookup.named(q, datetime.now(timezone.utc), page="the Care list")
+        people = [{"sam": p["sam"], "name": p.get("name"), "department": p.get("department"),
+                   "disabled": p.get("disabled"),
+                   "aternity": aternity_spelling(lambda n, s=p["sam"].lower(): _sam(n) == s)}
+                  for p in got["people"]]
+        log.info("Care list: a search by name in AD from %s found %d people", addr_of(request), len(people))
+        return {"state": got["state"], "why": got["why"], "people": people, "max": ad_max}
 
     @app.put("/api/care/order")
     def care_order(body: CareOrder, request: Request):

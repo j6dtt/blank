@@ -102,9 +102,18 @@ GLOSSARY: dict[str, dict[str, str]] = {
     },
     "care": {
         "Care list": "",  # set_refresh
-        "issue": f"Either an event Aternity rated {_SEV} with that user's name today, or more {TOP_STATUS} slow "
+        "issue": f"An event Aternity rated {_SEV} with that user's name today, more {TOP_STATUS} slow "
                  "actions by this time of day than on any of their own days before (each one judged by its own "
-                 "time of day, whenever it is checked).",
+                 "time of day, whenever it is checked), or a slow start-up.",
+        "Slow start-up": (f"A start-up of that user today (a logon or a boot, Aternity's own types) that took longer "
+                          f"than every one of that type of theirs in the {care.BOOT_DAYS} days before "
+                          f"({care.BOOT_MIN} of them needed) and longer than 1 in 10 of everyone's of that type "
+                          "today. Both: a few seconds over their own longest, or a morning slow for everyone, is "
+                          "not one. Aternity gives start-ups no severity. Show more lists each start-up of today "
+                          "with both comparisons, or why it was not compared."),
+        "disabled in AD": ("Active Directory says that user's account is disabled: they may have left. \"not in "
+                           "AD\": no account of that name. The name and department under the label are AD's "
+                           "(looked up once a day); with no label, the tile shows AD's name."),
         "their usual by now": f"The fewest and the most {TOP_STATUS} slow actions that user had by this time "
                               f"of day on their own latest {care.USUAL_DAYS} days with a PC in use, any day of "
                               f"the week ({care.MIN_USUAL} needed).",

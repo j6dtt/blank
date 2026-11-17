@@ -9,7 +9,7 @@ has no login: anyone who can open it can change the list (each change is
 logged with the address it came from). Each user is checked after each read
 of the Today reader, from rows already read:
 - an issue is an event Aternity rates Critical or Major (TILE_SEVERITIES)
-  with their username today, or more actions Aternity rated Major
+  with their username today, a slow start-up (below), or more actions Aternity rated Major
   (TOP_STATUS) by this time of day than on any of the days before that they
   used a PC (their own usual: the latest USUAL_DAYS such days, any day of
   the week, MIN_USUAL needed; read from their last HISTORY_DAYS of
@@ -22,6 +22,14 @@ of the Today reader, from rows already read:
   Major action no check judged in time (a restart, the days before read
   late, rows sent late) met a usual grown since and was lost (stage, Nov 15
   2026). An OK tile with Major actions says the moment it came nearest;
+- a slow start-up (the user's choice "A and B", 2026-11-17; Aternity rates none): a start-up
+  of theirs today (logons.group_starts: rows of one PC within an hour) with a type (Aternity's
+  MEASUREMENT_TYPE, rows with their username) that took longer than every one of that type of
+  theirs in the BOOT_DAYS days before (BOOT_MIN needed: A) and longer than 1 in 10 of everyone's
+  of that type today (the assessment's read of today's start-ups, logons.P90_MIN measured: B).
+  Both, so a 45-second logon of someone who logs on in 30 to 40 never lights, nor one that is
+  slow for everyone (a morning when every virtual desktop is slow). Today's are read for all the
+  users at every check (one read, BOOT_BATCH names), the days before once a day per user;
 - a slow-actions issue is a spell: it is over after QUIET with no Major
   action (the count is for the whole day, so it alone would hold all day:
   seen on stage), or when they are back within their usual by that time of
@@ -76,6 +84,8 @@ from pathlib import Path
 from .aternity import odata_quote, odata_time
 from .config import SEVERITY_ORDER, TILE_SEVERITIES, TOP_STATUS, CareUser
 from .http import short_error
+from .logons import BASELINE_DAYS, MIN_HISTORY, P90_MIN, group_starts
+from .logons import _when as _started
 from .models import parse_time
 from .today import HOUR, MIN_USUAL, USUAL_DAYS, Today
 
@@ -92,6 +102,10 @@ SUMMARY_MAX = 120  # characters in /api/MSS/care/status's summary
 STALE_READS = 3  # /api/MSS/care/status says the statuses are out of date after this many reads' time with no read
 WAIT_S = 10  # the investigation worker looks for work this often
 LIST_FILE = "care_list.json"  # in the data folder: [{"username": ..., "label": ...}]
+BOOT_DAYS = BASELINE_DAYS  # a user's start-ups of the days before (how long Aternity keeps them on prod: not known)
+BOOT_MIN = MIN_HISTORY  # their earlier start-ups of a type needed to compare
+BOOT_BATCH = 25  # usernames in one read of today's start-ups
+START_TAG = "Slow start-up"  # a slow start-up's tag on the tile (Aternity rates start-ups with no severity)
 NAME_MAX, LABEL_MAX = 100, 60
 
 
@@ -140,6 +154,11 @@ def _fit(head: str, more: list[str]) -> str:
     return text if len(text) <= SUMMARY_MAX else text[:SUMMARY_MAX - 3].rstrip(" ,;") + "..."
 
 
+def _secs(v: float, unit: str) -> str:
+    """A start-up's time as Aternity gives it: "85 s", "37.4 s"."""
+    return f"{v:.1f}".rstrip("0").rstrip(".") + f" {unit}"
+
+
 def _times(x: tuple) -> int:
     """How many times one health event row says it happened (1 when Aternity does not say)."""
     return x[7] if len(x) > 7 and x[7] else 1
@@ -162,6 +181,12 @@ class Care:
         self.users: list[CareUser] = []
         self.skipped = 0
         self.history: dict[str, dict] = {}  # user -> {"for": day read, "days": {day: [Major second of day]}, "rows"}
+        # user -> {"for": day read, "types": {type: [durations]}, "days", "first", "cut"}: start-ups of BOOT_DAYS before
+        self.boot_history: dict[str, dict] = {}
+        self.boots_today: dict = {"for": None, "rows": {}}  # today's start-ups of the users: {user: [BootSample]}
+        self.fleet_of = None  # (now) -> {type: {"n", "p90"}}: everyone's start-ups today (web.py: the assessment's read)
+        self.fleet: dict = {}  # its answer at the last check
+        self.unit_of = lambda: "s"  # config.yaml's boot_unit
         self.issues: dict[str, list[dict]] = {}  # user -> issues of the last KEEP_DAYS
         self.reports: dict[str, dict] = {}  # user -> latest investigation
         self.names: dict[str, str] = {}  # user (lower case) -> the name as Aternity writes it
@@ -377,6 +402,8 @@ class Care:
                 self.issues.pop(user, None)
                 self.reports.pop(user, None)
                 self.history.pop(user, None)
+                self.boot_history.pop(user, None)
+                self.boots_today["rows"].pop(user, None)
                 self.checked.discard(user)
                 if user in self.pending:
                     self.pending.remove(user)
@@ -408,11 +435,23 @@ class Care:
             users = self.users
         self._set_users(users)
         t = self.today.day(now)
-        for u in self.users:
+        for u in self.users:  # their days before (once a day): the activity read also gives Aternity's spelling
             user = u.username.lower()
             h = self.history.get(user)
             if client is not None and (h is None or h["for"] != t or h.get("cut")):
                 self._read_history(client, u, now)
+            b = self.boot_history.get(user)
+            if client is not None and (b is None or b["for"] != t or b.get("cut")):
+                self._read_boot_history(client, u, now)
+        if client is not None:
+            self._read_boots_today(client, now)
+        try:
+            self.fleet = self.fleet_of(now) if self.fleet_of else {}
+        except Exception as exc:  # not known: start-ups are not judged at this check
+            log.warning("Care list: everyone's start-ups of today are not known (%s)", short_error(exc))
+            self.fleet = {}
+        for u in self.users:
+            user = u.username.lower()
             found = self.issues_now(u, now)
             first = user not in self.checked
             stale = self._restarted(user, now) if first else []
@@ -532,10 +571,12 @@ class Care:
             return ""
         sent, happened = _when(i["fresh"]), _when(i.get("last") or i["since"])
         said = ""
-        if sent - happened > self._step():
-            said = (f"Aternity sent {'the latest' if (i.get('seen') or 1) > 1 else 'it'} at "
+        if sent - happened > self._step():  # a start-up is judged once theirs and everyone's are read
+            said = (f"Found at the {self.today.local(sent):%H:%M} read. " if i["kind"] == "startup" else
+                    f"Aternity sent {'the latest' if (i.get('seen') or 1) > 1 else 'it'} at "
                     f"{self.today.local(sent):%H:%M}. ")
-        new = f"new {TOP_STATUS} action" if i["kind"] == "slow" else f"new {_name(i)}"
+        new = (f"new {TOP_STATUS} action" if i["kind"] == "slow" else "new slow start-up" if i["kind"] == "startup"
+               else f"new {_name(i)}")
         nxt, left = self.today.next_read, i.get("left")
         if nxt is not None and left:
             at = self.today.local(nxt + self._step() * (left - 1))
@@ -590,6 +631,95 @@ class Care:
         self.history[u.username.lower()] = {"for": t, "days": days, "rows": len(rows), "cut": cut}
         log.info("Care list: read %d actions of %s over the %d days before (%d days with a PC in use)",
                  len(rows), self._who(u), HISTORY_DAYS, len(days))
+
+    def _read_boots_today(self, client, now: datetime) -> None:
+        """Today's start-ups of every user on the list: one read (BOOT_BATCH names a request). Rows
+        are added to those of earlier reads of today (a read that failed or was cut short loses none)."""
+        t = self.today.day(now)
+        if self.boots_today["for"] != t:
+            self.boots_today = {"for": t, "rows": {}}
+        names = [self.aternity_name(u) for u in self.users]
+        mark, rows = len(client.warnings), []
+        for k in range(0, len(names), BOOT_BATCH):
+            rows += client.boots(self.today.midnight(t), now, usernames=names[k:k + BOOT_BATCH])
+        if len(client.warnings) > mark:
+            self.note("boots_today", f"Today's start-ups of the Care list's users could not be read in full "
+                                     f"({client.warnings[-1]}): those read before are kept; read again at the next check.")
+        else:
+            self.notes.pop("boots_today", None)
+        have = self.boots_today["rows"]
+        for r in rows:
+            if not r.username or r.duration is None or not r.type:
+                continue
+            mine = have.setdefault(r.username.lower(), [])
+            if not any(x.device == r.device and x.type == r.type and x.timestamp == r.timestamp for x in mine):
+                mine.append(r)
+
+    def _read_boot_history(self, client, u: CareUser, now: datetime) -> None:
+        """Their start-ups of the BOOT_DAYS days before, per Aternity type (once a day). A read that
+        failed or was cut short is no comparison (its highest could be too low): read again at the next check."""
+        t = self.today.day(now)
+        user, name = u.username.lower(), self.aternity_name(u)
+        mark = len(client.warnings)
+        rows = client.boots(self.today.midnight(t - timedelta(days=BOOT_DAYS)), self.today.midnight(t), username=name)
+        cut = len(client.warnings) > mark
+        if cut:
+            self.note("boots", f"{u.username}'s start-ups of the {BOOT_DAYS} days before could not be read in full "
+                               f"({client.warnings[-1]}): their start-ups are not compared until they are (read again "
+                               "at the next check).")
+        else:
+            self.notes.pop("boots", None)
+        types: dict[str, list[float]] = {}
+        days = set()
+        for r in rows:
+            if r.type and r.duration is not None:
+                types.setdefault(r.type, []).append(r.duration)
+                days.add(self.today.day(_started(r)))
+        self.boot_history[user] = {"for": t, "types": types, "days": len(days), "first": min(days, default=None),
+                                   "cut": cut}
+        log.info("Care list: read %d start-ups of %s over the %d days before (%d days with one)", len(rows),
+                 self._who(u), BOOT_DAYS, len(days))
+
+    def _starts(self, user: str, now: datetime) -> tuple[list[dict], list[dict]]:
+        """Today's start-ups of one user: (the slow ones as issues, every one with each type against
+        theirs before and everyone's today). Slow: longer than every one of that type of theirs in the
+        BOOT_DAYS days before (BOOT_MIN of them) and than 1 in 10 of everyone's today (the user's
+        choice, 2026-11-17); a type not compared says why."""
+        t = self.today.day(now)
+        rows = self.boots_today["rows"].get(user, []) if self.boots_today["for"] == t else []
+        h, unit = self.boot_history.get(user), self.unit_of() or "s"
+        issues, every = [], []
+        for st in group_starts(rows):
+            first, end = min(_started(b) for b in st), max(b.timestamp for b in st)
+            parts = []
+            for b in sorted(st, key=_started):
+                before = h["types"].get(b.type, []) if h and h["for"] == t and not h.get("cut") else None
+                fleet = self.fleet.get(b.type) or {}
+                x = {"type": b.type, "secs": b.duration, "n": None if before is None else len(before),
+                     "low": min(before) if before else None, "high": max(before) if before else None,
+                     "p90": fleet.get("p90"), "everyone": fleet.get("n")}
+                x["why"] = ("their start-ups of the days before are not read yet" if h is None or h["for"] != t
+                            else "their start-ups of the days before could not be read in full" if before is None
+                            else f"{len(before)} of theirs in the {BOOT_DAYS} days before, {BOOT_MIN} needed"
+                            if len(before) < BOOT_MIN
+                            else "everyone's start-ups of today are not read yet" if not fleet
+                            else f"{fleet['n']} of everyone's today, {P90_MIN} needed for 1 in 10" if x["p90"] is None
+                            else None)
+                x["slow"] = x["why"] is None and b.duration > x["high"] and b.duration > x["p90"]
+                parts.append(x)
+            every.append({"at": _iso(first), "end": _iso(end), "device": st[0].device, "parts": parts})
+            slow = [x for x in parts if x["slow"]]
+            if not slow:
+                continue
+            words = "; ".join(f"{x['type']} {_secs(x['secs'], unit)} (their {x['n']} before: {_secs(x['low'], unit)} "
+                              f"to {_secs(x['high'], unit)}; 1 in 10 of everyone's today over {_secs(x['p90'], unit)})"
+                              for x in slow)
+            issues.append({"key": f"startup {t} {st[0].device} {_iso(first)}", "kind": "startup", "what": START_TAG,
+                           "level": None, "since": _iso(first), "last": _iso(end), "quiet": now - end >= QUIET,
+                           "day": t.isoformat(), "count": len(slow), "pcs": [st[0].device], "apps": [],
+                           "slow": [{k: x[k] for k in ("type", "secs", "n", "low", "high", "p90")} for x in slow],
+                           "text": f"{START_TAG} on {st[0].device} at {self.today.local(first):%H:%M}: {words}."})
+        return issues, every
 
     def usual(self, user: str, now: datetime) -> dict | None:
         """Their Major actions by this time of day on the latest USUAL_DAYS days before that they
@@ -729,7 +859,7 @@ class Care:
                 self.names[user] = all_[0][4]
         if major and major[0][2]:
             self.names.setdefault(user, major[0][2])
-        return found
+        return found + self._starts(user, now)[0]
 
     def _merge(self, user: str, found: list[dict], t: date, now: datetime,
                first: bool = False, judged: bool = True) -> tuple[list, list, list]:
@@ -830,6 +960,26 @@ class Care:
                             i.pop(k, None)
                 else:
                     if quiet:  # first seen when it was already over: Aternity sent it late
+                        f.update(cleared=_iso(now), ended="quiet")
+                    mine.append(start(f))
+                    new.append(f)
+            for f in found:  # slow start-ups: one issue per start-up (its PC, its time overlapping)
+                if f["kind"] != "startup":
+                    continue
+                f = dict(f)
+                quiet = f.pop("quiet")
+                i = next((i for i in mine if i["kind"] == "startup" and i["day"] == f["day"] and i["pcs"] == f["pcs"]
+                          and f["since"] <= i.get("last", i["since"]) and f["last"] >= i["since"]), None)
+                if i is not None:
+                    i.update(text=f["text"], slow=f["slow"], since=min(i["since"], f["since"]),
+                             last=max(i.get("last", i["since"]), f["last"]))
+                    if seen(i, f):  # another of its types found slow
+                        again.append(i)
+                    if quiet and not i.get("cleared"):
+                        i.update(cleared=_iso(now), ended="quiet")
+                        cleared.append(i)
+                else:
+                    if quiet:
                         f.update(cleared=_iso(now), ended="quiet")
                     mine.append(start(f))
                     new.append(f)
@@ -966,7 +1116,8 @@ class Care:
         waiting = user in self.pending or self.running == user
         return {"username": self.names.get(user, u.username), "label": u.label,
                 "title": u.label or u.username, "status": status, "note": note,
-                "level": min((i["level"] for i in mine), key=lambda s: rank.get(s, 9)) if mine else None,
+                "level": min((i["level"] for i in mine if i["level"]), key=lambda s: rank.get(s, 9), default=None),
+                "tag": START_TAG if mine and not any(i["level"] for i in mine) else None,
                 "since": min((i["since"] for i in mine), default=None),
                 "since_local": today.local(_when(min(i["since"] for i in mine))).strftime("%H:%M") if mine else None,
                 "start": _iso(_inv_start(today_all)) if today_all else None,  # "Investigate again now"
@@ -1045,7 +1196,15 @@ class Care:
             local = lambda k: self.today.local(_when(report[k]))  # noqa: E731
             report = dict(report, at_local=local("at").strftime("%b %d %H:%M"),
                           span_local=f"{local('start'):%H:%M} to {local('end'):%H:%M} {self.today.zone_label}")
-        return {**tile, "history": issues, "report": report}
+        starts = []
+        for x in self._starts(user, now)[1]:
+            local = self.today.local(_when(x["at"]))
+            starts.append(dict(x, at_local=f"{local:%H:%M}"))
+        b = self.boot_history.get(user)
+        about = {"days": BOOT_DAYS, "need": BOOT_MIN, "unit": self.unit_of() or "s",
+                 "with": b["days"] if b else None,
+                 "first": b["first"].isoformat() if b and b["first"] else None}
+        return {**tile, "history": issues, "report": report, "starts": list(reversed(starts)), "starts_about": about}
 
     # -- /api/MSS/care/status: every tile for another platform ------------------------------
     def status(self, now: datetime) -> dict:
@@ -1090,7 +1249,8 @@ class Care:
         return out
 
     def _short(self, i: dict) -> str:
-        return f"{TOP_STATUS} slow actions" if i["kind"] == "slow" else _name(i)
+        return f"{TOP_STATUS} slow actions" if i["kind"] == "slow" else "slow start-up" if i["kind"] == "startup" \
+            else _name(i)
 
     def _said(self, i: dict, u: dict) -> str:
         """The most serious alert in one line: what, where, when (UTC)."""
@@ -1103,6 +1263,11 @@ class Care:
                      + (f" (usual by now {usual['low']}-{usual['high']})" if usual.get("enough") else ""))
                     + f", the last at {_utc(i.get('last') or i['since'])} UTC"
                     + (f", most in {i['apps'][0]}" if i.get("apps") else ""))
+        if i["kind"] == "startup":
+            unit = self.unit_of() or "s"
+            return (f"Slow start-up at {_utc(i['since'])} UTC on {', '.join(i.get('pcs') or [])}: "
+                    + "; ".join(f"{x['type']} {_secs(x['secs'], unit)} (their usual {_secs(x['low'], '').strip()}-"
+                                f"{_secs(x['high'], unit)})" for x in i.get("slow") or []))
         apps, pcs, n = i.get("apps") or [], i.get("pcs") or [], i.get("seen") or 1
         what = _name(i) + (" - " + ", ".join(apps[:2]) + (f" +{len(apps) - 2}" if len(apps) > 2 else "")
                            if apps else "")

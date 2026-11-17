@@ -365,7 +365,7 @@ demo mode: nothing in `src/` knows about it.
   `Care.relabel`) in the same dialog (`careDialog(user, edit)`). One check or change at a time (`Care.checking`). Users are checked
   after each read of the Today reader (`keep_reading(..., care=)`), from
   rows it holds (`Hour.user_devs`/`user_runs`/`dev_kind`). Issue: an event
-  in `TILE_SEVERITIES` with their username today, or more Major actions by
+  in `TILE_SEVERITIES` with their username today, a slow start-up, or more Major actions by
   this time of day than on any of their own days before with a PC in use
   (each Major action judged by its own time of day, the whole day at every
   check: `_replay`; judged only at the check against the usual by then,
@@ -460,8 +460,27 @@ demo mode: nothing in `src/` knows about it.
   issue; OK: when the last alert ended, `_alert_end`: its `off` read, else local
   midnight), summary (`_said`, `_ok_words`, `_fit`: our words, never AI,
   `_ascii`, `SUMMARY_MAX` 120, "+N more: ..."); all times UTC, no PC
-  field (PCs only in the summary). Slow start-ups and alerts out of the
-  app: step 2.
+  field (PCs only in the summary). Step 2 (the user's "build it A and
+  B", 2026-11-17; alerts out of the app: not for now): a slow start-up
+  (`_starts`, kind "startup", level None, the tile's `tag` `START_TAG`:
+  Aternity rates none) is a start-up of theirs today (`group_starts`)
+  with a type longer than every one of theirs in `BOOT_DAYS` (30) days
+  before (`BOOT_MIN` 5: A) and than 1 in 10 of everyone's today (B:
+  `Assessments.fleet_boots`, `boots_of`'s `p90`, `P90_MIN`; read at the
+  check when not read since the start, a new day at its first read);
+  rows with their username only (`client.boots(usernames=)`, one read
+  of today per check, `BOOT_BATCH`, rows added to earlier reads';
+  `_read_boot_history` once a day, cut short: not compared). One issue
+  per start-up (its PC, times overlapping); "Found at the HH:MM read"
+  (not "Aternity sent it"); `detail`'s `starts` (each type against both,
+  or `why`) and "Open in Start-ups ▸" (`cStarts`). AD on the tab (the
+  user's "all three", 2026-11-17): `GET /api/care/ad` (the list's own
+  users only, `ad.Lookup.look(page=)`: name, department, disabled,
+  found; asked after the tiles are drawn, `loadCareAd`), the tile's
+  title `careTitle` (label, else AD's name), `careSub`, "disabled in
+  AD"; `POST /api/care/find` (PIN, 3+ characters: `Lookup.named`, each
+  with `aternity_spelling`), the dialog's `#cFindRow`; the status feed
+  keeps the typed label.
 - `software.py`: the "Software" tab, fifth (`/api/software`, `#software`;
   docs/software-tab.md, decisions of 2026-11-10). One background reader
   (`keep_reading`, every `READ_EVERY_H`, a few minutes) reads the
