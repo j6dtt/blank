@@ -111,22 +111,16 @@ GLOSSARY: dict[str, dict[str, str]] = {
         "Rated Major today": f"Each of that user's actions today that Aternity rated {TOP_STATUS}, latest first: "
                              "the time, the application and activity, how long it took (and the PC when they "
                              "used more than one). The tile shows the latest 3; Show more lists them all.",
-        "never more than their usual": f"At no time today did that user have more {TOP_STATUS} slow actions so "
-                                       "far than on any of their own days before by the same time of day; "
-                                       "\"nearest\" is the moment today came closest: how many they had by "
-                                       "then, against the fewest and the most by that time on those days.",
         "alert": "",  # set_refresh
         "Clears at": "",  # set_refresh
-        "Earlier today": f"Today's issues of that user whose alert is off: no read of Aternity brought anything new "
-                         f"of them in the last {care.ALERT_READS} reads.",
         "over": f"An issue (one count, one investigation) ends after {_QUIET_H} hour with no new one. A "
                 "slow-actions issue also ends when the user is back within their usual. A later one is a new issue.",
-        "✓ OK": "No alert on for that user now. The tile says how many actions were measured today and how "
-                f"many were rated {TOP_STATUS}.",
+        "✓ OK": "No alert on for that user now. The tile says how many actions were measured today, how "
+                f"many were rated {TOP_STATUS} and their usual by now. \"More than their usual by now\" with OK: "
+                f"no new {TOP_STATUS} action came in the last reads (the alert is on only while reads bring new "
+                "ones).",
         "not found": f"The name was not seen in Aternity's activity in {care.HISTORY_DAYS} days: it may be "
                      "misspelled.",
-        "Why": "The headline of the investigation that ran by itself for that user's issues of today (at most one "
-               "an hour per user; it runs again for an issue it did not cover, such as one Aternity sent late).",
         "Major actions each day": (
             f"Small bars: that user's actions Aternity rated {TOP_STATUS} by this time of day on each of the last "
             f"{care.KEEP_DAYS} days, today last, from Aternity's own records. Today's bar is the tile's \"rated "
@@ -432,16 +426,13 @@ SAMPLES = (
     ("care", "Tile: Front desk (ab1234)", [
         "Major since 09:40", "Front desk", "ab1234", "VD-31 (virtual)",
         "More Major slow actions than usual: 14 by 10:15 (their usual by now: 0 to 3, 4 days before)",
-        "Why: Sample Mail Open took 21.4 s on VD-31 (Major). Likely: Sample Mail hung on VD-31 at 2 of them",
         "Major actions each day, by 10:15, last 8 days (today last): 0, 1, 0, 3, 2, 0, 1, 14; an issue on the last",
     ], "Why does this user have an issue?", ("14", "0 to 3", "usual")),
     ("care", "Tile: Shift lead (cd5678)", [
         "✓ OK", "Shift lead", "cd5678", "PC-204 (physical)",
-        "No alert now: 212 actions today, 2 rated Major (usual by now: 0 to 4).",
-        "Earlier today: more Major slow actions than usual from 08:10, the last at 09:05. Over: back within their "
-        "usual at 09:35.",
+        "212 actions today, 2 rated Major (usual by now: 0 to 4).",
         "Major actions each day, by 10:15, last 8 days (today last): 1, 0, 2, 4, 3, 1, 0, 2; an issue on the last",
-    ], "What does Earlier today mean on this tile?", ("earlier", "alert", "08:10", "09:05", "09:35")),
+    ], "What does usual by now mean on this tile?", ("usual", "0 to 4", "10:15")),
     ("investigate", "Headline and What to do", [
         "Sample Mail Launch took 89.2 s on PC-77 (Major). Likely: PC-77's disk is failing (Aternity recorded "
         "Faulty HD S.M.A.R.T. Status and HD Failure)",

@@ -370,10 +370,18 @@ demo mode: nothing in `src/` knows about it.
   (each Major action judged by its own time of day, the whole day at every
   check: `_replay`; judged only at the check against the usual by then,
   which grows all day, a Major action no check judged in time was lost:
-  "1 rated Major" and no "Earlier today", stage, Nov 15 2026; an OK tile
-  with Major actions says "never more than their usual by the same time
-  of day" and the moment it came nearest, `nearest`; a slow issue is not
-  "back within their usual" while the usual is not known). Every tile
+  "1 rated Major" and no "Earlier today", stage, Nov 15 2026; a slow
+  issue is not "back within their usual" while the usual is not known;
+  `nearest` is still in the view, for the status summary only). The
+  tiles show no "Earlier today", no "Why" and no `nearest` (the user,
+  Nov 17 2026: "Completely remove: Earlier today, and Why"; two usuals
+  on one tile read as a contradiction, "back within it at 05:19" as if
+  something happened then, and "Why" was the investigation's headline,
+  which can lead with a Minor action the tile did not list): an OK tile
+  is the day's counts against their usual by now (`okText`, "more than
+  their usual by now" when an alert went off above it); Show more lists
+  today's issues, those over "(over)", and the investigation. The status
+  feed for the other platform is unchanged (`_ok_words`). Every tile
   lists the user's Major actions of today, latest first (`majors`: time,
   application · activity · seconds, the PC when more than one; the latest
   3 on the tile, all under Show more): "1 rated Major" with nothing to
@@ -390,7 +398,7 @@ demo mode: nothing in `src/` knows about it.
   Nov 13), `INV_PAD` before their first issue of the day (open or over) to
   now, and "Investigate again now" the same (`_inv_start`, the tile's
   `start`); its
-  title is the tile's "Why", the page opens it without a re-run. Issues
+  title is in Show more, the page opens it without a re-run. Issues
   and the latest investigation: `<data>/care/<user>.json`, `KEEP_DAYS`
   (usernames on disk, agreed). A slow issue is a spell: over (`cleared`,
   `ended`) after `QUIET` (1 h) with no Major action (the day's count alone
@@ -422,8 +430,8 @@ demo mode: nothing in `src/` knows about it.
   the 18:25 read if no new Application Crash" (`Today.next_read`), or
   "Stays on today: a failing disk is the PC's state"; a PC's lit disk
   events are one line, `_one_disk`), the most serious first (disk,
-  Critical, Major, events before slow), then `earlier` ("Earlier
-  today: ..."), `before` (the latest issue before today, "Last issue before
+  Critical, Major, events before slow), `earlier` (Show more only,
+  "(over)"), `before` (the latest issue before today, "Last issue before
   today"). The tile's bars (`_major_days`, the user's choice of Nov 15
   2026): their Major actions by this time of day on each of the last
   `KEEP_DAYS` days, today last, from the days read for the usual

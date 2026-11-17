@@ -210,10 +210,10 @@ actions by this time of day than on any of the user's own latest 5 days
 with a PC in use, any day of the week (people on the list often work
 weekends). Each Major action is judged by its own time of day, whenever it
 is checked, so one found late (after a restart, or sent late by Aternity)
-is still an "Earlier today" line; an OK tile with Major actions says they
-were never more than their usual by the same time of day, and the moment
-they came nearest ("nearest: 1 by 10:12, their usual by then 0 to 1").
-Every tile lists the user's actions Aternity rated Major today, latest
+still counts. An OK tile says the day's counts against one usual, their
+usual by now ("176 actions today, 3 rated Major (usual by now: 0 to 4)");
+"more than their usual by now" on an OK tile means no new Major action
+came in the last reads. Every tile lists the user's actions Aternity rated Major today, latest
 first ("10:12 Outlook · Send Mail · 9.4 s"): the latest 3 on the tile, all
 of them under Show more.
 What lights the tile (its alert): a read of Aternity that brings something
@@ -225,8 +225,8 @@ the 3rd read after the last read that brought a new one ("Clears at the
 so 15 minutes at a 5-minute refresh); a repeat, or another event, keeps the
 tile on. A failing disk (Aternity's "(Disk)" or "(Drive)" label on the
 failing part and its category Hardware, as HD Failure; not Low Disk Space,
-category System) stays on all day: "Stays on today". Then the
-issue is an "Earlier today" line on the tile. Repeats of one kind less than
+category System) stays on all day: "Stays on today". Then the tile is
+OK again (Show more lists the issue as over). Repeats of one kind less than
 an hour apart are one issue (one count, one investigation); after an hour
 with none it is over (slow actions also once the user is back within their
 usual), and a later one is a new issue. A restart does not light again what
@@ -235,8 +235,10 @@ alert's time. Every user has a tile: those with an alert on first (a failing
 disk, then Critical, then Major), then names not seen in 8 days, then green
 "✓ OK" tiles (actions today, how many Major, their usual by now, or "not
 compared" when there are too few days with a PC in the 8 days Aternity
-keeps to know it (3 needed);
-what was earlier today). Under each, small bars: their Major actions by this
+keeps to know it (3 needed)). The tiles have no "Earlier today" and no
+"Why" (the user, Nov 17 2026: two usuals on one tile read as a
+contradiction, and "Why" could be about an action the tile did not
+list). Under each, small bars: their Major actions by this
 time of day on each of the last 8 days, today last, from Aternity's own
 records, so today's bar is the tile's "rated Major" and the dark bars before
 it are the days their usual comes from (its range is their lowest to
@@ -248,8 +250,8 @@ scrolls) or move it with ↑ ↓ or the arrow keys, then "Save order" (PIN);
 Cancel leaves the order as it was. The status below follows the same
 order. An investigation runs by itself (at most one an hour per
 user) whenever one of today's issues is not covered by the latest one: a new
-issue, or one Aternity sent late; its headline is the tile's "Why". Click a
-tile: today's issues, the investigation ("Open the investigation ▸" shows it
+issue, or one Aternity sent late. Click a
+tile: today's issues (those over marked "(over)"), the investigation ("Open the investigation ▸" shows it
 on the Investigate tab without running it again; "Investigate again now ▸"
 runs a new one) and the issues of the 7 days before. The tab's red count is
 the users with an alert on now; `…/#care` opens the tab.
