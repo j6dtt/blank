@@ -15,6 +15,7 @@ product versions and tenants, so every one of them is configurable. Run
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -62,6 +63,10 @@ VDI_COLUMNS = {
     "boots": {"image_build": "DEVICE_IMAGE_BUILD_NUMBER"},
     "inventory": {"sccm_client": "SCCM_CLIENT_VERSION", "image_build": "DEVICE_IMAGE_BUILD_NUMBER"},
 }
+# SecureView (secureview.py): before its own records, Aternity's daily data says which devices
+# people sat at on each day (Riverbed's $metadata: BUSINESS_ACTIVITIES_DAILY has TIMEFRAME and
+# CLIENT_DEVICE_NAME; kept about 90 days on the live tenant, stage Nov 10 2026)
+SECUREVIEW_DAILY = {"entity": "BUSINESS_ACTIVITIES_DAILY", "time": "TIMEFRAME", "client_device": "CLIENT_DEVICE_NAME"}
 # verify --clients: where the device a person sat at was (Riverbed's $metadata, activities);
 # how the live tenant fills it is what the check shows (never read before, Nov 16 2026).
 CLIENT_COLUMNS = {"on_vpn": "LOCATION_ON_VPN"}
@@ -422,6 +427,15 @@ class AdConfig:
 
 
 @dataclass
+class SecureViewConfig:
+    """SecureView on the admin page (secureview.py; docs/admin-roadmap.md): the devices people sit
+    at whose name matches `match`, a regular expression, any case (the user's, 2026-11-17:
+    '^[A-Za-z0-9]{7}-.*THIN.*$'). Empty: off, and the column is not read."""
+
+    match: str = ""
+
+
+@dataclass
 class Settings:
     aternity: AternityConfig = field(default_factory=AternityConfig)
     netim: NetimConfig = field(default_factory=NetimConfig)
@@ -440,6 +454,7 @@ class Settings:
     refresh_minutes: int = 15
     # the page's title, after the brand in the top bar and the browser tab; empty: the brand alone
     title: str = ""
+    secureview: SecureViewConfig = field(default_factory=SecureViewConfig)
 
 
 def _merge_dataclass(obj: Any, data: dict[str, Any]) -> None:
@@ -458,7 +473,7 @@ def _merge_dataclass(obj: Any, data: dict[str, Any]) -> None:
 
 
 TOP_KEYS = ("aternity", "netim", "thresholds", "topology", "ai", "ad", "care_list", "bucket_minutes", "boot_unit",
-            "timezone", "refresh_minutes", "title")
+            "timezone", "refresh_minutes", "title", "secureview")
 
 
 def config_notes(path: str | os.PathLike | None = None, zone: bool = True) -> list[str]:
@@ -485,6 +500,13 @@ def config_notes(path: str | os.PathLike | None = None, zone: bool = True) -> li
         except (ZoneInfoNotFoundError, ValueError):
             notes.append(f"config.yaml: timezone \"{zone}\" is not a time zone this host knows, so UTC is used "
                          "for Today's midnight and the days and times in sentences (write it as America/New_York).")
+    match = str((raw.get("secureview") or {}).get("match") or "") if isinstance(raw.get("secureview"), dict) else ""
+    if match:
+        try:
+            re.compile(match)
+        except re.error as exc:
+            notes.append(f"config.yaml: secureview.match is not a regular expression this app can read ({exc}), "
+                         "so SecureView is off.")
     minutes = raw.get("refresh_minutes")
     if minutes not in (None, ""):
         low, high = REFRESH_RANGE
@@ -515,6 +537,8 @@ def load_settings(path: str | os.PathLike | None = None) -> Settings:
             if isinstance(ad.get(key), str):
                 ad[key] = [ad[key]] if ad[key].strip() else []
         _merge_dataclass(settings.ad, ad)
+        _merge_dataclass(settings.secureview, raw.get("secureview"))
+        settings.secureview.match = str(settings.secureview.match or "").strip()
         settings.ad.domain = settings.ad.domain.strip().strip(".")
         if "bucket_minutes" in raw:
             settings.bucket_minutes = int(raw["bucket_minutes"])

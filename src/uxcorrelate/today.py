@@ -149,6 +149,7 @@ class Today:
         self.watch: set[str] = set()  # addresses that opened the app today (usage.py): rows of theirs are kept
         self.read_took: float | None = None  # seconds the last read took (the admin page)
         self.start_took: float | None = None  # seconds the first read (24 hours, at start) took
+        self.secureview = None  # SecureView (secureview.py): every hour read also goes to it, any day
         self.lock = threading.Lock()
         self.load()
 
@@ -577,11 +578,12 @@ def _read_hour(today: Today, names, client, start: datetime, now: datetime) -> N
     entity, f = client.cfg.entities["activities"], client.cfg.fields["activities"]
     ts = f["timestamp"]
     mark = len(client.warnings)
+    sv = today.secureview if today.secureview is not None and today.secureview.on() else None
     try:
         rows = client.query(entity, f"{ts} ge {odata_time(start)} and {ts} lt {odata_time(start + HOUR)}",
                             select=[f[k] for k in ("timestamp", "username", "device", "application", "status",
                                                    "activity", "response_time", "virtualization", "ip_address")
-                                    if f.get(k)])
+                                    + (("client_device",) if sv is not None else ()) if f.get(k)])
     except Exception as exc:  # Aternity down: the next read tries again
         today.failures += 1
         today.note("activity", f"Aternity activity could not be read ({short_error(exc)}); trying again in "
@@ -593,6 +595,11 @@ def _read_hour(today: Today, names, client, start: datetime, now: datetime) -> N
         today.failures += 1
     if names is not None:
         names.add(rows, f, start, min(start + HOUR, now), partial)
+    if sv is not None:  # every hour read, today's or not: SecureView keeps its own days
+        try:
+            sv.add_hour(start, rows, f, now, partial)
+        except Exception:
+            log.exception("SecureView: the rows of the hour from %s could not be recorded", start.isoformat())
     span = f"{today.local(start):%b %d %H:%M}-{today.local(start + HOUR):%H:%M}"
     if today.day(start) != today.day(now) and start not in today.hours:
         log.info("Today: read %d activity rows for %s (for the name list)", len(rows), span)
@@ -664,6 +671,8 @@ def keep_reading(today: Today, names, make_client, sleep, clock=lambda: datetime
     today.start_took = (today.as_of - now).total_seconds()
     if today.failures == mark:
         today.read_ok = today.as_of
+    if today.secureview is not None:
+        _guarded("SecureView's save", lambda: today.secureview.save(clock()))
     today.ready = True
     log.info("Today ready: %d hours of activity read; %d usernames and %d devices known",
              len(starts), len(names.seen["username"]) if names else 0, len(names.seen["device"]) if names else 0)
@@ -711,6 +720,8 @@ def _read_all(today: Today, names, make_client, client, care, after, now: dateti
     today.as_of = now
     if today.failures == mark:
         today.read_ok = now
+    if today.secureview is not None:
+        _guarded("SecureView's save", lambda: today.secureview.save(clock()))
     if care is not None:
         _guarded("the Care list's check", lambda: care.check(client, clock()))
     if after is not None:

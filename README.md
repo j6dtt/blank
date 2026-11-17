@@ -406,6 +406,9 @@ line with the caller's address.
 
 **What it shows** (one day; **Day** at the top picks another, today
 updates every minute):
+- **SecureView** (first, when set): the devices people sit at to work
+  outside the office; always today and its history, whatever **Day**
+  says. See "SecureView" below.
 - **People using the app**: Now (a visit in the last 15 minutes: person,
   desktop, tab, last visit); then the day: each person's first and last
   visit, tabs used and what they ran. "Waiting for Aternity (address)":
@@ -466,6 +469,73 @@ at the top of the panel says when it cannot work:
 
 Each look-up is a log line ("Active Directory: looked up 4 users and 4
 PCs on dc1… (3 and 3 found)").
+
+### SecureView
+
+How it works: the Today reader already reads every action each hour.
+With SecureView on, it also reads the device the person sat at
+(Aternity's `CLIENT_DEVICE_NAME`, the device a virtual desktop is opened
+from). Each row whose device matches `secureview.match` widens that
+device's day: first and last time heard, each person with their own
+times, the desktops. Rows Aternity sends late, or a second read of an
+hour, only widen a day.
+
+```
+14:07 sample46 on VD-10 from HV00046-SAMPLE46THIN
+  └─► 2026-11-16: HV00046-SAMPLE46THIN
+      first 07:08, last 14:07; sample46 07:08-14:07
+```
+
+Aternity has no connect or disconnect record: "heard" is an action on a
+virtual desktop opened from the device, and a session nobody uses sends
+nothing. Only devices Aternity has heard from are known (they are not in
+AD).
+
+**Turn it on** in config.yaml, then `docker compose up -d`:
+
+```yaml
+secureview:
+  match: '^[A-Za-z0-9]{7}-.*THIN.*$'   # 7 characters, a dash, then THIN
+```
+
+Any case. Empty: off, and the column is not read. A pattern the app
+cannot read is a note in `verify`, in the Connections dialog and on the
+panel.
+
+**The days before.** Once the first read is done, and each night at
+03:00, Aternity's daily data (kept about 90 days) is read day by day for
+each day not read in full: which devices were heard that day, with no
+times and no people. The History tab says what it got ("89, back to Wed
+Aug 19"), or that the daily data names no device, or why it could not be
+read (tried again the next night).
+
+**Where and how:** `/admin`, log in, the first panel.
+- **TODAY** (opens first): devices in use today against the usual by
+  this time of day (the latest 5 days of the same kind with times),
+  heard in the last 30 min, people, first heard, first time ever heard.
+  In use by hour (the band is the usual), by department (the people's,
+  from AD), the longest in use. The list: search (device, person,
+  department, desktop), a department box, sort by first heard, last heard
+  or name; a green dot is heard in the last 30 min; "Show all" under 25.
+- **HISTORY**: devices heard since the records began, heard in the last
+  30 days, in use on a working day, first heard in the last 30 days.
+  Click a box to list its devices: silent 30, 60 or 90 days or more,
+  heard in the last 30 days, first heard in the last 30 days. Search and
+  the department box (the last person's) narrow the list; "Show 25 more";
+  **Download the list (CSV)** saves the list as shown. Click a device:
+  its last 90 days as squares (faded: weekend), its days with times and
+  people, and one line for the days known only from the daily data.
+  Click it again to close. Charts: devices per day (hollow: a day not
+  read in full) and silent 30 days or more, day by day; by department;
+  heard on the most days; the most different people.
+
+Names and departments come from AD as for People using the app (the
+same look-up, 200 names a request). A device with no username, or known
+only from the daily data, is "no person recorded".
+
+Kept in `$UXCORRELATE_DATA/secureview/<date>.json` (device names and
+usernames), 400 days, then deleted; `daily.json` notes the days read
+from the daily data.
 
 ## Quick start
 
@@ -802,6 +872,7 @@ src/uxcorrelate/
   report.py      text report
   cli.py         command line
   usage.py       the admin page's counts and who used the app
+  secureview.py  the admin page's SecureView (devices people sit at)
   web.py         FastAPI app;  static/index.html  UI, static/admin.html  /admin
 tests/           pytest suite (HTTP mocked with httpx.MockTransport;
                  synthetic.py is a fake Aternity/NetIM for engine tests)

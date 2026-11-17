@@ -96,6 +96,59 @@ Known limits of the first version:
   10:15).
 - Not counted: the Software reader's daily `$metadata` read.
 
+## SecureView (built on dev 2026-11-17, "build it")
+
+The devices people sit at whose name matches `secureview.match`
+(the user's THIN devices for people working outside the office:
+`^[A-Za-z0-9]{7}-.*THIN.*$`, any case; WT devices are not
+tracked; about 1,500, about 100 in use a day). The first panel
+of `/admin`, sub-tabs Today and History (mockup v3, with no AD
+per device and "by department" for "by place").
+
+How it works: the Today reader's hourly read of
+`BUSINESS_ACTIVITIES_RAW` also takes `CLIENT_DEVICE_NAME` when
+SecureView is on (filled on every virtual desktop action,
+`verify --clients` on stage, 2026-11-17); no new read. Each
+matching row widens its device's local day: first and last
+heard, the hours heard, each person's own first and last, the
+desktops. `secureview.py`, `<data>/secureview/<date>.json`, 400
+days. Aternity has no connect or disconnect record; an idle
+session sends nothing.
+
+Decisions (the user, 2026-11-17):
+- Track first heard and last heard per device per day, not
+  usage by actions ("Of course timestamps").
+- History only of devices Aternity has heard from ("build
+  history based on devices it's heard"): silent 30, 60, 90+
+  days, heard and first heard in the last 30 days.
+- THIN devices are not in AD and are for users working outside
+  the office: no OU or description per device; the people's AD
+  name and department; "by department" with a department box.
+- Named SecureView.
+
+The days before the records: Aternity's daily data
+(`BUSINESS_ACTIVITIES_DAILY`, kept ~90 days, stage Nov 10; its
+$metadata has `CLIENT_DEVICE_NAME`) asked day by day for
+`TIMEFRAME` and `CLIENT_DEVICE_NAME` only (Aternity adds up the
+rest: a row per day and device), once the first read is done and
+each night at 03:00, for each day not read in full. Days only:
+no times, no people. A daily row's day is the local day its
+`TIMEFRAME` plus 12 hours falls on (whose midnight Aternity uses
+is not documented). The History tab says what it got, or that
+the column is empty, or why the read failed.
+
+Also built: the usual by now (the latest 5 days of the same kind
+read in full with times, from 3), days not read said, a device's
+90 days as squares on a click, a CSV of the list shown. AD
+names: the same look-up as People using the app, 200 names a
+request. Dev: made-up THIN and WT devices (`dev/sample_riverbed.py`,
+`_client`), daily data kept 90 days there.
+
+To find out on stage: whether the daily data names the device
+people sat at (the History tab's line), and whether prod's
+devices match the pattern as typed (the Today tab's count against
+`verify --clients`).
+
 ## Later (ideas)
 
 - **Data freshness**: how late Aternity sends rows, per hour

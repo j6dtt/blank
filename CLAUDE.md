@@ -687,6 +687,31 @@ demo mode: nothing in `src/` knows about it.
   Status Hardware), so other hardware is added from it, and
   from the same read whether one row holds several times
   (`_times_in_a_row`: `HEALTH_EVENT_VOLUME` above 1, by event).
+- `secureview.py`: SecureView, the first panel of the admin page
+  (`/admin/api/secureview`, `/admin/api/secureview/device`; the user's
+  "build it", 2026-11-17; docs/admin-roadmap.md). The devices people sit
+  at (`CLIENT_DEVICE_NAME`) matching config.yaml's `secureview.match`
+  (`SecureViewConfig`, any case; empty: off and the column is not read;
+  a bad pattern is a `config_notes` note and `error`). The Today reader
+  gives it every hour it reads, any day (`Today.secureview`, in
+  `_read_hour` before the other-day return): each matching row widens
+  its device's local day (`add_hour`: first, last, local hours, people
+  with their own first and last, desktops; never narrows); an hour read
+  after it ended is `final`, cut short `cut`; a day `complete` when every
+  hour is final. Saved after each read (`save`, atomic, dirty days),
+  `KEEP_DAYS` 400. Before the records: `backfill` (thread
+  `keep_backfilling`, after the first read, then 03:00 local) reads
+  `SECUREVIEW_DAILY` day by day for days not read in full, the
+  `TIMEFRAME` + 12 h local day, days only (`daily`: ok / none / failed,
+  said on History). `view`: Today (usual by now from `USUAL_DAYS`
+  complete days of the same kind, `MIN_USUAL`; hours with their band;
+  "new" only with `NEW_DAYS` of records) and History (every device heard,
+  silent days, the last person with their own times, per day with `part`
+  days, silent 30+ day by day, `unread` days). No AD per device (THIN
+  devices are not in AD); the page groups by the people's AD department
+  (`svByDept`, the shared `adLook`, `AD_ASK` names a request). Page:
+  `sv*` functions in admin.html, `SV` state kept across its own
+  minute's redraw (not while a box of it has focus).
 - `ad.py` + `verify --ad` (`verify.verify_ad`, the user's "build it",
   2026-11-15; docs/admin-roadmap.md): Active Directory, read only.
   verify and the app's look-up share `find_dcs`, `ports_of`, `best`,

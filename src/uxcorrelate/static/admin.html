@@ -12,10 +12,12 @@
     --accent: #2f5d46; --bad: #a8382d; --warn: #b26f12; --ok: #3d7a4f;
     --head: #1f3b2e; --head-text: #f4ead2; --head-muted: #c8bb98; --brass: #b08d45;
     --serif: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --accent2: #93b8a0; --band: #e6d9bb; --faint: #f6f0e2;  /* SecureView: weekend bars, the usual's band, open rows */
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #15140f; --panel: #1e1c16; --text: #ece3cf; --muted: #a99f88; --border: #363228;
-            --accent: #4e8a69; --head: #10231a; --head-muted: #b3a682; --brass: #c9a55a; color-scheme: dark; }
+            --accent: #4e8a69; --head: #10231a; --head-muted: #b3a682; --brass: #c9a55a; color-scheme: dark;
+            --accent2: #35604a; --band: #3a3529; --faint: #25221b; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; font: 14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; background: var(--bg); color: var(--text); }
@@ -78,6 +80,46 @@
   ul.plain li.bad { border-color: var(--bad); color: var(--text); }
   .q { max-height: 420px; overflow-y: auto; }
   .ad [title]:not([title=""]) { border-bottom: 1px dotted var(--muted); cursor: help; }
+  /* SecureView (the devices people sit at; secureview.py) */
+  #sv[hidden] { display: none; }
+  .ph { display: flex; gap: 10px 14px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+  .ph h2 { margin: 0; }
+  .subtabs { display: flex; gap: 4px; }
+  .subtabs button { font: 600 13px var(--serif); letter-spacing: .08em; text-transform: uppercase; padding: 5px 14px; border-radius: 4px 4px 0 0;
+    border: 1px solid var(--border); border-bottom: 2px solid var(--border); background: var(--faint); color: var(--muted); }
+  .subtabs button.on { background: var(--panel); color: var(--accent); border-bottom-color: var(--brass); }
+  .asof { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .two { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)); gap: 8px 24px; }
+  .two > * { min-width: 0; }
+  .two + .two { margin-top: 14px; }
+  .tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 4px 0 8px; }
+  .tools input, .tools select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; font-size: 13px; }
+  .tools input { flex: 1 1 200px; min-width: 0; }
+  .btn2 { padding: 6px 12px; border: 1px solid var(--accent); color: var(--accent); background: transparent; font-size: 13px; }
+  .link { color: var(--accent); background: none; border: 0; padding: 0; font: inherit; font-weight: 600; text-align: left; }
+  .chips { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(150px, 100%), 1fr)); gap: 8px; margin: 4px 0 10px; max-width: 820px; }
+  .chip { border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; background: var(--bg); text-align: left; color: var(--text); font-weight: 400; }
+  .chip b { font: 700 18px var(--serif); display: block; font-variant-numeric: tabular-nums; }
+  .chip span { font-size: 12px; color: var(--muted); }
+  .chip.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--panel); }
+  .hl .trk { position: relative; height: 10px; background: var(--faint); border-radius: 0 3px 3px 0; }
+  .hl .trk i { position: absolute; left: 0; top: 0; bottom: 0; min-width: 0; }
+  svg.ch { width: 100%; height: auto; display: block; }
+  svg.ch text { fill: var(--muted); font-size: 10px; }
+  svg.ch .v { fill: var(--accent); } svg.ch .v.we { fill: var(--accent2); } svg.ch .v.now { fill: var(--brass); }
+  svg.ch .v.part { fill: var(--panel); stroke: var(--accent); stroke-width: 1; }  /* a day not read in full: hollow */
+  svg.ch .band { fill: var(--band); } svg.ch line { stroke: var(--border); }
+  svg.ch g.h:hover .v { fill: var(--brass); }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 4px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-left: 4px; vertical-align: 1px; }
+  table.sv { min-width: 760px; }
+  tr.open > td { background: var(--faint); }
+  tr.det > td { background: var(--faint); padding: 6px 12px 14px 24px; }
+  .cal { display: grid; grid-template-columns: repeat(45, 1fr); gap: 2px; max-width: 640px; margin: 4px 0 8px; }
+  .cal i { aspect-ratio: 1; border-radius: 2px; background: var(--band); }
+  .cal i.u { background: var(--accent); } .cal i.w { opacity: .45; }
+  .fine { color: var(--muted); font-size: 12px; margin: 12px 0 0; }
   #login { max-width: 460px; justify-self: center; width: 100%; }
   #login form { display: grid; gap: 10px; }
 </style>
@@ -103,6 +145,7 @@
     <p class="err" id="loginErr"></p>
   </section>
   <p class="err" id="err"></p>
+  <section class="panel" id="sv" hidden></section>
   <div id="page" hidden></div>
 </main>
 <script>
@@ -187,6 +230,7 @@ async function load(day = state.day) {
   $("err").textContent = "";
   state.day = j.date; state.data = j;
   draw(j);
+  if (!SV.timer && !SV.busy) svLoad();  // SecureView keeps its own minute
   if (j.today) state.timer = setTimeout(() => { if (!document.hidden) load(); else state.timer = setTimeout(load, 60000); }, 60000);
 }
 
@@ -231,7 +275,8 @@ function nums(items) {
 const nobody = x => `<span class="muted">${x.waiting ? "waiting for Aternity" : "not known"}</span> <span class="small muted">(${esc(x.addr || "no address")})</span>`;
 // Active Directory (ad.Lookup): each username and desktop on the page looked up once a day, in
 // memory only; asked after the page is drawn, so the page never waits on AD
-const AD = { users: {}, pcs: {}, res: null, busy: false, keptH: 24 };
+const AD = { users: {}, pcs: {}, res: null, busy: false, again: false, keptH: 24 };
+const AD_ASK = 200;  // names of each kind in one request (ad.ASK_MAX)
 function adGot(kept, name) {
   const x = kept[name];
   return x && Date.now() - x.at < AD.keptH * 3600e3 ? x.v : null;
@@ -267,25 +312,37 @@ function adFill() {
   const line = $("adLine");
   if (line) line.innerHTML = adLine();
 }
-async function adLook(j) {
-  if (AD.busy || (AD.res && (AD.res.state === "off" || AD.res.state === "refused"))) return;  // known until a restart
-  const users = [...new Set(j.people.filter(p => p.who).map(p => p.who))].filter(n => !adGot(AD.users, n));
-  const pcs = [...new Set(j.people.flatMap(p => p.pcs || []))].filter(n => !adGot(AD.pcs, n));
-  if (!users.length && !pcs.length) return;
+// every name on the page not looked up yet: the people panel's, and SecureView's people
+function adWanted() {
+  const j = state.data, people = j && j.people ? j.people : [];
+  const users = [...new Set([...people.filter(p => p.who).map(p => p.who), ...svUsers()])].filter(n => !adGot(AD.users, n));
+  const pcs = [...new Set(people.flatMap(p => p.pcs || []))].filter(n => !adGot(AD.pcs, n));
+  return { users, pcs };
+}
+async function adLook() {
+  if (AD.busy) { AD.again = true; return; }  // asked while a look-up runs: once more after it, with the names then
+  if (AD.res && (AD.res.state === "off" || AD.res.state === "refused")) return;  // known until a restart
   AD.busy = true;
   try {
-    const r = await fetch("admin/api/ad", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ users, pcs }) });
-    const x = await readJson(r);
-    if (r.status === 401) return;  // the next load shows the login
-    if (!r.ok) { AD.res = { state: "down", why: x.detail || `HTTP ${r.status}` }; return; }
-    AD.res = x; AD.keptH = x.kept_h || 24;
-    const now = Date.now();
-    for (const [k, v] of Object.entries(x.users || {})) AD.users[k] = { at: now, v };
-    for (const [k, v] of Object.entries(x.pcs || {})) AD.pcs[k] = { at: now, v };
+    do {
+      AD.again = false;
+      const { users, pcs } = adWanted();
+      for (let i = 0; i < Math.max(users.length, pcs.length); i += AD_ASK) {
+        const r = await fetch("admin/api/ad", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ users: users.slice(i, i + AD_ASK), pcs: pcs.slice(i, i + AD_ASK) }) });
+        const x = await readJson(r);
+        if (r.status === 401) return;  // the next load shows the login
+        if (!r.ok) { AD.res = { state: "down", why: x.detail || `HTTP ${r.status}` }; return; }
+        AD.res = x; AD.keptH = x.kept_h || 24;
+        const now = Date.now();
+        for (const [k, v] of Object.entries(x.users || {})) AD.users[k] = { at: now, v };
+        for (const [k, v] of Object.entries(x.pcs || {})) AD.pcs[k] = { at: now, v };
+        if (x.state !== "ok") return;  // not set, refused or not answering: the line says so
+      }
+    } while (AD.again);
   } catch (e) {
     AD.res = { state: "down", why: "UX Correlator did not answer: " + e.message };
-  } finally { AD.busy = false; adFill(); }
+  } finally { AD.busy = false; adFill(); svAdDone(); }
 }
 
 function person(p) {
@@ -430,6 +487,346 @@ function daysPanel(j) {
     + `<p class="muted small">Kept 30 days, then deleted.</p></section>`;
 }
 
+// ---------- SecureView (secureview.py): the devices people sat at that match secureview.match ----------
+// Its own minute (the Today reader reads Aternity every refresh_minutes); drawn again only when the reply
+// changed and no box of it is being typed in. State is kept here, so a redraw keeps the tab, search and list.
+const SV = { j: null, text: "", timer: null, busy: false, view: "today", tq: "", tsort: "first", tdept: "", tshown: 25,
+  chip: "30", hq: "", hdept: "", hshown: 25, open: null, dev: {} };
+const MON3 = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function svDay(d, word = true) {  // "Mon Sep 28", today "Today"
+  if (word && SV.j && d === SV.j.date) return "Today";
+  const t = new Date(d + "T12:00:00Z");
+  return t.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+}
+const svAgo = (d) => Math.round((Date.parse(SV.j.date + "T12:00:00Z") - Date.parse(d + "T12:00:00Z")) / 864e5);
+function svUsers() {  // the people SecureView shows, for AD
+  const j = SV.j;
+  if (!j || !j.on || !j.today) return [];
+  return [...j.today.devices.flatMap(x => x.people.map(p => p.user)), ...j.history.devices.filter(x => x.person).map(x => x.person)];
+}
+function svDept(user) {  // the person's department from AD; null while AD has not answered for them
+  const x = adGot(AD.users, user);
+  if (!x) return null;
+  return !x.found ? "not in AD" : (x.department || "no department in AD");
+}
+const svWho = (user, from, to) => `<b>${esc(user)}</b><span class="ad" data-adu="${esc(user)}">${adUser(user)}</span>`
+  + (from ? ` <span class="muted small">${esc(from)}–${esc(to)}</span>` : "");
+
+async function svLoad() {
+  clearTimeout(SV.timer); SV.timer = null;
+  SV.busy = true;
+  let r, text;
+  try {
+    r = await fetch("admin/api/secureview", { cache: "no-store" });
+    text = await r.text();
+  } catch (e) { SV.busy = false; SV.timer = setTimeout(svLoad, 60000); return; }  // the page's own line says it
+  SV.busy = false;
+  if (r.status === 401) return;  // the page shows the login
+  SV.timer = setTimeout(() => { if (!document.hidden) svLoad(); else SV.timer = setTimeout(svLoad, 60000); }, 60000);
+  let j;
+  try { j = JSON.parse(text); } catch (e) { return; }
+  if (!r.ok || text === SV.text) return;
+  const typing = document.activeElement && $("sv").contains(document.activeElement) && /INPUT|SELECT/.test(document.activeElement.tagName);
+  if (typing && SV.j) { SV.timer = setTimeout(svLoad, 15000); return; }  // drawn once the box is left
+  SV.text = text; SV.j = j;
+  svDraw();
+  adLook();
+}
+
+// bars with an optional usual band (lowest to highest); a title on each is its hover text
+function svChart(vals, opts) {
+  const W = 480, H = 120, L = 24, B = 18, T = 8, n = Math.max(vals.length, 1), cw = (W - L) / n;
+  const max = Math.max(1, ...vals.map(v => Math.max(v.v ?? 0, v.hi ?? 0)));
+  const step = max <= 4 ? 1 : max <= 10 ? 2 : max <= 40 ? 10 : max <= 100 ? 20 : 10 ** Math.floor(Math.log10(max)) * (max / 10 ** Math.floor(Math.log10(max)) > 5 ? 2 : 1);
+  const top = Math.ceil(max / step) * step;
+  const y = v => T + (H - T - B) * (1 - v / top);
+  let s = `<line x1="${L}" x2="${W}" y1="${y(0)}" y2="${y(0)}"/>`;
+  for (const g of [top / 2, top]) if (Number.isInteger(g)) s += `<line x1="${L}" x2="${W}" y1="${y(g)}" y2="${y(g)}" stroke-dasharray="2 3"/><text x="${L - 4}" y="${y(g) + 3}" text-anchor="end">${g}</text>`;
+  vals.forEach((v, k) => {
+    const x = L + k * cw;
+    s += `<g class="h"><title>${esc(v.title)}</title><rect x="${x}" y="${T}" width="${cw}" height="${H - T - B}" fill="transparent"/>`;
+    if (v.lo != null) s += `<rect class="band" x="${x + cw * 0.08}" y="${y(v.hi)}" width="${cw * 0.84}" height="${Math.max(1, y(v.lo) - y(v.hi))}" rx="2"/>`;
+    if (v.v) s += `<rect class="v ${v.cls || ""}" x="${x + cw * (opts.thin ? 0.2 : 0.28)}" y="${y(v.v)}" width="${cw * (opts.thin ? 0.6 : 0.44)}" height="${Math.max(0.5, y(0) - y(v.v))}" rx="${opts.thin ? 1 : 3}"/>`;
+    s += `</g>`;
+    if (v.lab) s += `<text x="${Math.min(W - 12, Math.max(L + 12, x + cw / 2))}" y="${H - 5}" text-anchor="middle">${esc(v.lab)}</text>`;
+  });
+  return `<svg class="ch" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.label)}">${s}</svg>`;
+}
+const svHl = rows => rows.length ? `<div class="hl">${rows.map(([a, n, of, note]) => `<span>${esc(a)}</span><span class="trk"><i style="width:${(100 * n / Math.max(1, of)).toFixed(1)}%;background:var(--accent)"></i></span>`
+  + `<span class="n">${fmt(n)} <span class="muted">of ${fmt(of)}</span>${note ? ` <span class="muted small">${esc(note)}</span>` : ""}</span>`).join("")}</div>` : `<p class="muted small">None.</p>`;
+
+function svAdState() {  // why there are no departments yet, or ""
+  const x = AD.res;
+  if (x && x.state === "off") return "Departments come from Active Directory, which is not set (see People using the app).";
+  if (x && x.state === "refused") return "Active Directory refused the login, so there are no departments.";
+  if (x && x.state === "down") return "Active Directory did not answer: departments as far as known.";
+  return "";
+}
+// department -> [devices, people] over a list of [device, users]
+function svByDept(list) {
+  const per = new Map(), wait = new Set();
+  for (const [dev, users] of list) {
+    const ds = new Set();
+    for (const u of users) { const d = svDept(u); if (d == null) wait.add(dev); else ds.add(d); }
+    for (const d of ds) per.set(d, (per.get(d) || 0) + 1);
+  }
+  return { rows: [...per].sort(svDeptOrder), wait: wait.size };
+}
+const SV_NOT_DEPT = ["no department in AD", "not in AD", "no person recorded"];  // after the departments
+function svDeptOrder(a, b) {
+  const x = SV_NOT_DEPT.indexOf(a[0]), y = SV_NOT_DEPT.indexOf(b[0]);
+  if (x !== y) return x - y;
+  const n = v => Array.isArray(v) ? v[1] : v;
+  return n(b[1]) - n(a[1]) || a[0].localeCompare(b[0]);
+}
+function svDeptOptions(sel, users) {
+  const ds = [...new Set(users.map(svDept).filter(Boolean))].sort((a, b) => SV_NOT_DEPT.indexOf(a) - SV_NOT_DEPT.indexOf(b) || a.localeCompare(b));
+  return `<option value="">Every department</option>` + ds.map(d => `<option${d === sel ? " selected" : ""}>${esc(d)}</option>`).join("")
+    + (sel && !ds.includes(sel) ? `<option selected>${esc(sel)}</option>` : "");
+}
+
+function svDraw() {
+  const j = SV.j, box = $("sv");
+  box.hidden = false;
+  if (!j.on) {
+    box.innerHTML = `<h2>SecureView</h2>` + (j.error ? `<p class="note bad">${esc(j.error)}</p>`
+      : `<p class="muted">SecureView is off. It tracks the devices people sit at (Aternity's CLIENT_DEVICE_NAME) whose name matches a pattern: `
+      + `set <code>secureview: match:</code> in config.yaml (e.g. <code>'^[A-Za-z0-9]{7}-.*THIN.*$'</code>), then <code>docker compose up -d</code>.</p>`);
+    return;
+  }
+  const asof = SV.view === "today" ? `${svDay(j.date, false)}${j.as_of_local ? ` · as of ${esc(j.as_of_local)}` : ""} ${esc(j.zone)}`
+    : `since ${svDay(j.history.start)} (the records' start), to today`;
+  box.innerHTML = `<div class="ph"><h2>SecureView</h2><div class="subtabs" role="tablist">`
+    + ["today", "history"].map(v => `<button class="${SV.view === v ? "on" : ""}" data-v="${v}" role="tab" aria-selected="${SV.view === v}">${v === "today" ? "Today" : "History"}</button>`).join("")
+    + `</div><span class="asof">${asof}</span></div>`
+    + (j.off ? `<p class="note">${esc(j.off)}</p>` : !j.ready ? `<p class="note">The first read of Aternity is not done yet: the counts fill in as it reads.</p>` : "")
+    + j.notes.map(n => `<p class="note">${esc(n)}</p>`).join("")
+    + `<div id="svBody">${SV.view === "today" ? svToday(j) : svHistory(j)}</div>`;
+  box.querySelectorAll(".subtabs button").forEach(b => b.addEventListener("click", () => { SV.view = b.dataset.v; svDraw(); }));
+  if (SV.view === "today") svTodayBind(); else svHistoryBind();
+}
+
+// ---------- Today ----------
+function svToday(j) {
+  const t = j.today, u = t.usual, cur = t.hours.filter(h => h.n != null).length - 1;
+  const kind = u.kind === "weekend" ? "weekend" : "working";
+  const usual = u.low != null ? `usual by now: ${u.low} to ${u.high}` : `usual by now: not known yet; it needs ${u.need} ${kind} days with times, ${u.days} so far`;
+  const hours = t.hours.map(h => ({ v: h.n, lo: h.low, hi: h.high, cls: h.hour === cur ? "now" : "", lab: h.hour % 3 === 0 ? String(h.hour).padStart(2, "0") : "",
+    title: `${String(h.hour).padStart(2, "0")}:00–${String(h.hour).padStart(2, "0")}:59: ` + (h.n != null ? `${plural(h.n, "device")} heard${h.hour === cur ? " (so far)" : ""}` : "not yet")
+      + (h.low != null ? `; usual ${h.low} to ${h.high}` : "") }));
+  const longest = t.devices.slice().sort((a, b) => (b.last - b.first) - (a.last - a.first)).slice(0, 3);
+  return nums([[fmt(t.devices.length), `in use today (${usual})`], [fmt(t.recent), `heard in the last ${j.recent_min} min`], [fmt(t.people), "people"],
+      [esc(t.first_local || "–"), "first heard today"], ...(t.new != null ? [[fmt(t.new), "heard for the first time"]] : [])])
+    + `<div class="two"><div><h3>In use by hour <span class="muted small">(devices heard in that hour)</span></h3>`
+    + svChart(hours, { label: "Devices in use by hour today" })
+    + `<div class="legend"><span><i style="background:var(--accent)"></i>today</span><span><i style="background:var(--brass)"></i>this hour so far</span>`
+    + `<span><i style="background:var(--band)"></i>usual: lowest to highest, ${u.low != null ? `${u.days} ${kind} days` : "not known yet"}</span></div></div>`
+    + `<div><h3>By department <span class="muted small">(the people's, from AD: devices in use today)</span></h3><div id="svTDept">${svTDept(j)}</div>`
+    + `<h3>Longest in use today <span class="muted small">(first to last heard)</span></h3><div class="small">`
+    + (longest.length ? longest.map(x => `${esc(x.name)} · ${esc(x.first_local)}–${esc(x.last_local)}`).join("<br>") : `<span class="muted">None yet.</span>`) + `</div></div></div>`
+    + `<h3>In use today <span class="muted small">(${fmt(t.devices.length)})</span></h3>`
+    + `<div class="tools"><input id="svTq" placeholder="Search a device, person, department or desktop" aria-label="Search" value="${esc(SV.tq)}">`
+    + `<select id="svTdept" aria-label="Department">${svDeptOptions(SV.tdept, t.devices.flatMap(x => x.people.map(p => p.user)))}</select>`
+    + `<select id="svTsort" aria-label="Sort">${[["first", "First heard"], ["last", "Last heard, latest first"], ["name", "Device name"]].map(([v, l]) => `<option value="${v}"${SV.tsort === v ? " selected" : ""}>${l}</option>`).join("")}</select></div>`
+    + `<div class="tableWrap"><table class="sv"><thead><tr><th>Device</th><th class="n">First heard</th><th class="n">Last heard</th><th>Used by</th><th>Desktop</th></tr></thead><tbody id="svTbody"></tbody></table></div>`
+    + `<button class="link" id="svTmore" style="margin-top:6px" hidden></button>`
+    + `<p class="fine">The devices people sat at (Aternity's CLIENT_DEVICE_NAME) whose name matches <code>${esc(j.match)}</code> (secureview.match in config.yaml), any case. `
+    + `First / last heard: the first and last action Aternity measured today on a virtual desktop opened from the device; Aternity has no connect or disconnect record, `
+    + `and a session nobody uses sends nothing. <span class="dot"></span> heard in the last ${j.recent_min} min. Each person with their own first and last. `
+    + `Usual: devices heard by this time of day on the latest days of the same kind read in full. Name and department: Active Directory, looked up once a day. `
+    + `Times in ${esc(j.zone)}.</p>`;
+}
+function svTDept(j) {
+  const d = svByDept(j.today.devices.map(x => [x.name, x.people.map(p => p.user)]));
+  const why = svAdState();
+  return (d.rows.length ? svHl(d.rows.map(([a, n]) => [a, n, j.today.devices.length])) : why ? "" : `<p class="muted small">${j.today.devices.length ? "" : "None."}</p>`)
+    + (d.wait && !why ? `<p class="muted small">${plural(d.wait, "device")} waiting for Active Directory.</p>` : "")
+    + (why ? `<p class="muted small">${esc(why)}</p>` : "")
+    + (d.rows.length ? `<p class="muted small">A device two people of different departments used counts under both.</p>` : "");
+}
+function svTRows() {
+  const t = SV.j.today, q = SV.tq.trim().toLowerCase();
+  let rows = t.devices.filter(x => (!SV.tdept || x.people.some(p => svDept(p.user) === SV.tdept))
+    && (!q || [x.name, ...x.desktops, ...x.people.flatMap(p => { const a = adGot(AD.users, p.user); return [p.user, a && a.name, a && a.department]; })]
+      .join(" ").toLowerCase().includes(q)));
+  return rows.sort(SV.tsort === "last" ? (a, b) => b.last - a.last : SV.tsort === "name" ? (a, b) => a.name.localeCompare(b.name) : (a, b) => a.first - b.first);
+}
+function svTBody() {
+  const rows = svTRows();
+  $("svTbody").innerHTML = rows.slice(0, SV.tshown).map(x => `<tr><td><b>${esc(x.name)}</b>${x.new ? ` <span class="small warn">first time</span>` : ""}</td>`
+    + `<td class="n">${esc(x.first_local)}</td><td class="n">${esc(x.last_local)}${x.recent ? `<span class="dot" title="heard in the last ${SV.j.recent_min} min"></span>` : ""}</td>`
+    + `<td>${x.people.length ? x.people.map(p => `<div>${svWho(p.user, x.people.length > 1 && p.first_local, p.last_local)}</div>`).join("") : `<span class="muted">no username</span>`}</td>`
+    + `<td>${esc(x.desktops.join(", ") || "–")}</td></tr>`).join("")
+    || `<tr><td colspan="5" class="muted">${SV.j.today.devices.length ? "No device matches." : "No device heard yet today."}</td></tr>`;
+  const m = $("svTmore");
+  m.hidden = rows.length <= SV.tshown; m.textContent = `Show all ${fmt(rows.length)} ▸`;
+}
+function svTodayBind() {
+  $("svTq").addEventListener("input", e => { SV.tq = e.target.value; SV.tshown = 25; svTBody(); });
+  $("svTdept").addEventListener("change", e => { SV.tdept = e.target.value; SV.tshown = 25; svTBody(); });
+  $("svTsort").addEventListener("change", e => { SV.tsort = e.target.value; svTBody(); });
+  $("svTmore").addEventListener("click", () => { SV.tshown = 1e9; svTBody(); });
+  svTBody();
+}
+
+// ---------- History ----------
+function svLists(h) {
+  const lists = [["30", "silent 30 days or more", h.devices.filter(x => x.silent >= 30)], ["60", "silent 60 days or more", h.devices.filter(x => x.silent >= 60)],
+    ["90", "silent 90 days or more", h.devices.filter(x => x.silent >= 90)], ["heard", `heard in the last ${SV.j.new_days} days`, h.devices.filter(x => x.silent < SV.j.new_days)]];
+  if (h.new30 != null) lists.push(["new", `first heard in the last ${SV.j.new_days} days`, h.devices.filter(x => svAgo(x.first) < SV.j.new_days)]);
+  return lists;
+}
+function svHistory(j) {
+  const h = j.history, d = h.daily;
+  const tick = (p, i) => p.date.endsWith("-01") ? MON3[Number(p.date.slice(5, 7)) - 1] + " 1" : i === h.per_day.length - 1 ? "today" : "";
+  const perDay = h.per_day.map((p, i) => ({ v: p.n, cls: (p.working ? "" : "we") + (p.part ? " part" : ""), lab: tick(p, i),
+    title: `${svDay(p.date)}: ` + (p.n == null ? "not read" : `${plural(p.n, "device")} heard${p.date === j.date ? " (so far)" : p.part ? " (not read in full)" : ""}`) }));
+  const silentBy = h.silent_by_day.map((p, i) => ({ v: p.n, lab: tick(p, i),
+    title: `${svDay(p.date)}: ` + (p.n == null ? `not known (the records begin ${svDay(h.start)})` : `${plural(p.n, "device")} silent ${j.new_days} days or more`) }));
+  const lists = svLists(h);
+  if (!lists.some(l => l[0] === SV.chip)) SV.chip = "30";
+  const most = h.devices.filter(x => x.days90).sort((a, b) => b.days90 - a.days90 || a.name.localeCompare(b.name)).slice(0, 5);
+  const many = h.devices.filter(x => x.people30).sort((a, b) => b.people30 - a.people30 || a.name.localeCompare(b.name)).slice(0, 5);
+  return nums([[fmt(h.devices.length), `devices heard since ${svDay(h.start)} (the records' start)`], [fmt(h.heard30), `heard in the last ${j.new_days} days`],
+      [h.working ? `${h.working.low} to ${h.working.high}` : "–", h.working ? `in use on a working day (${h.working.days} working days)` : "in use on a working day: no working day read in full yet"],
+      ...(h.new30 != null ? [[fmt(h.new30), `first heard in the last ${j.new_days} days`]] : [])])
+    + (d.state === "ok" ? `<p class="muted small">${esc(d.note)}</p>` : d.state ? `<p class="note">${esc(d.note)}</p>`
+      : `<p class="muted small">Aternity's daily data (the days before the records): not read yet. It is read once the first read of Aternity is done, then each night.</p>`)
+    + (h.unread ? `<p class="note">${plural(h.unread, "day")} since ${svDay(h.start)} could not be read (the app was not running, and Aternity's daily data did not have them): `
+      + `a device may have been heard on them, so it may be silent for less than shown.</p>` : "")
+    + `<h3>Heard before, silent since <span class="muted small">(click one to list them)</span></h3>`
+    + `<div class="chips">${lists.map(([k, t, l]) => `<button class="chip${k === SV.chip ? " on" : ""}" data-k="${k}"><b>${fmt(l.length)}</b><span>${t}</span></button>`).join("")}</div>`
+    + `<p class="muted small" id="svChipNote"></p>`
+    + `<div class="tools"><input id="svHq" placeholder="Search a device, last person or department" aria-label="Search" value="${esc(SV.hq)}">`
+    + `<select id="svHdept" aria-label="Department">${svDeptOptions(SV.hdept, h.devices.filter(x => x.person).map(x => x.person))}</select>`
+    + `<button class="btn2" type="button" id="svCsv">Download the list (CSV)</button></div>`
+    + `<div class="tableWrap"><table class="sv"><thead><tr><th>Device</th><th>Last heard</th><th>First heard</th><th>Last person</th><th class="n">Days heard</th></tr></thead><tbody id="svHbody"></tbody></table></div>`
+    + `<button class="link" id="svHmore" style="margin-top:6px" hidden></button>`
+    + `<div class="two"><div><h3>In use per day <span class="muted small">(the last ${j.chart_days} days)</span></h3>${svChart(perDay, { label: "Devices in use per day", thin: true })}`
+    + `<div class="legend"><span><i style="background:var(--accent)"></i>working day</span><span><i style="background:var(--accent2)"></i>weekend</span>`
+    + `<span><i style="border:1px solid var(--accent)"></i>not read in full</span></div></div>`
+    + `<div><h3>Silent ${j.new_days} days or more, day by day <span class="muted small">(heard before, not in the ${j.new_days} days to that day)</span></h3>`
+    + `${svChart(silentBy, { label: `Devices silent ${j.new_days} days or more`, thin: true })}</div></div>`
+    + `<div class="two"><div><h3>By department <span class="muted small">(the last person's, from AD: heard in the last ${j.new_days} days, of those heard since ${svDay(h.start)})</span></h3><div id="svHDept">${svHDept(j)}</div></div>`
+    + `<div><h3>Heard on the most days <span class="muted small">(the last ${j.chart_days})</span></h3><div class="small">`
+    + (most.length ? most.map(x => `${esc(x.name)} · ${plural(x.days90, "day")}`).join("<br>") : `<span class="muted">None.</span>`) + `</div>`
+    + `<h3>Most different people <span class="muted small">(the last ${j.new_days} days)</span></h3><div class="small">`
+    + (many.length ? many.map(x => `${esc(x.name)} · ${plural(x.people30, "person", "people")}`).join("<br>") : `<span class="muted">None.</span>`) + `</div></div></div>`
+    + `<p class="fine">Only devices Aternity has heard from: a device nobody used since before ${svDay(h.start)} is not known here. Heard: a virtual desktop opened from the `
+    + `device sent Aternity an action that day. Silent: heard before, nothing since. First / last heard with times and people for the days in SecureView's own records; `
+    + `Aternity's daily data before them gives the day only. Records kept ${j.keep_days} days. Click a device for its days.</p>`;
+}
+function svHDept(j) {
+  const ds = j.history.devices, per = new Map();
+  let wait = 0, none = 0;
+  for (const x of ds) {
+    const d = x.person ? svDept(x.person) : "no person recorded";
+    if (d == null) { wait++; continue; }
+    if (!x.person) none++;
+    const v = per.get(d) || [0, 0, 0];
+    v[0] += x.silent < j.new_days; v[1] += 1; v[2] += x.silent >= 90;
+    per.set(d, v);
+  }
+  const why = svAdState();
+  const rows = [...per].sort(svDeptOrder).map(([d, v]) => [d, v[0], v[1], v[2] ? `· ${v[2]} silent 90+` : ""]);
+  return svHl(rows) + (wait && !why ? `<p class="muted small">${plural(wait, "device")} waiting for Active Directory.</p>` : "")
+    + (why ? `<p class="muted small">${esc(why)}</p>` : "")
+    + (none ? `<p class="muted small">"No person recorded": known from Aternity's daily data only, which has no people.</p>` : "");
+}
+function svHRows() {
+  const h = SV.j.history, q = SV.hq.trim().toLowerCase();
+  const list = (svLists(h).find(l => l[0] === SV.chip) || [, , []])[2];
+  const rows = list.filter(x => (!SV.hdept || (x.person && svDept(x.person) === SV.hdept))
+    && (!q || [x.name, x.person, ...(x.person ? (a => a ? [a.name, a.department] : [])(adGot(AD.users, x.person)) : [])].join(" ").toLowerCase().includes(q)));
+  return rows.sort(SV.chip === "heard" ? (a, b) => b.days90 - a.days90 || a.name.localeCompare(b.name)
+    : SV.chip === "new" ? (a, b) => a.first.localeCompare(b.first) || a.name.localeCompare(b.name)
+    : (a, b) => b.silent - a.silent || a.name.localeCompare(b.name));
+}
+function svDetail(name) {
+  const x = SV.dev[name];
+  if (!x) return `<span class="muted small">Reading…</span>`;
+  if (x.error) return `<span class="bad small">${esc(x.error)}</span>`;
+  const heard = x.squares.filter(q => q.heard), timed = heard.filter(q => !q.day_only).reverse(), only = heard.filter(q => q.day_only);
+  const we = d => [0, 6].includes(new Date(d + "T12:00:00Z").getUTCDay());
+  const lines = timed.slice(0, 10).map(q => `${esc(svDay(q.date))} · ${esc(q.first_local)}–${esc(q.last_local)}`
+    + (q.part ? ` <span class="muted">(the day not read in full)</span>` : "") + " · "
+    + (q.people.map(p => svWho(p.user, q.people.length > 1 && p.first_local, p.last_local)).join(", ") || `<span class="muted">no username</span>`)
+    + (q.desktops.length ? ` · <span class="muted">${esc(q.desktops.join(", "))}</span>` : ""));
+  if (timed.length > 10) lines.push(`<span class="muted">and ${plural(timed.length - 10, "day")} more with times.</span>`);
+  if (only.length) lines.push(`<span class="muted">${plural(only.length, "day")} from Aternity's daily data (no times, no people)`
+    + (only.length > 1 ? `, ${esc(svDay(only[0].date))} to ${esc(svDay(only[only.length - 1].date))}` : `: ${esc(svDay(only[0].date))}`) + ".</span>");
+  if (x.days > heard.length) lines.push(`<span class="muted">Heard on ${plural(x.days, "day")} since ${esc(svDay(x.first))}.</span>`);
+  return `<div class="small muted">The last ${x.squares.length} days, oldest first (a square a day; faded: weekend)</div>`
+    + `<div class="cal">${x.squares.map(q => `<i class="${q.heard ? "u" : ""}${we(q.date) ? " w" : ""}" title="${esc(svDay(q.date))}${q.heard ? ": heard" : ""}"></i>`).join("")}</div>`
+    + `<div class="small">${lines.join("<br>")}</div>`;
+}
+async function svOpen(name) {
+  SV.open = SV.open === name ? null : name;
+  svHBody();
+  if (!SV.open || SV.dev[name]) return;
+  try {
+    const r = await fetch("admin/api/secureview/device?name=" + encodeURIComponent(name), { cache: "no-store" });
+    const x = await readJson(r);
+    SV.dev[name] = r.ok ? x : { error: x.detail || `HTTP ${r.status}` };
+    adLook();
+  } catch (e) { SV.dev[name] = { error: "UX Correlator did not answer: " + e.message }; }
+  if ($("svHbody")) svHBody();
+}
+function svHBody() {
+  const rows = svHRows(), h = SV.j.history;
+  $("svHbody").innerHTML = rows.slice(0, SV.hshown).map(x => {
+    const ago = x.silent ? ` <span class="muted small">(${plural(x.silent, "day")} ago)</span>` : "";
+    let r = `<tr class="${SV.open === x.name ? "open" : ""}"><td><button class="link" data-d="${esc(x.name)}">${esc(x.name)} ${SV.open === x.name ? "▾" : "▸"}</button></td>`
+      + `<td>${esc(svDay(x.last))}${ago}</td><td>${esc(svDay(x.first))}</td>`
+      + `<td>${x.person ? svWho(x.person) + `<div class="muted small">${esc(svDay(x.person_day))} ${esc(x.person_first)}–${esc(x.person_last)}</div>` : `<span class="muted">no person recorded</span>`}</td>`
+      + `<td class="n">${fmt(x.days)}</td></tr>`;
+    if (SV.open === x.name) r += `<tr class="det"><td colspan="5">${svDetail(x.name)}</td></tr>`;
+    return r;
+  }).join("") || `<tr><td colspan="5" class="muted">${h.devices.length ? "No device matches." : "No device heard yet."}</td></tr>`;
+  const m = $("svHmore");
+  m.hidden = rows.length <= SV.hshown; m.textContent = `Show 25 more of ${fmt(rows.length)} ▸`;
+  const span = h.span_days, n = Number(SV.chip);
+  $("svChipNote").textContent = n && span <= n ? `None can be yet: the records go back ${plural(span, "day")}, to ${svDay(h.start)}; this list fills as days pass.` : "";
+  $("svHbody").querySelectorAll("[data-d]").forEach(b => b.addEventListener("click", () => svOpen(b.dataset.d)));
+}
+function svCsv() {
+  const rows = svHRows(), q = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const lines = [["Device", "Last heard", "Days since", "First heard", "Last person", "Name (AD)", "Department (AD)", "Days heard"].map(q).join(",")];
+  for (const x of rows) {
+    const a = x.person ? adGot(AD.users, x.person) : null;
+    lines.push([x.name, x.last, x.silent, x.first, x.person || "", a && a.found ? a.name : "", x.person ? svDept(x.person) || "" : "", x.days].map(q).join(","));
+  }
+  const url = URL.createObjectURL(new Blob([lines.join("\r\n") + "\r\n"], { type: "text/csv" }));
+  const link = Object.assign(document.createElement("a"), { href: url, download: `secureview-${SV.chip}-${SV.j.date}.csv` });
+  document.body.appendChild(link); link.click(); link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function svHistoryBind() {
+  $("sv").querySelectorAll(".chip").forEach(c => c.addEventListener("click", () => {
+    SV.chip = c.dataset.k; SV.hshown = 25; SV.open = null;
+    $("sv").querySelectorAll(".chip").forEach(x => x.classList.toggle("on", x === c)); svHBody();
+  }));
+  $("svHq").addEventListener("input", e => { SV.hq = e.target.value; SV.hshown = 25; svHBody(); });
+  $("svHdept").addEventListener("change", e => { SV.hdept = e.target.value; SV.hshown = 25; svHBody(); });
+  $("svHmore").addEventListener("click", () => { SV.hshown += 25; svHBody(); });
+  $("svCsv").addEventListener("click", svCsv);
+  svHBody();
+}
+// AD answered: the parts that use departments (the rest is filled by adFill)
+function svAdDone() {
+  const j = SV.j;
+  if (!j || !j.on || !$("svBody")) return;
+  if (SV.view === "today" && $("svTDept")) {
+    $("svTDept").innerHTML = svTDept(j);
+    $("svTdept").innerHTML = svDeptOptions(SV.tdept, j.today.devices.flatMap(x => x.people.map(p => p.user)));
+    svTBody();
+  } else if ($("svHDept")) {
+    $("svHDept").innerHTML = svHDept(j);
+    $("svHdept").innerHTML = svDeptOptions(SV.hdept, j.history.devices.filter(x => x.person).map(x => x.person));
+    svHBody();
+  }
+}
+
 function draw(j) {
   $("login").hidden = true; $("bar").hidden = false;
   const sel = $("day");
@@ -441,7 +838,7 @@ function draw(j) {
   page.innerHTML = peoplePanel(j) + `<div class="grid2">${usePanel(j)}${askPanel(j)}</div>`
     + `<div class="grid2">${carePanel(j)}${daysPanel(j)}</div>` + loadPanel(j);
   page.querySelectorAll("svg.bars g.day").forEach(g => g.addEventListener("click", () => load(j.days[Number(g.dataset.i)].date)));
-  adLook(j);  // names from AD, filled in when it answers
+  adLook();  // names from AD, filled in when it answers
 }
 
 $("day").addEventListener("change", ev => load(ev.target.value));
@@ -450,6 +847,7 @@ $("out").addEventListener("click", async () => {
   try { await fetch("admin/api/logout", { method: "POST" }); } catch (e) { /* the cookie goes with the session anyway */ }
   state = { day: "", data: null, timer: null };
   Object.assign(AD, { users: {}, pcs: {}, res: null });  // what AD said goes with the session
+  clearTimeout(SV.timer); Object.assign(SV, { j: null, text: "", dev: {}, open: null }); $("sv").hidden = true;
   showLogin(await me());
 });
 

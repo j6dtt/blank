@@ -170,10 +170,13 @@ def create_app(config_path: str | None = None) -> FastAPI:
     names = app.state.names = NameList()
     try:
         first = load_settings(config_path)
-        zone, refresh = first.timezone, first.refresh_minutes
+        zone, refresh, sv_match = first.timezone, first.refresh_minutes, first.secureview.match
     except Exception:  # a broken config.yaml: the reader says so
-        zone, refresh = "", Settings().refresh_minutes
+        zone, refresh, sv_match = "", Settings().refresh_minutes, ""
     today = app.state.today = Today(zone, os.environ.get("UXCORRELATE_DATA") or None)
+    from .secureview import SecureView, keep_backfilling
+    # SecureView on the admin page: the Today reader's hours also go to it (secureview.match, read at start)
+    sv = app.state.secureview = today.secureview = SecureView(sv_match, zone, os.environ.get("UXCORRELATE_DATA") or None)
     today.refresh_min = refresh  # how often Aternity is read (config.yaml refresh_minutes)
     from . import explain as _explain
     _explain.set_refresh(refresh)
@@ -243,6 +246,10 @@ def create_app(config_path: str | None = None) -> FastAPI:
                              args=(status, lambda: load_settings(config_path), time.sleep),
                              kwargs={"notes_of": lambda: config_notes(config_path, zone=False)}, daemon=True,
                              name="status").start()
+        if sv.on() and not sv.started:  # Aternity's daily data for the days before SecureView's records
+            sv.started = True
+            threading.Thread(target=_http.as_doing("SecureView daily read", keep_backfilling),
+                             args=(sv, today, aternity_client, time.sleep), daemon=True, name="secureview").start()
         if not care.started:
             care.started = True
             threading.Thread(target=_http.as_doing("Care list investigations", care.work),
@@ -250,6 +257,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
                              name="care").start()
         yield
         usage.save(force=True)  # a restart: the admin page's counts since the last write (at most a minute's)
+        sv.save(datetime.now(timezone.utc))
 
     app.router.lifespan_context = lifespan
 
@@ -880,5 +888,23 @@ def create_app(config_path: str | None = None) -> FastAPI:
         if not admin_in(request):
             raise HTTPException(401, "Log in first.")
         return ad_lookup.look(body.users, body.pcs, datetime.now(timezone.utc))
+
+    @app.get("/admin/api/secureview")
+    def admin_secureview(request: Request):
+        """SecureView: the devices people sat at that match secureview.match, today and since the
+        records began (secureview.py)."""
+        if not admin_in(request):
+            raise HTTPException(401, "Log in first.")
+        return sv.view(datetime.now(timezone.utc), today.as_of, today.ready, today.off)
+
+    @app.get("/admin/api/secureview/device")
+    def admin_secureview_device(request: Request, name: str = ""):
+        """One device's last 90 days: a square a day, and the days with times and people."""
+        if not admin_in(request):
+            raise HTTPException(401, "Log in first.")
+        got = sv.device(name[:256], datetime.now(timezone.utc))
+        if got is None:
+            raise HTTPException(404, f"SecureView has no record of {name[:256]}.")
+        return got
 
     return app

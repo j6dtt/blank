@@ -19,13 +19,27 @@ the main app. First version committed 16d699b (2026-11-15).
 Its own roadmap: `docs/admin-roadmap.md` (decided, first
 version, limits, later ideas, the discussion so far).
 
+### SecureView (admin page)
+The devices people sit at to work outside the office (THIN,
+`secureview.match`): first and last heard per device per day,
+Today and History, silent 30 / 60 / 90 days, by department from
+AD. Built on dev 2026-11-17 ("build it"); stage copy next. See
+`docs/admin-roadmap.md`.
+
 ## Waiting on you
 
-- **`verify --clients --except WT` on prod or stage** (built on
-  dev 2026-11-16, the user: track virtual desktops used from
-  devices not starting with WT, names to check them, and whether
-  `LOCATION_ON_VPN` marks the same ones). Then decide what to
-  track on a page.
+- **`verify --clients --except WT` in a working hour**, `--hours
+  4` (built 2026-11-16, 9c8ed8d; the user: track virtual desktops
+  used from devices not starting with WT, and does
+  `LOCATION_ON_VPN` mark the same ones?). First run on stage
+  (2026-11-17, a quiet hour, 691 actions): 52 devices behind 52
+  virtual desktops, 44 starting with WT (WT, WTC, WTE, WTB, WTD,
+  WTA), 8 not, each 1 desktop and 1 user; the 8 begin with a
+  7-character code, then a name ending THIN / THINE / THINVM;
+  `CLIENT_DEVICE_TYPE` 'Remote Device' on all; `LOCATION_ON_VPN`
+  'false' on every action (virtual and physical): no VPN in that
+  hour, so it does not mark the 8. Decided (2026-11-17): track
+  the THIN devices' first and last heard: SecureView, above.
 - **`verify --ai` on stage**: the Care list samples changed.
 
 ## Agreed

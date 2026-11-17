@@ -22,9 +22,18 @@ The story (local times, today):
   pack was updated on that PC 2 days ago).
 - sample23 on PC-023: Sample Chat hangs every 20 minutes, every second one
   ends in a crash (Application Crash (After Hang)).
-- Virtual desktops (VD-01..VD-16, pooled; users sample37..sample50 at thin
-  clients TC-37..TC-50): logons slow this morning (User Profile), launches
-  right after them slow.
+- Virtual desktops (VD-01..VD-16, pooled; users sample37..sample50): logons
+  slow this morning (User Profile), launches right after them slow.
+- The devices they sit at (CLIENT_DEVICE_NAME, `_client`; SecureView on the
+  admin page tracks those like "HV00045-SAMPLE45THIN"): sample37..sample42
+  in the office (WTC0037.., sample41 at WTB41-THINLAB, which does not
+  match: 5 characters before the dash); sample43, sample44 in the office in
+  the morning, at home on a THIN device from 13:00 on Mon, Wed and Fri (the
+  same session, reconnected); sample45..sample49 outside the office (sample47's
+  in lower case); sample48's device replaced 40 days ago, sample49's 75 days
+  ago (the old ones silent since); sample50 on a THIN device on Tue and Thu,
+  else WTE0050; sample42 on sample46's device on Friday afternoons (two
+  people on one device).
 - Around them, every day: other crashes, background crashes, low memory,
   low disk space, hangs.
 
@@ -52,7 +61,8 @@ from zoneinfo import ZoneInfo
 ZONE = "America/New_York"   # the story's "today": set the same timezone in config.yaml
 SEED = "sample-1"           # another word gives other made-up rows, the same story
 ACTIVITY_DAYS = 8           # actions, app usage, processes kept (prod: about 8)
-HISTORY_DAYS = 30           # health events, change log, start-ups, daily sums
+HISTORY_DAYS = 30           # health events, change log, start-ups
+DAILY_DAYS = 90             # daily sums (prod: about 90, stage Nov 10 2026)
 SEED_DAYS = 21              # past days of saved counts written for the Today usual
 NOT_PUBLISHED = ("ANOMALY_DETECTION_INCIDENTS",)  # as on prod
 PAGE_ROWS = 5000            # rows per OData page, then @odata.nextLink
@@ -110,9 +120,33 @@ def _users() -> dict:
         if n in (5, 9, 13, 21):
             mix["Sample ERP"] = 0
         us[f"sample{n:02d}"] = {"n": n, "pc": f"PC-{n:03d}" if n <= 36 else None,
-                                "client": f"TC-{n}" if n > 36 else None,
                                 "rate": 9 + (n * 5) % 8, "mix": mix}
     return us
+
+
+def _client(user: str, t: datetime, T: date) -> str | None:
+    """The device a virtual desktop user sits at, at time t (the story's today: T)."""
+    n, d = USERS[user]["n"], _day(t)
+    if n <= 36:
+        return None
+    home = t.astimezone(Z).hour >= 13
+    if n == 41:
+        return "WTB41-THINLAB"
+    if n == 42 and d.weekday() == 4 and t.astimezone(Z).hour >= 14:
+        return _client("sample46", t, T)
+    if n <= 42:
+        return f"WTC{n:04d}"
+    if n <= 44:
+        return f"HV{n:05d}-HOME{n}THINE" if d.weekday() in (0, 2, 4) and home else f"WTC{n:04d}"
+    if n == 47:
+        return "hv00047-sample47thin"
+    if n == 48:
+        return "HV00148-SAMPLE48THIN" if d < T - timedelta(days=40) else "HV00248-SAMPLE48THINE"
+    if n == 49:
+        return "HV00149-SAMPLE49THINVM" if d < T - timedelta(days=75) else "HV00249-SAMPLE49THIN"
+    if n == 50:
+        return "HV00050-SAMPLE50THIN" if d.weekday() in (1, 3) else "WTE0050"
+    return f"HV{n:05d}-SAMPLE{n}" + ("THIN", "THINVM")[n % 2]
 
 
 USERS = _users()
@@ -542,7 +576,7 @@ class Sample:
         rtt = {HQ: (2, 6), NORTH: (28, 40), SOUTH: (30, 45), DC: (1, 3)}[pc["site"]]
         if d == T and pc["site"] == SOUTH and 10.5 <= c < 11.25:
             rtt = (120, 180)
-        u = USERS[s.user]
+        client = _client(s.user, t, T)
         return {
             "TIMEFRAME": _sec(t), "USERNAME": s.user, "DEVICE_NAME": s.dev, "APPLICATION_NAME": app,
             "ACTIVITY_NAME": act, "ACTIVITY_RESPONSE_TIME": round(rt, 3), "ACTIVITY_CLIENT_TIME": round(parts[0], 3),
@@ -552,7 +586,7 @@ class Sample:
             "HRC_DISK_QUEUE_LENGTH": round(queue, 2), "NETWORK_RTT_AVG": round(r.uniform(*rtt), 1),
             "DEVICE_IP_ADDRESS": pc["ip"], "BUSINESS_LOCATION": pc["site"], "OS_NAME": "Windows 11",
             "VIRTUALIZATION": "true" if pc["virtual"] else "false",
-            "CLIENT_DEVICE_NAME": u["client"], "CLIENT_DEVICE_TYPE": "Thin Client" if u["client"] else None,
+            "CLIENT_DEVICE_NAME": client, "CLIENT_DEVICE_TYPE": "Thin Client" if client else None,
             "APPLICATION_VERSION": self.version(s.dev, app, t), "DEVICE_IMAGE_BUILD_NUMBER": pc["image"],
             "_at": t + timedelta(minutes=r.uniform(2, 6)),
         }
@@ -900,7 +934,8 @@ class Sample:
                 if which == "usage":
                     key = (a["DEVICE_NAME"], a["APPLICATION_NAME"])
                 else:
-                    key = (a["DEVICE_NAME"], a["APPLICATION_NAME"], a["ACTIVITY_NAME"], a["SLA_STATUS"])
+                    key = (a["DEVICE_NAME"], a["APPLICATION_NAME"], a["ACTIVITY_NAME"], a["SLA_STATUS"],
+                           a["CLIENT_DEVICE_NAME"])
                 x = per.setdefault(key, {"user": a["USERNAME"], "n": 0, "rt": 0.0, "crash": 0, "hang": 0.0,
                                          "version": a["APPLICATION_VERSION"]})
                 x["n"] += 1
@@ -924,7 +959,8 @@ class Sample:
                 row.update({"APPLICATION_CRASHES_TOTAL": x["crash"], "APPLICATION_HANG_TIME_TOTAL": x["hang"],
                             "APPLICATION_UXI_AVG": round(9.2 - 0.8 * x["crash"], 1)})
             else:
-                row.update({"ACTIVITY_NAME": key[2], "SLA_STATUS": key[3], "ACTIVITY_VOLUME": x["n"],
+                row.update({"ACTIVITY_NAME": key[2], "SLA_STATUS": key[3], "CLIENT_DEVICE_NAME": key[4],
+                            "ACTIVITY_VOLUME": x["n"],
                             "ACTIVITY_RESPONSE_TIME_AVG": round(x["rt"] / x["n"], 3)})
             rows.append(row)
         return rows
@@ -932,7 +968,8 @@ class Sample:
     # -- rows of a data source between two times -----------------------------------
     def rows(self, entity: str, lo: datetime | None, hi: datetime | None) -> list[dict]:
         now = self.clock()
-        kept = now - timedelta(days=ACTIVITY_DAYS if entity in SHORT_KEPT else HISTORY_DAYS)
+        kept = now - timedelta(days=ACTIVITY_DAYS if entity in SHORT_KEPT else DAILY_DAYS if entity in ADDED_UP[1:]
+                               else HISTORY_DAYS)
         lo = max(lo or kept, kept)
         hi = min(hi or now, now)
         if lo > hi:
