@@ -27,11 +27,21 @@ AD. Built on dev 2026-11-17 ("build it"), 294bd37; on stage the
 same day: the daily data names the devices, History back to
 Aug 19. Then the admin page in two tabs, Statistics and
 SecureView, and By department across the page (option B), both
-built on dev 2026-11-17 ("build it"; stage copy:
-`static/admin.html`). See `docs/admin-roadmap.md`.
+built on dev 2026-11-17 ("build it"), bb76884. Then SEARCH and
+ACTIONS, built on dev 2026-11-17 ("build it", with the AD name
+search): SecureView's third sub-tab searches every day kept by a
+username, device, desktop or a person's real name (AD); a third
+admin tab, ACTIONS, lists every action of any user today, read
+from Aternity on Show. Stage copy: `secureview.py`, `ad.py`,
+`actions.py` (new), `web.py`, `static/admin.html`, then restart.
+See `docs/admin-roadmap.md`.
 
 ## Waiting on you
 
+- **Stage copy of the admin page's SEARCH and ACTIONS** (built
+  2026-11-17): the five files above, restart, then a search by a
+  THIN device, a username and a real name, and ACTIONS for one
+  user (how long the read takes on a busy user).
 - **`verify --clients --except WT` in a working hour**, `--hours
   4` (built 2026-11-16, 9c8ed8d; the user: track virtual desktops
   used from devices not starting with WT, and does

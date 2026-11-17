@@ -404,13 +404,16 @@ ends with **Log out** or a restart. 5 wrong passwords from one address
 lock it for 15 minutes. Each login, wrong password and lock is a log
 line with the caller's address.
 
-**Two tabs** under the top bar: **STATISTICS** (opens first) and
+**Three tabs** under the top bar: **STATISTICS** (opens first),
 **SECUREVIEW** (the devices people sit at to work outside the office;
-see "SecureView" below). Each has its link, `/admin#statistics` and
-`/admin#secureview`; a reload or a login stays on the tab in the link.
-Only the open tab is read, every minute; the other is read again the
-moment it is opened and keeps where it was (SecureView's sub-tab, search,
-department box and open device). **Log out** is on both.
+see "SecureView" below) and **ACTIONS** (every action of one user
+today; see "Actions" below). Each has its link, `/admin#statistics`,
+`/admin#secureview`, `/admin#actions`; a reload or a login stays on the
+tab in the link. Statistics and SecureView are read every minute while
+open; the other tabs are read again the moment they are opened and keep
+where they were (SecureView's sub-tab, search, department box and open
+device; Actions' user and list). Actions reads Aternity only when you
+press Show. **Log out** is on every tab.
 
 **Statistics** (one day; **Day** at the top, shown on this tab only,
 picks another; today updates every minute):
@@ -541,6 +544,38 @@ read (tried again the next night).
   silent 90+", in 2 columns; click a row: the list above shows that
   department (brought into view), "no person recorded" too. Then heard
   on the most days and the most different people.
+- **SEARCH**: part of a username, a device or a desktop (2 characters
+  or more, any case), then Enter or **Search**. It looks through every
+  day kept (up to 400) and lists, latest day first:
+  - **People**: each day, the device they sat at, their own first and
+    last time, the desktops; "+1 other person" when someone else used
+    that device that day; **All actions today ▸** opens ACTIONS for
+    them.
+  - **Devices**: each day, first and last heard, the people with their
+    own times, the desktops; the days known only from the daily data in
+    one line under them ("Also heard on 67 days ... days only").
+  - **Desktops**: each day, the devices it was opened from and the
+    people on it.
+
+  The latest 30 days of a match, then **Show all N days ▸**; at most 20
+  matches of each kind ("type more of the name"). Click any name in the
+  results to search it. A username on TODAY or HISTORY (or in a device's
+  days) opens SEARCH with it. **Download CSV**: a row per day and
+  person. A person's days start with SecureView's own records (the daily
+  data has no people).
+
+  A person's real name ("Pat Lee"): when nothing SecureView recorded has
+  it, one read-only AD search, every word in the display name, first
+  name or surname. It lists who AD has (name, department, title, the
+  account; **All actions today ▸** when Aternity has their username),
+  then their days as above. AD not set, refused or not answering is
+  said instead.
+
+  ```
+  "user 45" ─► SecureView: nothing
+     └─► AD: Sample User 45 (account sample45)
+          └─► SecureView: sample45's days
+  ```
 
 Names and departments come from AD as for People using the app (the
 same look-up, 200 names a request). A device with no username, or known
@@ -549,6 +584,39 @@ only from the daily data, is "no person recorded".
 Kept in `$UXCORRELATE_DATA/secureview/<date>.json` (device names and
 usernames), 400 days, then deleted; `daily.json` notes the days read
 from the daily data.
+
+### Actions
+
+Every action Aternity measured today for one person: any username
+Aternity knows, THIN device or not. How it works: **Show** sends one
+read of Aternity's activity for that username, from local midnight to
+now, with only the columns shown and at most 5,000 rows. Nothing is
+kept; it counts on the Load panel as "admin page".
+
+```
+sample49 ─► Show ─► Aternity: sample49, 00:00 to now
+  └─► 38 actions, 00:00:58-04:25:37, 0 rated Major
+       04:25:37  Sample Docs  Save Document  1.29 s ...
+```
+
+**Where and how:** `/admin`, log in, the **ACTIONS** tab
+(`/admin#actions`), or **All actions today ▸** on SecureView's SEARCH.
+- Type a username: the names Aternity sent in the last 8 days are
+  offered as you type (the Investigate tab's list). A name typed in
+  other capitals is asked for as Aternity writes it; one it has not
+  sent is asked for as typed, and a note says so. Enter or **Show**.
+- The top: the person (name and department from AD), how many actions,
+  first to last, how many Aternity rated Major, applications, the
+  desktops and the devices sat at.
+- The list, latest first: time to the second, application, activity,
+  response time, Aternity's rating (Major red, Minor amber), the desktop
+  (virtual or physical), the device sat at. The first 200, then **Show
+  all**.
+- **Every application** box: one application only. **Read again**: a
+  new read. **Download CSV**: the list as shown.
+- More than 5,000 actions, or a reply Aternity cut short, is said above
+  the list; a cut-short reply with nothing in it is "not known", never
+  "no action".
 
 ## Quick start
 
@@ -886,6 +954,7 @@ src/uxcorrelate/
   cli.py         command line
   usage.py       the admin page's counts and who used the app
   secureview.py  the admin page's SecureView (devices people sit at)
+  actions.py     the admin page's Actions (one user's actions today)
   web.py         FastAPI app;  static/index.html  UI, static/admin.html  /admin
 tests/           pytest suite (HTTP mocked with httpx.MockTransport;
                  synthetic.py is a fake Aternity/NetIM for engine tests)

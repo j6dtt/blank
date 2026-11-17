@@ -163,6 +163,19 @@
   .cal i { aspect-ratio: 1; border-radius: 2px; background: var(--band); }
   .cal i.u { background: var(--accent); } .cal i.w { opacity: .45; }
   .fine { color: var(--muted); font-size: 12px; margin: 12px 0 0; }
+  /* SecureView's Search: a match each, its days in a table (the user's request, 2026-11-17) */
+  .match { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 12px; }
+  .match h3 { display: flex; gap: 4px 10px; flex-wrap: wrap; align-items: baseline; margin: 0 0 6px; }
+  .match h3 .link { font-size: 14px; }
+  .match h3 .ad { font: 400 13px system-ui, -apple-system, Segoe UI, sans-serif; }
+  table.sr { min-width: 600px; }
+  .sect { font: 600 13px var(--serif); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 18px 0 0; }
+  .adp { display: grid; gap: 4px; margin: 0 0 8px; }
+  /* Actions: every action of one user today */
+  #act[hidden] { display: none; }
+  table.act { min-width: 860px; }
+  td.t { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.Major { color: var(--bad); font-weight: 600; } td.Minor { color: var(--warn); }
   #login { max-width: 460px; justify-self: center; width: 100%; }
   #login form { display: grid; gap: 10px; }
 </style>
@@ -180,7 +193,7 @@
     <span class="small" id="asOf" style="color: var(--head-muted)"></span></span>
     <button id="out">Log out</button>
   </div></div>
-  <nav id="tabs" role="tablist" hidden><button id="tabStats" role="tab" data-t="stats">Statistics</button><button id="tabSv" role="tab" data-t="sv">SecureView</button></nav>
+  <nav id="tabs" role="tablist" hidden><button id="tabStats" role="tab" data-t="stats">Statistics</button><button id="tabSv" role="tab" data-t="sv">SecureView</button><button id="tabAct" role="tab" data-t="act">Actions</button></nav>
 </header>
 <main id="main">
   <section class="panel" id="login" hidden>
@@ -190,6 +203,7 @@
   </section>
   <p class="err" id="err"></p>
   <section class="panel" id="sv" hidden></section>
+  <section class="panel" id="act" hidden></section>
   <div id="page" hidden></div>
 </main>
 <script>
@@ -228,7 +242,8 @@ function showLogin(m) {
   TAB.now = "";  // no tab loads or keeps its minute until the next login; reads under way are dropped
   TAB.seq.stats++; TAB.seq.sv++;
   clearTimeout(state.timer); clearTimeout(SV.timer); SV.timer = null;
-  $("bar").hidden = true; $("tabs").hidden = true; $("page").hidden = true; $("sv").hidden = true; $("login").hidden = false;
+  $("bar").hidden = true; $("tabs").hidden = true; $("page").hidden = true; $("sv").hidden = true; $("act").hidden = true;
+  $("login").hidden = false;
   $("err").textContent = "";
   const box = $("loginBody");
   if (!m.set) {
@@ -289,9 +304,9 @@ async function load(day = state.day) {
 // ---------- the two tabs: Statistics (the panels above) and SecureView; the open one is in the link ----------
 // Only the open tab is read and kept up to date; the other keeps what it showed (and its sub-tab, box and open
 // row) and is read again the moment it is opened.
-const TABS = { stats: "statistics", sv: "secureview" };
+const TABS = { stats: "statistics", sv: "secureview", act: "actions" };
 const TAB = { now: "", scroll: {}, seq: { stats: 0, sv: 0 } };
-const tabOfLink = () => location.hash === "#" + TABS.sv ? "sv" : "stats";
+const tabOfLink = () => Object.keys(TABS).find(k => location.hash === "#" + TABS[k]) || "stats";
 function openTab(t) {
   const was = TAB.now;
   if (was && was !== t) TAB.scroll[was] = scrollY;
@@ -303,16 +318,17 @@ function openTab(t) {
   }
   $("login").hidden = true; $("tabs").hidden = false; $("bar").hidden = false;
   $("statsBar").classList.toggle("off", t !== "stats");  // the Day box and "as of" are the Statistics panels'
-  $("page").hidden = t !== "stats"; $("sv").hidden = t !== "sv";
+  $("page").hidden = t !== "stats"; $("sv").hidden = t !== "sv"; $("act").hidden = t !== "act";
   $("err").textContent = "";
   if (location.hash !== "#" + TABS[t]) history.replaceState(null, "", "#" + TABS[t]);
   if (t === "stats") {
     if (!state.data) $("page").innerHTML = `<section class="panel"><p class="muted">Loading…</p></section>`;
     load();
-  } else {
+  } else if (t === "sv") {
     if (!SV.j) $("sv").innerHTML = `<h2>SecureView</h2><p class="muted">Loading…</p>`;
     svLoad();
-  }
+  } else if (!$("actUser")) actDraw();  // Actions reads Aternity only when Show is pressed: no minute
+
   if (was !== t) scrollTo(0, TAB.scroll[t] || 0);
 }
 $("tabs").addEventListener("click", ev => {
@@ -580,7 +596,7 @@ function daysPanel(j) {
 // Its own minute (the Today reader reads Aternity every refresh_minutes); drawn again only when the reply
 // changed and no box of it is being typed in. State is kept here, so a redraw keeps the tab, search and list.
 const SV = { j: null, text: "", timer: null, view: "today", tq: "", tsort: "first", tdept: "", tshown: 25,
-  chip: "30", hq: "", hdept: "", hshown: 25, open: null, dev: {} };
+  chip: "30", hq: "", hdept: "", hshown: 25, open: null, dev: {}, sq: "", sres: null, serr: "", sbusy: false, sseq: 0, sall: {} };
 const MON3 = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function svDay(d, word = true) {  // "Mon Sep 28", today "Today"
   if (word && SV.j && d === SV.j.date) return "Today";
@@ -588,17 +604,21 @@ function svDay(d, word = true) {  // "Mon Sep 28", today "Today"
   return t.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
 }
 const svAgo = (d) => Math.round((Date.parse(SV.j.date + "T12:00:00Z") - Date.parse(d + "T12:00:00Z")) / 864e5);
-function svUsers() {  // the people SecureView shows, for AD
-  const j = SV.j;
-  if (!j || !j.on || !j.today) return [];
-  return [...j.today.devices.flatMap(x => x.people.map(p => p.user)), ...j.history.devices.filter(x => x.person).map(x => x.person)];
+function svUsers() {  // the people SecureView and Actions show, for AD
+  const j = SV.j, s = SV.sres, out = [];
+  if (j && j.on && j.today) out.push(...j.today.devices.flatMap(x => x.people.map(p => p.user)), ...j.history.devices.filter(x => x.person).map(x => x.person));
+  if (s) out.push(...s.people.map(m => m.name), ...[...s.devices, ...s.desktops].flatMap(m => m.rows.flatMap(r => r.people.map(p => p.user))));
+  if (ACT.j) out.push(ACT.j.user);
+  return out;
 }
 function svDept(user) {  // the person's department from AD; null while AD has not answered for them
   const x = adGot(AD.users, user);
   if (!x) return null;
   return !x.found ? "not in AD" : (x.department || "no department in AD");
 }
-const svWho = (user, from, to) => `<b>${esc(user)}</b><span class="ad" data-adu="${esc(user)}">${adUser(user)}</span>`
+// a username is a link: it opens Search with it (every day SecureView kept of that person)
+const svWho = (user, from, to) => `<button class="link" data-sq="${esc(user)}" title="Search SecureView's days of ${esc(user)}">${esc(user)}</button>`
+  + `<span class="ad" data-adu="${esc(user)}">${adUser(user)}</span>`
   + (from ? ` <span class="muted small">${esc(from)}–${esc(to)}</span>` : "");
 
 async function svLoad() {
@@ -714,15 +734,15 @@ function svDraw() {
     return;
   }
   const asof = SV.view === "today" ? `${svDay(j.date, false)}${j.as_of_local ? ` · as of ${esc(j.as_of_local)}` : ""} ${esc(j.zone)}`
-    : `since ${svDay(j.history.start)} (the records' start), to today`;
+    : `since ${svDay(j.history.start)} (the records' start), to today` + (SV.view === "search" ? ` · ${esc(j.zone)}` : "");
   box.innerHTML = `<div class="ph"><h2>SecureView</h2><div class="subtabs" role="tablist">`
-    + ["today", "history"].map(v => `<button class="${SV.view === v ? "on" : ""}" data-v="${v}" role="tab" aria-selected="${SV.view === v}">${v === "today" ? "Today" : "History"}</button>`).join("")
+    + [["today", "Today"], ["history", "History"], ["search", "Search"]].map(([v, w]) => `<button class="${SV.view === v ? "on" : ""}" data-v="${v}" role="tab" aria-selected="${SV.view === v}">${w}</button>`).join("")
     + `</div><span class="asof">${asof}</span></div>`
     + (j.off ? `<p class="note">${esc(j.off)}</p>` : !j.ready ? `<p class="note">The first read of Aternity is not done yet: the counts fill in as it reads.</p>` : "")
     + j.notes.map(n => `<p class="note">${esc(n)}</p>`).join("")
-    + `<div id="svBody">${SV.view === "today" ? svToday(j) : svHistory(j)}</div>`;
+    + `<div id="svBody">${SV.view === "today" ? svToday(j) : SV.view === "history" ? svHistory(j) : svSearch()}</div>`;
   box.querySelectorAll(".subtabs button").forEach(b => b.addEventListener("click", () => { SV.view = b.dataset.v; svDraw(); }));
-  if (SV.view === "today") svTodayBind(); else svHistoryBind();
+  if (SV.view === "today") svTodayBind(); else if (SV.view === "history") svHistoryBind(); else svSearchBind();
 }
 
 // ---------- Today ----------
@@ -925,8 +945,12 @@ function svCsv() {
     const a = x.person ? adGot(AD.users, x.person) : null;
     lines.push([x.name, x.last, x.silent, x.first, x.person || "", a && a.found ? a.name : "", x.person ? svDept(x.person) || "" : "", x.days].map(q).join(","));
   }
+  download(`secureview-${SV.chip}-${SV.j.date}.csv`, lines);
+}
+const csvCell = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+function download(name, lines) {  // a CSV file of these lines
   const url = URL.createObjectURL(new Blob([lines.join("\r\n") + "\r\n"], { type: "text/csv" }));
-  const link = Object.assign(document.createElement("a"), { href: url, download: `secureview-${SV.chip}-${SV.j.date}.csv` });
+  const link = Object.assign(document.createElement("a"), { href: url, download: name });
   document.body.appendChild(link); link.click(); link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
@@ -962,6 +986,250 @@ function svAdDone() {
   }
 }
 
+// ---------- Search: every day SecureView kept of a person, a device or a desktop (secureview.search) ----------
+const SV_DAYS_SHOWN = 30;  // days of a match shown before "Show all"
+function svSearch() {
+  return `<div class="tools"><input id="svSq" type="search" value="${esc(SV.sq)}" autocomplete="off" aria-label="Search SecureView"`
+    + ` placeholder="A username, device or desktop (part of it, 2 characters or more), or a person's name">`
+    + `<button id="svSgo">Search</button><button class="btn2" id="svScsv"${SV.sres ? "" : " hidden"}>Download CSV</button></div>`
+    + `<div id="svSres">${svSRes()}</div>`;
+}
+const svFind = v => `<button class="link" data-sq="${esc(v)}" title="Search for ${esc(v)}">${esc(v)}</button>`;
+const svTimes = (a, b) => `${esc(a)}–${esc(b)}`;
+const svPeople = r => r.people.map(p => svWho(p.user, r.people.length > 1 && p.first_local, p.last_local)).join("<br>") || `<span class="muted">no username</span>`;
+const svDesks = ds => ds.length ? ds.map(d => svFind(d)).join(", ") : `<span class="muted">–</span>`;
+// a match: its days with times in a table (the latest SV_DAYS_SHOWN, then "Show all"); a device's days known only
+// from Aternity's daily data (no times, no people) in one line under it
+function svMatch(kind, m, head, cols, row) {
+  const key = kind + ":" + m.name, timed = m.rows.filter(r => !r.day_only), only = m.rows.filter(r => r.day_only);
+  const dates = [...new Set(timed.map(r => r.date))];
+  const shown = SV.sall[key] ? dates : dates.slice(0, SV_DAYS_SHOWN), keep = new Set(shown);
+  return `<div class="match"><h3>${head}</h3>` + (timed.length ? `<div class="tableWrap"><table class="sr"><thead><tr>${cols.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>`
+    + timed.filter(r => keep.has(r.date)).map(r => `<tr>${row(r).map(c => `<td>${c}</td>`).join("")}</tr>`).join("") + `</tbody></table></div>`
+    + (shown.length < dates.length ? `<button class="btn2" data-sall="${esc(key)}">Show all ${fmt(dates.length)} days ▸</button>` : "") : "")
+    + (only.length ? `<p class="muted small">${timed.length ? "Also heard on" : "Heard on"} ${plural(only.length, "day")} from Aternity's daily data`
+      + (only.length > 1 ? `, ${esc(svDay(only[only.length - 1].date))} to ${esc(svDay(only[0].date))}` : `: ${esc(svDay(only[0].date))}`)
+      + `: days only, no times or people.</p>` : "") + `</div>`;
+}
+const svSpan = m => `<span class="muted small">${m.days === 1 ? `1 day: ${esc(svDay(m.last))}` : `${plural(m.days, "day")}, ${esc(svDay(m.first))} to ${esc(svDay(m.last))}`}</span>`;
+function svSAd(s) {  // a person's real name, looked up in AD when no username has it
+  const a = s.ad, q = `"${esc(s.q)}"`;
+  if (!a) return "";
+  if (a.state === "off") return `<p class="muted small">Searching it as a person's name needs Active Directory, which is not set (${esc(a.why)}).</p>`;
+  if (a.state === "refused") return `<p class="note">Not searched as a person's name: <span class="bad">Active Directory refused the login of AD_USERNAME (${esc(a.why)})</span>.</p>`;
+  if (a.state === "down") return `<p class="note">Not searched as a person's name: Active Directory did not answer (${esc(a.why)}). Try again in a few minutes.</p>`;
+  if (!a.people.length) return `<p class="muted small">Active Directory has no one by that name either.</p>`;
+  return `<p class="small">No username has ${q}. Active Directory has ${plural(a.people.length, "person", "people")} by that name`
+    + (a.people.length >= s.max ? ` (the first ${s.max}: type more of the name)` : "") + `; those SecureView recorded are below.</p>`
+    + `<div class="adp small">${a.people.map(p => `<div><b>${esc(p.name || p.sam)}</b>`
+      + [p.department, p.title].filter(Boolean).map(v => ` · ${esc(v)}`).join("") + ` · <span class="muted">account ${esc(p.sam)}</span>`
+      + (p.disabled ? ` <span class="bad">disabled in AD</span>` : "")
+      + (p.aternity ? ` · <button class="link" data-act="${esc(p.aternity)}">All actions today ▸</button>`
+        : ` · <span class="muted">no action in Aternity in the last ${s.names_days} days</span>`) + `</div>`).join("")}</div>`;
+}
+function svSRes() {
+  if (SV.sbusy) return `<p class="muted">Searching every day kept…</p>`;
+  if (SV.serr) return `<p class="bad">${esc(SV.serr)}</p>`;
+  const s = SV.sres;
+  if (!s) return `<p class="muted small">Searches every day SecureView kept: a person's days, each at the device they sat at with their own first and last time; `
+    + `a device's days with the people on it; a desktop's days with the devices and people that opened it. Part of a name is enough, any case; Enter searches. `
+    + `When nothing here has it, it is searched as a person's name in Active Directory. Click any name in the results to search it.</p>`;
+  const n = s.people.length + s.devices.length + s.desktops.length, more = s.more.people + s.more.devices + s.more.desktops;
+  let h = `<p class="small">${n ? `${plural(n + more, "match", "matches")} for "${esc(s.q)}"` : `Nothing SecureView recorded has "${esc(s.q)}".`}`
+    + (more ? ` <span class="warn">The first ${s.max} of each kind are listed: type more of the name.</span>` : "") + `</p>` + svSAd(s);
+  if (s.known && !s.people.some(m => m.name.toLowerCase() === s.known.toLowerCase()))
+    h += `<p class="small">${esc(s.known)} is a username Aternity has, with no day at a SecureView device. `
+      + `<button class="link" data-act="${esc(s.known)}">All actions today ▸</button></p>`;
+  if (s.people.length) h += `<p class="sect">People</p>` + s.people.map(m => svMatch("p", m,
+    `${svFind(m.name)}<span class="ad" data-adu="${esc(m.name)}">${adUser(m.name)}</span> ${svSpan(m)} <span class="muted small">· ${plural(m.devices, "device")}</span>`
+      + ` <button class="link" data-act="${esc(m.name)}">All actions today ▸</button>`,
+    ["Day", "Device", "Their first–last", "Desktops"],
+    r => [esc(svDay(r.date)), svFind(r.device) + (r.others ? ` <span class="muted small">+${plural(r.others, "other person", "other people")}</span>` : ""),
+      svTimes(r.first_local, r.last_local), svDesks(r.desktops)])).join("")
+    + (s.more.people ? `<p class="muted small">and ${plural(s.more.people, "more person", "more people")}: type more of the name.</p>` : "");
+  if (s.devices.length) h += `<p class="sect">Devices</p>` + s.devices.map(m => svMatch("d", m,
+    `${svFind(m.name)} ${svSpan(m)} <span class="muted small">· ${plural(m.people, "person", "people")}</span>`,
+    ["Day", "Heard", "People", "Desktops"],
+    r => [esc(svDay(r.date)), svTimes(r.first_local, r.last_local), svPeople(r), svDesks(r.desktops)])).join("")
+    + (s.more.devices ? `<p class="muted small">and ${plural(s.more.devices, "more device")}: type more of the name.</p>` : "");
+  if (s.desktops.length) h += `<p class="sect">Desktops</p>` + s.desktops.map(m => svMatch("k", m,
+    `${svFind(m.name)} ${svSpan(m)} <span class="muted small">· opened from ${plural(m.devices, "device")} by ${plural(m.people, "person", "people")}</span>`,
+    ["Day", "Device", "Device heard", "People on it"],
+    r => [esc(svDay(r.date)), svFind(r.device), svTimes(r.first_local, r.last_local), svPeople(r)])).join("")
+    + (s.more.desktops ? `<p class="muted small">and ${plural(s.more.desktops, "more desktop")}: type more of the name.</p>` : "");
+  if (n) h += `<p class="fine">A person's days are SecureView's own records${s.people_since ? `, kept since ${esc(svDay(s.people_since))}` : ""}: `
+    + `before them Aternity's daily data gives a device's days only, with no times and no people. Times in ${esc(s.zone)}; at most ${fmt(s.keep_days)} days are kept.</p>`;
+  return h;
+}
+function svSDraw() {
+  if ($("svSres")) $("svSres").innerHTML = svSRes();
+  if ($("svScsv")) $("svScsv").hidden = !SV.sres || SV.sbusy;
+}
+async function svSearchRun() {
+  const q = SV.sq.trim();
+  if (q.length < 2) { SV.serr = "Type at least 2 characters."; SV.sres = null; svSDraw(); return; }
+  const seq = ++SV.sseq;  // the latest search wins; one sent before a log-out is dropped
+  SV.sbusy = true; SV.serr = ""; svSDraw();
+  try {
+    const r = await fetch("admin/api/secureview/search?q=" + encodeURIComponent(q), { cache: "no-store" });
+    const x = await readJson(r);
+    if (seq !== SV.sseq) return;
+    SV.sbusy = false;
+    if (r.status === 401) { showLogin(await me()); return; }
+    if (!r.ok) { SV.serr = x.detail || `HTTP ${r.status}`; SV.sres = null; }
+    else { SV.sres = x; SV.sall = {}; }
+  } catch (e) {
+    if (seq !== SV.sseq) return;
+    SV.sbusy = false; SV.serr = "UX Correlator did not answer: " + e.message;
+  }
+  svSDraw();
+  adLook();
+}
+function svSearchFor(q) {  // a name clicked anywhere in SecureView: Search with it
+  SV.view = "search"; SV.sq = q;
+  svDraw(); scrollTo(0, 0);
+  svSearchRun();
+}
+function svSearchBind() {
+  const box = $("svSq");
+  box.addEventListener("input", e => { SV.sq = e.target.value; });
+  box.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); box.blur(); svSearchRun(); } });
+  $("svSgo").addEventListener("click", svSearchRun);
+  $("svScsv").addEventListener("click", svSCsv);
+}
+function svSCsv() {
+  const s = SV.sres, lines = [["Found", "Name", "Day", "Device", "Desktops", "Person", "First", "Last", "Note"].map(csvCell).join(",")];
+  const add = (...v) => lines.push(v.map(csvCell).join(","));
+  for (const m of s.people) for (const r of m.rows) add("person", m.name, r.date, r.device, r.desktops.join(" "), m.name, r.first_local, r.last_local, r.others ? `${r.others} other(s) on the device that day` : "");
+  for (const [kind, list] of [["device", s.devices], ["desktop", s.desktops]])
+    for (const m of list) for (const r of m.rows) {
+      const dev = kind === "device" ? m.name : r.device, desks = kind === "device" ? r.desktops.join(" ") : m.name;
+      if (r.day_only) add(kind, m.name, r.date, dev, desks, "", "", "", "Aternity's daily data: day only, no times or people");
+      else if (!r.people.length) add(kind, m.name, r.date, dev, desks, "", r.first_local, r.last_local, "no username");
+      else for (const p of r.people) add(kind, m.name, r.date, dev, desks, p.user, p.first_local, p.last_local, "");
+    }
+  download(`secureview-search-${s.q.replace(/[^a-z0-9]+/gi, "_").slice(0, 40)}-${s.date}.csv`, lines);
+}
+$("sv").addEventListener("click", ev => {  // the names, "Show all" and "All actions today" of every SecureView list
+  const q = ev.target.closest("[data-sq]"), a = ev.target.closest("[data-act]"), all = ev.target.closest("[data-sall]");
+  if (q) svSearchFor(q.dataset.sq);
+  else if (a) actFor(a.dataset.act);
+  else if (all) { SV.sall[all.dataset.sall] = true; svSDraw(); }
+});
+
+// ---------- Actions: every action Aternity measured today for one user, any user (actions.py) ----------
+const ACT = { user: "", j: null, err: "", busy: false, app: "", shown: 200, seq: 0, ntimer: null };
+const ACT_SHOWN = 200;  // rows drawn before "Show all"
+const RATE_CLASS = { Major: "Major", Minor: "Minor" };  // Aternity's ratings that are coloured
+function actDraw() {
+  $("act").innerHTML = `<div class="ph"><h2>All actions today</h2><span class="asof" id="actAsof"></span></div>`
+    + `<p class="muted small">Every action Aternity measured today for one person: any username Aternity knows, not only SecureView's. `
+    + `Read from Aternity when you press Show, from midnight to now; latest first, to the second. Nothing is kept.</p>`
+    + `<div class="tools"><input id="actUser" list="actNames" value="${esc(ACT.user)}" autocomplete="off" aria-label="Username"`
+    + ` placeholder="Username (names Aternity sent are offered as you type)"><datalist id="actNames"></datalist>`
+    + `<button id="actGo">Show</button></div><div id="actRes"></div>`;
+  const box = $("actUser");
+  box.addEventListener("input", e => {
+    ACT.user = e.target.value;
+    clearTimeout(ACT.ntimer);
+    ACT.ntimer = setTimeout(actNames, 200);
+  });
+  box.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); box.blur(); actRun(); } });
+  $("actGo").addEventListener("click", actRun);
+  $("actRes").addEventListener("click", ev => {
+    const b = ev.target.closest("button[data-a]");
+    if (!b) return;
+    if (b.dataset.a === "again") actRun();
+    else if (b.dataset.a === "csv") actCsv();
+    else if (b.dataset.a === "all") { ACT.shown = 1e9; actBody(); }
+  });
+  actBody();
+  if (!ACT.user) box.focus();
+}
+async function actNames() {  // the usernames seen in Aternity's activity (the Investigate tab's box)
+  const q = ACT.user.trim(), list = $("actNames");
+  if (!list) return;
+  if (q.length < 2) { list.innerHTML = ""; return; }
+  try {
+    const r = await fetch("api/names?kind=username&q=" + encodeURIComponent(q), { cache: "no-store" });
+    const x = await readJson(r);
+    if (r.ok && ACT.user.trim() === q) list.innerHTML = (x.names || []).map(n => `<option value="${esc(n)}">`).join("");
+  } catch (e) { /* no suggestions: any name can still be typed */ }
+}
+async function actRun() {
+  const u = ACT.user.trim();
+  if (!u) { ACT.err = "Type a username."; ACT.j = null; actBody(); return; }
+  const seq = ++ACT.seq;  // the latest read wins; one sent before a log-out is dropped
+  Object.assign(ACT, { busy: true, err: "", j: null, app: "", shown: ACT_SHOWN });
+  actBody();
+  try {
+    const r = await fetch("admin/api/actions?user=" + encodeURIComponent(u), { cache: "no-store" });
+    const x = await readJson(r);
+    if (seq !== ACT.seq) return;
+    ACT.busy = false;
+    if (r.status === 401) { showLogin(await me()); return; }
+    if (!r.ok) ACT.err = x.detail || `HTTP ${r.status}`;
+    else { ACT.j = x; ACT.user = x.user; if ($("actUser")) $("actUser").value = x.user; }
+  } catch (e) {
+    if (seq !== ACT.seq) return;
+    ACT.busy = false; ACT.err = "UX Correlator did not answer: " + e.message;
+  }
+  actBody();
+  adLook();
+}
+function actFor(user) {  // "All actions today ▸" on SecureView's Search: this tab, read for that user
+  ACT.user = user;
+  openTab("act");
+  if ($("actUser")) $("actUser").value = user;
+  scrollTo(0, 0);
+  actRun();
+}
+const actRt = v => v == null ? `<span class="muted">–</span>` : `${Number(v).toFixed(v < 10 ? 2 : 1)} s`;
+function actRows() {
+  return ACT.j.rows.filter(x => !ACT.app || x.app === ACT.app);
+}
+function actBody() {
+  const box = $("actRes"), j = ACT.j;
+  if (!box) return;
+  $("actAsof").textContent = j ? `${svDay(j.date, false)} · read at ${j.as_of_local} ${j.zone}` : "";
+  if (ACT.busy) { box.innerHTML = `<p class="muted">Reading Aternity for ${esc(ACT.user.trim())}…</p>`; return; }
+  if (ACT.err) { box.innerHTML = `<p class="bad">${esc(ACT.err)}</p>`; return; }
+  if (!j) { box.innerHTML = ""; return; }
+  let h = `<p><b>${esc(j.user)}</b><span class="ad" data-adu="${esc(j.user)}">${adUser(j.user)}</span></p>`
+    + j.notes.map(n => `<p class="note">${esc(n)}</p>`).join("");
+  if (!j.count) {
+    box.innerHTML = h + (j.partial ? `<p class="muted">None in what Aternity sent; its reply was cut short, so whether there were any is not known.</p>`
+      : `<p class="muted">Aternity measured no action for ${esc(j.user)} today (midnight to ${esc(j.as_of_local)}).</p>`)
+      + `<div class="tools"><button class="btn2" data-a="again">Read again</button></div>`;
+    return;
+  }
+  h += nums([[fmt(j.count), "actions today"], [`${esc(j.first)}–${esc(j.last)}`, "first to last"],
+    [fmt(j.top_count), `rated ${j.top}`, j.top_count ? "bad" : ""], [fmt(j.apps.length), j.apps.length === 1 ? "application" : "applications"]])
+    + `<p class="small muted">${j.desktops.length ? `Desktops: ${esc(j.desktops.join(", "))}` : "No desktop named"}`
+    + (j.sat_at.length ? ` · sat at: ${esc(j.sat_at.join(", "))}` : "") + `</p>`
+    + `<div class="tools"><select id="actApp" aria-label="Application"><option value="">Every application (${fmt(j.count)})</option>`
+    + j.apps.map(([a, n]) => `<option value="${esc(a)}"${a === ACT.app ? " selected" : ""}>${esc(a || "no application")} (${fmt(n)})</option>`).join("")
+    + `</select><button class="btn2" data-a="again">Read again</button><button class="btn2" data-a="csv">Download CSV</button></div>`;
+  const rows = actRows();
+  h += `<div class="tableWrap"><table class="act"><thead><tr><th>Time</th><th>Application</th><th>Activity</th><th class="n">Response time</th>`
+    + `<th>Rating</th><th>Desktop</th><th>Sat at</th></tr></thead><tbody>`
+    + rows.slice(0, ACT.shown).map(x => `<tr><td class="t">${esc(x.t)}</td><td>${esc(x.app)}</td><td>${esc(x.activity)}</td>`
+      + `<td class="n">${actRt(x.rt)}</td><td class="${RATE_CLASS[x.status] || ""}">${esc(x.status || "–")}</td>`
+      + `<td>${esc(x.desktop || "–")}${x.kind ? ` <span class="muted small">${esc(x.kind)}</span>` : ""}</td><td>${esc(x.sat_at || "–")}</td></tr>`).join("")
+    + `</tbody></table></div>`
+    + (rows.length > ACT.shown ? `<button class="btn2" data-a="all">Show all ${fmt(rows.length)} ▸</button>` : "")
+    + `<p class="fine">Rating: Aternity's own (SLA status). Response time: Aternity's, in seconds. Desktop: the PC or virtual desktop the action ran on; `
+    + `sat at: the device the person sat at, for a virtual desktop. Times in ${esc(j.zone)}.</p>`;
+  box.innerHTML = h;
+  $("actApp").addEventListener("change", e => { ACT.app = e.target.value; ACT.shown = ACT_SHOWN; actBody(); });
+}
+function actCsv() {
+  const j = ACT.j, lines = [["Date", "Time", "Username", "Application", "Activity", "Response time (s)", "Rating", "Desktop", "Kind", "Sat at"].map(csvCell).join(",")];
+  for (const x of actRows()) lines.push([j.date, x.t, j.user, x.app, x.activity, x.rt, x.status, x.desktop, x.kind, x.sat_at].map(csvCell).join(","));
+  download(`actions-${j.user.replace(/[^a-z0-9]+/gi, "_").slice(0, 40)}-${j.date}${ACT.app ? "-" + ACT.app.replace(/[^a-z0-9]+/gi, "_").slice(0, 30) : ""}.csv`, lines);
+}
+
+
 function draw(j) {
   const sel = $("day");
   sel.innerHTML = j.dates.map(d => `<option value="${esc(d)}"${d === j.date ? " selected" : ""}>${esc(dayName(d, j.dates[0]))}</option>`).join("");
@@ -980,7 +1248,9 @@ $("out").addEventListener("click", async () => {
   try { await fetch("admin/api/logout", { method: "POST" }); } catch (e) { /* the cookie goes with the session anyway */ }
   state = { day: "", data: null, timer: null };
   Object.assign(AD, { users: {}, pcs: {}, res: null });  // what AD said goes with the session
-  Object.assign(SV, { j: null, text: "", timer: null, dev: {}, open: null });
+  Object.assign(SV, { j: null, text: "", timer: null, dev: {}, open: null, sq: "", sres: null, serr: "", sbusy: false, sseq: SV.sseq + 1, sall: {} });
+  Object.assign(ACT, { user: "", j: null, err: "", busy: false, app: "", seq: ACT.seq + 1 });
+  $("act").innerHTML = "";  // drawn again, empty, at the next login
   showLogin(await me());
 });
 

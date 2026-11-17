@@ -427,3 +427,21 @@ def test_admin_ad_route_needs_the_login(stubs, monkeypatch):
 def datetime_now():
     from datetime import datetime
     return datetime(2026, 11, 16, 15, tzinfo=timezone.utc)
+
+
+def test_a_search_by_a_real_name_needs_every_word_and_keeps_nothing(stubs):
+    look, made, _ = lookup(domain="corp.example", username="svc", password=PASSWORD)
+    now = datetime_now()
+    got = look.named("alice  ARCHER", now)
+    assert got["state"] == "ok" and [p["sam"] for p in got["people"]] == ["alice"]
+    assert got["people"][0]["name"] == "Alice Archer" and got["people"][0]["department"] == "Finance"
+    assert look.named("alice zed", now)["people"] == []  # every word
+    assert not look.users  # nothing kept
+
+
+def test_a_search_by_name_with_ad_not_set_or_refused_reads_nothing(stubs):
+    look, made, _ = lookup(domain="corp.example")
+    assert look.named("alice", datetime_now())["state"] == "off" and not made
+    look, made, made_with = lookup(domain="corp.example", username="svc", password="wrong")
+    look.refused = "the name or password is wrong"
+    assert look.named("alice", datetime_now())["state"] == "refused" and not made

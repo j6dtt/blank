@@ -452,6 +452,16 @@ def similar(d: Directory, conn, base: str, word: str, computer: bool = False, li
     return names[:limit]
 
 
+def people_named(d: Directory, conn, base: str, text: str, limit: int) -> list[dict]:
+    """AD's users whose name has every word of text (display name, first name or surname): the admin
+    page's search by a real name ("Pat Lee"). At most `limit` (AD's size limit)."""
+    words = [_esc(w) for w in text.split()[:NAME_WORDS]]
+    if not words:
+        return []
+    terms = "".join(f"(|(displayName=*{w}*)(givenName=*{w}*)(sn=*{w}*))" for w in words)
+    return d.search(conn, base, f"(&(objectCategory=person)(objectClass=user){terms})", USER_ATTRS, size=limit)
+
+
 def disabled(entry: dict) -> bool:
     try:
         return bool(int(_one(entry.get("userAccountControl")) or 0) & DISABLED)
@@ -493,6 +503,8 @@ KEEP_H = 24  # a name looked up is kept this long, in memory only (a restart loo
 RETRY_MIN = 5  # AD did not answer: the next try waits this long, however often the page asks
 ASK_MAX = 200  # names of each kind in one request
 NAME_MAX = 256  # characters of one name
+NAME_WORDS = 4  # words of a real name searched for
+NAMED_MAX = 20  # people a search by a real name lists (SecureView's SEARCH_MAX)
 SYSTEM = "Active Directory"  # its name on the admin page's "Load" panel
 log = logging.getLogger("uxcorrelate")
 
@@ -565,6 +577,40 @@ class Lookup:
                           "users": {u: self.users[u][1] for u in users if u in self.users},
                           "pcs": {p: self.pcs[p][1] for p in pcs if p in self.pcs}}
 
+    def named(self, text: str, now: datetime) -> dict:
+        """{"state", "why", "people": [{"sam", **user_view}]}: AD's users whose name has every word of
+        text (SecureView's search by a real name, the user's "build it", 2026-11-17). One search, under
+        the same rules as look (not set, refused, RETRY_MIN after AD did not answer); nothing kept."""
+        cfg = self.cfg_of()
+        text = " ".join(str(text).split())[:NAME_MAX]
+        if not (cfg.username and cfg.password):
+            return {"state": "off", "why": "AD_USERNAME and AD_PASSWORD are not set in .env", "people": []}
+        with self.lock:
+            waiting = self.down and now - self.down[0] < timedelta(minutes=RETRY_MIN)
+            found: list[dict] = []
+            if not self.refused and not waiting and text:
+                try:
+                    d = self.directory_of(cfg)
+                    conn, base, host = self._login(d, cfg)
+                    try:
+                        found = self._timed("names", lambda: people_named(d, conn, base, text, NAMED_MAX))
+                    finally:
+                        conn.unbind()
+                    self.down = None
+                    log.info("Active Directory: a search by name on the admin page found %d people on %s",
+                             len(found), host)
+                except _Refused as exc:
+                    self.refused = str(exc)
+                    log.warning("Active Directory refused the login of AD_USERNAME (%s): not tried again until "
+                                "the app restarts (correct .env, then docker compose up -d)", exc)
+                except Exception as exc:  # AD not answering never stops the admin page
+                    self.down, self.dc = (now, " ".join(str(exc).split())[:200] or type(exc).__name__), None
+                    log.warning("Active Directory did not answer (%s): tried again in %d min", self.down[1], RETRY_MIN)
+            state, why = (("refused", self.refused) if self.refused else
+                          ("down", self.down[1]) if self.down else ("ok", ""))
+        people = [{"sam": str(_one(e.get("sAMAccountName")) or "")} | user_view(e) for e in found]
+        return {"state": state, "why": why, "people": [x for x in people if x["sam"]][:NAMED_MAX]}
+
     def _read(self, cfg, need_u: list[str], need_p: list[str], now: datetime) -> None:
         d = self.directory_of(cfg)
         conn, base, host = self._login(d, cfg)
@@ -624,7 +670,8 @@ class Lookup:
         try:
             got = run()
             ok = got[0] is not None if isinstance(got, tuple) else True
-            rows = sum(1 for v in got.values() if v) if isinstance(got, dict) else None
+            rows = sum(1 for v in got.values() if v) if isinstance(got, dict) else \
+                len(got) if isinstance(got, list) else None
             return got
         finally:
             if http.METER is not None:

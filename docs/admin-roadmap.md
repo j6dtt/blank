@@ -173,6 +173,35 @@ its own (under its row on a phone), the list above brought into view
 on a click; "no person recorded" can be picked in History's
 Department box too. Stage copy: `static/admin.html`, with the tabs.
 
+SEARCH and ACTIONS: built on dev 2026-11-17 (the user: "I need to be
+able to search usage history", SecureView's; "Also add search by
+user for today all actions with timestamp", on the admin page; then
+"build it", with the AD name search). SEARCH is SecureView's third
+sub-tab: part of a username, device or desktop (2+ characters, any
+case), Enter: every day kept (up to 400), each match's days latest
+first (a person: device, their own first and last, desktops; a
+device: people with their times; a desktop: the devices and people
+that opened it); a device's days from the daily data are one line
+under its days with times; 20 matches of each kind at most, 30
+days each then "Show all"; a click on a name searches it; a
+username on Today or History opens SEARCH; CSV. A real name: when
+nothing SecureView recorded has it, one AD search by name (every
+word in display name, first name or surname; read only; nothing
+kept), then those accounts' days. ACTIONS is a third admin tab
+(`/admin#actions`), any username Aternity knows (the names list's
+spelling, suggestions as you type): one read of the activity for
+that user from local midnight to now, the columns shown only, at
+most 5,000 rows (said when cut, and a reply cut short), on the Load
+panel as "admin page"; time to the second, application, activity,
+response time, Aternity's rating, desktop, the device sat at;
+latest first; an application box, CSV, Read again. "All actions
+today ▸" on a SEARCH person opens it. People are searchable from
+SecureView's own records only (the daily data has no people).
+Change from the plan: AD is asked only when nothing at all matched
+(a device search such as "thin" had asked AD too). Stage copy:
+`secureview.py`, `ad.py`, `actions.py` (new), `web.py`,
+`static/admin.html`, then restart.
+
 ## Later (ideas)
 
 - **Data freshness**: how late Aternity sends rows, per hour

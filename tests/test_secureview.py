@@ -233,8 +233,8 @@ def test_the_admin_page_needs_its_login(monkeypatch, tmp_path):
     assert 'fetch("admin/api/secureview"' in page and "confirm(" not in page and "alert(" not in page
     # two tabs, each with its link (the user, Nov 17 2026): Statistics opens first, SecureView by its link
     assert 'data-t="stats">Statistics<' in page and 'data-t="sv">SecureView<' in page
-    assert 'const TABS = { stats: "statistics", sv: "secureview" };' in page
-    assert 'location.hash === "#" + TABS.sv ? "sv" : "stats"' in page
+    assert 'const TABS = { stats: "statistics", sv: "secureview", act: "actions" };' in page
+    assert 'Object.keys(TABS).find(k => location.hash === "#" + TABS[k]) || "stats"' in page
     # by department across the page, a row sets the Department box (the user's pick B, Nov 17 2026)
     assert 'svDeptPick("svTDept", "tdept", tDept, "svTq");' in page and 'svDeptPick("svHDept", "hdept", hDept, "svHq");' in page
     assert "svHl(" not in page and 'SV.hdept === SV_NO_PERSON ? !x.person' in page
@@ -267,3 +267,79 @@ def test_the_daily_source_names_are_riverbeds_own():
     schema = parse_odata_metadata((Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
     assert {v for k, v in SECUREVIEW_DAILY.items() if k != "entity"} <= schema[SECUREVIEW_DAILY["entity"]]
     assert "CLIENT_DEVICE_NAME" in schema["BUSINESS_ACTIVITIES_RAW"]  # what the Today reader adds
+
+
+def test_search_finds_people_devices_and_desktops_over_every_day_kept(tmp_path):
+    from uxcorrelate import secureview
+    today = date(2026, 11, 17)
+    d1, d2 = today - timedelta(days=1), today - timedelta(days=3)
+    old = today - timedelta(days=60)
+    sv = SecureView(MATCH, ZONE, tmp_path)
+    t = datetime(old.year, old.month, old.day, tzinfo=timezone.utc)
+    sv.backfill(client_of(Daily({t: ["HV00148-SAMPLE48THIN"]})), NOW)  # a day only: no times, no people
+    hour_rows(sv, [row(at(d1, 8, 5), "HV00148-SAMPLE48THIN", "CORP\\Ann", "VD-01"),
+                   row(at(d1, 11, 40), "HV00148-SAMPLE48THIN", "CORP\\Ann", "VD-02"),
+                   row(at(d1, 13, 0), "HV00148-SAMPLE48THIN", "bob", "VD-01"),
+                   row(at(d2, 9, 0), "HV00149-SAMPLE49THIN", "CORP\\Ann", "VD-01"),
+                   row(at(today, 7, 30), "HV00150-SAMPLE50THIN", "carol", "VD-77")])
+    got = sv.search("ann", NOW)
+    assert [m["name"] for m in got["people"]] == ["CORP\\Ann"] and not got["devices"] and not got["desktops"]
+    ann = got["people"][0]
+    assert (ann["days"], ann["first"], ann["last"], ann["devices"]) == (2, d2.isoformat(), d1.isoformat(), 2)
+    assert ann["rows"] == [{"date": d1.isoformat(), "device": "HV00148-SAMPLE48THIN", "first_local": "08:05", "last_local": "11:40",
+                            "desktops": ["VD-01", "VD-02"], "others": 1},
+                           {"date": d2.isoformat(), "device": "HV00149-SAMPLE49THIN", "first_local": "09:00", "last_local": "09:00",
+                            "desktops": ["VD-01"], "others": 0}]
+    dev = sv.search("SAMPLE48", NOW)["devices"]
+    assert [m["name"] for m in dev] == ["HV00148-SAMPLE48THIN"] and dev[0]["people"] == 2 and dev[0]["days"] == 2
+    assert [r["date"] for r in dev[0]["rows"]] == [d1.isoformat(), old.isoformat()]  # latest first
+    assert [p["user"] for p in dev[0]["rows"][0]["people"]] == ["CORP\\Ann", "bob"]  # in the order they came
+    assert dev[0]["rows"][1] == {"date": old.isoformat(), "day_only": True, "first_local": None, "last_local": None,
+                                 "people": [], "desktops": []}
+    desk = sv.search("vd-0", NOW)["desktops"]
+    assert [m["name"] for m in desk] == ["VD-01", "VD-02"]  # VD-01 last seen yesterday too: then by name
+    assert desk[0]["devices"] == 2 and desk[0]["people"] == 2 and [r["device"] for r in desk[0]["rows"]] == \
+        ["HV00148-SAMPLE48THIN", "HV00149-SAMPLE49THIN"]
+    # an exact name first; then the latest heard
+    assert [m["name"] for m in sv.search("sample", NOW)["devices"]][0] == "HV00150-SAMPLE50THIN"
+    # AD found "Ann Archer" as the account ann: her days though no username has the words typed
+    named = sv.search("archer", NOW, ["ann"])
+    assert [m["name"] for m in named["people"]] == ["CORP\\Ann"]
+    assert got["people_since"] == d2.isoformat() and got["keep_days"] == secureview.KEEP_DAYS
+
+
+def test_search_lists_at_most_search_max_of_a_kind(tmp_path, monkeypatch):
+    from uxcorrelate import secureview
+    monkeypatch.setattr(secureview, "SEARCH_MAX", 2)
+    sv = SecureView(MATCH, ZONE, tmp_path)
+    hour_rows(sv, [row(at(date(2026, 11, 17), 8, i), f"HV0014{i}-SAMPLE4{i}THIN", f"user{i}") for i in range(5)])
+    got = sv.search("user", NOW)
+    assert len(got["people"]) == 2 and got["more"]["people"] == 3 and got["max"] == 2
+
+
+def test_the_search_route_reads_ad_only_when_no_username_has_it(monkeypatch, tmp_path):
+    monkeypatch.setenv(web.ADMIN_ENV, "s3cret-test")
+    monkeypatch.setenv("UXCORRELATE_DATA", str(tmp_path))
+    app = web.create_app()
+    https = TestClient(app, base_url="https://testserver")
+    assert https.get("/admin/api/secureview/search?q=ann").status_code == 401
+    assert https.post("/admin/api/login", json={"password": "s3cret-test"}).status_code == 200
+    assert https.get("/admin/api/secureview/search?q=a").status_code == 400
+    asked = []
+    app.state.ad.named = lambda text, now: asked.append(text) or {"state": "ok", "why": "", "people": [
+        {"sam": "ann", "found": True, "name": "Ann Archer", "department": "Finance", "title": None, "office": None, "disabled": False}]}
+    import re
+    sv = app.state.secureview
+    sv.match, sv.rx = MATCH, re.compile(MATCH, re.IGNORECASE)  # as secureview.match in config.yaml
+    hour_rows(sv, [row(datetime.now(timezone.utc) - timedelta(hours=2), "HV00148-SAMPLE48THIN", "CORP\\Ann")])
+    app.state.names.add([{"USERNAME": "CORP\\Ann", "DEVICE_NAME": "VD-01"}], {"username": "USERNAME", "device": "DEVICE_NAME"},
+                        datetime.now(timezone.utc) - timedelta(hours=1), datetime.now(timezone.utc))
+    got = https.get("/admin/api/secureview/search?q=ann").json()
+    assert [m["name"] for m in got["people"]] == ["CORP\\Ann"] and got["ad"] is None and not asked  # a username has it
+    got = https.get("/admin/api/secureview/search?q=Ann%20Archer").json()
+    assert asked == ["Ann Archer"] and [m["name"] for m in got["people"]] == ["CORP\\Ann"]
+    assert got["ad"]["people"][0]["aternity"] == "CORP\\Ann"  # whom Actions can read, as Aternity writes them
+    assert https.get("/admin/api/secureview/search?q=corp%5Cann").json()["known"] == "CORP\\Ann"
+    page = (web.STATIC / "admin.html").read_text(encoding="utf-8")
+    assert '["search", "Search"]' in page and 'fetch("admin/api/secureview/search?q="' in page
+    assert 'data-sq="${esc(user)}"' in page  # a username on Today or History opens Search with it

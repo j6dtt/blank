@@ -47,6 +47,8 @@ SILENT_DAYS = (30, 60, 90)  # History's lists: silent this many days or more
 LOOK_BACK = 28  # days looked through for the usual's days of the same kind
 DAILY_AT_H = 3  # local hour the daily read runs each day (a day Aternity has not written yet: the next day)
 STATE = "daily.json"
+SEARCH_MIN = 2  # characters a search needs
+SEARCH_MAX = 20  # people, devices and desktops listed each (more: "type more")
 
 
 def _new_day() -> dict:
@@ -437,6 +439,71 @@ class SecureView:
                                        for p in people], "desktops": sorted(x["desktops"])})
         return {"name": name, "first": ds[0].isoformat(), "last": ds[-1].isoformat(), "days": len(ds), "zone": self.zone_label,
                 "squares": out}
+
+    def search(self, q: str, now: datetime, sams=()) -> dict:
+        """Every day kept of the people, devices and desktops whose name has q (any case), latest first
+        (the user, 2026-11-17: "I need to be able to search usage history"). sams: AD account names
+        (lower case) found by a real name: those people too. A person's days are SecureView's own
+        records only (Aternity's daily data has no people). At most SEARCH_MAX of each kind."""
+        q, sams = (q or "").strip().lower(), {str(x).lower() for x in sams}
+        people: dict[str, dict] = {}
+        devices: dict[str, dict] = {}
+        desks: dict[str, dict] = {}
+
+        def who(x) -> list[dict]:
+            return [{"user": p[0], "first_local": self.hm(p[1]), "last_local": self.hm(p[2])}
+                    for p in sorted(x["people"].values(), key=lambda p: p[1])]
+        with self.lock:
+            since = min((d for d, day in self.days.items() if any(x["first"] is not None for x in day["devices"].values())),
+                        default=None)
+            for d in sorted(self.days, reverse=True):
+                day_s = d.isoformat()
+                for name, x in self.days[d]["devices"].items():
+                    dev = q in name.lower()
+                    hit_p = [(k, p) for k, p in x["people"].items() if q in k or (sams and _sam(k) in sams)]
+                    hit_k = [k for k in x["desktops"] if q in k.lower()]
+                    if not (dev or hit_p or hit_k):
+                        continue
+                    row = {"date": day_s, "day_only": x["first"] is None, "first_local": self.hm(x["first"]),
+                           "last_local": self.hm(x["last"])}
+                    if dev:
+                        m = devices.setdefault(name, {"name": name, "rows": [], "people": set()})
+                        m["rows"].append(row | {"people": who(x), "desktops": sorted(x["desktops"])})
+                        m["people"].update(x["people"])
+                    for key, p in hit_p:
+                        m = people.setdefault(key, {"name": p[0], "rows": [], "devices": set()})
+                        m["rows"].append({"date": day_s, "device": name, "first_local": self.hm(p[1]),
+                                          "last_local": self.hm(p[2]), "desktops": sorted(x["desktops"]),
+                                          "others": len(x["people"]) - 1})
+                        m["devices"].add(name)
+                    for desk in hit_k:
+                        m = desks.setdefault(desk, {"name": desk, "rows": [], "devices": set(), "people": set()})
+                        m["rows"].append(row | {"device": name, "people": who(x)})
+                        m["devices"].add(name)
+                        m["people"].update(x["people"])
+
+        def listed(found: dict, extra) -> tuple[list[dict], int]:
+            out = []
+            for m in found.values():
+                m["rows"].sort(key=lambda r: r.get("device") or "")
+                m["rows"].sort(key=lambda r: r["date"], reverse=True)  # latest day first, devices by name in a day
+                dates = sorted({r["date"] for r in m["rows"]})
+                out.append({"name": m["name"], "days": len(dates), "first": dates[0], "last": dates[-1],
+                            **extra(m), "rows": m["rows"]})
+            out.sort(key=lambda m: (m["name"].lower() != q, -date.fromisoformat(m["last"]).toordinal(), m["name"].lower()))
+            return out[:SEARCH_MAX], max(0, len(out) - SEARCH_MAX)
+        ps, pmore = listed(people, lambda m: {"devices": len(m["devices"])})
+        ds, dmore = listed(devices, lambda m: {"people": len(m["people"])})
+        ks, kmore = listed(desks, lambda m: {"devices": len(m["devices"]), "people": len(m["people"])})
+        return {"q": q, "people": ps, "devices": ds, "desktops": ks, "more": {"people": pmore, "devices": dmore,
+                "desktops": kmore}, "max": SEARCH_MAX, "people_since": since.isoformat() if since else None,
+                "date": self.day(now).isoformat(), "zone": self.zone_label, "keep_days": KEEP_DAYS}
+
+
+def _sam(user: str) -> str:
+    """The account part of a username as Aternity writes it (DOMAIN\\name, name@domain, name), lower case:
+    what AD's sAMAccountName is compared with."""
+    return str(user).split("\\")[-1].split("@")[0].lower()
 
 
 def keep_backfilling(sv: SecureView, today, make_client, sleep, clock=lambda: datetime.now(timezone.utc)) -> None:

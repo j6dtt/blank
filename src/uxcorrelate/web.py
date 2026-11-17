@@ -907,4 +907,59 @@ def create_app(config_path: str | None = None) -> FastAPI:
             raise HTTPException(404, f"SecureView has no record of {name[:256]}.")
         return got
 
+    def aternity_spelling(match) -> str | None:
+        """The first username seen in Aternity's activity that `match` accepts (the names list)."""
+        with names.lock:
+            return next((n for n in sorted(names.seen["username"], key=str.lower) if match(n)), None)
+
+    @app.get("/admin/api/secureview/search")
+    def admin_secureview_search(request: Request, q: str = ""):
+        """SecureView's SEARCH: a username, device or desktop over every day kept (secureview.search);
+        when nothing it recorded has it, the people AD knows by that name (ad.Lookup.named, read only)."""
+        from .secureview import SEARCH_MIN, _sam
+        if not admin_in(request):
+            raise HTTPException(401, "Log in first.")
+        q = " ".join(q.split())[:100]
+        if len(q) < SEARCH_MIN:
+            raise HTTPException(400, f"Type at least {SEARCH_MIN} characters.")
+        now = datetime.now(timezone.utc)
+        got = sv.search(q, now)
+        named = None
+        if not (got["people"] or got["devices"] or got["desktops"]) and len(q) >= 3 and any(c.isalpha() for c in q):
+            named = ad_lookup.named(q, now)
+            if named["people"]:
+                got = sv.search(q, now, [p["sam"] for p in named["people"]])
+            for p in named["people"]:  # whom the ACTIONS tab can read: as Aternity writes them
+                p["aternity"] = aternity_spelling(lambda n, s=p["sam"].lower(): _sam(n) == s)
+        got["ad"] = named
+        got["known"] = aternity_spelling(lambda n: n.lower() == q.lower())  # q is a username Aternity has
+        from .names import KEEP_DAYS as names_days
+        got["names_days"] = names_days
+        return got
+
+    actions_lock = threading.Lock()  # one ACTIONS read of Aternity at a time
+
+    @app.get("/admin/api/actions")
+    def admin_actions(request: Request, user: str = ""):
+        """ACTIONS: every action Aternity measured today for one user, any user, read now (actions.py)."""
+        from . import actions
+        if not admin_in(request):
+            raise HTTPException(401, "Log in first.")
+        user = " ".join(user.split())[:256]
+        if not user:
+            raise HTTPException(400, "Type a username.")
+        client = aternity_client()
+        if client is None:
+            raise HTTPException(503, "Aternity is not set (aternity.base_url in config.yaml).")
+        name, note = actions.spelled(names, user)
+        started = time.monotonic()
+        try:
+            with actions_lock:
+                got = actions.read(client, name, load_settings(config_path).timezone, datetime.now(timezone.utc), note)
+        except ApiError as exc:
+            raise HTTPException(502, f"Aternity could not be read ({exc.short()}). Try again.")
+        log.info("Admin: all actions today read for one user (%d actions%s) in %.1f s", got["count"],
+                 ", cut short" if got["cut"] or got["partial"] else "", time.monotonic() - started)
+        return got
+
     return app

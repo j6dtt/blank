@@ -717,7 +717,34 @@ demo mode: nothing in `src/` knows about it.
   `SV_NO_PERSON`). Page:
   `sv*` functions in admin.html, `SV` state kept across its own
   minute's redraw (not while a box of it has focus) and while the
-  other tab is open.
+  other tab is open. SEARCH (the third sub-tab; the user's "build
+  it", 2026-11-17: "I need to be able to search usage history"):
+  `/admin/api/secureview/search?q=` (`SEARCH_MIN` 2 characters),
+  `search`: every day kept, people (their own times per device-day),
+  devices, desktops whose name has q, latest first, `SEARCH_MAX` 20
+  of each (`more`); the page shows `SV_DAYS_SHOWN` 30 days then "Show
+  all", a device's daily-data days in one line. When nothing it
+  recorded has q (3+ characters, a letter), web.py asks AD once by a
+  real name (`ad.Lookup.named`: every word in displayName / givenName
+  / sn, `NAMED_MAX`, the same off / refused / `RETRY_MIN` rules as
+  `look`, nothing kept) and searches those accounts (`_sam`: the
+  account part of Aternity's username); each with its Aternity
+  spelling from the names list (`aternity`) for "All actions today
+  ▸". A username anywhere in SecureView is a link (`svWho`, `data-sq`)
+  to SEARCH with it; CSV (`svSCsv`).
+- `actions.py`: the admin page's ACTIONS tab (`/admin/api/actions?user=`,
+  `#actions`; the user, 2026-11-17: "search by user for today all
+  actions with timestamp", "in admin page", any user, not only
+  SecureView's). `read`: one query of the activity for that username
+  from local midnight to now, `COLUMNS` only, `ROWS_MAX` 5,000 (+1 to
+  know it was cut: `cut`), a reply cut short `partial` (the warnings'
+  count), both said in `notes`; latest first, local times to the
+  second. `spelled`: Aternity's spelling from the names list, else as
+  typed with a note. One read at a time (`actions_lock`), on the Load
+  panel as "admin page" (`/admin/api`). Nothing kept. Page: `act*`
+  functions and `ACT` in admin.html; read only on Show / Read again /
+  "All actions today ▸" (`actFor`), no minute; suggestions from
+  `/api/names`; an application box, CSV, "Show all" after 200.
 - `ad.py` + `verify --ad` (`verify.verify_ad`, the user's "build it",
   2026-11-15; docs/admin-roadmap.md): Active Directory, read only.
   verify and the app's look-up share `find_dcs`, `ports_of`, `best`,
@@ -833,9 +860,10 @@ demo mode: nothing in `src/` knows about it.
   connection and login, not the model's answers (`verify --ai`).
 - `usage.py` + `static/admin.html`: the admin page (`/admin`, no link
   from the main page; docs/admin-roadmap.md, the user's request and
-  choices, 2026-11-15). Two folder tabs as the main page's (the user,
-  2026-11-17): STATISTICS (the usage panels, first) and SECUREVIEW;
-  `openTab`, the link `#statistics` / `#secureview` (`TABS`,
+  choices, 2026-11-15). Folder tabs as the main page's (the user,
+  2026-11-17): STATISTICS (the usage panels, first), SECUREVIEW and
+  ACTIONS; `openTab`, the link `#statistics` / `#secureview` /
+  `#actions` (`TABS`,
   `tabOfLink`, hashchange); only the open tab is read and keeps its
   minute (`load`, `svLoad` return on the other tab; `TAB.seq` drops a
   read overtaken by a newer one or sent before a log-out); the Day box
