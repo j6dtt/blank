@@ -13,16 +13,33 @@
     --head: #1f3b2e; --head-text: #f4ead2; --head-muted: #c8bb98; --brass: #b08d45;
     --serif: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
     --accent2: #93b8a0; --band: #e6d9bb; --faint: #f6f0e2;  /* SecureView: weekend bars, the usual's band, open rows */
+    --grey: #c9bfa8;  /* SecureView: the groups that are not a department */
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #15140f; --panel: #1e1c16; --text: #ece3cf; --muted: #a99f88; --border: #363228;
             --accent: #4e8a69; --head: #10231a; --head-muted: #b3a682; --brass: #c9a55a; color-scheme: dark;
-            --accent2: #35604a; --band: #3a3529; --faint: #25221b; }
+            --accent2: #35604a; --band: #3a3529; --faint: #25221b; --grey: #4a4537; }
   }
   * { box-sizing: border-box; }
+  html { scrollbar-gutter: stable; }  /* a short tab and a long one are as wide: the bar wraps the same on both */
   body { margin: 0; font: 14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; background: var(--bg); color: var(--text); }
-  header { padding: 12px max(16px, env(safe-area-inset-left, 0px)) 12px; border-bottom: 3px solid var(--brass);
-           background: var(--head); color: var(--head-text); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  header { padding: 12px max(16px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px));
+           border-bottom: 3px solid var(--brass); background: var(--head); color: var(--head-text); }
+  .top { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding-bottom: 12px; }
+  /* the two tabs, as the main page's: folder tabs on the brass rule; the open one is parchment and joins the page */
+  nav { display: flex; gap: 4px; align-items: flex-end; margin-bottom: -3px; }
+  nav[hidden] { display: none; }
+  #statsBar.off { visibility: hidden; }  /* kept in its place: the bar is as tall on both tabs, nothing jumps */
+  nav button { white-space: nowrap; background: rgba(244, 234, 210, .07); color: var(--head-muted);
+               border: 1px solid rgba(176, 141, 69, .5); border-bottom: 0; border-radius: 7px 7px 0 0;
+               padding: 9px 16px; margin-bottom: 3px; font: 600 12px/18px var(--serif); letter-spacing: .12em; text-transform: uppercase; }
+  nav button:hover, nav button:focus-visible { color: var(--head-text); background: rgba(244, 234, 210, .14); }
+  nav button.on { background: var(--bg); color: var(--accent); border: 1px solid var(--brass); border-top: 3px solid var(--brass);
+                  border-bottom: 0; padding: 9px 18px 12px; margin-bottom: 0; }
+  #statsBar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  @media (max-width: 640px) {  /* a phone: the main page's smaller tabs */
+    nav button { padding-left: 12px; padding-right: 12px; font-size: 11px; letter-spacing: .08em; }
+  }
   .brand { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .brand small { color: var(--head-muted); font: 600 16px/1.1 var(--serif); font-variant: small-caps; letter-spacing: .03em; }
   .brand i { width: 2px; align-self: stretch; min-height: 24px; background: var(--brass); }
@@ -102,8 +119,6 @@
   .chip b { font: 700 18px var(--serif); display: block; font-variant-numeric: tabular-nums; }
   .chip span { font-size: 12px; color: var(--muted); }
   .chip.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--panel); }
-  .hl .trk { position: relative; height: 10px; background: var(--faint); border-radius: 0 3px 3px 0; }
-  .hl .trk i { position: absolute; left: 0; top: 0; bottom: 0; min-width: 0; }
   svg.ch { width: 100%; height: auto; display: block; }
   svg.ch text { fill: var(--muted); font-size: 10px; }
   svg.ch .v { fill: var(--accent); } svg.ch .v.we { fill: var(--accent2); } svg.ch .v.now { fill: var(--brass); }
@@ -113,6 +128,34 @@
   .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 2px; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 4px; }
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); margin-left: 4px; vertical-align: 1px; }
+  .row21 { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 8px 24px; }
+  .row21 > * { min-width: 0; }
+  @media (max-width: 760px) { .row21 { grid-template-columns: minmax(0, 1fr); } }
+  /* By department: rows across the page, in columns read down each one, most first (the user's pick B, 2026-11-17);
+     a row is a button: it shows that department's devices in the list */
+  .dcols { columns: 3 250px; column-gap: 28px; }
+  .dr { break-inside: avoid; display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(48px, 1fr) 5.6em; gap: 10px; align-items: center;
+        width: 100%; padding: 3px 4px; border: 0; border-radius: 4px; background: transparent; color: var(--text); font: inherit; font-size: 13px;
+        font-weight: 400; text-align: left; }
+  .dcols.hist { columns: 2 380px; }  /* History: "114 of 134" then "· 12 silent 90+" in a column of its own, rows of one height */
+  .dcols.hist .dr { grid-template-columns: minmax(0, 1.4fr) minmax(40px, 1fr) 6.8em 7.8em; }
+  .dr .nt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  @media (max-width: 560px) {  /* a phone: History's "· 12 silent 90+" under its row, so the names keep their room */
+    .dcols.hist .dr { grid-template-columns: minmax(0, 1.4fr) minmax(40px, 1fr) 6.8em; row-gap: 0; }
+    .dr .nt { grid-column: 1 / -1; text-align: right; }
+    .dr .nt:empty { display: none; }
+  }
+  .dr > * { min-width: 0; }
+  .dr:hover { background: var(--faint); }
+  .dr:hover .nm { color: var(--accent); text-decoration: underline; }
+  .dr.on { background: var(--faint); box-shadow: inset 3px 0 0 var(--brass); }
+  .dr.on .nm { color: var(--accent); font-weight: 700; }
+  .dr .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dr .trk { position: relative; height: 10px; background: var(--faint); border-radius: 0 3px 3px 0; }
+  .dr:hover .trk, .dr.on .trk { background: var(--bg); }
+  .dr .trk i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); border-radius: 0 3px 3px 0; }
+  .dr.not .trk i { background: var(--grey); }
+  .dr .n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   table.sv { min-width: 760px; }
   tr.open > td { background: var(--faint); }
   tr.det > td { background: var(--faint); padding: 6px 12px 14px 24px; }
@@ -125,7 +168,7 @@
 </style>
 </head>
 <body>
-<header>
+<header><div class="top">
   <svg width="30" height="34" viewBox="0 0 30 34" aria-hidden="true">
     <path d="M15 1 L28 5 V16 C28 25 22 30 15 33 C8 30 2 25 2 16 V5 Z" fill="none" stroke="var(--brass)" stroke-width="2"/>
     <text x="15" y="21" text-anchor="middle" font-family="Georgia, serif" font-size="11" font-weight="700"
@@ -133,10 +176,11 @@
   <div class="brand"><small>J6 Preservation Society</small><!--title--></div>
   <span class="tag">Admin</span>
   <div id="bar" hidden>
-    <label class="small">Day <select id="day" aria-label="Day"></select></label>
-    <span class="small" id="asOf" style="color: var(--head-muted)"></span>
+    <span id="statsBar"><label class="small">Day <select id="day" aria-label="Day"></select></label>
+    <span class="small" id="asOf" style="color: var(--head-muted)"></span></span>
     <button id="out">Log out</button>
-  </div>
+  </div></div>
+  <nav id="tabs" role="tablist" hidden><button id="tabStats" role="tab" data-t="stats">Statistics</button><button id="tabSv" role="tab" data-t="sv">SecureView</button></nav>
 </header>
 <main id="main">
   <section class="panel" id="login" hidden>
@@ -181,7 +225,11 @@ async function me() {
 }
 
 function showLogin(m) {
-  $("bar").hidden = true; $("page").hidden = true; $("login").hidden = false;
+  TAB.now = "";  // no tab loads or keeps its minute until the next login; reads under way are dropped
+  TAB.seq.stats++; TAB.seq.sv++;
+  clearTimeout(state.timer); clearTimeout(SV.timer); SV.timer = null;
+  $("bar").hidden = true; $("tabs").hidden = true; $("page").hidden = true; $("sv").hidden = true; $("login").hidden = false;
+  $("err").textContent = "";
   const box = $("loginBody");
   if (!m.set) {
     box.innerHTML = `<p>No admin password is set. Put <code>ADMIN_PASSWORD=…</code> in the app's <code>.env</code>, then <code>docker compose up -d</code> (a restart does not read <code>.env</code> again; on Kubernetes, load the Secret again and restart the pod).</p>`;
@@ -206,33 +254,74 @@ function showLogin(m) {
         body: JSON.stringify({ password: $("pw").value }) });
       const j = await readJson(r);
       if (!r.ok) { $("loginErr").textContent = j.detail || `HTTP ${r.status}`; $("pw").select(); return; }
-      $("login").hidden = true;
-      load();
+      openTab(tabOfLink());
     } catch (e) {
       $("loginErr").textContent = "UX Correlator did not answer: " + e.message;
     } finally { b.disabled = false; }
   });
 }
 
+// The Statistics tab: read while it is open, each minute while it shows today
 async function load(day = state.day) {
+  if (TAB.now !== "stats") return;  // a minute that ends on the other tab, or after logging out
   clearTimeout(state.timer);
+  const seq = ++TAB.seq.stats;  // the latest read wins (a day picked while one runs); one sent before a log-out is dropped
+  const say = t => { if (TAB.now === "stats") $("err").textContent = t; };
   let r, j;
   try {
     r = await fetch("admin/api/usage" + (day ? "?day=" + encodeURIComponent(day) : ""), { cache: "no-store" });
     j = await readJson(r);
   } catch (e) {
-    $("err").textContent = "UX Correlator did not answer: " + e.message + ". Trying again in a minute.";
+    if (seq !== TAB.seq.stats) return;
+    say("UX Correlator did not answer: " + e.message + ". Trying again in a minute.");
     state.timer = setTimeout(load, 60000);
     return;
   }
+  if (seq !== TAB.seq.stats) return;
   if (r.status === 401) { showLogin(await me()); return; }
-  if (!r.ok) { $("err").textContent = j.detail || `HTTP ${r.status}`; return; }
-  $("err").textContent = "";
+  if (!r.ok) { say(j.detail || `HTTP ${r.status}`); return; }
+  say("");
   state.day = j.date; state.data = j;
   draw(j);
-  if (!SV.timer && !SV.busy) svLoad();  // SecureView keeps its own minute
   if (j.today) state.timer = setTimeout(() => { if (!document.hidden) load(); else state.timer = setTimeout(load, 60000); }, 60000);
 }
+
+// ---------- the two tabs: Statistics (the panels above) and SecureView; the open one is in the link ----------
+// Only the open tab is read and kept up to date; the other keeps what it showed (and its sub-tab, box and open
+// row) and is read again the moment it is opened.
+const TABS = { stats: "statistics", sv: "secureview" };
+const TAB = { now: "", scroll: {}, seq: { stats: 0, sv: 0 } };
+const tabOfLink = () => location.hash === "#" + TABS.sv ? "sv" : "stats";
+function openTab(t) {
+  const was = TAB.now;
+  if (was && was !== t) TAB.scroll[was] = scrollY;
+  TAB.now = t;
+  clearTimeout(state.timer); clearTimeout(SV.timer); SV.timer = null;
+  for (const b of $("tabs").querySelectorAll("button")) {
+    b.classList.toggle("on", b.dataset.t === t);
+    b.setAttribute("aria-selected", String(b.dataset.t === t));
+  }
+  $("login").hidden = true; $("tabs").hidden = false; $("bar").hidden = false;
+  $("statsBar").classList.toggle("off", t !== "stats");  // the Day box and "as of" are the Statistics panels'
+  $("page").hidden = t !== "stats"; $("sv").hidden = t !== "sv";
+  $("err").textContent = "";
+  if (location.hash !== "#" + TABS[t]) history.replaceState(null, "", "#" + TABS[t]);
+  if (t === "stats") {
+    if (!state.data) $("page").innerHTML = `<section class="panel"><p class="muted">Loading…</p></section>`;
+    load();
+  } else {
+    if (!SV.j) $("sv").innerHTML = `<h2>SecureView</h2><p class="muted">Loading…</p>`;
+    svLoad();
+  }
+  if (was !== t) scrollTo(0, TAB.scroll[t] || 0);
+}
+$("tabs").addEventListener("click", ev => {
+  const b = ev.target.closest("button[data-t]");
+  if (!b) return;
+  if (b.dataset.t === TAB.now) { scrollTo(0, 0); return; }  // the open tab: back to its top
+  openTab(b.dataset.t);
+});
+addEventListener("hashchange", () => { if (TAB.now && tabOfLink() !== TAB.now) openTab(tabOfLink()); });
 
 function dayName(d, today) {
   const t = new Date(d + "T12:00:00Z");
@@ -490,7 +579,7 @@ function daysPanel(j) {
 // ---------- SecureView (secureview.py): the devices people sat at that match secureview.match ----------
 // Its own minute (the Today reader reads Aternity every refresh_minutes); drawn again only when the reply
 // changed and no box of it is being typed in. State is kept here, so a redraw keeps the tab, search and list.
-const SV = { j: null, text: "", timer: null, busy: false, view: "today", tq: "", tsort: "first", tdept: "", tshown: 25,
+const SV = { j: null, text: "", timer: null, view: "today", tq: "", tsort: "first", tdept: "", tshown: 25,
   chip: "30", hq: "", hdept: "", hshown: 25, open: null, dev: {} };
 const MON3 = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function svDay(d, word = true) {  // "Mon Sep 28", today "Today"
@@ -513,21 +602,33 @@ const svWho = (user, from, to) => `<b>${esc(user)}</b><span class="ad" data-adu=
   + (from ? ` <span class="muted small">${esc(from)}–${esc(to)}</span>` : "");
 
 async function svLoad() {
+  if (TAB.now !== "sv") return;  // a minute that ends on the other tab, or after logging out
   clearTimeout(SV.timer); SV.timer = null;
-  SV.busy = true;
+  const seq = ++TAB.seq.sv;  // the latest read wins; one sent before a log-out is dropped
+  const say = t => { if (TAB.now === "sv") $("err").textContent = t; };
   let r, text;
   try {
     r = await fetch("admin/api/secureview", { cache: "no-store" });
     text = await r.text();
-  } catch (e) { SV.busy = false; SV.timer = setTimeout(svLoad, 60000); return; }  // the page's own line says it
-  SV.busy = false;
-  if (r.status === 401) return;  // the page shows the login
+  } catch (e) {
+    if (seq !== TAB.seq.sv) return;
+    say("UX Correlator did not answer: " + e.message + ". Trying again in a minute.");
+    SV.timer = setTimeout(svLoad, 60000);
+    return;
+  }
+  if (seq !== TAB.seq.sv) return;
+  if (r.status === 401) { showLogin(await me()); return; }
   SV.timer = setTimeout(() => { if (!document.hidden) svLoad(); else SV.timer = setTimeout(svLoad, 60000); }, 60000);
-  let j;
-  try { j = JSON.parse(text); } catch (e) { return; }
-  if (!r.ok || text === SV.text) return;
+  let j = null;
+  try { j = JSON.parse(text); } catch (e) { /* not JSON: a proxy's page */ }
+  if (!r.ok || !j) {
+    say((j && j.detail) || `UX Correlator answered HTTP ${r.status}${r.status >= 502 ? ": the app may be restarting" : ""}.`);
+    return;
+  }
+  say("");
+  if (text === SV.text) return;
   const typing = document.activeElement && $("sv").contains(document.activeElement) && /INPUT|SELECT/.test(document.activeElement.tagName);
-  if (typing && SV.j) { SV.timer = setTimeout(svLoad, 15000); return; }  // drawn once the box is left
+  if (typing && SV.j) { clearTimeout(SV.timer); SV.timer = setTimeout(svLoad, 15000); return; }  // drawn once the box is left
   SV.text = text; SV.j = j;
   svDraw();
   adLook();
@@ -552,8 +653,27 @@ function svChart(vals, opts) {
   });
   return `<svg class="ch" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts.label)}">${s}</svg>`;
 }
-const svHl = rows => rows.length ? `<div class="hl">${rows.map(([a, n, of, note]) => `<span>${esc(a)}</span><span class="trk"><i style="width:${(100 * n / Math.max(1, of)).toFixed(1)}%;background:var(--accent)"></i></span>`
-  + `<span class="n">${fmt(n)} <span class="muted">of ${fmt(of)}</span>${note ? ` <span class="muted small">${esc(note)}</span>` : ""}</span>`).join("")}</div>` : `<p class="muted small">None.</p>`;
+// By department, across the page in columns read down each one, most first (the user's pick B, 2026-11-17: beside the
+// hour chart, 15-20 departments left the space under the chart empty). rows: [department, n, of, note, what n is];
+// sel: the Department box's; a click on a row sets the box (again: every department), the groups that are not a
+// department in grey
+const svDeptRows = (rows, sel, hist) => rows.length ? `<div class="dcols${hist ? " hist" : ""}">` + rows.map(([a, n, of, note, what]) =>
+  `<button type="button" class="dr${a === sel ? " on" : ""}${SV_NOT_DEPT.includes(a) ? " not" : ""}" data-dept="${esc(a)}" aria-pressed="${a === sel}" `
+  + `title="${esc(`${a}: ${fmt(n)} of ${fmt(of)} ${what}${note ? `, ${note}` : ""}. ${a === sel ? "Click again for every department." : "Click to list its devices."}`)}">`
+  + `<span class="nm">${esc(a)}</span><span class="trk"><i style="width:${(100 * n / Math.max(1, of)).toFixed(1)}%"></i></span>`
+  + `<span class="n">${fmt(n)} <span class="muted">of ${fmt(of)}</span></span>${hist ? `<span class="nt muted small">${note ? `· ${esc(note)}` : ""}</span>` : ""}</button>`).join("")
+  + `</div>` : `<p class="muted small">None.</p>`;
+function svDeptPick(box, key, body, list) {  // a department row clicked: the Department box and the list follow
+  $(box).addEventListener("click", ev => {
+    const b = ev.target.closest("[data-dept]");
+    if (!b) return;
+    SV[key] = SV[key] === b.dataset.dept ? "" : b.dataset.dept;
+    body();
+    const el = $(list), r = el && el.getBoundingClientRect();  // the list, brought into view when it is off screen
+    if (r && (r.top < 0 || r.bottom > innerHeight))
+      el.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  });
+}
 
 function svAdState() {  // why there are no departments yet, or ""
   const x = AD.res;
@@ -579,15 +699,14 @@ function svDeptOrder(a, b) {
   const n = v => Array.isArray(v) ? v[1] : v;
   return n(b[1]) - n(a[1]) || a[0].localeCompare(b[0]);
 }
-function svDeptOptions(sel, users) {
-  const ds = [...new Set(users.map(svDept).filter(Boolean))].sort((a, b) => SV_NOT_DEPT.indexOf(a) - SV_NOT_DEPT.indexOf(b) || a.localeCompare(b));
+function svDeptOptions(sel, users, extra = []) {
+  const ds = [...new Set([...users.map(svDept).filter(Boolean), ...extra])].sort((a, b) => SV_NOT_DEPT.indexOf(a) - SV_NOT_DEPT.indexOf(b) || a.localeCompare(b));
   return `<option value="">Every department</option>` + ds.map(d => `<option${d === sel ? " selected" : ""}>${esc(d)}</option>`).join("")
     + (sel && !ds.includes(sel) ? `<option selected>${esc(sel)}</option>` : "");
 }
 
 function svDraw() {
   const j = SV.j, box = $("sv");
-  box.hidden = false;
   if (!j.on) {
     box.innerHTML = `<h2>SecureView</h2>` + (j.error ? `<p class="note bad">${esc(j.error)}</p>`
       : `<p class="muted">SecureView is off. It tracks the devices people sit at (Aternity's CLIENT_DEVICE_NAME) whose name matches a pattern: `
@@ -614,16 +733,16 @@ function svToday(j) {
   const hours = t.hours.map(h => ({ v: h.n, lo: h.low, hi: h.high, cls: h.hour === cur ? "now" : "", lab: h.hour % 3 === 0 ? String(h.hour).padStart(2, "0") : "",
     title: `${String(h.hour).padStart(2, "0")}:00–${String(h.hour).padStart(2, "0")}:59: ` + (h.n != null ? `${plural(h.n, "device")} heard${h.hour === cur ? " (so far)" : ""}` : "not yet")
       + (h.low != null ? `; usual ${h.low} to ${h.high}` : "") }));
-  const longest = t.devices.slice().sort((a, b) => (b.last - b.first) - (a.last - a.first)).slice(0, 3);
+  const longest = t.devices.slice().sort((a, b) => (b.last - b.first) - (a.last - a.first)).slice(0, 5);
   return nums([[fmt(t.devices.length), `in use today (${usual})`], [fmt(t.recent), `heard in the last ${j.recent_min} min`], [fmt(t.people), "people"],
       [esc(t.first_local || "–"), "first heard today"], ...(t.new != null ? [[fmt(t.new), "heard for the first time"]] : [])])
-    + `<div class="two"><div><h3>In use by hour <span class="muted small">(devices heard in that hour)</span></h3>`
+    + `<div class="row21"><div><h3>In use by hour <span class="muted small">(devices heard in that hour)</span></h3>`
     + svChart(hours, { label: "Devices in use by hour today" })
     + `<div class="legend"><span><i style="background:var(--accent)"></i>today</span><span><i style="background:var(--brass)"></i>this hour so far</span>`
     + `<span><i style="background:var(--band)"></i>usual: lowest to highest, ${u.low != null ? `${u.days} ${kind} days` : "not known yet"}</span></div></div>`
-    + `<div><h3>By department <span class="muted small">(the people's, from AD: devices in use today)</span></h3><div id="svTDept">${svTDept(j)}</div>`
-    + `<h3>Longest in use today <span class="muted small">(first to last heard)</span></h3><div class="small">`
+    + `<div><h3>Longest in use today <span class="muted small">(first to last heard)</span></h3><div class="small">`
     + (longest.length ? longest.map(x => `${esc(x.name)} · ${esc(x.first_local)}–${esc(x.last_local)}`).join("<br>") : `<span class="muted">None yet.</span>`) + `</div></div></div>`
+    + `<h3>By department <span class="muted small">(the people's, from AD: devices in use today; click one to list its devices)</span></h3><div id="svTDept">${svTDept(j)}</div>`
     + `<h3>In use today <span class="muted small">(${fmt(t.devices.length)})</span></h3>`
     + `<div class="tools"><input id="svTq" placeholder="Search a device, person, department or desktop" aria-label="Search" value="${esc(SV.tq)}">`
     + `<select id="svTdept" aria-label="Department">${svDeptOptions(SV.tdept, t.devices.flatMap(x => x.people.map(p => p.user)))}</select>`
@@ -639,7 +758,8 @@ function svToday(j) {
 function svTDept(j) {
   const d = svByDept(j.today.devices.map(x => [x.name, x.people.map(p => p.user)]));
   const why = svAdState();
-  return (d.rows.length ? svHl(d.rows.map(([a, n]) => [a, n, j.today.devices.length])) : why ? "" : `<p class="muted small">${j.today.devices.length ? "" : "None."}</p>`)
+  return (d.rows.length ? svDeptRows(d.rows.map(([a, n]) => [a, n, j.today.devices.length, "", "devices in use today"]), SV.tdept)
+    : why ? "" : `<p class="muted small">${j.today.devices.length ? "" : "None."}</p>`)
     + (d.wait && !why ? `<p class="muted small">${plural(d.wait, "device")} waiting for Active Directory.</p>` : "")
     + (why ? `<p class="muted small">${esc(why)}</p>` : "")
     + (d.rows.length ? `<p class="muted small">A device two people of different departments used counts under both.</p>` : "");
@@ -663,7 +783,13 @@ function svTBody() {
 }
 function svTodayBind() {
   $("svTq").addEventListener("input", e => { SV.tq = e.target.value; SV.tshown = 25; svTBody(); });
-  $("svTdept").addEventListener("change", e => { SV.tdept = e.target.value; SV.tshown = 25; svTBody(); });
+  const tDept = () => {  // the Department box, the rows' mark and the list, after either changed
+    SV.tshown = 25;
+    $("svTdept").innerHTML = svDeptOptions(SV.tdept, SV.j.today.devices.flatMap(x => x.people.map(p => p.user)));
+    $("svTDept").innerHTML = svTDept(SV.j); svTBody();
+  };
+  $("svTdept").addEventListener("change", e => { SV.tdept = e.target.value; tDept(); });
+  svDeptPick("svTDept", "tdept", tDept, "svTq");
   $("svTsort").addEventListener("change", e => { SV.tsort = e.target.value; svTBody(); });
   $("svTmore").addEventListener("click", () => { SV.tshown = 1e9; svTBody(); });
   svTBody();
@@ -698,7 +824,7 @@ function svHistory(j) {
     + `<div class="chips">${lists.map(([k, t, l]) => `<button class="chip${k === SV.chip ? " on" : ""}" data-k="${k}"><b>${fmt(l.length)}</b><span>${t}</span></button>`).join("")}</div>`
     + `<p class="muted small" id="svChipNote"></p>`
     + `<div class="tools"><input id="svHq" placeholder="Search a device, last person or department" aria-label="Search" value="${esc(SV.hq)}">`
-    + `<select id="svHdept" aria-label="Department">${svDeptOptions(SV.hdept, h.devices.filter(x => x.person).map(x => x.person))}</select>`
+    + `<select id="svHdept" aria-label="Department">${svHDeptOptions(j)}</select>`
     + `<button class="btn2" type="button" id="svCsv">Download the list (CSV)</button></div>`
     + `<div class="tableWrap"><table class="sv"><thead><tr><th>Device</th><th>Last heard</th><th>First heard</th><th>Last person</th><th class="n">Days heard</th></tr></thead><tbody id="svHbody"></tbody></table></div>`
     + `<button class="link" id="svHmore" style="margin-top:6px" hidden></button>`
@@ -707,20 +833,23 @@ function svHistory(j) {
     + `<span><i style="border:1px solid var(--accent)"></i>not read in full</span></div></div>`
     + `<div><h3>Silent ${j.new_days} days or more, day by day <span class="muted small">(heard before, not in the ${j.new_days} days to that day)</span></h3>`
     + `${svChart(silentBy, { label: `Devices silent ${j.new_days} days or more`, thin: true })}</div></div>`
-    + `<div class="two"><div><h3>By department <span class="muted small">(the last person's, from AD: heard in the last ${j.new_days} days, of those heard since ${svDay(h.start)})</span></h3><div id="svHDept">${svHDept(j)}</div></div>`
-    + `<div><h3>Heard on the most days <span class="muted small">(the last ${j.chart_days})</span></h3><div class="small">`
-    + (most.length ? most.map(x => `${esc(x.name)} · ${plural(x.days90, "day")}`).join("<br>") : `<span class="muted">None.</span>`) + `</div>`
-    + `<h3>Most different people <span class="muted small">(the last ${j.new_days} days)</span></h3><div class="small">`
+    + `<h3>By department <span class="muted small">(the last person's, from AD: heard in the last ${j.new_days} days, of those heard since ${svDay(h.start)}; click one to list its devices above)</span></h3><div id="svHDept">${svHDept(j)}</div>`
+    + `<div class="two"><div><h3>Heard on the most days <span class="muted small">(the last ${j.chart_days})</span></h3><div class="small">`
+    + (most.length ? most.map(x => `${esc(x.name)} · ${plural(x.days90, "day")}`).join("<br>") : `<span class="muted">None.</span>`) + `</div></div>`
+    + `<div><h3>Most different people <span class="muted small">(the last ${j.new_days} days)</span></h3><div class="small">`
     + (many.length ? many.map(x => `${esc(x.name)} · ${plural(x.people30, "person", "people")}`).join("<br>") : `<span class="muted">None.</span>`) + `</div></div></div>`
     + `<p class="fine">Only devices Aternity has heard from: a device nobody used since before ${svDay(h.start)} is not known here. Heard: a virtual desktop opened from the `
     + `device sent Aternity an action that day. Silent: heard before, nothing since. First / last heard with times and people for the days in SecureView's own records; `
     + `Aternity's daily data before them gives the day only. Records kept ${j.keep_days} days. Click a device for its days.</p>`;
 }
+const SV_NO_PERSON = "no person recorded";  // History: a device known from Aternity's daily data only
+const svHDeptOptions = j => svDeptOptions(SV.hdept, j.history.devices.filter(x => x.person).map(x => x.person),
+  j.history.devices.some(x => !x.person) ? [SV_NO_PERSON] : []);
 function svHDept(j) {
   const ds = j.history.devices, per = new Map();
   let wait = 0, none = 0;
   for (const x of ds) {
-    const d = x.person ? svDept(x.person) : "no person recorded";
+    const d = x.person ? svDept(x.person) : SV_NO_PERSON;
     if (d == null) { wait++; continue; }
     if (!x.person) none++;
     const v = per.get(d) || [0, 0, 0];
@@ -728,15 +857,15 @@ function svHDept(j) {
     per.set(d, v);
   }
   const why = svAdState();
-  const rows = [...per].sort(svDeptOrder).map(([d, v]) => [d, v[0], v[1], v[2] ? `· ${v[2]} silent 90+` : ""]);
-  return svHl(rows) + (wait && !why ? `<p class="muted small">${plural(wait, "device")} waiting for Active Directory.</p>` : "")
+  const rows = [...per].sort(svDeptOrder).map(([d, v]) => [d, v[0], v[1], v[2] ? `${v[2]} silent 90+` : "", `heard in the last ${j.new_days} days`]);
+  return svDeptRows(rows, SV.hdept, true) + (wait && !why ? `<p class="muted small">${plural(wait, "device")} waiting for Active Directory.</p>` : "")
     + (why ? `<p class="muted small">${esc(why)}</p>` : "")
     + (none ? `<p class="muted small">"No person recorded": known from Aternity's daily data only, which has no people.</p>` : "");
 }
 function svHRows() {
   const h = SV.j.history, q = SV.hq.trim().toLowerCase();
   const list = (svLists(h).find(l => l[0] === SV.chip) || [, , []])[2];
-  const rows = list.filter(x => (!SV.hdept || (x.person && svDept(x.person) === SV.hdept))
+  const rows = list.filter(x => (!SV.hdept || (SV.hdept === SV_NO_PERSON ? !x.person : x.person && svDept(x.person) === SV.hdept))
     && (!q || [x.name, x.person, ...(x.person ? (a => a ? [a.name, a.department] : [])(adGot(AD.users, x.person)) : [])].join(" ").toLowerCase().includes(q)));
   return rows.sort(SV.chip === "heard" ? (a, b) => b.days90 - a.days90 || a.name.localeCompare(b.name)
     : SV.chip === "new" ? (a, b) => a.first.localeCompare(b.first) || a.name.localeCompare(b.name)
@@ -807,7 +936,13 @@ function svHistoryBind() {
     $("sv").querySelectorAll(".chip").forEach(x => x.classList.toggle("on", x === c)); svHBody();
   }));
   $("svHq").addEventListener("input", e => { SV.hq = e.target.value; SV.hshown = 25; svHBody(); });
-  $("svHdept").addEventListener("change", e => { SV.hdept = e.target.value; SV.hshown = 25; svHBody(); });
+  const hDept = () => {
+    SV.hshown = 25;
+    $("svHdept").innerHTML = svHDeptOptions(SV.j);
+    $("svHDept").innerHTML = svHDept(SV.j); svHBody();
+  };
+  $("svHdept").addEventListener("change", e => { SV.hdept = e.target.value; hDept(); });
+  svDeptPick("svHDept", "hdept", hDept, "svHq");
   $("svHmore").addEventListener("click", () => { SV.hshown += 25; svHBody(); });
   $("svCsv").addEventListener("click", svCsv);
   svHBody();
@@ -822,18 +957,16 @@ function svAdDone() {
     svTBody();
   } else if ($("svHDept")) {
     $("svHDept").innerHTML = svHDept(j);
-    $("svHdept").innerHTML = svDeptOptions(SV.hdept, j.history.devices.filter(x => x.person).map(x => x.person));
+    $("svHdept").innerHTML = svHDeptOptions(j);
     svHBody();
   }
 }
 
 function draw(j) {
-  $("login").hidden = true; $("bar").hidden = false;
   const sel = $("day");
   sel.innerHTML = j.dates.map(d => `<option value="${esc(d)}"${d === j.date ? " selected" : ""}>${esc(dayName(d, j.dates[0]))}</option>`).join("");
   $("asOf").textContent = j.today ? `as of ${j.as_of_local} ${j.zone}` : "";
   const page = $("page");
-  page.hidden = false;
   if (j.missing) { page.innerHTML = `<section class="panel"><p class="muted">Nothing was recorded on ${esc(dayName(j.date, j.dates[0]))}.</p></section>`; return; }
   page.innerHTML = peoplePanel(j) + `<div class="grid2">${usePanel(j)}${askPanel(j)}</div>`
     + `<div class="grid2">${carePanel(j)}${daysPanel(j)}</div>` + loadPanel(j);
@@ -843,18 +976,18 @@ function draw(j) {
 
 $("day").addEventListener("change", ev => load(ev.target.value));
 $("out").addEventListener("click", async () => {
-  clearTimeout(state.timer);
+  TAB.now = ""; TAB.seq.stats++; TAB.seq.sv++; clearTimeout(state.timer); clearTimeout(SV.timer);  // reads under way are dropped
   try { await fetch("admin/api/logout", { method: "POST" }); } catch (e) { /* the cookie goes with the session anyway */ }
   state = { day: "", data: null, timer: null };
   Object.assign(AD, { users: {}, pcs: {}, res: null });  // what AD said goes with the session
-  clearTimeout(SV.timer); Object.assign(SV, { j: null, text: "", dev: {}, open: null }); $("sv").hidden = true;
+  Object.assign(SV, { j: null, text: "", timer: null, dev: {}, open: null });
   showLogin(await me());
 });
 
 (async () => {
   try {
     const m = await me();
-    if (m.in) load(); else showLogin(m);
+    if (m.in) openTab(tabOfLink()); else showLogin(m);
   } catch (e) { $("err").textContent = "UX Correlator did not answer: " + e.message; }
 })();
 </script>

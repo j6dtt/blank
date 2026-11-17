@@ -404,11 +404,16 @@ ends with **Log out** or a restart. 5 wrong passwords from one address
 lock it for 15 minutes. Each login, wrong password and lock is a log
 line with the caller's address.
 
-**What it shows** (one day; **Day** at the top picks another, today
-updates every minute):
-- **SecureView** (first, when set): the devices people sit at to work
-  outside the office; always today and its history, whatever **Day**
-  says. See "SecureView" below.
+**Two tabs** under the top bar: **STATISTICS** (opens first) and
+**SECUREVIEW** (the devices people sit at to work outside the office;
+see "SecureView" below). Each has its link, `/admin#statistics` and
+`/admin#secureview`; a reload or a login stays on the tab in the link.
+Only the open tab is read, every minute; the other is read again the
+moment it is opened and keeps where it was (SecureView's sub-tab, search,
+department box and open device). **Log out** is on both.
+
+**Statistics** (one day; **Day** at the top, shown on this tab only,
+picks another; today updates every minute):
 - **People using the app**: Now (a visit in the last 15 minutes: person,
   desktop, tab, last visit); then the day: each person's first and last
   visit, tabs used and what they ran. "Waiting for Aternity (address)":
@@ -509,12 +514,17 @@ times and no people. The History tab says what it got ("89, back to Wed
 Aug 19"), or that the daily data names no device, or why it could not be
 read (tried again the next night).
 
-**Where and how:** `/admin`, log in, the first panel.
+**Where and how:** `/admin`, log in, the **SECUREVIEW** tab (or
+`/admin#secureview` straight away).
 - **TODAY** (opens first): devices in use today against the usual by
   this time of day (the latest 5 days of the same kind with times),
   heard in the last 30 min, people, first heard, first time ever heard.
-  In use by hour (the band is the usual), by department (the people's,
-  from AD), the longest in use. The list: search (device, person,
+  In use by hour (the band is the usual) with the 5 longest in use
+  beside it. By department (the people's, from AD): a row each, across
+  the page in 3 columns read down each one, most first; the groups that
+  are not a department last, in grey. Click a row: the list shows that
+  department's devices (the department box says it); click it again:
+  every department. The list: search (device, person,
   department, desktop), a department box, sort by first heard, last heard
   or name; a green dot is heard in the last 30 min; "Show all" under 25.
 - **HISTORY**: devices heard since the records began, heard in the last
@@ -526,8 +536,11 @@ read (tried again the next night).
   its last 90 days as squares (faded: weekend), its days with times and
   people, and one line for the days known only from the daily data.
   Click it again to close. Charts: devices per day (hollow: a day not
-  read in full) and silent 30 days or more, day by day; by department;
-  heard on the most days; the most different people.
+  read in full) and silent 30 days or more, day by day. By department
+  (the last person's): heard in the last 30 days of those heard, "· 2
+  silent 90+", in 2 columns; click a row: the list above shows that
+  department (brought into view), "no person recorded" too. Then heard
+  on the most days and the most different people.
 
 Names and departments come from AD as for People using the app (the
 same look-up, 200 names a request). A device with no username, or known

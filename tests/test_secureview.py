@@ -231,6 +231,13 @@ def test_the_admin_page_needs_its_login(monkeypatch, tmp_path):
     assert https.get("/admin/api/secureview/device?name=x").status_code == 404
     page = (web.STATIC / "admin.html").read_text(encoding="utf-8")
     assert 'fetch("admin/api/secureview"' in page and "confirm(" not in page and "alert(" not in page
+    # two tabs, each with its link (the user, Nov 17 2026): Statistics opens first, SecureView by its link
+    assert 'data-t="stats">Statistics<' in page and 'data-t="sv">SecureView<' in page
+    assert 'const TABS = { stats: "statistics", sv: "secureview" };' in page
+    assert 'location.hash === "#" + TABS.sv ? "sv" : "stats"' in page
+    # by department across the page, a row sets the Department box (the user's pick B, Nov 17 2026)
+    assert 'svDeptPick("svTDept", "tdept", tDept, "svTq");' in page and 'svDeptPick("svHDept", "hdept", hDept, "svHq");' in page
+    assert "svHl(" not in page and 'SV.hdept === SV_NO_PERSON ? !x.person' in page
 
 
 def test_the_daily_read_waits_for_the_first_read_and_runs_each_night(tmp_path):

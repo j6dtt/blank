@@ -144,10 +144,34 @@ names: the same look-up as People using the app, 200 names a
 request. Dev: made-up THIN and WT devices (`dev/sample_riverbed.py`,
 `_client`), daily data kept 90 days there.
 
-To find out on stage: whether the daily data names the device
-people sat at (the History tab's line), and whether prod's
-devices match the pattern as typed (the Today tab's count against
-`verify --clients`).
+On stage (294bd37, 2026-11-17): the daily data names the device
+people sat at; History reads back to Aug 19 (90 days). Still to
+see: whether prod's devices match the pattern as typed (the
+Today tab's count against `verify --clients`).
+
+Built on dev 2026-11-17 ("build it"): the admin page in two folder
+tabs, as the main page's: STATISTICS (the usage panels, opens first)
+and SECUREVIEW. Each has its link (`/admin#statistics`,
+`/admin#secureview`); a reload or login stays on it. Only the open tab
+is read, every minute; the other is read the moment it is opened and
+keeps its sub-tab, boxes and open device. The Day box is Statistics'
+only. Log out on both. Stage copy: `static/admin.html`.
+
+Asked 2026-11-17 (the user: "not sure I like the by department
+visualization": with 15-20 departments the list beside the hour
+chart leaves the space under the chart empty). Four options
+mocked, waiting for a pick: A upright bars across the page (same
+height whatever the count; names cut under narrow bars, slides on
+a phone), B the rows across the page in 3 columns (recommended:
+full names, one scale, 7 rows for 20), C the 6 biggest and "+ N
+more", D a tile per department. In A, B and D a click on a
+department filters the list below; the hour chart gets "Longest
+in use" beside it. The user picked B; built on dev the same day
+("B, build it"): Today 3 columns, the 5 longest in use beside the
+hour chart; History 2 columns with "· 2 silent 90+" in a column of
+its own (under its row on a phone), the list above brought into view
+on a click; "no person recorded" can be picked in History's
+Department box too. Stage copy: `static/admin.html`, with the tabs.
 
 ## Later (ideas)
 

@@ -687,7 +687,7 @@ demo mode: nothing in `src/` knows about it.
   Status Hardware), so other hardware is added from it, and
   from the same read whether one row holds several times
   (`_times_in_a_row`: `HEALTH_EVENT_VOLUME` above 1, by event).
-- `secureview.py`: SecureView, the first panel of the admin page
+- `secureview.py`: SecureView, the admin page's SECUREVIEW tab
   (`/admin/api/secureview`, `/admin/api/secureview/device`; the user's
   "build it", 2026-11-17; docs/admin-roadmap.md). The devices people sit
   at (`CLIENT_DEVICE_NAME`) matching config.yaml's `secureview.match`
@@ -709,9 +709,15 @@ demo mode: nothing in `src/` knows about it.
   silent days, the last person with their own times, per day with `part`
   days, silent 30+ day by day, `unread` days). No AD per device (THIN
   devices are not in AD); the page groups by the people's AD department
-  (`svByDept`, the shared `adLook`, `AD_ASK` names a request). Page:
+  (`svByDept`, the shared `adLook`, `AD_ASK` names a request), drawn
+  across the page in columns (`svDeptRows`, the user's pick B of four
+  mocked, 2026-11-17: beside the hour chart 15-20 departments left the
+  space under it empty); a row is a button that sets the Department
+  box (`svDeptPick`; History's "no person recorded" too,
+  `SV_NO_PERSON`). Page:
   `sv*` functions in admin.html, `SV` state kept across its own
-  minute's redraw (not while a box of it has focus).
+  minute's redraw (not while a box of it has focus) and while the
+  other tab is open.
 - `ad.py` + `verify --ad` (`verify.verify_ad`, the user's "build it",
   2026-11-15; docs/admin-roadmap.md): Active Directory, read only.
   verify and the app's look-up share `find_dcs`, `ports_of`, `best`,
@@ -827,7 +833,14 @@ demo mode: nothing in `src/` knows about it.
   connection and login, not the model's answers (`verify --ai`).
 - `usage.py` + `static/admin.html`: the admin page (`/admin`, no link
   from the main page; docs/admin-roadmap.md, the user's request and
-  choices, 2026-11-15). Login: `ADMIN_PASSWORD` in .env, HTTPS only
+  choices, 2026-11-15). Two folder tabs as the main page's (the user,
+  2026-11-17): STATISTICS (the usage panels, first) and SECUREVIEW;
+  `openTab`, the link `#statistics` / `#secureview` (`TABS`,
+  `tabOfLink`, hashchange); only the open tab is read and keeps its
+  minute (`load`, `svLoad` return on the other tab; `TAB.seq` drops a
+  read overtaken by a newer one or sent before a log-out); the Day box
+  is Statistics' only (`#statsBar`, kept in its place so the bar does
+  not jump; `scrollbar-gutter: stable` for the same). Login: `ADMIN_PASSWORD` in .env, HTTPS only
   (`admin_https`: the scheme, X-Forwarded-Proto behind the ingress),
   cookie `uxadmin` Path=/admin 8 h (`ADMIN_HOURS`), in memory (a restart
   logs out), `ADMIN_TRIES` 5 wrong from one address lock it

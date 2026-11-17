@@ -23,8 +23,12 @@ version, limits, later ideas, the discussion so far).
 The devices people sit at to work outside the office (THIN,
 `secureview.match`): first and last heard per device per day,
 Today and History, silent 30 / 60 / 90 days, by department from
-AD. Built on dev 2026-11-17 ("build it"); stage copy next. See
-`docs/admin-roadmap.md`.
+AD. Built on dev 2026-11-17 ("build it"), 294bd37; on stage the
+same day: the daily data names the devices, History back to
+Aug 19. Then the admin page in two tabs, Statistics and
+SecureView, and By department across the page (option B), both
+built on dev 2026-11-17 ("build it"; stage copy:
+`static/admin.html`). See `docs/admin-roadmap.md`.
 
 ## Waiting on you
 
