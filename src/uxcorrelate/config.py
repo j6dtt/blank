@@ -62,6 +62,9 @@ VDI_COLUMNS = {
     "boots": {"image_build": "DEVICE_IMAGE_BUILD_NUMBER"},
     "inventory": {"sccm_client": "SCCM_CLIENT_VERSION", "image_build": "DEVICE_IMAGE_BUILD_NUMBER"},
 }
+# verify --clients: where the device a person sat at was (Riverbed's $metadata, activities);
+# how the live tenant fills it is what the check shows (never read before, Nov 16 2026).
+CLIENT_COLUMNS = {"on_vpn": "LOCATION_ON_VPN"}
 # Aternity's own words, seen on the live tenant (verify --overview, Nov 2026):
 # activity SLA_STATUS Normal / Undefined / Minor / Major (no Critical), health
 # event severity Minor / Major / Critical. The "Today" tab shows them as given.

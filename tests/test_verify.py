@@ -703,3 +703,48 @@ def test_every_check_group_is_printed_and_one_failed_part_stops_only_itself():
     got = part("fleet", cut, client=c)
     assert got[-1].item == "fleet: not read in full" and got[-1].rows[0].startswith("PARTIAL: Aternity X")
     assert _limit([{}] * 5, 5) and not _limit([{}] * 4, 5)
+
+
+def test_verify_clients_names_the_devices_not_starting_with_wt_and_sets_them_against_vpn():
+    """verify --clients (the user's request, Nov 16 2026): virtual desktops by the device people sat at
+    (CLIENT_DEVICE_NAME), the ones not starting with WT by name, and each LOCATION_ON_VPN value as sent
+    against them; physical PCs apart. Made-up names and values."""
+    from pathlib import Path
+    from uxcorrelate.verify import verify_clients
+
+    def act(dev, user, client, vpn, virtual="true", kind="Remote Device"):
+        return {"TIMEFRAME": "2026-11-16T14:00:00Z", "DEVICE_NAME": dev, "USERNAME": user, "VIRTUALIZATION": virtual,
+                "CLIENT_DEVICE_NAME": client, "CLIENT_DEVICE_TYPE": kind, "LOCATION_ON_VPN": vpn}
+    rows = ([act("VD-1", "u1", "WT-0101", "No")] * 3 + [act("VD-2", "u2", "wt-0102", "No")]
+            + [act("VD-3", "u3", "HOME-PC7", "Yes")] * 2 + [act("VD-4", "u3", "HOME-PC7", "Yes")]
+            + [act("VD-5", "u4", "LT-55", "Yes"), act("VD-5", "u4", "LT-55", "No")]
+            + [act("VD-6", "u5", "WT-0300", "Yes")]
+            + [act("VD-7", "u6", None, "No"), act("PC-9", "u7", None, "Yes", virtual="false", kind=None)])
+    asked = []
+
+    def handler(request):
+        if request.url.path.endswith("/$metadata"):
+            return httpx.Response(200, text=(Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
+        asked.append(request.url.params.get("$select"))
+        return httpx.Response(200, json={"value": rows})
+
+    settings = Settings()
+    settings.aternity.base_url = "https://aternity.test/aternity.odata/v2.0"
+    checks = verify_clients(settings, AternityClient(settings.aternity, transport=httpx.MockTransport(handler)),
+                            ["wt"], hours=99)
+    flat = " ".join(render_checks(checks).split())
+    assert asked == ["TIMEFRAME,DEVICE_NAME,USERNAME,VIRTUALIZATION,CLIENT_DEVICE_NAME,CLIENT_DEVICE_TYPE,LOCATION_ON_VPN"]
+    assert ("Last 24 h: 12 actions. Virtual desktops: 11 actions on 7 desktops by 6 users; CLIENT_DEVICE_NAME "
+            "filled on 10 of them, 5 devices (3 starting with WT, 2 not). Physical PCs: 1 actions on 1 PCs. "
+            "How the device names begin: · WT…: 3 devices, 5 actions · HOME…: 1 devices, 3 actions · "
+            "LT…: 1 devices, 2 actions · CLIENT_DEVICE_TYPE: starting with WT: 'Remote Device' 5; "
+            "not: 'Remote Device' 5") in flat
+    assert ("clients: not starting with WT 2 devices, 5 actions on 3 virtual desktops by 2 users. The 2 with the "
+            "most actions, to check (device: actions · the desktops it was on · users · LOCATION_ON_VPN as sent): "
+            "· HOME-PC7: 3 actions · on VD-3, VD-4 · 1 user(s) · LOCATION_ON_VPN: 'Yes' 3 "
+            "· LT-55: 2 actions · on VD-5 · 1 user(s) · LOCATION_ON_VPN: 'Yes' 1, 'No' 1") in flat
+    assert ("A device with actions under two values is under both (1 such): "
+            "· 'No': virtual desktops 6 actions from 3 devices (2 starting with WT, 1 not) · physical PCs 0 actions "
+            "on 0 PCs (0 starting with WT, 0 not) "
+            "· 'Yes': virtual desktops 5 actions from 3 devices (1 starting with WT, 2 not) · physical PCs 1 actions "
+            "on 1 PCs (0 starting with WT, 1 not)") in flat

@@ -52,8 +52,13 @@ Rests on it: "virtual desktop", start-ups compared across the user's
 desktops. Confirm: the desktop team.
 
 **M6. `CLIENT_DEVICE_NAME` is the device the user sat at.**
-ASSUMED from the name. Rests on it: "virtual desktop from WT…".
-Confirm: admin question 1.
+DOCUMENTED (Riverbed's help, device details: "Client Device Name (For
+virtual deployments only): Displays the hostname of a device which is
+connecting to a VDI or virtual application server"; found 2026-11-16).
+A name only: no address of that device on the live tenant
+(`CLIENT_DEVICE_SUBNET` is only in the unpublished `REMOTE_DISPLAY_*`).
+The same help: a virtual session reports to Aternity only while a user is
+logged in to Windows. Rests on it: "virtual desktop from WT…".
 
 **M7. "N/A" means no value.**
 OBSERVED. Rests on it: blanks everywhere.

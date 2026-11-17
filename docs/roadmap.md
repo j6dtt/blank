@@ -21,6 +21,11 @@ version, limits, later ideas, the discussion so far).
 
 ## Waiting on you
 
+- **`verify --clients --except WT` on prod or stage** (built on
+  dev 2026-11-16, the user: track virtual desktops used from
+  devices not starting with WT, names to check them, and whether
+  `LOCATION_ON_VPN` marks the same ones). Then decide what to
+  track on a page.
 - **`verify --ai` on stage**: the Care list samples changed.
 
 ## Agreed
@@ -74,7 +79,10 @@ version, limits, later ideas, the discussion so far).
   "(Disk)" / "(Drive)" label (built on dev 2026-11-16, from
   `verify --overview` on stage: Low Disk Space 8 PCs and
   Corrupted FS 2 PCs under "(Drive)" are System; they had led
-  investigations and lit Care tiles all day). Uncommitted.
+  investigations and lit Care tiles all day). a807a50 (pushed);
+  on stage 2026-11-16 (verify --overview: Low Disk Space and
+  Corrupted FS "not a failing disk", HD Failure and S.M.A.R.T.
+  "a failing disk"); prod copy next.
 
 - 912aeab: AD names on the admin page; on prod 2026-11-16 (the
   user: the display name shows under "People using the app").

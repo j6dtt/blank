@@ -722,6 +722,17 @@ demo mode: nothing in `src/` knows about it.
   real Samba DC filled by `dev/sample_ad.sh`; Samba has no Microsoft
   "Sicily" NTLM bind, so NTLM is not proven on dev. Tests: ldap3's
   MOCK_SYNC with `OFFLINE_AD_2012_R2` (`tests/test_ad.py`).
+- `verify --clients` (`verify.verify_clients`, only on its own; the
+  user's request, Nov 16 2026: track virtual desktops used from devices
+  not starting with WT, and are those the ones on VPN?): `--except`
+  (beginnings set apart), `--hours` (`CLIENT_HOURS`), `CLIENT_ROWS`.
+  Virtual desktop actions by `CLIENT_DEVICE_NAME` (documented by
+  Riverbed: the device connecting to the VDI; data-meanings M6): how the
+  names begin (`_begins`), `CLIENT_NAMES` of the others by name (device
+  names and desktops shown, the user asked for names to check; users
+  counted), each `LOCATION_ON_VPN` value as sent (`CLIENT_COLUMNS`,
+  never read on live before) against WT / not WT, physical PCs apart.
+  Which value means VPN is not assumed: every value is listed.
 - `verify --software` (`verify._software`, only on its own), short: what
   `INSTALLED_SOFTWARE` (`SOFTWARE_SOURCE`, `SOFTWARE_COLUMNS`) gives the
   Software tab: PCs, programs, installs and `SOFTWARE_USER_SCOPE`

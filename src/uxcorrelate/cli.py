@@ -176,11 +176,13 @@ def cmd_verify(args) -> int:
     checks: list[Check] = [Check("config.yaml", "settings", False, n, "Correct it or take it out of config.yaml.")
                            for n in config_notes(args.config)]
     # each part guarded (verify.part): every result is printed at the end, and one error had printed none
-    if args.overview or args.versions or args.software:  # one Aternity part only
-        from .verify import verify_overview, verify_software, verify_versions
+    if args.overview or args.versions or args.software or args.clients:  # one Aternity part only
+        from .verify import verify_clients, verify_overview, verify_software, verify_versions
         client = AternityClient(settings.aternity)
         item, run = (("overview", lambda: verify_overview(settings, client)) if args.overview else
                      ("versions", lambda: verify_versions(settings, client)) if args.versions else
+                     ("clients", lambda: verify_clients(settings, client, (args.except_ or "").split(","),
+                                                        args.hours)) if args.clients else
                      ("software", lambda: verify_software(settings, client, pc=args.pc)))
         checks += part(item, run, client=client)
         print(render_checks(checks))
@@ -277,6 +279,12 @@ def main(argv: list[str] | None = None) -> int:
     ver.add_argument("--user", help="with --ad: this user in AD, as Aternity writes the username")
     ver.add_argument("--versions", action="store_true",
                      help="only each application's version on crashes, hangs and actions (no PC names shown)")
+    ver.add_argument("--clients", action="store_true",
+                     help="only the devices people sit at to use virtual desktops (CLIENT_DEVICE_NAME), by name, "
+                          "and LOCATION_ON_VPN against them")
+    ver.add_argument("--except", dest="except_", metavar="BEGINNING",
+                     help="with --clients: set apart the devices whose names start with this (several: WT,TC)")
+    ver.add_argument("--hours", type=int, default=1, help="with --clients: the last N hours (1 to 24; default 1)")
     ver.set_defaults(func=cmd_verify)
 
     args = p.parse_args(argv)

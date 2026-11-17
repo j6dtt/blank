@@ -14,6 +14,7 @@ screen, and every FAIL says what to change there.
 from __future__ import annotations
 
 import difflib
+import re
 from bisect import bisect_right
 import textwrap
 import time
@@ -28,7 +29,7 @@ from .aternity import AternityClient, is_virtual, odata_quote, odata_time
 from .config import (DISK_CATEGORIES, DISK_FREE_COLUMNS, DISK_PARTS, OS_COLUMNS, OVERVIEW_SOURCES, PROCESS_COLUMN, SOFTWARE_COLUMNS,
                      SOFTWARE_OS_UPDATE,
                      SOFTWARE_REMOVED, SOFTWARE_SOURCE, SOFTWARE_USER_SCOPE, SOFTWARE_UPDATE_GAP_MIN, TIME_COLUMNS,
-                     NO_VALUE, TOP_STATUS, VDI_COLUMNS, VERSION_OPTIONAL, VERSION_SOURCES, Settings)
+                     CLIENT_COLUMNS, NO_VALUE, TOP_STATUS, VDI_COLUMNS, VERSION_OPTIONAL, VERSION_SOURCES, Settings)
 from .after_start import AFTER_START_MIN  # "right after a start-up", as investigations
 from .correlate import slow_rule
 from .http import ApiError, short_error
@@ -1445,6 +1446,129 @@ def verify_overview(settings: Settings, client: AternityClient) -> list[Check]:
         return [Check("Aternity", "connection", False, f"Could not read $metadata: {exc.short() if isinstance(exc, ApiError) else exc}",
                       "Check aternity.base_url, aternity.username and ATERNITY_PASSWORD.")]
     return _overview(settings, client, schema)
+
+
+CLIENT_ROWS = 50_000  # activity rows read by verify --clients (the check's limit; about 10,550 an hour on live)
+CLIENT_NAMES = 25  # device names listed, to check them
+CLIENT_BEGINS = 15  # how the device names begin, most actions first
+CLIENT_HOURS = (1, 24)  # --hours: the fewest and the most
+
+
+def _begins(name: str) -> str:
+    """How a device name begins: its first letters ("WT-1234" -> "WT"), else its first 2 characters."""
+    m = re.match(r"[A-Za-z]+", name)
+    return (m.group(0) if m else name[:2]).upper()
+
+
+def verify_clients(settings: Settings, client: AternityClient, except_: list[str] = (), hours: int = 1) -> list[Check]:
+    """Virtual desktops by the device people sat at (CLIENT_DEVICE_NAME, Riverbed: "the hostname of
+    a device which is connecting to a VDI or virtual application server"): how the names begin, the
+    devices whose names do not start with `except_` by name (to check them), and each LOCATION_ON_VPN
+    value against them (the user's request, Nov 16 2026: are the devices not starting with WT the
+    ones on VPN?). Names of devices and desktops are shown; users are counted only."""
+    try:
+        schema = parse_odata_metadata(client.http.request("GET", "/$metadata", headers={"Accept": "application/xml"}).text)
+    except (ApiError, ET.ParseError) as exc:
+        return [Check("Aternity", "connection", False, f"Could not read $metadata: {exc.short() if isinstance(exc, ApiError) else exc}",
+                      "Check aternity.base_url, aternity.username and ATERNITY_PASSWORD.")]
+    ent, f = settings.aternity.entities.get("activities"), settings.aternity.fields.get("activities", {})
+    cols = schema.get(ent, set())
+    keys = ("timestamp", "device", "username", "virtualization", "client_device")
+    gone = [f"{k} ({f.get(k) or 'not set'})" for k in keys if f.get(k) not in cols]
+    if gone:
+        return [Check("Aternity", "clients", False, f"{ent} has no {', '.join(gone)}: nothing to show.",
+                      f"Check aternity.fields.activities in config.yaml against {ent} in verify's column list.")]
+    ctype, vpn = VDI_COLUMNS["activities"].get("client_type"), CLIENT_COLUMNS["on_vpn"]
+    ctype, vpn = (ctype if ctype in cols else None), (vpn if vpn in cols else None)
+    hours = min(max(int(hours), CLIENT_HOURS[0]), CLIENT_HOURS[1])
+    mark = len(client.warnings)
+    try:
+        rows = client.query(ent, f"{f['timestamp']} ge {odata_time(datetime.now(timezone.utc) - timedelta(hours=hours))}",
+                            select=[f[k] for k in keys] + [c for c in (ctype, vpn) if c], top=CLIENT_ROWS)
+    except ApiError as exc:
+        return [Check("Aternity", "clients", None, f"Aternity's activity could not be read ({exc.short()}).")]
+    cut = _cut_short(client, mark) + _limit(rows, CLIENT_ROWS)
+    marks = [p.strip().upper() for p in except_ if p.strip()]
+    called = " or ".join(marks)
+    apart = lambda name: any(str(name).upper().startswith(p) for p in marks)  # noqa: E731
+    kind = lambda r: is_virtual(r.get(f["virtualization"]))  # noqa: E731
+    virt = [r for r in rows if kind(r)]
+    phys = [r for r in rows if kind(r) is False]
+    devs: dict[str, list[dict]] = {}
+    for r in virt:
+        if r.get(f["client_device"]):
+            devs.setdefault(str(r[f["client_device"]]), []).append(r)
+    others = [d for d in devs if not apart(d)]
+    split = lambda names: (f" ({sum(1 for n in names if apart(n)):,} starting with {called}, "  # noqa: E731
+                           f"{sum(1 for n in names if not apart(n)):,} not)") if marks else ""
+    count = lambda rs, k: len({r.get(f[k]) for r in rs} - {None, ""})  # noqa: E731
+    said = lambda v: "no value" if v in (None, "") else f"'{v}'"  # noqa: E731
+    vals = lambda rs, c: ", ".join(f"{said(v)} {n:,}" for v, n in Counter(r.get(c) for r in rs).most_common(3))  # noqa: E731
+    out = []
+    # 1. the devices people sat at: how many, how their names begin
+    begins: dict[str, list[str]] = {}
+    for d in devs:
+        begins.setdefault(_begins(d), []).append(d)
+    lines = [f"{b}…: {len(ds):,} devices, {sum(len(devs[d]) for d in ds):,} actions"
+             for b, ds in sorted(begins.items(), key=lambda kv: -sum(len(devs[d]) for d in kv[1]))[:CLIENT_BEGINS]]
+    if len(begins) > CLIENT_BEGINS:
+        lines.append(f"+{len(begins) - CLIENT_BEGINS} more beginnings")
+    if ctype:
+        on = lambda rs: vals(rs, ctype) or "none"  # noqa: E731
+        lines.append(f"{ctype}: " + (f"starting with {called}: {on([r for d in devs if apart(d) for r in devs[d]])}; "
+                                     f"not: {on([r for d in others for r in devs[d]])}" if marks
+                                     else on([r for rs in devs.values() for r in rs])))
+    unmarked = len(rows) - len(virt) - len(phys)
+    out.append(Check("Aternity", "clients: the devices people sat at", None,
+                     f"Last {hours} h: {len(rows):,} actions{_first(rows, CLIENT_ROWS)}. Virtual desktops: "
+                     f"{len(virt):,} actions on {count(virt, 'device'):,} desktops by {count(virt, 'username'):,} users; "
+                     f"{f['client_device']} filled on {sum(len(rs) for rs in devs.values()):,} of them, "
+                     f"{len(devs):,} devices{split(devs)}. Physical PCs: {len(phys):,} actions on "
+                     f"{count(phys, 'device'):,} PCs" + (f"; not marked virtual or physical: {unmarked:,} actions"
+                                                        if unmarked else "") + ". How the device names begin:",
+                     rows=lines + cut))
+    # 2. the devices not starting with `except_`, by name, to check them
+    item = f"clients: not starting with {called}" if marks else "clients: the devices, by name"
+    if not others:
+        out.append(Check("Aternity", item, None, f"None: every device people sat at starts with {called}."
+                         if marks and devs else "None in this span."))
+    else:
+        mine = [r for d in others for r in devs[d]]
+        names = []
+        for d in sorted(others, key=lambda d: -len(devs[d]))[:CLIENT_NAMES]:
+            desks = Counter(str(r.get(f["device"])) for r in devs[d]).most_common()
+            on = ", ".join(n for n, _ in desks[:2]) + (f" (+{len(desks) - 2})" if len(desks) > 2 else "")
+            names.append(f"{d}: {len(devs[d]):,} actions · on {on} · {count(devs[d], 'username')} user(s)"
+                         + (f" · {vpn}: {vals(devs[d], vpn)}" if vpn else ""))
+        if len(others) > CLIENT_NAMES:
+            names.append(f"+{len(others) - CLIENT_NAMES:,} more not listed")
+        out.append(Check("Aternity", item, None,
+                         f"{len(others):,} devices, {len(mine):,} actions on {count(mine, 'device'):,} virtual desktops "
+                         f"by {count(mine, 'username'):,} users. The {min(len(others), CLIENT_NAMES)} with the most "
+                         "actions, to check (device: actions · the desktops it was on · users"
+                         + (f" · {vpn} as sent" if vpn else "") + "):", rows=names))
+    # 3. each LOCATION_ON_VPN value against the devices people sat at (and physical PCs)
+    col = CLIENT_COLUMNS["on_vpn"]
+    if not vpn:
+        out.append(Check("Aternity", f"clients: {col}", None, f"Not published in {ent} by this Aternity."))
+        return out
+    by: dict = {}
+    for r in rows:
+        by.setdefault(r.get(vpn), []).append(r)
+    both = sum(1 for rs in devs.values() if len({r.get(vpn) for r in rs}) > 1)
+    lines = []
+    for v, rs in sorted(by.items(), key=lambda kv: -len(kv[1])):
+        vd = [r for r in rs if kind(r)]
+        pc = [r for r in rs if kind(r) is False]
+        ds = {str(r[f["client_device"]]) for r in vd if r.get(f["client_device"])}
+        pcs = {str(r[f["device"]]) for r in pc if r.get(f["device"])}
+        lines.append(f"{said(v)}: virtual desktops {len(vd):,} actions from {len(ds):,} devices{split(ds)} · "
+                     f"physical PCs {len(pc):,} actions on {len(pcs):,} PCs{split(pcs)}")
+    out.append(Check("Aternity", f"clients: {col}", None,
+                     f"Each value as sent (no value: empty or N/A): virtual desktop actions by the device people sat "
+                     f"at, and physical PCs. A device with actions under two values is under both ({both:,} such):",
+                     rows=lines))
+    return out
 
 
 SW_SAMPLE = 1000  # health events read by verify --versions

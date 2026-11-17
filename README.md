@@ -693,6 +693,15 @@ back to dev.
   other PCs have change-log rows in the same minute.
 - **Process data:** every published data source with a process column,
   whether it has rows, and its CPU/memory/IO columns.
+- **Devices people sit at** (`verify --clients --except WT`, only on its
+  own; `--hours N`, 1 to 24, default 1): virtual desktop actions by the
+  device the user sat at (`CLIENT_DEVICE_NAME`, Riverbed: "the hostname
+  of a device which is connecting to a VDI"): how many, how their names
+  begin, the 25 not starting with WT with the most actions by name (the
+  desktops each was on, its users counted, its `LOCATION_ON_VPN` values),
+  and each `LOCATION_ON_VPN` value as sent: how many devices under it
+  start with WT and how many not, and physical PCs. Several beginnings:
+  `--except WT,TC`.
 - **Active Directory** (`verify --ad`, read only; also at the end of a
   full `verify` once an `ad:` block or `AD_USERNAME` is set): the
   domain (`ad.domain`, else this host's DNS search domain and those
