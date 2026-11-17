@@ -64,9 +64,13 @@ VDI_COLUMNS = {
     "inventory": {"sccm_client": "SCCM_CLIENT_VERSION", "image_build": "DEVICE_IMAGE_BUILD_NUMBER"},
 }
 # SecureView (secureview.py): before its own records, Aternity's daily data says which devices
-# people sat at on each day (Riverbed's $metadata: BUSINESS_ACTIVITIES_DAILY has TIMEFRAME and
-# CLIENT_DEVICE_NAME; kept about 90 days on the live tenant, stage Nov 10 2026)
-SECUREVIEW_DAILY = {"entity": "BUSINESS_ACTIVITIES_DAILY", "time": "TIMEFRAME", "client_device": "CLIENT_DEVICE_NAME"}
+# people sat at on each day, who and on which desktops (Riverbed's $metadata: BUSINESS_ACTIVITIES_DAILY has TIMEFRAME,
+# CLIENT_DEVICE_NAME, USERNAME and DEVICE_NAME; kept about 90 days on the live tenant, stage Nov 10 2026)
+SECUREVIEW_DAILY = {"entity": "BUSINESS_ACTIVITIES_DAILY", "time": "TIMEFRAME", "client_device": "CLIENT_DEVICE_NAME",
+                    "username": "USERNAME", "device": "DEVICE_NAME"}
+# and its hourly data first (each person's first and last hour; how long it is kept is not known: the
+# read goes back until a day has no row, and History says how far)
+SECUREVIEW_HOURLY = dict(SECUREVIEW_DAILY, entity="BUSINESS_ACTIVITIES_HOURLY")
 # verify --clients: where the device a person sat at was (Riverbed's $metadata, activities);
 # how the live tenant fills it is what the check shows (never read before, Nov 16 2026).
 CLIENT_COLUMNS = {"on_vpn": "LOCATION_ON_VPN"}

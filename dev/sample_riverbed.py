@@ -63,6 +63,7 @@ SEED = "sample-1"           # another word gives other made-up rows, the same st
 ACTIVITY_DAYS = 8           # actions, app usage, processes kept (prod: about 8)
 HISTORY_DAYS = 30           # health events, change log, start-ups
 DAILY_DAYS = 90             # daily sums (prod: about 90, stage Nov 10 2026)
+HOURLY_DAYS = 35            # hourly sums of actions (prod: not known; made up, below the daily's)
 SEED_DAYS = 21              # past days of saved counts written for the Today usual
 NOT_PUBLISHED = ("ANOMALY_DETECTION_INCIDENTS",)  # as on prod
 PAGE_ROWS = 5000            # rows per OData page, then @odata.nextLink
@@ -210,12 +211,12 @@ TIME_COL = {
     "BUSINESS_ACTIVITIES_RAW": "TIMEFRAME", "APPLICATIONS_RAW": "TIMEFRAME", "DEVICE_HEALTH_RAW": "TIMEFRAME",
     "WINDOWS_MACHINE_BOOTS": "TIMEFRAME", "MACHINE_BOOT_COMPONENTS": "TIMEFRAME",
     "INSTALLED_SOFTWARE_CHANGE_LOG": "INSTALLED_SW_CHANGE_TIMESTAMP", "APPLICATION_RESOURCES_HOURLY": "TIMEFRAME",
-    "APPLICATIONS_DAILY": "TIMEFRAME", "BUSINESS_ACTIVITIES_DAILY": "TIMEFRAME",
+    "APPLICATIONS_DAILY": "TIMEFRAME", "BUSINESS_ACTIVITIES_DAILY": "TIMEFRAME", "BUSINESS_ACTIVITIES_HOURLY": "TIMEFRAME",
 }
 SHORT_KEPT = ("BUSINESS_ACTIVITIES_RAW", "APPLICATIONS_RAW", "APPLICATION_RESOURCES_HOURLY")
 # Aternity adds these up over the columns asked for (INSTALLED_SOFTWARE without DEVICE_NAME
 # comes per name and version with DEVICE_COUNT, as on the live tenant)
-ADDED_UP = ("INSTALLED_SOFTWARE", "APPLICATIONS_DAILY", "BUSINESS_ACTIVITIES_DAILY")
+ADDED_UP = ("INSTALLED_SOFTWARE", "APPLICATIONS_DAILY", "BUSINESS_ACTIVITIES_DAILY", "BUSINESS_ACTIVITIES_HOURLY")
 SUMS = ("APPLICATION_CRASHES_TOTAL", "APPLICATION_HANG_TIME_TOTAL", "ACTIVITY_VOLUME", "INSTALLED_SW_COUNT",
         "INSTALLED_SW_INSTALLATION_VOLUME")
 AVERAGES = ("APPLICATION_UXI_AVG", "ACTIVITY_RESPONSE_TIME_AVG")
@@ -965,10 +966,32 @@ class Sample:
             rows.append(row)
         return rows
 
+    def hourly(self, h: datetime) -> list[dict]:
+        """BUSINESS_ACTIVITIES_HOURLY: one hour's actions added up, as the daily sums (written once the
+        hour ended)."""
+        if h + HOUR > self.clock():
+            return []
+        per: dict = {}
+        for a in self.actions(h):
+            key = (a["DEVICE_NAME"], a["USERNAME"], a["APPLICATION_NAME"], a["ACTIVITY_NAME"], a["SLA_STATUS"],
+                   a["CLIENT_DEVICE_NAME"])
+            x = per.setdefault(key, {"n": 0, "rt": 0.0})
+            x["n"] += 1
+            x["rt"] += a["ACTIVITY_RESPONSE_TIME"]
+        rows = []
+        for (dev, user, app, act, status, client), x in sorted(per.items(), key=lambda kv: str(kv[0])):
+            pc = PCS[dev]
+            rows.append({"TIMEFRAME": h, "DEVICE_NAME": dev, "USERNAME": user, "APPLICATION_NAME": app,
+                         "ACTIVITY_NAME": act, "SLA_STATUS": status, "CLIENT_DEVICE_NAME": client,
+                         "VIRTUALIZATION": "true" if pc["virtual"] else "false", "BUSINESS_LOCATION": pc["site"],
+                         "ACTIVITY_VOLUME": x["n"], "ACTIVITY_RESPONSE_TIME_AVG": round(x["rt"] / x["n"], 3)})
+        return rows
+
     # -- rows of a data source between two times -----------------------------------
     def rows(self, entity: str, lo: datetime | None, hi: datetime | None) -> list[dict]:
         now = self.clock()
-        kept = now - timedelta(days=ACTIVITY_DAYS if entity in SHORT_KEPT else DAILY_DAYS if entity in ADDED_UP[1:]
+        kept = now - timedelta(days=ACTIVITY_DAYS if entity in SHORT_KEPT else HOURLY_DAYS
+                               if entity == "BUSINESS_ACTIVITIES_HOURLY" else DAILY_DAYS if entity in ADDED_UP[1:]
                                else HISTORY_DAYS)
         lo = max(lo or kept, kept)
         hi = min(hi or now, now)
@@ -998,6 +1021,8 @@ class Sample:
             return [r for d in days for r in self.daily(d, "usage")]
         if entity == "BUSINESS_ACTIVITIES_DAILY":
             return [r for d in days for r in self.daily(d, "actions")]
+        if entity == "BUSINESS_ACTIVITIES_HOURLY":
+            return [r for h in hours for r in self.hourly(h)]
         if entity == "INSTALLED_SOFTWARE":
             return self.installed()
         if entity == "DEVICE_INVENTORY":

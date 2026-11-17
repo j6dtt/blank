@@ -139,26 +139,47 @@ def test_the_usual_by_now_needs_days_read_in_full(tmp_path):
 
 
 class Daily:
-    """A made-up Aternity answering BUSINESS_ACTIVITIES_DAILY per day."""
+    """A made-up Aternity answering BUSINESS_ACTIVITIES_DAILY per day ({day's TIMEFRAME: rows}) and
+    BUSINESS_ACTIVITIES_HOURLY per hour ({hour's TIMEFRAME: rows}); a row is a device's name, or
+    (device, username, desktop), added up as Aternity does."""
 
-    def __init__(self, days: dict, fail=False):
-        self.days, self.fail, self.asked = days, fail, []
+    def __init__(self, days: dict, fail=False, hours: dict | None = None, hour_fail=False, page_hours=None):
+        self.days, self.fail, self.asked, self.hours, self.hour_fail = days, fail, [], hours or {}, hour_fail
+        self.hourly_asked: list[tuple] = []
+        self.page_hours = page_hours  # a read of more hours than this gets a next page (cut short at max_pages 1)
+
+    @staticmethod
+    def _row(t, n):
+        dev, user, desk = n if isinstance(n, tuple) else (n, None, None)
+        return {"TIMEFRAME": t.isoformat(), "CLIENT_DEVICE_NAME": dev, "USERNAME": user, "DEVICE_NAME": desk}
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
-        if self.fail:
-            return httpx.Response(400, json={"error": {"message": "Unknown column: CLIENT_DEVICE_NAME"}})
         flt = req.url.params.get("$filter", "")
         lo = datetime.fromisoformat(flt.split("ge ")[1].split(" and")[0].replace("Z", "+00:00"))
+        hi = datetime.fromisoformat(flt.split("lt ")[1].split(" and")[0].replace("Z", "+00:00"))
+        if req.url.path.endswith("BUSINESS_ACTIVITIES_HOURLY"):
+            self.hourly_asked.append((lo, hi))
+            if self.hour_fail:
+                return httpx.Response(404, json={"error": {"message": "Entity set 'BUSINESS_ACTIVITIES_HOURLY' doesn't exist."}})
+            rows = [self._row(t, n) for t, names in self.hours.items() if lo <= t < hi for n in names]
+            out = {"value": rows}
+            if self.page_hours and hi - lo > timedelta(hours=self.page_hours):
+                out["@odata.nextLink"] = str(req.url)  # more pages: cut short at max_pages
+            return httpx.Response(200, json=out)
+        if self.fail:
+            return httpx.Response(400, json={"error": {"message": "Unknown column: CLIENT_DEVICE_NAME"}})
         self.asked.append(req.url.params.get("$select"))
         rows = []
         for t, names in self.days.items():
             if lo <= t < lo + timedelta(hours=25):
-                rows += [{"TIMEFRAME": t.isoformat(), "CLIENT_DEVICE_NAME": n} for n in names]
+                rows += [self._row(t, n) for n in names]
         return httpx.Response(200, json={"value": rows})
 
 
-def client_of(handler):
+def client_of(handler, max_pages=None):
     cfg = AternityConfig(base_url="https://aternity.test/aternity.odata/v2.0", username="u", password="p")
+    if max_pages:
+        cfg.max_pages = max_pages
     return AternityClient(cfg, transport=httpx.MockTransport(handler))
 
 
@@ -171,7 +192,9 @@ def test_aternity_daily_data_fills_the_days_before_the_records(tmp_path):
     fake = Daily({utc_midnight: ["HV00148-SAMPLE48THIN", "WTC0037", None], local_midnight: ["HV00149-SAMPLE49THINVM"]})
     sv = SecureView(MATCH, ZONE, tmp_path)
     sv.backfill(client_of(fake), NOW)
-    assert fake.asked[0] == "TIMEFRAME,CLIENT_DEVICE_NAME" and len(fake.asked) == 90
+    assert fake.asked[0] == "TIMEFRAME,CLIENT_DEVICE_NAME,USERNAME,DEVICE_NAME" and len(fake.asked) == 90
+    # its hourly data first: no row on the two days before today (one may not be written yet), so none after
+    assert len(fake.hourly_asked) == 8 and {hi - lo for lo, hi in fake.hourly_asked} == {timedelta(hours=6)}
     assert set(sv.days[d1]["devices"]) == {"HV00148-SAMPLE48THIN"} and sv.days[d1]["daily"]
     assert set(sv.days[d2]["devices"]) == {"HV00149-SAMPLE49THINVM"}
     h = sv.view(NOW)["history"]
@@ -179,8 +202,9 @@ def test_aternity_daily_data_fills_the_days_before_the_records(tmp_path):
     assert {x["name"]: x["silent"] for x in h["devices"]} == {"HV00148-SAMPLE48THIN": 40, "HV00149-SAMPLE49THINVM": 75}
     assert all(x["person"] is None for x in h["devices"])  # days only: no people, no times
     detail = sv.device("HV00148-SAMPLE48THIN", NOW)
-    assert [q for q in detail["squares"] if q["heard"]] == [{"date": d1.isoformat(), "heard": True, "day_only": True, "part": False,
-                                                              "first_local": None, "last_local": None, "people": [], "desktops": []}]
+    assert [q for q in detail["squares"] if q["heard"]] == [{"date": d1.isoformat(), "heard": True, "day_only": True, "by": "day",
+                                                              "part": False, "first_local": None, "last_local": None, "people": [],
+                                                              "desktops": []}]
     sv.save(NOW)
     fake.asked.clear()
     again = SecureView(MATCH, ZONE, tmp_path)
@@ -276,7 +300,7 @@ def test_search_finds_people_devices_and_desktops_over_every_day_kept(tmp_path):
     old = today - timedelta(days=60)
     sv = SecureView(MATCH, ZONE, tmp_path)
     t = datetime(old.year, old.month, old.day, tzinfo=timezone.utc)
-    sv.backfill(client_of(Daily({t: ["HV00148-SAMPLE48THIN"]})), NOW)  # a day only: no times, no people
+    sv.backfill(client_of(Daily({t: ["HV00148-SAMPLE48THIN"]})), NOW)  # a day only: no times, no one named
     hour_rows(sv, [row(at(d1, 8, 5), "HV00148-SAMPLE48THIN", "CORP\\Ann", "VD-01"),
                    row(at(d1, 11, 40), "HV00148-SAMPLE48THIN", "CORP\\Ann", "VD-02"),
                    row(at(d1, 13, 0), "HV00148-SAMPLE48THIN", "bob", "VD-01"),
@@ -287,14 +311,14 @@ def test_search_finds_people_devices_and_desktops_over_every_day_kept(tmp_path):
     ann = got["people"][0]
     assert (ann["days"], ann["first"], ann["last"], ann["devices"]) == (2, d2.isoformat(), d1.isoformat(), 2)
     assert ann["rows"] == [{"date": d1.isoformat(), "device": "HV00148-SAMPLE48THIN", "first_local": "08:05", "last_local": "11:40",
-                            "desktops": ["VD-01", "VD-02"], "others": 1},
+                            "by": "minute", "day_only": False, "desktops": ["VD-01", "VD-02"], "others": 1},
                            {"date": d2.isoformat(), "device": "HV00149-SAMPLE49THIN", "first_local": "09:00", "last_local": "09:00",
-                            "desktops": ["VD-01"], "others": 0}]
+                            "by": "minute", "day_only": False, "desktops": ["VD-01"], "others": 0}]
     dev = sv.search("SAMPLE48", NOW)["devices"]
     assert [m["name"] for m in dev] == ["HV00148-SAMPLE48THIN"] and dev[0]["people"] == 2 and dev[0]["days"] == 2
     assert [r["date"] for r in dev[0]["rows"]] == [d1.isoformat(), old.isoformat()]  # latest first
     assert [p["user"] for p in dev[0]["rows"][0]["people"]] == ["CORP\\Ann", "bob"]  # in the order they came
-    assert dev[0]["rows"][1] == {"date": old.isoformat(), "day_only": True, "first_local": None, "last_local": None,
+    assert dev[0]["rows"][1] == {"date": old.isoformat(), "day_only": True, "by": "day", "first_local": None, "last_local": None,
                                  "people": [], "desktops": []}
     desk = sv.search("vd-0", NOW)["desktops"]
     assert [m["name"] for m in desk] == ["VD-01", "VD-02"]  # VD-01 last seen yesterday too: then by name
@@ -305,7 +329,7 @@ def test_search_finds_people_devices_and_desktops_over_every_day_kept(tmp_path):
     # AD found "Ann Archer" as the account ann: her days though no username has the words typed
     named = sv.search("archer", NOW, ["ann"])
     assert [m["name"] for m in named["people"]] == ["CORP\\Ann"]
-    assert got["people_since"] == d2.isoformat() and got["keep_days"] == secureview.KEEP_DAYS
+    assert got["records_since"] == d2.isoformat() and got["keep_days"] == secureview.KEEP_DAYS
 
 
 def test_search_lists_at_most_search_max_of_a_kind(tmp_path, monkeypatch):
@@ -343,3 +367,86 @@ def test_the_search_route_reads_ad_only_when_no_username_has_it(monkeypatch, tmp
     page = (web.STATIC / "admin.html").read_text(encoding="utf-8")
     assert '["search", "Search"]' in page and 'fetch("admin/api/secureview/search?q="' in page
     assert 'data-sq="${esc(user)}"' in page  # a username on Today or History opens Search with it
+
+
+T48 = "HV00148-SAMPLE48THIN"
+
+
+def test_aternitys_hourly_data_gives_the_hour_and_never_moves_a_time_seen(tmp_path):
+    today = date(2026, 11, 17)
+    d1, d2, d3 = today - timedelta(days=1), today - timedelta(days=2), today - timedelta(days=7)
+    sv = SecureView(MATCH, ZONE, tmp_path)
+    # SecureView's own records of d1 (part of the day): ann 08:05 to 14:10
+    hour_rows(sv, [row(at(d1, 8, 5), T48, "CORP\\Ann", "VD-01"), row(at(d1, 14, 10), T48, "CORP\\Ann", "VD-01")])
+    hours = {at(d1, 8): [(T48, "CORP\\Ann", "VD-01")], at(d1, 15): [(T48, "CORP\\Ann", "VD-02")],
+             at(d1, 11): [(T48, "bob", "VD-01"), ("WTC0037", "zed", "VD-09")],
+             at(d2, 9): [(T48, "CORP\\Ann", "VD-01")], at(d2, 17): [(T48, "CORP\\Ann", "VD-01")]}
+    days = {datetime(d3.year, d3.month, d3.day, tzinfo=timezone.utc): [(T48, "carol", "VD-03")]}
+    sv.backfill(client_of(Daily(days, hours=hours)), NOW)
+    x = sv.days[d1]["devices"][T48]
+    assert x["first"] == at(d1, 8, 5).timestamp() and x["back"]["by"] == "hour"  # its own minute is kept
+    assert x["desktops"] == {"VD-01", "VD-02"} and "WTC0037" not in sv.days[d1]["devices"]
+    ann = sv.search("ann", NOW)["people"][0]["rows"]
+    assert [(r["date"], r["first_local"], r["last_local"], r["by"]) for r in ann] == [
+        (d1.isoformat(), "08:05", "15:xx", "hour"),  # 08:05: the records' minute, in the hour Aternity has; 15:xx: later
+        (d2.isoformat(), "09:xx", "17:xx", "hour")]
+    dev = sv.search("sample48", NOW)["devices"][0]
+    assert [(r["date"], r["first_local"], r["last_local"], r["day_only"]) for r in dev["rows"]] == [
+        (d1.isoformat(), "08:05", "15:xx", False), (d2.isoformat(), "09:xx", "17:xx", False), (d3.isoformat(), None, None, True)]
+    assert dev["rows"][0]["people"] == [{"user": "CORP\\Ann", "first_local": "08:05", "last_local": "15:xx"},
+                                        {"user": "bob", "first_local": "11:xx", "last_local": "11:xx"}]
+    assert dev["rows"][2]["people"] == [{"user": "carol", "first_local": None, "last_local": None}]  # its daily data
+    assert sv.search("vd-03", NOW)["desktops"][0]["rows"][0]["people"][0]["user"] == "carol"
+    assert sv.daily["hour"] == {d1, d2} and sv.daily["read"] == {d1, d2, d3}
+    note = sv.view(NOW)["history"]["daily"]["note"]
+    assert f"Days before the records, from Aternity: 3, back to {d3:%a %b %d}." in note
+    assert f"2 with each person's first and last hour (its hourly data, back to {d2:%a %b %d})" in note
+    assert "1 day only, with the people and desktops (its daily data)." in note
+    last = {r["name"]: r for r in sv.view(NOW)["history"]["devices"]}[T48]
+    assert (last["person"], last["person_day"], last["person_first"], last["person_last"]) == ("CORP\\Ann", d1.isoformat(), "08:05", "15:xx")
+    detail = [q for q in sv.device(T48, NOW)["squares"] if q["heard"]]
+    assert [(q["by"], q["first_local"]) for q in detail] == [("day", None), ("hour", "09:xx"), ("hour", "08:05")]
+    # saved and read back
+    sv.save(NOW)
+    again = SecureView(MATCH, ZONE, tmp_path)
+    assert again.search("ann", NOW)["people"][0]["rows"] == sv.search("ann", NOW)["people"][0]["rows"]
+    assert again.daily["hour"] == {d1, d2}
+
+
+def test_an_hourly_read_cut_short_is_read_hour_by_hour(tmp_path):
+    d1 = date(2026, 11, 16)
+    fake = Daily({}, hours={at(d1, 8): [(T48, "ann", "VD-01")], at(d1, 9): [(T48, "ann", "VD-01")]}, page_hours=1)
+    sv = SecureView(MATCH, ZONE, tmp_path)
+    sv.backfill(client_of(fake, max_pages=1), NOW)
+    assert sv.days[d1]["devices"][T48]["back"]["h"] == [at(d1, 8).timestamp(), at(d1, 9).timestamp()]
+    # every 6-hour read came back cut short: each hour on its own, on the two days tried (the second has no row)
+    assert sum(1 for lo, hi in fake.hourly_asked if hi - lo == timedelta(hours=1)) == 48
+
+
+def test_no_hourly_data_or_none_naming_a_device_reads_the_daily(tmp_path):
+    d1 = date(2026, 11, 16)
+    days = {datetime(2026, 11, 16, tzinfo=timezone.utc): [(T48, "ann", "VD-01")]}
+    gone = Daily(days, hour_fail=True)
+    sv = SecureView(MATCH, ZONE, tmp_path)
+    sv.backfill(client_of(gone), NOW)
+    assert len(gone.hourly_asked) == 1 and sv.daily["hour"] == set() and d1 in sv.daily["read"]
+    assert "None with the hour (its hourly data: Mon Nov 16 could not be read" in sv.daily["note"]
+    unnamed = Daily(days, hours={at(d1, 9): [(None, "ann", "PC-07")]})
+    sv = SecureView(MATCH, ZONE, tmp_path / "b")
+    sv.backfill(client_of(unnamed), NOW)
+    assert sv.daily["hour"] == set() and sv.days[d1]["devices"][T48]["back"]["people"] == {"ann": ["ann", None, None]}
+    assert "names no device people sat at on Mon Nov 16" in sv.daily["note"]
+
+
+def test_days_read_before_the_people_were_asked_for_are_read_again(tmp_path):
+    (tmp_path / "secureview").mkdir()
+    (tmp_path / "secureview" / "daily.json").write_text(json.dumps({"read": ["2026-11-10"], "state": "ok", "note": "x", "at": 1}))
+    assert SecureView(MATCH, ZONE, tmp_path).daily["read"] == set()
+
+
+def test_the_hourly_source_names_are_riverbeds_own():
+    from pathlib import Path
+    from uxcorrelate.config import SECUREVIEW_HOURLY
+    from uxcorrelate.verify import parse_odata_metadata
+    schema = parse_odata_metadata((Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
+    assert {v for k, v in SECUREVIEW_HOURLY.items() if k != "entity"} <= schema[SECUREVIEW_HOURLY["entity"]]

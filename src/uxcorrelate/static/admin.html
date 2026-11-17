@@ -837,8 +837,8 @@ function svHistory(j) {
       [h.working ? `${h.working.low} to ${h.working.high}` : "–", h.working ? `in use on a working day (${h.working.days} working days)` : "in use on a working day: no working day read in full yet"],
       ...(h.new30 != null ? [[fmt(h.new30), `first heard in the last ${j.new_days} days`]] : [])])
     + (d.state === "ok" ? `<p class="muted small">${esc(d.note)}</p>` : d.state ? `<p class="note">${esc(d.note)}</p>`
-      : `<p class="muted small">Aternity's daily data (the days before the records): not read yet. It is read once the first read of Aternity is done, then each night.</p>`)
-    + (h.unread ? `<p class="note">${plural(h.unread, "day")} since ${svDay(h.start)} could not be read (the app was not running, and Aternity's daily data did not have them): `
+      : `<p class="muted small">The days before the records (Aternity's hourly and daily data): not read yet. They are read once the first read of Aternity is done, then each night.</p>`)
+    + (h.unread ? `<p class="note">${plural(h.unread, "day")} since ${svDay(h.start)} could not be read (the app was not running, and Aternity did not have them): `
       + `a device may have been heard on them, so it may be silent for less than shown.</p>` : "")
     + `<h3>Heard before, silent since <span class="muted small">(click one to list them)</span></h3>`
     + `<div class="chips">${lists.map(([k, t, l]) => `<button class="chip${k === SV.chip ? " on" : ""}" data-k="${k}"><b>${fmt(l.length)}</b><span>${t}</span></button>`).join("")}</div>`
@@ -859,10 +859,12 @@ function svHistory(j) {
     + `<div><h3>Most different people <span class="muted small">(the last ${j.new_days} days)</span></h3><div class="small">`
     + (many.length ? many.map(x => `${esc(x.name)} · ${plural(x.people30, "person", "people")}`).join("<br>") : `<span class="muted">None.</span>`) + `</div></div></div>`
     + `<p class="fine">Only devices Aternity has heard from: a device nobody used since before ${svDay(h.start)} is not known here. Heard: a virtual desktop opened from the `
-    + `device sent Aternity an action that day. Silent: heard before, nothing since. First / last heard with times and people for the days in SecureView's own records; `
-    + `Aternity's daily data before them gives the day only. Records kept ${j.keep_days} days. Click a device for its days.</p>`;
+    + `device sent Aternity an action that day. Silent: heard before, nothing since. ${SV_TIMES} Records kept ${j.keep_days} days. Click a device for its days.</p>`;
 }
-const SV_NO_PERSON = "no person recorded";  // History: a device known from Aternity's daily data only
+const SV_NO_PERSON = "no person recorded";  // History: a device with no person on any day kept
+// how a first and last time is known, said under each list that shows them
+const SV_TIMES = `First and last heard: to the minute from SecureView's own records; "08:xx" is the hour only, from Aternity's hourly data; `
+  + `"day only": Aternity's daily data (the people and desktops, no times).`;
 const svHDeptOptions = j => svDeptOptions(SV.hdept, j.history.devices.filter(x => x.person).map(x => x.person),
   j.history.devices.some(x => !x.person) ? [SV_NO_PERSON] : []);
 function svHDept(j) {
@@ -880,7 +882,7 @@ function svHDept(j) {
   const rows = [...per].sort(svDeptOrder).map(([d, v]) => [d, v[0], v[1], v[2] ? `${v[2]} silent 90+` : "", `heard in the last ${j.new_days} days`]);
   return svDeptRows(rows, SV.hdept, true) + (wait && !why ? `<p class="muted small">${plural(wait, "device")} waiting for Active Directory.</p>` : "")
     + (why ? `<p class="muted small">${esc(why)}</p>` : "")
-    + (none ? `<p class="muted small">"No person recorded": known from Aternity's daily data only, which has no people.</p>` : "");
+    + (none ? `<p class="muted small">"No person recorded": neither SecureView nor Aternity named anyone on its days.</p>` : "");
 }
 function svHRows() {
   const h = SV.j.history, q = SV.hq.trim().toLowerCase();
@@ -895,16 +897,14 @@ function svDetail(name) {
   const x = SV.dev[name];
   if (!x) return `<span class="muted small">Reading…</span>`;
   if (x.error) return `<span class="bad small">${esc(x.error)}</span>`;
-  const heard = x.squares.filter(q => q.heard), timed = heard.filter(q => !q.day_only).reverse(), only = heard.filter(q => q.day_only);
+  const heard = x.squares.filter(q => q.heard).reverse();  // latest first
   const we = d => [0, 6].includes(new Date(d + "T12:00:00Z").getUTCDay());
-  const lines = timed.slice(0, 10).map(q => `${esc(svDay(q.date))} · ${esc(q.first_local)}–${esc(q.last_local)}`
+  const lines = heard.slice(0, 10).map(q => `${esc(svDay(q.date))} · ${svTimes(q.first_local, q.last_local)}`
     + (q.part ? ` <span class="muted">(the day not read in full)</span>` : "") + " · "
     + (q.people.map(p => svWho(p.user, q.people.length > 1 && p.first_local, p.last_local)).join(", ") || `<span class="muted">no username</span>`)
     + (q.desktops.length ? ` · <span class="muted">${esc(q.desktops.join(", "))}</span>` : ""));
-  if (timed.length > 10) lines.push(`<span class="muted">and ${plural(timed.length - 10, "day")} more with times.</span>`);
-  if (only.length) lines.push(`<span class="muted">${plural(only.length, "day")} from Aternity's daily data (no times, no people)`
-    + (only.length > 1 ? `, ${esc(svDay(only[0].date))} to ${esc(svDay(only[only.length - 1].date))}` : `: ${esc(svDay(only[0].date))}`) + ".</span>");
-  if (x.days > heard.length) lines.push(`<span class="muted">Heard on ${plural(x.days, "day")} since ${esc(svDay(x.first))}.</span>`);
+  if (x.days > 10) lines.push(`<span class="muted">Heard on ${plural(x.days, "day")} since ${esc(svDay(x.first))}:</span> `
+    + `<button class="link" data-sq="${esc(x.name)}">every day in Search ▸</button>`);
   return `<div class="small muted">The last ${x.squares.length} days, oldest first (a square a day; faded: weekend)</div>`
     + `<div class="cal">${x.squares.map(q => `<i class="${q.heard ? "u" : ""}${we(q.date) ? " w" : ""}" title="${esc(svDay(q.date))}${q.heard ? ": heard" : ""}"></i>`).join("")}</div>`
     + `<div class="small">${lines.join("<br>")}</div>`;
@@ -927,7 +927,7 @@ function svHBody() {
     const ago = x.silent ? ` <span class="muted small">(${plural(x.silent, "day")} ago)</span>` : "";
     let r = `<tr class="${SV.open === x.name ? "open" : ""}"><td><button class="link" data-d="${esc(x.name)}">${esc(x.name)} ${SV.open === x.name ? "▾" : "▸"}</button></td>`
       + `<td>${esc(svDay(x.last))}${ago}</td><td>${esc(svDay(x.first))}</td>`
-      + `<td>${x.person ? svWho(x.person) + `<div class="muted small">${esc(svDay(x.person_day))} ${esc(x.person_first)}–${esc(x.person_last)}</div>` : `<span class="muted">no person recorded</span>`}</td>`
+      + `<td>${x.person ? svWho(x.person) + `<div class="muted small">${esc(svDay(x.person_day))} ${svTimes(x.person_first, x.person_last)}</div>` : `<span class="muted">no person recorded</span>`}</td>`
       + `<td class="n">${fmt(x.days)}</td></tr>`;
     if (SV.open === x.name) r += `<tr class="det"><td colspan="5">${svDetail(x.name)}</td></tr>`;
     return r;
@@ -995,21 +995,17 @@ function svSearch() {
     + `<div id="svSres">${svSRes()}</div>`;
 }
 const svFind = v => `<button class="link" data-sq="${esc(v)}" title="Search for ${esc(v)}">${esc(v)}</button>`;
-const svTimes = (a, b) => `${esc(a)}–${esc(b)}`;
+const svTimes = (a, b) => a ? `${esc(a)}–${esc(b)}` : `<span class="muted">day only</span>`;  // "08:xx": the hour only
 const svPeople = r => r.people.map(p => svWho(p.user, r.people.length > 1 && p.first_local, p.last_local)).join("<br>") || `<span class="muted">no username</span>`;
 const svDesks = ds => ds.length ? ds.map(d => svFind(d)).join(", ") : `<span class="muted">–</span>`;
-// a match: its days with times in a table (the latest SV_DAYS_SHOWN, then "Show all"); a device's days known only
-// from Aternity's daily data (no times, no people) in one line under it
+// a match: every day a row, latest first (the user: "first heard and last heard also for all dates"), the latest
+// SV_DAYS_SHOWN days, then "Show all"
 function svMatch(kind, m, head, cols, row) {
-  const key = kind + ":" + m.name, timed = m.rows.filter(r => !r.day_only), only = m.rows.filter(r => r.day_only);
-  const dates = [...new Set(timed.map(r => r.date))];
+  const key = kind + ":" + m.name, dates = [...new Set(m.rows.map(r => r.date))];
   const shown = SV.sall[key] ? dates : dates.slice(0, SV_DAYS_SHOWN), keep = new Set(shown);
-  return `<div class="match"><h3>${head}</h3>` + (timed.length ? `<div class="tableWrap"><table class="sr"><thead><tr>${cols.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>`
-    + timed.filter(r => keep.has(r.date)).map(r => `<tr>${row(r).map(c => `<td>${c}</td>`).join("")}</tr>`).join("") + `</tbody></table></div>`
-    + (shown.length < dates.length ? `<button class="btn2" data-sall="${esc(key)}">Show all ${fmt(dates.length)} days ▸</button>` : "") : "")
-    + (only.length ? `<p class="muted small">${timed.length ? "Also heard on" : "Heard on"} ${plural(only.length, "day")} from Aternity's daily data`
-      + (only.length > 1 ? `, ${esc(svDay(only[only.length - 1].date))} to ${esc(svDay(only[0].date))}` : `: ${esc(svDay(only[0].date))}`)
-      + `: days only, no times or people.</p>` : "") + `</div>`;
+  return `<div class="match"><h3>${head}</h3><div class="tableWrap"><table class="sr"><thead><tr>${cols.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>`
+    + m.rows.filter(r => keep.has(r.date)).map(r => `<tr>${row(r).map(c => `<td>${c}</td>`).join("")}</tr>`).join("") + `</tbody></table></div>`
+    + (shown.length < dates.length ? `<button class="btn2" data-sall="${esc(key)}">Show all ${fmt(dates.length)} days ▸</button>` : "") + `</div>`;
 }
 const svSpan = m => `<span class="muted small">${m.days === 1 ? `1 day: ${esc(svDay(m.last))}` : `${plural(m.days, "day")}, ${esc(svDay(m.first))} to ${esc(svDay(m.last))}`}</span>`;
 function svSAd(s) {  // a person's real name, looked up in AD when no username has it
@@ -1057,8 +1053,8 @@ function svSRes() {
     ["Day", "Device", "Device heard", "People on it"],
     r => [esc(svDay(r.date)), svFind(r.device), svTimes(r.first_local, r.last_local), svPeople(r)])).join("")
     + (s.more.desktops ? `<p class="muted small">and ${plural(s.more.desktops, "more desktop")}: type more of the name.</p>` : "");
-  if (n) h += `<p class="fine">A person's days are SecureView's own records${s.people_since ? `, kept since ${esc(svDay(s.people_since))}` : ""}: `
-    + `before them Aternity's daily data gives a device's days only, with no times and no people. Times in ${esc(s.zone)}; at most ${fmt(s.keep_days)} days are kept.</p>`;
+  if (n) h += `<p class="fine">${SV_TIMES} SecureView's own records${s.records_since ? ` began ${esc(svDay(s.records_since))}` : ": none yet"}. `
+    + `Times in ${esc(s.zone)}; at most ${fmt(s.keep_days)} days are kept.</p>`;
   return h;
 }
 function svSDraw() {
@@ -1100,13 +1096,14 @@ function svSearchBind() {
 function svSCsv() {
   const s = SV.sres, lines = [["Found", "Name", "Day", "Device", "Desktops", "Person", "First", "Last", "Note"].map(csvCell).join(",")];
   const add = (...v) => lines.push(v.map(csvCell).join(","));
-  for (const m of s.people) for (const r of m.rows) add("person", m.name, r.date, r.device, r.desktops.join(" "), m.name, r.first_local, r.last_local, r.others ? `${r.others} other(s) on the device that day` : "");
+  const how = by => by === "hour" ? "08:xx: the hour only (Aternity's hourly data)" : by === "day" ? "day only (Aternity's daily data)" : "";
+  for (const m of s.people) for (const r of m.rows) add("person", m.name, r.date, r.device, r.desktops.join(" "), m.name, r.first_local, r.last_local,
+    [how(r.by), r.others ? `${r.others} other(s) on the device that day` : ""].filter(Boolean).join("; "));
   for (const [kind, list] of [["device", s.devices], ["desktop", s.desktops]])
     for (const m of list) for (const r of m.rows) {
       const dev = kind === "device" ? m.name : r.device, desks = kind === "device" ? r.desktops.join(" ") : m.name;
-      if (r.day_only) add(kind, m.name, r.date, dev, desks, "", "", "", "Aternity's daily data: day only, no times or people");
-      else if (!r.people.length) add(kind, m.name, r.date, dev, desks, "", r.first_local, r.last_local, "no username");
-      else for (const p of r.people) add(kind, m.name, r.date, dev, desks, p.user, p.first_local, p.last_local, "");
+      if (!r.people.length) add(kind, m.name, r.date, dev, desks, "", r.first_local, r.last_local, [how(r.by), "no username"].filter(Boolean).join("; "));
+      else for (const p of r.people) add(kind, m.name, r.date, dev, desks, p.user, p.first_local, p.last_local, how(r.by));
     }
   download(`secureview-search-${s.q.replace(/[^a-z0-9]+/gi, "_").slice(0, 40)}-${s.date}.csv`, lines);
 }

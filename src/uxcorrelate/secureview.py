@@ -12,10 +12,14 @@ day, never narrow it. Aternity has no connect or disconnect record: "heard" is a
 virtual desktop opened from the device, and a session nobody uses sends nothing.
 
 Only devices Aternity has heard from are known (the user: "build history based on devices it's
-heard"; the THIN devices are not in AD). Before the records, Aternity's daily data (kept about
-90 days on the live tenant, stage Nov 10 2026) is read once a day for each day not read in
-full, the device people sat at alone: which devices were heard that day, no times, no people
-(`backfill`). A day is <data>/secureview/<date>.json (device names and usernames), KEEP_DAYS.
+heard"; the THIN devices are not in AD). Before the records, Aternity is read once a day for each
+day not read in full (`backfill`; the user, 2026-11-17: history of people and "first heard and
+last heard also for all dates"): its hourly data while it has rows (each device's and person's
+first and last hour, the desktops; how long it keeps them is not known), then its daily data
+(kept about 90 days on the live tenant, stage Nov 10 2026: the people and desktops, no times).
+That is kept apart from the records (`back`), never moving a time SecureView saw itself; a day
+shows the records' minute unless Aternity's hour is earlier (later): "08:xx" (`ends`). A day is
+<data>/secureview/<date>.json (device names and usernames), KEEP_DAYS.
 """
 
 from __future__ import annotations
@@ -30,7 +34,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from .aternity import odata_time
-from .config import SECUREVIEW_DAILY
+from .config import SECUREVIEW_DAILY, SECUREVIEW_HOURLY
 from .http import short_error
 from .models import parse_time
 from .today import HOUR, LATE, MIN_USUAL, USUAL_DAYS, kind_of, working, zone_of
@@ -40,7 +44,11 @@ log = logging.getLogger("uxcorrelate.secureview")
 KEEP_DAYS = 400  # days kept on disk (the plan agreed, 2026-11-17)
 RECENT_MIN = 30  # "heard in the last 30 min"
 DAILY_DAYS = 90  # days of Aternity's daily data asked for (it keeps about 90)
-DAILY_ROWS = 20_000  # rows of one day's daily read: more is not read (said), as a day has ~1,200 devices
+DAILY_ROWS = 50_000  # rows of one day's daily read: more is not read (said); a row per device, person and desktop
+HOURLY_SPAN = 6  # hours of Aternity's hourly data in one read (a read cut short: hour by hour)
+HOURLY_ROWS = 50_000  # rows of one read of it: more is not read (that day: its daily data)
+NO_DEVICE = "no device"  # the daily data's rows name no device people sat at
+STATE_V = 2  # the saved state's version: days read before it (devices only) are read again with the people
 CHART_DAYS = 90  # History's charts and a device's squares
 NEW_DAYS = 30  # "first heard in the last 30 days" and "heard in the last 30 days"
 SILENT_DAYS = (30, 60, 90)  # History's lists: silent this many days or more
@@ -62,6 +70,7 @@ def _new_dev() -> dict:
 def _to_json(day: dict) -> dict:
     return {"devices": {n: {"first": x["first"], "last": x["last"], "hours": sorted(x["hours"]),
                             "people": x["people"], "desktops": sorted(x["desktops"])}
+                        | ({"back": x["back"]} if x.get("back") else {})
                         for n, x in sorted(day["devices"].items())},
             "final": sorted(day["final"]), "cut": sorted(day["cut"]), "daily": day["daily"]}
 
@@ -72,6 +81,10 @@ def _from_json(raw: dict) -> dict:
         day["devices"][str(n)] = {"first": x.get("first"), "last": x.get("last"), "hours": set(x.get("hours") or ()),
                                   "people": {k: list(v) for k, v in (x.get("people") or {}).items()},
                                   "desktops": set(x.get("desktops") or ())}
+        back = x.get("back")
+        if isinstance(back, dict):
+            day["devices"][str(n)]["back"] = {"by": back.get("by") or "day", "h": back.get("h"),
+                                              "people": {k: list(v) for k, v in (back.get("people") or {}).items()}}
     day["final"], day["cut"], day["daily"] = set(raw.get("final") or ()), set(raw.get("cut") or ()), \
         bool(raw.get("daily"))
     return day
@@ -92,7 +105,7 @@ class SecureView:
         self.days: dict[date, dict] = {}
         self.dirty: set[date] = set()
         # what the read of Aternity's daily data found: days read, "ok" / "none" / "failed", in words
-        self.daily: dict = {"read": set(), "state": "", "note": "", "at": None}
+        self.daily: dict = {"read": set(), "hour": set(), "state": "", "note": "", "at": None}
         self.notes: dict[str, str] = {}
         self.pruned: date | None = None
         self.started = False  # the daily read's thread (one per process)
@@ -125,6 +138,54 @@ class SecureView:
     def hm(self, epoch: float | None) -> str | None:
         return None if epoch is None else datetime.fromtimestamp(epoch, timezone.utc).astimezone(self.zone).strftime(
             "%H:%M")
+
+    def hx(self, epoch: float) -> str:
+        """An hour known only as the hour (Aternity's hourly data): "08:xx"."""
+        return datetime.fromtimestamp(epoch, timezone.utc).astimezone(self.zone).strftime("%H:xx")
+
+    def _hour_of(self, epoch: float) -> int:
+        t = datetime.fromtimestamp(epoch, timezone.utc).astimezone(self.zone)
+        return int(t.replace(minute=0, second=0, microsecond=0).timestamp())
+
+    def ends(self, own1, own2, h1, h2) -> tuple:
+        """A day's first and last as shown, how they are known, and their times (to sort by): SecureView's
+        own minute, unless Aternity's hourly data has an earlier first (later last) hour: "08:xx" then
+        (by "hour"); neither: None, None (by "day": its daily data, or nothing)."""
+        f = l = tf = tl = None
+        by = "day"
+        if own1 is not None:
+            f, l, tf, tl, by = self.hm(own1), self.hm(own2), own1, own2, "minute"
+        if h1 is not None and (own1 is None or h1 < self._hour_of(own1)):
+            f, tf, by = self.hx(h1), h1, "hour"
+        if h2 is not None and (own2 is None or h2 > self._hour_of(own2)):
+            l, tl, by = self.hx(h2), h2 + 3599, "hour"
+        return f, l, by, tf, tl
+
+    def _times(self, x: dict) -> tuple:
+        h = (x.get("back") or {}).get("h") or (None, None)
+        return self.ends(x["first"], x["last"], h[0], h[1])
+
+    @staticmethod
+    def _keys(x: dict) -> set:
+        """A device-day's people (lower case): SecureView's own and Aternity's."""
+        return set(x["people"]) | set((x.get("back") or {}).get("people") or {})
+
+    def _people(self, x: dict) -> list[dict]:
+        """A device-day's people, each once, the first heard first: {"key", "user", "first_local",
+        "last_local", "by", "f", "l"} (f, l: times to sort by, None when not known)."""
+        own, back = x["people"], (x.get("back") or {}).get("people") or {}
+        out = []
+        for k in self._keys(x):
+            o, b = own.get(k), back.get(k)
+            f, l, by, tf, tl = self.ends(o[1] if o else None, o[2] if o else None, b[1] if b else None,
+                                         b[2] if b else None)
+            out.append({"key": k, "user": (o or b)[0], "first_local": f, "last_local": l, "by": by, "f": tf, "l": tl})
+        out.sort(key=lambda p: (p["f"] is None, p["f"] or 0, p["user"].lower()))
+        return out
+
+    @staticmethod
+    def _shown(people: list[dict]) -> list[dict]:
+        return [{"user": p["user"], "first_local": p["first_local"], "last_local": p["last_local"]} for p in people]
 
     def complete(self, d: date) -> bool:
         """Every hour of the day read in full after it ended (the usual needs whole days)."""
@@ -168,69 +229,165 @@ class SecureView:
 
     # -- Aternity's daily data, before the records ----------------------------------------
     def backfill(self, client, now: datetime) -> None:
-        """Which matching devices Aternity's daily data has for each of the DAILY_DAYS days
-        before today not read in full (newest first): days only. A day's row is the day its
-        TIMEFRAME starts plus 12 hours falls on here (Aternity's daily rows start at a midnight;
-        whose midnight is not documented). Asked for TIMEFRAME and CLIENT_DEVICE_NAME alone,
-        Aternity adds up the rest: a row per day and device (stage, Nov 10 2026: one row per PC and
-        version). A day Aternity has no row for is asked again the next day."""
+        """The days before the records (each of the DAILY_DAYS days before today not read yet and not
+        read in full by the Today reader, newest first), from Aternity: its hourly data while it has
+        rows (each device's and person's first and last hour, the desktops), then its daily data (the
+        people and desktops, no times). Asked for those columns alone, Aternity adds up the rest: a row
+        per hour (day), device, person and desktop. A day's daily row is the day its TIMEFRAME starts
+        plus 12 hours falls on here (they start at a midnight, whose is not documented); an hourly
+        row's hour is its TIMEFRAME (the hour's start, as a daily row's is its day's). What Aternity
+        gives is kept apart from the records (`back`): it never moves a time SecureView saw itself. A
+        day with no row in either is asked again the next day."""
         if not self.on():
             return
-        src = SECUREVIEW_DAILY
-        t_col, c_col = src["time"], src["client_device"]
         today = self.day(now)
         todo = [today - timedelta(days=k) for k in range(1, DAILY_DAYS + 1)]
         with self.lock:
             todo = [d for d in todo if d not in self.daily["read"] and not self.complete(d)]
-        read, said = 0, None
+        n_hour = n_day = 0
+        said, hour_ok, hour_note, found, misses = None, True, "", False, 0
         for d in todo:
-            lo, hi = self.midnight(d) - timedelta(hours=12), self.midnight(d + timedelta(days=1)) - timedelta(hours=12)
-            mark = len(client.warnings)
-            try:
-                rows = client.query(src["entity"], f"{t_col} ge {odata_time(lo)} and {t_col} lt {odata_time(hi)}",
-                                    select=[t_col, c_col], top=DAILY_ROWS)
-            except Exception as exc:
-                said = ("failed", f"Aternity's daily data could not be read ({short_error(exc)}); it is tried again "
-                                  "tomorrow.")
-                break
-            if len(client.warnings) > mark:
-                said = ("failed", f"Aternity's daily data for {d:%a %b %d} came back cut short; it is tried again "
-                                  "tomorrow.")
-                break
-            if len(rows) >= DAILY_ROWS:
-                said = ("failed", f"Aternity's daily data for {d:%a %b %d} has {DAILY_ROWS:,} rows or more, more "
-                                  "than one day's devices: not read.")
-                break
-            mine = [r for r in rows if (t := parse_time(r.get(t_col))) is not None
-                    and self.day(t + timedelta(hours=12)) == d]
-            if not mine:
-                continue  # not written yet, or past what Aternity keeps: asked again tomorrow
-            names = {str(r.get(c_col)) for r in mine if r.get(c_col)}
-            if not names:
+            got = None
+            if hour_ok:
+                got, why = self._hourly(client, d)
+                found = found or got is not None
+                if got is None:
+                    misses += 1
+                    hour_note = why
+                    # past what Aternity keeps by the hour, a read that failed, or two days in a row with no
+                    # row (one may not be written yet): its daily data from here
+                    if found or misses >= 2 or not why.startswith("no row"):
+                        hour_ok = False
+            by = "hour"
+            if got is None:
+                by = "day"
+                got, why = self._daily(client, d)
+                if got is None and why != NO_DEVICE:
+                    if why:  # failed, cut short or too big: said, tried again tomorrow
+                        said = ("failed", why)
+                        break
+                    continue  # not written yet, or past what Aternity keeps: asked again tomorrow
+            if why == NO_DEVICE:
                 said = ("none", "Aternity's daily data names no device people sat at (CLIENT_DEVICE_NAME is empty), "
                                 "so History has only its own records.")
                 break
             with self.lock:
                 day = self.days.setdefault(d, _new_day())
-                for n in sorted(names):
-                    if self.matches(n):
-                        day["devices"].setdefault(n, _new_dev())
+                for name, b in got.items():
+                    x = day["devices"].setdefault(name, _new_dev())
+                    x["desktops"] |= b.pop("desktops")
+                    x["back"] = b
                 day["daily"] = True
                 self.daily["read"].add(d)
+                self.daily["hour"].discard(d)
+                if by == "hour":
+                    self.daily["hour"].add(d)
                 self.dirty.add(d)
-            read += 1
+            n_hour, n_day = n_hour + (by == "hour"), n_day + (by == "day")
         with self.lock:
-            days = sorted(self.daily["read"])
+            days, hours = sorted(self.daily["read"]), sorted(self.daily["hour"])
             if said:
                 self.daily["state"], self.daily["note"] = said
             elif days:
                 self.daily["state"] = "ok"
-                self.daily["note"] = (f"Days before the records, from Aternity's daily data (days only: no times, no "
-                                      f"people): {len(days)}, back to {days[0]:%a %b %d}.")
+                self.daily["note"] = (f"Days before the records, from Aternity: {len(days)}, back to {days[0]:%a %b %d}. "
+                                      + (f"{len(hours)} with each person's first and last hour (its hourly data, back to "
+                                         f"{hours[0]:%a %b %d})" if hours else "None with the hour (its hourly data: "
+                                         + (hour_note or "no row") + ")")
+                                      + (f"; {len(days) - len(hours)} day{'s' if len(days) - len(hours) > 1 else ''} only, "
+                                         "with the people and desktops (its daily data)." if len(days) > len(hours) else "."))
             self.daily["at"] = int(now.timestamp())
             self.dirty.add(today)  # the state is saved with the next save
-        log.info("SecureView: Aternity's daily data read for %d day(s)%s", read,
-                 f"; {said[1]}" if said else "")
+        log.info("SecureView: the days before the records read from Aternity: %d by the hour, %d days only%s",
+                 n_hour, n_day, f"; {said[1]}" if said else "")
+
+    def _rows(self, client, src: dict, lo: datetime, hi: datetime, top: int) -> tuple[list[dict] | None, str]:
+        """(rows, "") or (None, why): failed, cut short, or `top` rows or more."""
+        t_col = src["time"]
+        mark = len(client.warnings)
+        try:
+            rows = client.query(src["entity"], f"{t_col} ge {odata_time(lo)} and {t_col} lt {odata_time(hi)}",
+                                select=[src[k] for k in ("time", "client_device", "username", "device")], top=top)
+        except Exception as exc:
+            return None, f"could not be read ({short_error(exc)})"
+        if len(client.warnings) > mark:
+            return None, "came back cut short"
+        if len(rows) >= top:
+            return None, f"has {top:,} rows or more"
+        return rows, ""
+
+    def _add(self, got: dict, src: dict, r: dict, h1, h2) -> None:
+        """One added-up row into got: device -> {"by", "h", "people", "desktops"} (h1, h2: its hour, or None)."""
+        name = r.get(src["client_device"])
+        if not self.matches(name):
+            return
+        b = got.setdefault(str(name), {"by": "hour" if h1 is not None else "day", "h": None, "people": {},
+                                       "desktops": set()})
+        if h1 is not None:
+            b["h"] = [h1, h2] if b["h"] is None else [min(b["h"][0], h1), max(b["h"][1], h2)]
+        user = r.get(src["username"])
+        if user:
+            p = b["people"].setdefault(str(user).lower(), [str(user), h1, h2])
+            if h1 is not None:
+                p[1], p[2] = min(p[1], h1), max(p[2], h2)
+        desk = r.get(src["device"])
+        if desk:
+            b["desktops"].add(str(desk))
+
+    def _hourly(self, client, d: date) -> tuple[dict | None, str]:
+        """Day d from Aternity's hourly data, HOURLY_SPAN hours a read (a read cut short: hour by hour):
+        (device -> what it gives, "") ; (None, why) with no row that day, or a read that failed."""
+        src, got, seen, named = SECUREVIEW_HOURLY, {}, False, False
+        starts = self.hour_starts(d)
+        for i in range(0, len(starts), HOURLY_SPAN):
+            part = starts[i:i + HOURLY_SPAN]
+            spans = [(part[0], part[-1] + HOUR)]
+            rows, why = self._rows(client, src, *spans[0], HOURLY_ROWS)
+            if rows is None and why == "came back cut short" and len(part) > 1:
+                rows = []
+                for s in part:  # hour by hour
+                    one, why = self._rows(client, src, s, s + HOUR, HOURLY_ROWS)
+                    if one is None:
+                        break
+                    rows += one
+                else:
+                    why = ""
+                if why:
+                    rows = None
+            if rows is None:
+                return None, f"{d:%a %b %d} {why}"
+            for r in rows:
+                t = parse_time(r.get(src["time"]))
+                if t is None or self.day(t) != d:
+                    continue
+                seen = True
+                named = named or bool(r.get(src["client_device"]))
+                h = int(t.astimezone(self.zone).replace(minute=0, second=0, microsecond=0).timestamp())
+                self._add(got, src, r, h, h)
+        if not seen:
+            return None, f"no row for {d:%a %b %d}"
+        if not named:  # its rows name no device people sat at: the daily data, which does (stage, Nov 17)
+            return None, f"names no device people sat at on {d:%a %b %d}"
+        return got, ""
+
+    def _daily(self, client, d: date) -> tuple[dict | None, str]:
+        """Day d from Aternity's daily data: (device -> what it gives, ""); (None, "") with no row that
+        day; (None, why) when the read failed, was cut short or is too big."""
+        src = SECUREVIEW_DAILY
+        lo, hi = self.midnight(d) - timedelta(hours=12), self.midnight(d + timedelta(days=1)) - timedelta(hours=12)
+        rows, why = self._rows(client, src, lo, hi, DAILY_ROWS)
+        if rows is None:
+            return None, f"Aternity's daily data for {d:%a %b %d} {why}; it is tried again tomorrow."
+        mine = [r for r in rows if (t := parse_time(r.get(src["time"]))) is not None
+                and self.day(t + timedelta(hours=12)) == d]
+        if not mine:
+            return None, ""
+        if not any(r.get(src["client_device"]) for r in mine):
+            return None, NO_DEVICE
+        got: dict = {}
+        for r in mine:
+            self._add(got, src, r, None, None)
+        return got, ""
 
     # -- files ---------------------------------------------------------------------------
     def load(self) -> None:
@@ -250,8 +407,10 @@ class SecureView:
             state = self.store / STATE
             if state.exists():
                 raw = json.loads(state.read_text())
-                self.daily = {"read": {date.fromisoformat(x) for x in raw.get("read") or ()},
-                              "state": raw.get("state") or "", "note": raw.get("note") or "", "at": raw.get("at")}
+                if raw.get("v") == STATE_V:  # else read before the people were asked for: read again
+                    self.daily = {"read": {date.fromisoformat(x) for x in raw.get("read") or ()},
+                                  "hour": {date.fromisoformat(x) for x in raw.get("hour") or ()},
+                                  "state": raw.get("state") or "", "note": raw.get("note") or "", "at": raw.get("at")}
         except (OSError, ValueError) as exc:
             bad.append(f"the folder ({short_error(exc)})")
         if bad:
@@ -267,7 +426,8 @@ class SecureView:
         with self.lock:
             todo = {d: _to_json(self.days[d]) for d in self.dirty if d in self.days}
             self.dirty.clear()
-            state = {"read": sorted(d.isoformat() for d in self.daily["read"]), "state": self.daily["state"],
+            state = {"v": STATE_V, "read": sorted(d.isoformat() for d in self.daily["read"]),
+                     "hour": sorted(d.isoformat() for d in self.daily["hour"]), "state": self.daily["state"],
                      "note": self.daily["note"], "at": self.daily["at"]}
         if not self.store or not todo:
             return
@@ -298,6 +458,7 @@ class SecureView:
                 del self.days[d]
                 self.dirty.discard(d)
             self.daily["read"] = {d for d in self.daily["read"] if d >= today - timedelta(days=DAILY_DAYS + 1)}
+            self.daily["hour"] &= self.daily["read"]
         if self.store:
             for d in old:
                 try:
@@ -373,11 +534,12 @@ class SecureView:
             last, person, person_day, lf, ll, people30 = ds[-1], None, None, None, None, set()
             for d in reversed(ds):
                 x = self.days[d]["devices"][n]
+                keys = self._keys(x)
                 if (td - d).days < NEW_DAYS:
-                    people30 |= set(x["people"])
-                if person is None and x["people"]:
-                    p = max(x["people"].values(), key=lambda p: p[2])
-                    person, person_day, lf, ll = p[0], d, self.hm(p[1]), self.hm(p[2])
+                    people30 |= keys
+                if person is None and keys:
+                    p = max(self._people(x), key=lambda p: p["l"] or 0)  # the last heard (none known: the first listed)
+                    person, person_day, lf, ll = p["user"], d, p["first_local"], p["last_local"]
                 if person is not None and (td - d).days >= NEW_DAYS:
                     break
             rows.append({"name": n, "first": ds[0].isoformat(), "last": last.isoformat(), "silent": (td - last).days,
@@ -431,28 +593,25 @@ class SecureView:
                 if x is None:
                     out.append({"date": d.isoformat(), "heard": False})
                     continue
-                people = sorted(x["people"].values(), key=lambda p: p[1])
-                out.append({"date": d.isoformat(), "heard": True, "day_only": x["first"] is None,
-                            "part": d != td and not self.complete(d) and x["first"] is not None,
-                            "first_local": self.hm(x["first"]), "last_local": self.hm(x["last"]),
-                            "people": [{"user": p[0], "first_local": self.hm(p[1]), "last_local": self.hm(p[2])}
-                                       for p in people], "desktops": sorted(x["desktops"])})
+                f, l, by, _, _ = self._times(x)
+                out.append({"date": d.isoformat(), "heard": True, "day_only": by == "day", "by": by,
+                            "part": by == "minute" and d != td and not self.complete(d),
+                            "first_local": f, "last_local": l, "people": self._shown(self._people(x)),
+                            "desktops": sorted(x["desktops"])})
         return {"name": name, "first": ds[0].isoformat(), "last": ds[-1].isoformat(), "days": len(ds), "zone": self.zone_label,
                 "squares": out}
 
     def search(self, q: str, now: datetime, sams=()) -> dict:
         """Every day kept of the people, devices and desktops whose name has q (any case), latest first
         (the user, 2026-11-17: "I need to be able to search usage history"). sams: AD account names
-        (lower case) found by a real name: those people too. A person's days are SecureView's own
-        records only (Aternity's daily data has no people). At most SEARCH_MAX of each kind."""
+        (lower case) found by a real name: those people too. Every day is a row (the user, 2026-11-17:
+        "first heard and last heard also for all dates"): times to the minute from SecureView's own
+        records, "08:xx" from Aternity's hourly data, none on a day from its daily data. At most
+        SEARCH_MAX of each kind."""
         q, sams = (q or "").strip().lower(), {str(x).lower() for x in sams}
         people: dict[str, dict] = {}
         devices: dict[str, dict] = {}
         desks: dict[str, dict] = {}
-
-        def who(x) -> list[dict]:
-            return [{"user": p[0], "first_local": self.hm(p[1]), "last_local": self.hm(p[2])}
-                    for p in sorted(x["people"].values(), key=lambda p: p[1])]
         with self.lock:
             since = min((d for d, day in self.days.items() if any(x["first"] is not None for x in day["devices"].values())),
                         default=None)
@@ -460,27 +619,33 @@ class SecureView:
                 day_s = d.isoformat()
                 for name, x in self.days[d]["devices"].items():
                     dev = q in name.lower()
-                    hit_p = [(k, p) for k, p in x["people"].items() if q in k or (sams and _sam(k) in sams)]
+                    keys = self._keys(x)
+                    hit_p = [k for k in keys if q in k or (sams and _sam(k) in sams)]
                     hit_k = [k for k in x["desktops"] if q in k.lower()]
                     if not (dev or hit_p or hit_k):
                         continue
-                    row = {"date": day_s, "day_only": x["first"] is None, "first_local": self.hm(x["first"]),
-                           "last_local": self.hm(x["last"])}
+                    f, l, by, _, _ = self._times(x)
+                    ppl = self._people(x)
+                    shown = self._shown(ppl)
+                    row = {"date": day_s, "day_only": by == "day", "by": by, "first_local": f, "last_local": l}
                     if dev:
                         m = devices.setdefault(name, {"name": name, "rows": [], "people": set()})
-                        m["rows"].append(row | {"people": who(x), "desktops": sorted(x["desktops"])})
-                        m["people"].update(x["people"])
-                    for key, p in hit_p:
-                        m = people.setdefault(key, {"name": p[0], "rows": [], "devices": set()})
-                        m["rows"].append({"date": day_s, "device": name, "first_local": self.hm(p[1]),
-                                          "last_local": self.hm(p[2]), "desktops": sorted(x["desktops"]),
-                                          "others": len(x["people"]) - 1})
+                        m["rows"].append(row | {"people": shown, "desktops": sorted(x["desktops"])})
+                        m["people"].update(keys)
+                    for p in ppl:
+                        if p["key"] not in hit_p:
+                            continue
+                        m = people.setdefault(p["key"], {"name": p["user"], "rows": [], "devices": set()})
+                        m["rows"].append({"date": day_s, "device": name, "first_local": p["first_local"],
+                                          "last_local": p["last_local"], "by": p["by"],
+                                          "day_only": p["by"] == "day", "desktops": sorted(x["desktops"]),
+                                          "others": len(keys) - 1})
                         m["devices"].add(name)
                     for desk in hit_k:
                         m = desks.setdefault(desk, {"name": desk, "rows": [], "devices": set(), "people": set()})
-                        m["rows"].append(row | {"device": name, "people": who(x)})
+                        m["rows"].append(row | {"device": name, "people": shown})
                         m["devices"].add(name)
-                        m["people"].update(x["people"])
+                        m["people"].update(keys)
 
         def listed(found: dict, extra) -> tuple[list[dict], int]:
             out = []
@@ -496,7 +661,7 @@ class SecureView:
         ds, dmore = listed(devices, lambda m: {"people": len(m["people"])})
         ks, kmore = listed(desks, lambda m: {"devices": len(m["devices"]), "people": len(m["people"])})
         return {"q": q, "people": ps, "devices": ds, "desktops": ks, "more": {"people": pmore, "devices": dmore,
-                "desktops": kmore}, "max": SEARCH_MAX, "people_since": since.isoformat() if since else None,
+                "desktops": kmore}, "max": SEARCH_MAX, "records_since": since.isoformat() if since else None,
                 "date": self.day(now).isoformat(), "zone": self.zone_label, "keep_days": KEEP_DAYS}
 
 

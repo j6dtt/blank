@@ -700,10 +700,21 @@ demo mode: nothing in `src/` knows about it.
   after it ended is `final`, cut short `cut`; a day `complete` when every
   hour is final. Saved after each read (`save`, atomic, dirty days),
   `KEEP_DAYS` 400. Before the records: `backfill` (thread
-  `keep_backfilling`, after the first read, then 03:00 local) reads
-  `SECUREVIEW_DAILY` day by day for days not read in full, the
-  `TIMEFRAME` + 12 h local day, days only (`daily`: ok / none / failed,
-  said on History). `view`: Today (usual by now from `USUAL_DAYS`
+  `keep_backfilling`, after the first read, then 03:00 local), day by
+  day for days not read in full, newest first (the user, 2026-11-17:
+  people's history and "first heard and last heard also for all
+  dates"): `SECUREVIEW_HOURLY` while it has rows (`_hourly`,
+  `HOURLY_SPAN` 6 h a read, cut short: hour by hour; its TIMEFRAME read
+  as the hour's start; how long it is kept is not known: two days in a
+  row with none, one after a day with some, a failed read, or rows that
+  name no device end it), then `SECUREVIEW_DAILY` (`_daily`, the
+  `TIMEFRAME` + 12 h local day), each with USERNAME and DEVICE_NAME,
+  added up by Aternity. Kept apart from the records (`back`: by, h,
+  people) and never moving a time SecureView saw (`ends`: the records'
+  minute unless Aternity's hour is earlier / later, "08:xx"; `_people`,
+  `_times`); `daily` ok / none / failed with `hour` (the days by the
+  hour), said on History; `STATE_V` 2: days read before (devices only)
+  are read again. `view`: Today (usual by now from `USUAL_DAYS`
   complete days of the same kind, `MIN_USUAL`; hours with their band;
   "new" only with `NEW_DAYS` of records) and History (every device heard,
   silent days, the last person with their own times, per day with `part`
@@ -722,8 +733,9 @@ demo mode: nothing in `src/` knows about it.
   `/admin/api/secureview/search?q=` (`SEARCH_MIN` 2 characters),
   `search`: every day kept, people (their own times per device-day),
   devices, desktops whose name has q, latest first, `SEARCH_MAX` 20
-  of each (`more`); the page shows `SV_DAYS_SHOWN` 30 days then "Show
-  all", a device's daily-data days in one line. When nothing it
+  of each (`more`); every day a row ("day only", "08:xx": `SV_TIMES`
+  says it under each list); the page shows `SV_DAYS_SHOWN` 30 days
+  then "Show all". When nothing it
   recorded has q (3+ characters, a letter), web.py asks AD once by a
   real name (`ad.Lookup.named`: every word in displayName / givenName
   / sn, `NAMED_MAX`, the same off / refused / `RETRY_MIN` rules as

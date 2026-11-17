@@ -511,11 +511,31 @@ cannot read is a note in `verify`, in the Connections dialog and on the
 panel.
 
 **The days before.** Once the first read is done, and each night at
-03:00, Aternity's daily data (kept about 90 days) is read day by day for
-each day not read in full: which devices were heard that day, with no
-times and no people. The History tab says what it got ("89, back to Wed
-Aug 19"), or that the daily data names no device, or why it could not be
-read (tried again the next night).
+03:00, Aternity is read day by day for each of the 90 days before today
+not read in full, newest first:
+- its **hourly data** while it has rows: each device's and person's
+  first and last hour, and the desktops (6 hours a read; a read cut
+  short is read again hour by hour). How long Aternity keeps it is not
+  known: the read goes back until a day has none.
+- then its **daily data** (kept about 90 days): the people and desktops
+  of each day, no times.
+
+```
+Mon Nov 16  own records   07:10-15:46   (to the minute)
+Fri Nov 13  hourly data   07:xx-17:xx   (the hour only)
+Mon Oct 12  daily data    day only      (person, desktop)
+```
+
+What Aternity gives is kept apart from SecureView's own records: it
+never moves a time SecureView saw itself. A day shows the records' minute
+unless Aternity's hour is earlier (later): "08:05" stays when Aternity's
+first hour is 08, "15:xx" replaces 14:10 when its last hour is 15. The
+History tab says what it got ("88, back to Thu Aug 20. 34 with each
+person's first and last hour (its hourly data, back to Tue Oct 13); 54
+days only, with the people and desktops (its daily data)"), or that the
+daily data names no device, or why it could not be read (tried again the
+next night). Days read before Nov 17 2026 (devices only) are read once
+more for their people.
 
 **Where and how:** `/admin`, log in, the **SECUREVIEW** tab (or
 `/admin#secureview` straight away).
@@ -536,8 +556,8 @@ read (tried again the next night).
   heard in the last 30 days, first heard in the last 30 days. Search and
   the department box (the last person's) narrow the list; "Show 25 more";
   **Download the list (CSV)** saves the list as shown. Click a device:
-  its last 90 days as squares (faded: weekend), its days with times and
-  people, and one line for the days known only from the daily data.
+  its last 90 days as squares (faded: weekend), its latest 10 days with
+  times, people and desktops, and **every day in Search ▸**.
   Click it again to close. Charts: devices per day (hollow: a day not
   read in full) and silent 30 days or more, day by day. By department
   (the last person's): heard in the last 30 days of those heard, "· 2
@@ -552,8 +572,7 @@ read (tried again the next night).
     that device that day; **All actions today ▸** opens ACTIONS for
     them.
   - **Devices**: each day, first and last heard, the people with their
-    own times, the desktops; the days known only from the daily data in
-    one line under them ("Also heard on 67 days ... days only").
+    own times, the desktops.
   - **Desktops**: each day, the devices it was opened from and the
     people on it.
 
@@ -561,8 +580,11 @@ read (tried again the next night).
   matches of each kind ("type more of the name"). Click any name in the
   results to search it. A username on TODAY or HISTORY (or in a device's
   days) opens SEARCH with it. **Download CSV**: a row per day and
-  person. A person's days start with SecureView's own records (the daily
-  data has no people).
+  person, with how its times are known.
+
+  Every day is a row: to the minute from SecureView's own records,
+  "07:xx" (the hour only) from Aternity's hourly data, "day only" from
+  its daily data.
 
   A person's real name ("Pat Lee"): when nothing SecureView recorded has
   it, one read-only AD search, every word in the display name, first
@@ -578,12 +600,12 @@ read (tried again the next night).
   ```
 
 Names and departments come from AD as for People using the app (the
-same look-up, 200 names a request). A device with no username, or known
-only from the daily data, is "no person recorded".
+same look-up, 200 names a request). A device no one was named on, by
+SecureView or Aternity, is "no person recorded".
 
 Kept in `$UXCORRELATE_DATA/secureview/<date>.json` (device names and
 usernames), 400 days, then deleted; `daily.json` notes the days read
-from the daily data.
+from Aternity and which of them by the hour.
 
 ### Actions
 
@@ -743,8 +765,9 @@ every read; the story is set against today:
 - Virtual desktops: slow logons this morning (User Profile).
 
 The settings block at the top of `dev/sample_riverbed.py` holds the time
-zone, how long each kind of data is kept (activity 8 days, as prod) and
-the seed; `uxcorrelate verify` passes against it.
+zone, how long each kind of data is kept (activity 8 days, as prod; the
+hourly sums 35 days, made up: prod's is not known) and the seed;
+`uxcorrelate verify` passes against it.
 
 The same compose file starts a made-up Active Directory for
 `verify --ad`: `sample-ad`, a real Samba domain controller, so DNS SRV

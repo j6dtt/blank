@@ -200,7 +200,29 @@ SecureView's own records only (the daily data has no people).
 Change from the plan: AD is asked only when nothing at all matched
 (a device search such as "thin" had asked AD too). Stage copy:
 `secureview.py`, `ad.py`, `actions.py` (new), `web.py`,
-`static/admin.html`, then restart.
+`static/admin.html`, then restart. Pushed 8301765.
+
+History of people and times (stage, 2026-11-17: "SecureView search
+only returns today for both user and device"). Was: before its own
+records SecureView read Aternity's daily data for the device alone,
+so a person had only today, and a device's earlier days were one
+grey line under its table. The user asked for "first heard and last
+heard also for all dates". Aternity keeps exact times about 8 days
+(raw), the hour in its hourly data (how long: not known), the day in
+its daily data (about 90 days). Agreed (A + hourly, "build it"),
+built on dev 2026-11-17: each night, for each of the 90 days not
+read in full, the hourly data while it has rows (each device's and
+person's first and last hour, the desktops), then the daily data
+(the people and desktops, no times); kept apart from SecureView's
+own records, never moving a time it saw ("08:05" stays, "15:xx"
+when Aternity's last hour is later). Every day is a row in Search
+("07:xx": the hour only; "day only"); History's last person comes
+from them too; a device's detail ends with "every day in Search".
+The raw data was not read (the heaviest read; it adds minutes for
+the first week only). Days read before (devices only) are read once
+more. On dev (hourly made up as 35 days): 88 days in about 40 s, 34
+by the hour. Stage copy: `config.py`, `secureview.py`,
+`static/admin.html`.
 
 ## Later (ideas)
 

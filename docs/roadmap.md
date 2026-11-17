@@ -32,16 +32,23 @@ ACTIONS, built on dev 2026-11-17 ("build it", with the AD name
 search): SecureView's third sub-tab searches every day kept by a
 username, device, desktop or a person's real name (AD); a third
 admin tab, ACTIONS, lists every action of any user today, read
-from Aternity on Show. Stage copy: `secureview.py`, `ad.py`,
-`actions.py` (new), `web.py`, `static/admin.html`, then restart.
-See `docs/admin-roadmap.md`.
+from Aternity on Show; pushed 8301765, on stage. Then every day of
+people and times in Search (the user: "first heard and last heard
+also for all dates"), built on dev 2026-11-17: Aternity's hourly
+data, then its daily data with the people and desktops. See
+`docs/admin-roadmap.md`.
 
 ## Waiting on you
 
-- **Stage copy of the admin page's SEARCH and ACTIONS** (built
-  2026-11-17): the five files above, restart, then a search by a
-  THIN device, a username and a real name, and ACTIONS for one
-  user (how long the read takes on a busy user).
+- **Stage copy of SecureView's history of people and times**
+  (built 2026-11-17 after "build it": the user found Search showed
+  only today, as the days before the records were read for devices
+  only): `config.py`, `secureview.py`, `static/admin.html`, restart.
+  At the next start the 90 days are read once more: Aternity's
+  hourly data while it has rows (first and last hour), then its
+  daily data (people and desktops, day only). To learn on stage:
+  History's line (how far back the hourly data goes, how long the
+  read took in the log), and a search by a username.
 - **`verify --clients --except WT` in a working hour**, `--hours
   4` (built 2026-11-16, 9c8ed8d; the user: track virtual desktops
   used from devices not starting with WT, and does
