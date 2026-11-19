@@ -129,15 +129,19 @@ class RestClient:
             return response
         raise AssertionError("unreachable")
 
-    def get_json(self, url: str, **kwargs):
-        return self._metered("GET", url, **kwargs)
+    def get_json(self, url: str, answered: tuple = (), **kwargs):
+        """answered: HTTP statuses that are an answer the caller expects (still raised as ApiError),
+        counted by METER as answered, not failed."""
+        return self._metered("GET", url, answered, **kwargs)
 
     def post_json(self, url: str, body, **kwargs):
-        return self._metered("POST", url, json=body, **kwargs)
+        return self._metered("POST", url, (), json=body, **kwargs)
 
-    def _metered(self, method: str, url: str, **kwargs):
+    def _metered(self, method: str, url: str, answered: tuple = (), **kwargs):
         """A call and its JSON, told to METER: seconds, rows (Aternity's "value", NetIM's "items"),
-        retries, answered or not."""
+        retries, answered or not. A status in `answered` is an answer: GPT-5.4's "no model list"
+        (HTTP 404) to the connection light's check every minute was counted as a failed call, about
+        1,440 a day, while the light was green (prod, Nov 18 2026)."""
         if METER is None:
             return self._json(self.request(method, url, **kwargs))
         self._tries.n = 0
@@ -151,6 +155,9 @@ class RestClient:
             elif isinstance(data, list):
                 rows = len(data)
             return data
+        except ApiError as exc:
+            ok = exc.status in answered
+            raise
         finally:
             try:
                 METER(self.name, PURPOSE.get(), source_of(url), time.monotonic() - start, rows,

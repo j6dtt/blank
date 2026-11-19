@@ -17,6 +17,7 @@ import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
+from .ai import NO_LIST  # an AI service that answers but has no model list: still connected
 from .chat import chat_service
 from .config import Settings
 from .http import ApiError, short_error
@@ -25,7 +26,6 @@ CHECK_EVERY_S = 60
 CHECK_TIMEOUT_S = 15.0  # a check waits this long at most, and is not tried again until the next one
 ATERNITY_BACK = timedelta(minutes=5)
 REFUSED = (401, 403)
-NO_LIST = (404, 405)  # an AI service that answers but has no model list: still connected
 OK, DOWN, WARN, OFF, WAIT = "ok", "down", "warn", "off", "wait"
 log = logging.getLogger("uxcorrelate")
 

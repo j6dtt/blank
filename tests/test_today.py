@@ -37,7 +37,7 @@ def day_file(d, top_by_hour, major_at_9=0, complete=True):
 
 
 def filled(**kw):
-    t = Today(ZONE, **kw)
+    t = Today(ZONE, **{"clock": lambda: NOW, **kw})
     nine = t.midnight(date(2026, 11, 9)) + 9 * HOUR  # 09:00 New York
     t.add_hour(nine, [act("PC1", "Major"), act("PC1", "Major"), act("PC2", "Minor"), act("PC3", "Normal"),
                       act("PC4", "Major", app="Mail"), act("PC5", "Undefined")], F, NOW)
@@ -88,7 +88,7 @@ def test_actions_are_compared_with_the_saved_working_days_by_the_same_hour(tmp_p
 
 
 def test_a_finished_day_is_saved_without_names_and_its_hours_dropped(tmp_path):
-    t = Today(ZONE, tmp_path)
+    t = Today(ZONE, tmp_path, clock=lambda: NOW)
     d = date(2026, 11, 8)
     starts = t.hour_starts(d)
     for s in starts:
@@ -100,7 +100,7 @@ def test_a_finished_day_is_saved_without_names_and_its_hours_dropped(tmp_path):
     assert saved["top_pcs_by_hour"][9] == 0 and saved["hours"]["10"] == {"Major": 1}
     assert "PC9" not in json.dumps(saved) and "ann" not in json.dumps(saved)
     assert all(h.day == date(2026, 11, 9) for h in t.hours.values())
-    assert Today(ZONE, tmp_path).saved[d]["top_pcs"] == 1  # read back at the next start
+    assert Today(ZONE, tmp_path, clock=lambda: NOW).saved[d]["top_pcs"] == 1  # read back at the next start
 
 
 def test_one_unreadable_saved_day_does_not_stop_the_days_after_it_loading(tmp_path):
@@ -108,13 +108,13 @@ def test_one_unreadable_saved_day_does_not_stop_the_days_after_it_loading(tmp_pa
     days.mkdir()
     (days / "2026-11-03.json").write_text("{cut off")
     (days / "2026-11-04.json").write_text(json.dumps(day_file(date(2026, 11, 4), [1] * 24)))
-    t = Today(ZONE, tmp_path)
+    t = Today(ZONE, tmp_path, clock=lambda: NOW)
     assert list(t.saved) == [date(2026, 11, 4)]  # before: the bad file stopped the loop, the usual lost the rest
     assert "2026-11-03.json" in t.notes["files"]
 
 
 def test_a_day_with_an_hour_missing_is_saved_but_never_used_as_usual(tmp_path):
-    t = Today(ZONE, tmp_path)
+    t = Today(ZONE, tmp_path, clock=lambda: NOW)
     d = date(2026, 11, 6)
     for s in t.hour_starts(d)[1:]:  # midnight hour never read
         t.add_hour(s, [], F, s + 2 * HOUR)
@@ -195,7 +195,7 @@ def test_the_reader_fills_today_and_the_name_list_then_waits(tmp_path):
         return httpx.Response(200, json={"value": []})
 
     cfg = AternityConfig(base_url="https://aternity.test/aternity.odata/v2.0", username="u", password="p")
-    t, names = Today(ZONE, tmp_path), NameList()
+    t, names = Today(ZONE, tmp_path, clock=lambda: NOW), NameList()
     with pytest.raises(Stop):
         keep_reading(t, names, lambda: AternityClient(cfg, transport=httpx.MockTransport(handler)),
                      lambda s: (_ for _ in ()).throw(Stop()), clock=lambda: NOW)

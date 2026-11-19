@@ -932,7 +932,12 @@ demo mode: nothing in `src/` knows about it.
   `<data>/usage/<date>.json` (local), written at most every minute,
   after each read and at shutdown; `KEEP_DAYS` 30, then deleted.
 - `http.py` is the shared REST client (basic auth, retries on 429/5xx);
-  `models.py` holds the dataclasses and `parse_time`.
+  `models.py` holds the dataclasses and `parse_time`. `get_json(...,
+  answered=)`: statuses that are an expected answer, still raised, counted
+  by METER as answered (`ai.NO_LIST` on the model list: GPT-5.4's 404 to
+  the light's check every minute was "816 failed" a day on the admin
+  page, prod Nov 18 2026). `usage._counts` keeps per source the calls
+  whose reply had rows: none (an AI service) is `rows` None, not said.
 - `report.py` renders the text report, `cli.py` is the argparse entry point,
   and `web.py` is the FastAPI app. Investigations and start-ups run as
   jobs (`/api/jobs`, a thread each, the page asks every second); a
@@ -960,7 +965,10 @@ demo mode: nothing in `src/` knows about it.
 - `tests/`: pytest. HTTP is mocked with `httpx.MockTransport`; the engine is
   tested with `tests/synthetic.py` (fake Aternity/NetIM, branch WAN
   saturation scenario) and stubs. There is no demo mode in the product; don't
-  add one back.
+  add one back. Files deleted after N days are judged by `Today.clock` /
+  `Software.clock` (Care by its Today's): a test with a fixed day gives it
+  (`clock=lambda: NOW`), or it fails once the real date passes N days
+  after it (the Care tests, dated Nov 9, failed on Nov 18 2026).
 
 ## Conventions and gotchas
 

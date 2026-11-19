@@ -208,7 +208,7 @@ class Care:
         if not self.store:
             return
         # the page's day, as _merge keeps them (the host's UTC day dropped a day early after 19:00 in New York)
-        cut = self.today.day(datetime.now(timezone.utc)) - timedelta(days=KEEP_DAYS)
+        cut = self.today.day(self.today.clock()) - timedelta(days=KEEP_DAYS)
         try:
             self.store.mkdir(parents=True, exist_ok=True)
             paths = sorted(self.store.glob("*.json"), key=lambda q: q.stat().st_mtime)  # the newest last: it wins

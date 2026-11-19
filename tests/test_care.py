@@ -35,7 +35,7 @@ def act(t, user, pc, status, app="Mail", virtual=True):
 def today_with(majors: int, event=None) -> Today:
     """MQ2208 (as Aternity writes it) with `majors` Major actions on VD-7 from 14:00, 10 min apart; tz9013
     with one."""
-    t = Today(ZONE)
+    t = Today(ZONE, clock=lambda: NOW)
     two = t.midnight(date(2026, 11, 9)) + 14 * HOUR
     rows = [act(two + timedelta(minutes=10 * k), "MQ2208", "VD-7", "Major") for k in range(majors)]
     rows += [act(two, "MQ2208", "VD-7", "Normal"), act(two, "tz9013", "PC-3", "Major", "ERP", False)]
@@ -49,7 +49,7 @@ def history(request: httpx.Request):
     """8 days of activity, by username: MQ2208 0-2 Major by 14:30 on the latest 5 days, a weekend
     among them; tz9013 1-2."""
     flt = request.url.params["$filter"].lower()
-    tz = Today(ZONE)
+    tz = Today(ZONE, clock=lambda: NOW)
     rows = []
     for back, majors in ((1, 1), (2, 2), (3, 1), (4, 2), (5, 0), (6, 9), (7, 9)):  # Sun 1, Sat 2; Tue 9 and Mon
         # 9 are past the latest 5 days
@@ -1071,7 +1071,7 @@ def boot(t, user, pc, kind, secs):
 def boots_of(today_rows, before=None, asked=None):
     """Aternity's start-ups: `before` (their days before: MQ2208's logons 27 to 37 s on 6 days) and
     `today_rows`, each answered when its time is inside the read's window."""
-    tz = Today(ZONE)
+    tz = Today(ZONE, clock=lambda: NOW)
     if before is None:
         before = [boot(tz.midnight(date(2026, 11, 9) - timedelta(days=k)) + 8 * HOUR, "MQ2208", "VD-7", "User Logon",
                        25.0 + 2 * k) for k in range(1, 7)]
@@ -1121,7 +1121,7 @@ def test_a_slow_start_up_is_longer_than_all_of_theirs_before_and_than_1_in_10_of
 
 def test_a_start_up_not_compared_says_why_and_lights_nothing():
     rows = [boot(AT(8, 0), "MQ2208", "VD-7", "User Logon", 90.0)]
-    tz = Today(ZONE)
+    tz = Today(ZONE, clock=lambda: NOW)
     few = [boot(tz.midnight(date(2026, 11, 5)) + 8 * HOUR, "MQ2208", "VD-7", "User Logon", 30.0)]
     for before, fleet, why in ((few, EVERYONE, "1 of theirs in the 30 days before, 5 needed"),
                                (None, {}, "everyone's start-ups of today are not read yet"),

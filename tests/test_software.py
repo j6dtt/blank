@@ -129,7 +129,7 @@ def client(seen=None, data=None):
 
 def test_every_red_flag_with_its_counts_ranked_by_pcs(tmp_path):
     c, s = client()
-    reader = sw.Software("", tmp_path)
+    reader = sw.Software("", tmp_path, clock=lambda: NOW)
     snap = sw.read_snapshot(c, s.aternity, NOW, reader)
     assert snap["list"] == {"pcs": 60, "programs": 6, "installs": 138, "user_programs": 1, "user_installs": 3}
     got = [(f["kind"], f["pcs"], f["text"]) for f in snap["flags"]]
@@ -185,12 +185,12 @@ def test_a_version_needs_enough_pcs_on_each_side_and_with_the_problem():
 
 def test_the_saved_days_mark_new_flags_and_keep_their_days(tmp_path):
     c, s = client()
-    reader = sw.Software("", tmp_path)
+    reader = sw.Software("", tmp_path, clock=lambda: NOW)
     first = sw.read_snapshot(c, s.aternity, NOW - timedelta(days=1), reader)
     first["flags"] = [f for f in first["flags"] if f["kind"] != "crash"]  # yesterday: no crash flag
     reader.save(first)
     reader.save(sw.read_snapshot(c, s.aternity, NOW, reader))
-    again = sw.Software("", tmp_path)  # after a restart: from the files
+    again = sw.Software("", tmp_path, clock=lambda: NOW)  # after a restart: from the files
     v = again.view()
     assert v["ready"] and v["date"] == "2026-11-10" and len(v["flags"]) == 7
     new = {f["kind"]: f["new"] for f in v["flags"]}
@@ -251,7 +251,7 @@ def test_a_click_reads_the_pcs_of_a_program_or_of_a_version_with_a_problem():
 
 def test_a_click_lists_the_pcs_without_a_windows_update_as_the_daily_read_counts_them(tmp_path):
     c, s = client()
-    reader = sw.Software("", tmp_path)
+    reader = sw.Software("", tmp_path, clock=lambda: NOW)
     reader.save(sw.read_snapshot(c, s.aternity, NOW, reader))
     wins, instead = sw.missing_on(reader.snap, "KB1")
     assert wins == ["Microsoft Windows 11 Enterprise 23H2"] and instead == ["KB2"]
@@ -303,7 +303,7 @@ class FakeAI:
 
 def test_the_summary_for_management_is_held_to_the_flags_numbers(tmp_path):
     c, s = client()
-    reader = sw.Software("", tmp_path)
+    reader = sw.Software("", tmp_path, clock=lambda: NOW)
     reader.save(sw.read_snapshot(c, s.aternity, NOW, reader))
     v = reader.view()
     good = FakeAI("Outlook 16.2 is slower: 400 of 2,400 actions rated Major, on 20 PCs. Check it with the Outlook team.")
@@ -337,7 +337,7 @@ def test_aternity_down_is_tried_again_soon_and_never_saved_as_a_day(tmp_path, mo
     monkeypatch.setattr("uxcorrelate.http.time.sleep", lambda s: None)  # the client's own waits between tries
     good, s = client()
     down = AternityClient(s.aternity, transport=httpx.MockTransport(lambda q: httpx.Response(503)))
-    reader = sw.Software("", tmp_path)
+    reader = sw.Software("", tmp_path, clock=lambda: NOW)
     clients, waits = [down, good, down], []
 
     class Stop(Exception):
@@ -384,7 +384,7 @@ def test_a_read_cut_short_says_its_counts_are_partial(tmp_path, monkeypatch):
     say so (PCs past the cut seemed to have no update, an application's PCs seemed fewer)."""
     monkeypatch.setattr(sw, "LIST_ROWS", 30)  # Outlook's 60 PCs reach the 60 rows asked for
     c, s = client()
-    snap = sw.read_snapshot(c, s.aternity, NOW, sw.Software("", tmp_path))
+    snap = sw.read_snapshot(c, s.aternity, NOW, sw.Software("", tmp_path, clock=lambda: NOW))
     crash = next(f for f in snap["flags"] if f["kind"] == "crash")
     assert crash["text"].endswith(" " + sw.CUT) and snap["versions"]["Outlook"]["partial"] is True
     assert snap["windows"]["partial"] is True  # 30 of 60 PCs read
@@ -396,16 +396,16 @@ def test_a_read_cut_short_says_its_counts_are_partial(tmp_path, monkeypatch):
     assert sw.before_after(c, NOW, "Outlook")["notes"][0].startswith(sw.CUT)
     assert sw.split_by_program(c, NOW, "Outlook", "Microsoft Edge")["notes"][0] == sw.CUT
     monkeypatch.setattr(sw, "LIST_ROWS", 20000)
-    full = sw.read_snapshot(c, s.aternity, NOW, sw.Software("", tmp_path))
+    full = sw.read_snapshot(c, s.aternity, NOW, sw.Software("", tmp_path, clock=lambda: NOW))
     assert all(sw.CUT not in f["text"] for f in full["flags"]) and full["windows"]["partial"] is False
     assert sw.split_by_program(c, NOW, "Outlook", "Microsoft Edge")["notes"] == []
 
 
 def test_one_unreadable_saved_day_does_not_stop_the_others_loading(tmp_path):
     c, s = client()
-    reader = sw.Software("", tmp_path)
+    reader = sw.Software("", tmp_path, clock=lambda: NOW)
     reader.save(sw.read_snapshot(c, s.aternity, NOW, reader))
     (tmp_path / "software" / "2026-11-09.json").write_text("{not json")
-    again = sw.Software("", tmp_path)
+    again = sw.Software("", tmp_path, clock=lambda: NOW)
     assert again.view()["ready"] and again.view()["date"] == "2026-11-10"  # the latest read still shows
     assert "2026-11-09.json" in again.note and "2026-11-10" in again.saved

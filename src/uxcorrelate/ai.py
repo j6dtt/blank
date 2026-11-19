@@ -20,6 +20,7 @@ import httpx
 from .config import AiService
 from .http import RestClient
 
+NO_LIST = (404, 405)  # a service that answers but has no model list (GPT-5.4 on prod: 404): an answer
 LOGINS = ("bearer", "api-key")  # "Authorization: Bearer <key>" or an "api-key: <key>" header
 
 class AiClient:
@@ -34,7 +35,7 @@ class AiClient:
 
     def models(self) -> list[str]:
         """The model names the service lists."""
-        data = self.http.get_json(self.cfg.models_path, params=self.cfg.query, headers=self.headers)
+        data = self.http.get_json(self.cfg.models_path, answered=NO_LIST, params=self.cfg.query, headers=self.headers)
         items = data if isinstance(data, list) else next(  # any other reply: no list (it raised)
             (data[k] for k in ("data", "models") if isinstance(data.get(k), list)), []) if isinstance(data, dict) else []
         names = [i if isinstance(i, str) else (i.get("id") or i.get("name")) for i in items

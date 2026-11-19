@@ -497,7 +497,10 @@ picks another; today updates every minute):
   has been read): calls, rows, seconds waiting,
   retries, failed and cut short, per system, by hour, by what the app was
   doing and by data source; how long the Today reader's reads take
-  against the minutes between them, and each start of the app.
+  against the minutes between them, and each start of the app. An AI
+  service with no model list answers the connection light's check (every
+  minute) with "not found": that is an answer, not a failed call. Rows
+  are left out for a system whose replies have none (the AI services).
 
 Kept in `$UXCORRELATE_DATA/usage/<date>.json`, 30 days, then deleted:
 usernames, desktop names, addresses and Ask anything's questions. Not

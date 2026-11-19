@@ -650,8 +650,10 @@ def read_snapshot(client, cfg, now: datetime, local, say=lambda s: None) -> dict
 
 # -- the reader and its saved days ------------------------------------------------
 class Software:
-    def __init__(self, zone: str = "", store: str | os.PathLike | None = None):
+    def __init__(self, zone: str = "", store: str | os.PathLike | None = None,
+                 clock=lambda: datetime.now(timezone.utc)):
         self.zone, self.zone_label, _ = zone_of(zone)
+        self.clock = clock  # what "today" is when old files are deleted: the tests give their own day
         self.store = Path(store) / "software" if store else None
         self.snap: dict | None = None  # the latest read
         self.saved: dict[str, dict] = {}  # date -> {flag key: PCs}, from the files
@@ -679,7 +681,7 @@ class Software:
         bad = []
         try:
             self.store.mkdir(parents=True, exist_ok=True)
-            cut = (date.today() - timedelta(days=KEEP_DAYS)).isoformat()
+            cut = (self.clock().astimezone(self.zone).date() - timedelta(days=KEEP_DAYS)).isoformat()
             latest = None
             for path in sorted(self.store.glob("*.json")):
                 try:  # one unreadable day no longer stops the others (and the latest read) loading

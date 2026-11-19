@@ -40,51 +40,21 @@ data, then its daily data with the people and desktops. See
 
 ## Waiting on you
 
-- **Stage copy of Care list step 2** (built on dev 2026-11-17):
-  `aternity.py`, `assess.py`, `care.py`, `ad.py`, `web.py`,
-  `explain.py`, `static/index.html`, restart. To learn on stage:
-  each Care user's Show more, "Start-ups today" (how many days of
-  start-ups Aternity keeps, which types carry the username), slow
-  start-ups a day; with `ad:` set, the names and departments on the
-  tiles, Add by name.
-- **Stage copy of the week under "Yesterday"** and **no red dots
-  on Care tiles** (both built on dev 2026-11-17): `assess.py`,
-  `care.py`, `explain.py`, `static/index.html`, with the step 2
-  copy above. To look at on stage: the Today tab's assessment box,
-  under Yesterday: three rows, last week dashed, gaps where a day
-  was not read in full.
-- Done (the user, 2026-11-17: "1-5 are all good, stage/prod are
-  same version now"): the stage copy of SecureView's history of
-  people and times (f905606); `verify --ai` on stage; the prod
-  copy of a807a50; `verify --clients --except WT` (first run on
-  stage, a quiet hour: 52 devices behind 52 virtual desktops, 8
-  not starting with WT, ending THIN / THINE / THINVM;
-  `LOCATION_ON_VPN` 'false' on every action; decided: SecureView).
+- **Stage copy of the load counter fix** (built on dev 2026-11-18,
+  the user's photo of prod: "AI service GPT-5.4 824 calls, 0 rows;
+  816 failed", the light green): `http.py`, `ai.py`, `status.py`,
+  `usage.py`, `today.py`, `software.py`, `care.py`,
+  `static/admin.html`, restart. Then the admin page's Load panel:
+  GPT-5.4's failed count stops growing (today's earlier calls stay
+  counted), no "rows" for it.
+- To watch on prod with Care step 2: how many slow start-ups a day
+  (noisy or not), how many days of start-ups Aternity keeps (Show
+  more says "N days with one, from ..."), which types carry the
+  username.
 
 ## Agreed
 
-- **A week of issues under "Yesterday"** (the user, 2026-11-17:
-  "a lines chart under 'Yesterday, the day in short', showing
-  issues counts by day from Mon-Sun"; three mocked, the user
-  picked A; "build it"): built on dev 2026-11-17. PCs a day with
-  a Critical event, a Major event and Major slow actions, Monday
-  to Sunday; a row per count with its own scale; this week solid,
-  today hollow (so far), last week dashed; no new Aternity read.
-  Not chosen: B (a line per kind of event, this week), C (the
-  last full week only).
-- **No red dots on Care tiles** (the user, 2026-11-17: "makes no
-  sense": a dot marked any saved issue of a day, a crash too, on
-  a bar of Major actions counted up to now): removed on dev.
-
-- **Care list step 2, built on dev 2026-11-17** ("build it A and
-  B, all three"): slow start-ups as an issue (A and B: longer than
-  every one of theirs of that type in the 30 days before, and than
-  1 in 10 of everyone's today), and Active Directory on the tab
-  (add a user by name, AD's name when no label, "disabled in AD").
-  Alerts out of the app: not for now (the user, 2026-11-17). Stage
-  copy, then a week on stage to judge how noisy it is: how many
-  slow start-ups a day, and how long Aternity keeps start-ups (Show
-  more says "N days with one, from …").
+- Nothing open.
 
 ## Ideas
 
@@ -106,14 +76,6 @@ data, then its daily data with the people and desktops. See
 
 ## Parked
 
-- **AD lookup of users and computers** (2026-11-15, the user:
-  "next step in roadmap"): image 4 has the libraries (ldap3,
-  dnspython, pycryptodome); `verify --ad` passed on prod
-  with and without the account (2026-11-16, the user). Names on
-  the admin page on prod (912aeab, 2026-11-16). The Care list
-  (name search at Add, labels from AD, "disabled in AD" on the
-  tiles) on hold (the user, 2026-11-16: "Let's hold AD
-  integration for now"). See `docs/admin-roadmap.md`.
 - **Kubernetes**: prod runs on Docker for now (user,
   2026-11-15); `k8s/uxcorrelate.yaml` is kept in step with
   `compose.yaml`. The way in switches between the ingress and
@@ -126,6 +88,20 @@ data, then its daily data with the people and desktops. See
   Also open: cpu / memory numbers, only one user could connect.
 
 ## Done (latest)
+
+- dbcf407: the week under "Yesterday" (the user's pick A of three
+  mocked: PCs a day with a Critical event, a Major event and Major
+  slow actions, Monday to Sunday, this week and last; not chosen:
+  B a line per kind of event, C the last full week only) and no
+  red dots on Care tiles ("makes no sense"). 16eeed7: Care list
+  step 2, slow start-ups as an issue (A and B) and Active
+  Directory on the tab (add by name, AD's name, "disabled in
+  AD"; with it the AD lookup is done: verify --ad, the admin
+  page's names, the Care list). Both on stage and prod 2026-11-17 (the user: "All good
+  both stage and prod").
+- f905606, a807a50, SecureView history, `verify --ai`,
+  `verify --clients --except WT`: on stage / prod 2026-11-17 (the
+  user: "1-5 are all good, stage/prod are same version now").
 
 - Failing disk needs Aternity's category Hardware, not only its
   "(Disk)" / "(Drive)" label (built on dev 2026-11-16, from

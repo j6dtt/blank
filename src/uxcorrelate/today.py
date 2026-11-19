@@ -123,8 +123,12 @@ class Hour:
 
 
 class Today:
-    def __init__(self, zone: str = "", store: str | os.PathLike | None = None):
+    def __init__(self, zone: str = "", store: str | os.PathLike | None = None,
+                 clock=lambda: datetime.now(timezone.utc)):
         self.zone, self.zone_label, self.zone_note = zone_of(zone)
+        # what "today" is when old files are deleted (Care's too): the tests give their own day (a test
+        # dated Nov 9 failed on Nov 18, its files older than the 8 days Care keeps by the real clock)
+        self.clock = clock
         self.refresh_min = REFRESH_MIN  # web.py sets config.yaml's refresh_minutes
         self.store = Path(store) / "days" if store else None
         self.hours: dict[datetime, Hour] = {}
@@ -316,7 +320,7 @@ class Today:
         bad = []
         try:
             self.store.mkdir(parents=True, exist_ok=True)
-            cut = date.today() - timedelta(days=KEEP_FILES_DAYS)
+            cut = self.day(self.clock()) - timedelta(days=KEEP_FILES_DAYS)  # the page's day, not the host's
             for path in sorted(self.store.glob("*.json")):
                 try:  # one unreadable day no longer stops the days after it loading (the usual lost them)
                     d = date.fromisoformat(path.stem)

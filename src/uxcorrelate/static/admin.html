@@ -565,11 +565,12 @@ function loadPanel(j) {
   s += `<div class="grid2">` + j.load.map(x => {
     const bad = [x.retries && `${plural(x.retries, "retry", "retries")}`, x.failed && `<span class="bad">${fmt(x.failed)} failed</span>`,
       x.cut && `<span class="warn">${fmt(x.cut)} cut short</span>`].filter(Boolean);
-    return `<div><h3>${esc(x.system)}</h3><p class="small">${plural(x.calls, "call")}, ${plural(x.rows, "row")}, ${dur(x.seconds)} waiting`
+    const rows = x.rows !== null && x.rows !== undefined;  // an AI service's replies have no rows: not said
+    return `<div><h3>${esc(x.system)}</h3><p class="small">${plural(x.calls, "call")}, ${rows ? `${plural(x.rows, "row")}, ` : ""}${dur(x.seconds)} waiting`
       + `${bad.length ? "; " + bad.join(", ") : "; no retry, none failed"}.</p>`
       + hourBars(x.by_hour, "call", `${x.system} calls by hour`)
-      + `<div class="tableWrap"><table><thead><tr><th>What for</th><th class="n">Calls</th><th class="n">Rows</th><th class="n">Waiting</th><th class="n">Failed</th></tr></thead><tbody>`
-      + x.purposes.map(p => `<tr><td>${esc(p.purpose)}</td><td class="n">${fmt(p.calls)}</td><td class="n">${fmt(p.rows)}</td><td class="n">${dur(p.seconds)}</td>`
+      + `<div class="tableWrap"><table><thead><tr><th>What for</th><th class="n">Calls</th>${rows ? `<th class="n">Rows</th>` : ""}<th class="n">Waiting</th><th class="n">Failed</th></tr></thead><tbody>`
+      + x.purposes.map(p => `<tr><td>${esc(p.purpose)}</td><td class="n">${fmt(p.calls)}</td>${rows ? `<td class="n">${p.rows === null ? "–" : fmt(p.rows)}</td>` : ""}<td class="n">${dur(p.seconds)}</td>`
         + `<td class="n${p.failed || p.cut ? " bad" : ""}">${fmt(p.failed)}${p.cut ? ` (+${fmt(p.cut)} cut)` : ""}</td></tr>`).join("")
       + `</tbody></table></div><p class="muted small" style="margin:8px 0 4px">Most called</p>`
       + hlist(x.sources.map(o => [o.source, o.calls])) + `</div>`;

@@ -76,6 +76,13 @@ def _new_day(d: date) -> dict:
             "polls": {"n": 0, "last": None, "a": None}, "calls": {}, "calls_hour": {}, "reads": [], "starts": []}
 
 
+def _counts(by_source: dict, source: str) -> list:
+    """One source's counts: calls, rows, seconds, retries, failed, cut short, calls whose reply had
+    rows. A day saved before Nov 18 2026 has the first six only (its rows say whether it had any)."""
+    c = by_source.setdefault(source, [0, 0, 0.0, 0, 0, 0, 0])
+    c.extend([0] * (7 - len(c)))
+    return c
+
 class Usage:
     def __init__(self, today, store: str | os.PathLike | None = None):
         self.today = today
@@ -228,9 +235,10 @@ class Usage:
         now = datetime.now(timezone.utc)
         with self.lock:
             day = self._day(now)
-            c = day["calls"].setdefault(system, {}).setdefault(purpose, {}).setdefault(source, [0, 0, 0.0, 0, 0, 0])
+            c = _counts(day["calls"].setdefault(system, {}).setdefault(purpose, {}), source)
             c[0] += 1
             c[1] += rows or 0
+            c[6] += rows is not None  # calls whose reply has rows: an AI service's never do
             c[2] = round(c[2] + seconds, 1)
             c[3] += retries
             c[4] += not ok
@@ -244,7 +252,7 @@ class Usage:
         now = datetime.now(timezone.utc)
         with self.lock:
             day = self._day(now)
-            c = day["calls"].setdefault(system, {}).setdefault(purpose, {}).setdefault(source, [0, 0, 0.0, 0, 0, 0])
+            c = _counts(day["calls"].setdefault(system, {}).setdefault(purpose, {}), source)
             c[5] += 1
             self._changed(day, now)
 
@@ -380,19 +388,22 @@ class Usage:
         polls = day["polls"]
         reads = [s for _, s in day["reads"]]
         load = []
+        def rows_of(c: list):  # None: no reply had rows ("0 rows" was said of every AI service)
+            return c[1] if c[6] or c[1] else None
         for system, by_purpose in sorted(day["calls"].items()):
-            tot = [0, 0, 0.0, 0, 0, 0]
+            tot = [0, 0, 0.0, 0, 0, 0, 0]
             purposes, sources = [], Counter()
             for purpose, by_source in by_purpose.items():
-                p = [0, 0, 0.0, 0, 0, 0]
-                for source, c in by_source.items():
+                p = [0, 0, 0.0, 0, 0, 0, 0]
+                for source in by_source:
+                    c = _counts(by_source, source)
                     p = [a + b for a, b in zip(p, c)]
                     sources[source] += c[0]
-                purposes.append({"purpose": purpose, "calls": p[0], "rows": p[1], "seconds": round(p[2]),
+                purposes.append({"purpose": purpose, "calls": p[0], "rows": rows_of(p), "seconds": round(p[2]),
                                  "retries": p[3], "failed": p[4], "cut": p[5]})
                 tot = [a + b for a, b in zip(tot, p)]
             hours = day["calls_hour"].get(system, {})
-            load.append({"system": system, "calls": tot[0], "rows": tot[1], "seconds": round(tot[2]),
+            load.append({"system": system, "calls": tot[0], "rows": rows_of(tot), "seconds": round(tot[2]),
                          "retries": tot[3], "failed": tot[4], "cut": tot[5],
                          "purposes": sorted(purposes, key=lambda p: -p["calls"]),
                          "sources": [{"source": s, "calls": n} for s, n in sources.most_common(8)],

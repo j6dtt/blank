@@ -162,6 +162,37 @@ def test_every_call_to_riverbed_is_counted_under_what_the_app_was_doing(monkeypa
     assert {s["source"] for s in aternity["sources"]} == {"BUSINESS_ACTIVITIES_RAW", "BAD", "DEVICE_HEALTH_RAW"}
 
 
+def test_an_ai_service_with_no_model_list_is_answered_not_failed(monkeypatch):
+    """Prod, Nov 18 2026: GPT-5.4 answers the connection light's model-list check (every minute)
+    with HTTP 404, "no list"; the light was green, the admin page said "824 calls, 0 rows; 816
+    failed". A 404 there is an answer; a 500 is still a failed call; an AI reply has no rows."""
+    from uxcorrelate import status as st
+    from uxcorrelate.config import AiService
+    use = Usage(Today(ZONE))
+    monkeypatch.setattr(_http, "METER", use.call)
+    answer = {"code": 404}
+
+    def handler(request):
+        if request.url.path.endswith("/models"):
+            return httpx.Response(answer["code"], json={"error": "not found"})
+        return httpx.Response(200, json={"choices": [{"message": {"content": "hello"}}]})
+    gpt = AiService(name="GPT-5.4", base_url="https://gpt.test/v1", model="gpt-x")
+    with _http.doing("connection lights"):
+        assert st.check_ai(gpt, True, {}, httpx.MockTransport(handler))["state"] == "ok"  # green, as before
+        answer["code"] = 500
+        assert st.check_ai(gpt, True, {}, httpx.MockTransport(handler))["state"] == "down"
+    [ai] = use.view(datetime.now(timezone.utc))["load"]
+    assert (ai["calls"], ai["failed"], ai["rows"]) == (2, 1, None)  # the 404 answered, the 500 failed; no rows
+    assert ai["purposes"][0]["rows"] is None
+    # a day saved before (six counts a source, no count of calls with rows) still adds up
+    use2 = Usage(Today(ZONE))
+    day = use2._day(datetime.now(timezone.utc))
+    day["calls"] = {"Aternity": {"Today reader": {"BUSINESS_ACTIVITIES_RAW": [3, 30, 1.5, 0, 0, 0]}},
+                    "AI service GPT-5.4": {"connection lights": {"models": [5, 0, 2.0, 0, 5, 0]}}}
+    load = {x["system"]: x for x in use2.view(datetime.now(timezone.utc))["load"]}
+    assert load["Aternity"]["rows"] == 30 and load["AI service GPT-5.4"]["rows"] is None
+
+
 def app_with(monkeypatch, password="s3cret-test"):
     if password is None:
         monkeypatch.delenv(web.ADMIN_ENV, raising=False)
