@@ -208,6 +208,9 @@ GLOSSARY: dict[str, dict[str, str]] = {
     "software": {
         "Software tab": f"What Aternity lists as installed on the PCs, read once a day, and each application's "
                         f"versions over the last {software.DAYS} days.",
+        "left out": "PCs that have installed software in Aternity but are no longer in its device list. Aternity "
+                    "takes a PC off its device list about a month after it last heard from it and keeps its "
+                    "software, so these are PCs that are gone. They are not counted anywhere on the tab.",
         "red flag": "Something on the installed software worth raising to management. One line per kind, the "
                     "most PCs first.",
         "Crashes more / Hangs more / Slower": f"One version of an application has the problem (PCs with a crash, "

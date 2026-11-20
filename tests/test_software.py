@@ -19,6 +19,9 @@ MEASURES = {"APPLICATION_CRASHES_TOTAL", "APPLICATION_HANG_TIME_TOTAL", "ACTIVIT
 FIXTURE = Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml"
 
 
+from uxcorrelate.http import ApiError  # noqa: E402
+
+
 def pc(i: int) -> str:
     return f"PC-{i:02d}"
 
@@ -47,7 +50,8 @@ def fake(tables: dict[str, list[dict]], seen: list | None = None):
         f, sel = p.get("$filter", ""), [c for c in p.get("$select", "").split(",") if c]
         if seen is not None:
             seen.append((entity, f, sel))
-        rows = [r for r in tables.get(entity, []) if all(_clause(r, c) for c in f.split(" and ") if c)]
+        rows = [r for r in tables.get(entity, [])
+                if all(any(_clause(r, x) for x in c.split(" or ")) for c in f.split(" and ") if c)]
         keys = [c for c in sel if c not in MEASURES and c != "DEVICE_COUNT"]
         per: dict = {}
         for r in rows:  # Aternity adds up per the columns asked for
@@ -131,7 +135,8 @@ def test_every_red_flag_with_its_counts_ranked_by_pcs(tmp_path):
     c, s = client()
     reader = sw.Software("", tmp_path, clock=lambda: NOW)
     snap = sw.read_snapshot(c, s.aternity, NOW, reader)
-    assert snap["list"] == {"pcs": 60, "programs": 6, "installs": 138, "user_programs": 1, "user_installs": 3}
+    assert snap["list"] == {"pcs": 60, "left_out": 0, "programs": 6, "installs": 138, "user_programs": 1,
+                            "user_installs": 3}
     got = [(f["kind"], f["pcs"], f["text"]) for f in snap["flags"]]
     assert got == [
         ("slow", 20, "Outlook 16.2: 400 of 2,400 actions rated Major, on 20 PCs; its other versions: 5 of 4,005 actions."),
@@ -231,7 +236,74 @@ def test_a_missing_source_is_a_note_not_a_failure():
     c.http.request = no_inventory
     snap = sw.read_snapshot(c, s.aternity, NOW, sw.Software(""))
     assert snap["windows"] is None and "windows" not in {f["kind"] for f in snap["flags"]}
-    assert snap["notes"] == ["DEVICE_INVENTORY gives no OS_VERSION: Windows updates are not counted."]
+    assert snap["notes"] == ["Aternity's device list is empty, so PCs that are gone are still counted in the "
+                             "installed software.",
+                             "DEVICE_INVENTORY gives no OS_VERSION: Windows updates are not counted."]
+
+
+def test_pcs_no_longer_in_aternitys_device_list_are_left_out_of_every_count(tmp_path):
+    """Stage, Nov 20 2026 (verify --inventory): Aternity's installed software list had 6,464 PCs,
+    1,266 of them no longer in its device list (3 in use in 8 days): it takes a PC off the device
+    list about a month after it last heard from it and keeps its software, so 1 in 5 of the PCs
+    behind the tab's counts was a PC that is gone. Their software is read and taken off the
+    totals; when that cannot be done, nothing is left out and a note says so."""
+    def data():
+        t = tables()
+        for k in (1, 2, 3):  # 3 PCs that are gone: Edge 119.0, one more Rare Tool, a tool only they have
+            for name, v, scope in (("Microsoft Edge", "119.0", "ALL"), ("Old Tool", "2.0", "ALL"),
+                                   ("Zoom", "5.1", "Specific User")):
+                t["INSTALLED_SOFTWARE"].append({"DEVICE_NAME": f"OLD-{k}", "INSTALLED_SW_NAME": name,
+                                                "INSTALLED_SW_VERSION": v, "INSTALLED_SW_TYPE": "Application",
+                                                "INSTALLED_SW_SCOPE": scope})
+        t["INSTALLED_SOFTWARE"].append({"DEVICE_NAME": "OLD-1", "INSTALLED_SW_NAME": "Java", "INSTALLED_SW_VERSION": "8.1",
+                                        "INSTALLED_SW_TYPE": "Application", "INSTALLED_SW_SCOPE": "ALL"})
+        t["INSTALLED_SOFTWARE"].append({"DEVICE_NAME": "OLD-1", "INSTALLED_SW_NAME": "Java", "INSTALLED_SW_VERSION": "11.0",
+                                        "INSTALLED_SW_TYPE": "Application", "INSTALLED_SW_SCOPE": "ALL"})
+        return t
+    plain = sw.read_snapshot(client()[0], Settings().aternity, NOW, sw.Software("", clock=lambda: NOW))
+    seen = []
+    c, s = client(seen, data())
+    reader = sw.Software("", tmp_path, clock=lambda: NOW)
+    snap = sw.read_snapshot(c, s.aternity, NOW, reader)
+    assert snap["list"] == dict(plain["list"], left_out=3)  # as if the 3 PCs were not there
+    assert snap["programs"] == plain["programs"] and "Old Tool" not in snap["programs"]
+    assert [(f["key"], f["pcs"]) for f in snap["flags"]] == [(f["key"], f["pcs"]) for f in plain["flags"]]
+    asked = [f for e, f, _ in seen if e == "INSTALLED_SOFTWARE" and " or " in f]
+    assert asked == ["DEVICE_NAME eq 'OLD-1' or DEVICE_NAME eq 'OLD-2' or DEVICE_NAME eq 'OLD-3'"]  # one read
+    # no PC name is saved; the lists opened by a click leave the same PCs out
+    reader.save(snap)
+    assert reader.gone == {"OLD-1", "OLD-2", "OLD-3"} and "OLD-" not in (tmp_path / "software" / f"{snap['date']}.json").read_text()
+    assert reader.view()["list"]["left_out"] == 3
+    assert sw.pcs_with_program(c, "Microsoft Edge", "119.0")["total"] == 8
+    assert sw.pcs_with_program(c, "Microsoft Edge", "119.0", gone=reader.gone)["total"] == 5
+
+    # Aternity refuses several PCs in one read: one PC a read, the same counts
+    c2, _ = client(data=data())
+    real = c2.query
+
+    def no_or(entity, filter=None, **kw):
+        if filter and " or " in filter:
+            raise ApiError("Aternity: HTTP 400", 400, "bad filter")
+        return real(entity, filter, **kw)
+    c2.query = no_or
+    again = sw.read_snapshot(c2, s.aternity, NOW, reader)
+    assert again["list"] == snap["list"] and again["programs"] == plain["programs"]
+
+    # their software cannot be read at all: nothing is left out, and it is said
+    def none(entity, filter=None, **kw):
+        if filter and "OLD-" in filter:
+            raise ApiError("Aternity: HTTP 500", 500, "down")
+        return real(entity, filter, **kw)
+    c2.query = none
+    kept = sw.read_snapshot(c2, s.aternity, NOW, reader)
+    assert kept["list"]["pcs"] == 63 and kept["list"]["left_out"] == 0 and kept["gone"] == []
+    assert any("could not be read (down), so PCs that are gone are still counted" in n for n in kept["notes"])
+
+    # most of the list missing from the device list: the lists do not go together, none left out
+    t = data()
+    t["DEVICE_INVENTORY"] = t["DEVICE_INVENTORY"][:10]
+    odd = sw.read_snapshot(client(data=t)[0], s.aternity, NOW, reader)
+    assert odd["list"]["left_out"] == 0 and any("too many to be PCs that are gone" in n for n in odd["notes"])
 
 
 def test_a_click_reads_the_pcs_of_a_program_or_of_a_version_with_a_problem():

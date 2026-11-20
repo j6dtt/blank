@@ -1665,7 +1665,8 @@ def verify_inventory(settings: Settings, client: AternityClient) -> list[Check]:
     extra = have - set(heard)
     silent = [pc for pc, d in age.items() if d >= INV_SILENT]
     lines = [f"In the device list too: {len(have & set(heard)):,} PCs.",
-             f"Not in the device list: {len(extra):,} PCs. The Software tab counts them today." if extra else
+             f"Not in the device list: {len(extra):,} PCs. The Software tab leaves them out of its counts "
+             "(see 4)." if extra else
              "Not in the device list: none. Every PC with software is in the device list."]
     if silent:
         lines.append(f"Of the {len(silent):,} PCs in the device list silent {INV_SILENT} days or more, "
@@ -1700,6 +1701,28 @@ def verify_inventory(settings: Settings, client: AternityClient) -> list[Check]:
         lines.append(f"For comparison, of the {len(heard):,} PCs in the device list, {len(set(heard) & used):,} ran an "
                      f"application in the last {INV_USE_DAYS} days.")
     out.append(Check("Aternity", item, None, f"Aternity's installed software list has {len(have):,} PCs.", rows=lines + cut))
+    # 4. what leaving them out costs the Software tab's daily read: their software, read now
+    item = "4. Reading the software of those PCs"
+    if not extra or cut:
+        return out
+    from .software import GONE_BATCH, GONE_MOST, rows_of_pcs
+    if len(extra) > GONE_MOST * len(have):
+        out.append(Check("Aternity", item, None, "More than half of the PCs with software are not in the device list: "
+                         "the Software tab does not take them as PCs that are gone, and leaves none out."))
+        return out
+    t0 = time.monotonic()
+    got, info = rows_of_pcs(client, extra, [D, SOFTWARE_COLUMNS["name"], SOFTWARE_COLUMNS["version"]])
+    secs = time.monotonic() - t0
+    how = ("one PC a read (Aternity refused several PCs in one read, or cut the reply short)" if info["one_by_one"]
+           else f"{GONE_BATCH} PCs a read")
+    if got is None:
+        out.append(Check("Aternity", item, None, f"The software of those {len(extra):,} PCs could not be read whole "
+                         f"({info['error']}; {info['reads']:,} reads in {secs:.0f} s, {how}). The Software tab "
+                         "then leaves none out and says so."))
+    else:
+        out.append(Check("Aternity", item, None,
+                         f"Read whole: {len(got):,} rows in {secs:.0f} s, {info['reads']:,} reads, {how}. This is what "
+                         f"the Software tab's read once a day does to leave those {len(extra):,} PCs out of its counts."))
     return out
 
 

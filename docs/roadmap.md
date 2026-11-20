@@ -50,16 +50,18 @@ data, then its daily data with the people and desktops. See
   (the user's screenshots, 2026-11-20): connection lights 1,123 ->
   1,132 calls in 10 minutes, failed 626 both times, no rows. Left:
   the prod copy, if that panel was stage.
-- **`verify --inventory` on stage, second run** (d3fd27b; its first
-  run on stage 2026-11-20: 5,211 PCs in the device list, none silent
-  over 25 days, 664 with no date; the software list has 6,464 PCs,
-  1,266 not in the device list; the user: the output "makes no
-  sense"). Rewritten in plain sentences and with one more count
-  (built on dev 2026-11-20, "build it, with plain English report"):
-  how many of those 1,266 ran an application in the last 8 days.
-  Copy `verify.py`, run it. Then the Software tab: count only PCs
-  in Aternity's device list (my suggestion, not agreed), if they
-  prove retired.
+- **Stage copy: Software tab leaves PCs that are gone out** (built
+  on dev 2026-11-20, "build it"). From `verify --inventory` on
+  stage (a95d34c): the installed software list has 6,464 PCs,
+  1,266 no longer in Aternity's device list, 3 of them in use in
+  8 days. Now only PCs in the device list are counted; the first
+  tile says how many were left out. Copy `software.py`,
+  `software_chat.py`, `agent.py`, `web.py`, `verify.py`,
+  `explain.py`, `static/index.html`, restart. First
+  `verify --inventory`: its 4. says how long the extra read takes
+  and whether Aternity takes 25 PCs in one read ("or", never used
+  on live before). Then the Software tab: about 5,198 PCs,
+  "1,266 more left out".
 - To watch on prod with Care step 2: how many slow start-ups a day
   (noisy or not), how many days of start-ups Aternity keeps (Show
   more says "N days with one, from ..."), which types carry the

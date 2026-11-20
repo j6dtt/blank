@@ -923,6 +923,17 @@ back to dev.
   other PCs have change-log rows in the same minute.
 - **Process data:** every published data source with a process column,
   whether it has rows, and its CPU/memory/IO columns.
+- **PCs that are gone, on the Software tab**: Aternity takes a PC off
+  its device list about a month after it last heard from it, but keeps
+  its installed software (stage, Nov 20 2026: 1,266 of 6,464 PCs).
+  The Software tab counts only PCs still in the device list: once a
+  day it reads the device list, then the software of the PCs not in
+  it (25 PCs a read), and takes that off Aternity's totals. The first
+  tile says "N more left out: no longer in Aternity's device list";
+  the lists opened by a click leave the same PCs out. When the device
+  list or their software cannot be read whole, or more than half the
+  PCs are missing from the device list, nothing is left out and a
+  note says so. `verify --inventory` (4.) times that read.
 - **PCs that are gone** (`verify --inventory`, only on its own): three
   answers in plain sentences, no PC names. 1. Aternity's device list:
   how many PCs it heard from today, 1 to 7, 8 to 30 and 31+ days ago,

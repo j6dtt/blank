@@ -612,7 +612,8 @@ def pcs(client, now: datetime, sw: Software, view: dict, known, args: dict, prog
             return _result("pcs", args, f"{name}: no version {version}", _period(view), ["Version"], rows,
                            [f"No PC has {name} {version} in the latest read; its newest versions are listed."],
                            say=f"No PC has {name} {version} in the latest read.")
-        got = pcs_with_program(client, name, str(version).strip() if prefix else ver, prefix=prefix)
+        got = pcs_with_program(client, name, str(version).strip() if prefix else ver, prefix=prefix,
+                               gone=getattr(sw, "gone", ()))
         rows = [[x["device"], x["version"]] for x in got["rows"][:PCS_ROWS]]
         runs = [{"device": x["device"], "start": (now - timedelta(hours=4)).isoformat(), "end": now.isoformat()}
                 for x in got["rows"][:PCS_ROWS]]

@@ -50,6 +50,8 @@ WEEKS = 12  # Windows last updated: weeks shown, then "older"
 AGG_ROWS = 5000  # rows of a read Aternity adds up (name + version: 2,245 on the live tenant)
 LIST_ROWS = 20000  # rows of a read that lists PCs
 PCS_SHOWN = 200  # PCs in a list opened by a click
+GONE_BATCH = 25  # retired PCs asked for in one read of their software (their names joined by "or")
+GONE_MOST = 0.5  # more of the list's PCs than this missing from the device list: not taken as retired PCs
 UPDATE_DAYS = 14  # before and after an update: the days read
 TAIL = ((1, 1), (2, 5), (6, 20), (21, 100), (101, 1000), (1001, None))  # flag 6: programs by how many PCs
 NO_VERSION = ""  # how a row with no version is kept (Aternity's "N/A")
@@ -152,18 +154,18 @@ class _Reads:
 
 
 # -- the daily read -------------------------------------------------------------
-def _installed(q: _Reads, say) -> tuple[dict, dict | None]:
-    """Programs: PCs per version, PCs, one-user PCs; and the list's size."""
+def _installed(q: _Reads, say) -> tuple[dict, dict | None, set]:
+    """Programs: PCs per version, PCs, one-user PCs; the list's size; and its PCs."""
     S, c = SOFTWARE_SOURCE, SOFTWARE_COLUMNS
     D, N, V, P, T = (c[k] for k in ("device", "name", "version", "pcs", "type"))
     if q.schema is not None and S not in q.schema:
         q.notes.append(f"{S} is not published by this Aternity: nothing on installed software can be read.")
-        return {}, None
+        return {}, None, set()
     say("Reading the installed software list")
     agg = q.rows(S, "The installed software list", select=[N, V, T, P] if q.has(S, T) else [N, V, P],
                  top=AGG_ROWS)
     if not agg:
-        return {}, None
+        return {}, None, set()
     progs: dict[str, dict] = {}
     for r in agg:
         name = r.get(N)
@@ -188,15 +190,118 @@ def _installed(q: _Reads, say) -> tuple[dict, dict | None]:
         for r in users or []:
             if str(r.get(N)) in progs:
                 progs[str(r.get(N))]["user"] = _int(r.get(P))
-    size = {"pcs": len({r.get(D) for r in listed}) if listed else None, "programs": len(progs),
-            "installs": sum(sum(p["versions"].values()) for p in progs.values()),
-            "user_programs": sum(1 for p in progs.values() if p["user"]) if users is not None else None,
-            "user_installs": sum(p["user"] for p in progs.values()) if users is not None else None}
-    return progs, size
+    pcs = {str(r.get(D)) for r in listed or [] if r.get(D)}
+    size = {"pcs": len(pcs) if listed else None, "left_out": 0, **_sizes(progs, users is not None)}
+    return progs, size, (pcs if listed and not q.cut else set())
 
 
-def _multi(q: _Reads, progs: dict, say) -> None:
-    """2+ versions on one PC: each program with more installs than PCs, read PC by PC."""
+def _sizes(progs: dict, users: bool) -> dict:
+    return {"programs": len(progs), "installs": sum(sum(p["versions"].values()) for p in progs.values()),
+            "user_programs": sum(1 for p in progs.values() if p["user"]) if users else None,
+            "user_installs": sum(p["user"] for p in progs.values()) if users else None}
+
+
+NOT_LEFT_OUT = "so PCs that are gone are still counted in the installed software."
+
+
+def _retired(q: _Reads, cfg, listed: set, say) -> set:
+    """The PCs of the installed list that are no longer in Aternity's device list: Aternity takes
+    a PC off its device list about a month after it last heard from it but keeps its software
+    (stage, Nov 20 2026: 1,266 of 6,464 PCs, 3 of them in use in 8 days). Empty when not known:
+    the device list not read whole, or more than `GONE_MOST` of the PCs missing from it (then
+    they are not retired PCs: the two lists do not go together)."""
+    inv, dev = cfg.entities.get("inventory"), cfg.fields.get("inventory", {}).get("device")
+    if not listed:
+        return set()
+    if not inv or not dev or not q.has(inv, dev):
+        q.notes.append(f"Aternity's device list is not published, {NOT_LEFT_OUT}")
+        return set()
+    say("Reading Aternity's device list")
+    rows = q.rows(inv, "Aternity's device list", select=[dev], top=LIST_ROWS)
+    known = {str(r.get(dev)).lower() for r in rows or [] if r.get(dev)}
+    if not known or q.cut:
+        if rows is not None:  # a failed read has its own note
+            q.notes.append(f"Aternity's device list {'was cut short' if known else 'is empty'}, {NOT_LEFT_OUT}")
+        return set()
+    gone = {pc for pc in listed if pc.lower() not in known}
+    if len(gone) > GONE_MOST * len(listed):
+        q.notes.append(f"{len(gone):,} of the {len(listed):,} PCs with installed software are not in Aternity's "
+                       f"device list: too many to be PCs that are gone, so none is left out.")
+        return set()
+    return gone
+
+
+def rows_of_pcs(client, pcs, select: list[str], say=lambda s: None) -> tuple[list[dict] | None, dict]:
+    """The installed software rows of these PCs, `GONE_BATCH` PCs a read (their names joined by
+    "or"; when Aternity refuses that or cuts a reply short, one PC a read from there on). None
+    when a read failed or was cut short even so: the rows are then not the whole of it. Also how
+    it went ({"reads", "one_by_one", "error"}), for verify --inventory's timing."""
+    D = SOFTWARE_COLUMNS["device"]
+    pcs, out, i, batch = sorted(pcs), [], 0, GONE_BATCH
+    info = {"reads": 0, "one_by_one": False, "error": ""}
+    while i < len(pcs):
+        chunk = pcs[i:i + batch]
+        say(f"Reading the software of PCs no longer in Aternity's device list: {i:,} of {len(pcs):,}")
+        mark = len(client.warnings)
+        try:
+            got = client.query(SOFTWARE_SOURCE, filter=" or ".join(f"{D} eq {odata_quote(pc)}" for pc in chunk),
+                               select=select, top=LIST_ROWS)
+            error = "Aternity's reply was cut short" if _partial(client, mark, got, LIST_ROWS) else ""
+        except Exception as exc:
+            error = short_error(exc)
+        info["reads"] += 1
+        if error and batch > 1:
+            batch, info["one_by_one"] = 1, True
+            continue
+        if error:
+            info["error"] = error
+            return None, info
+        out += got
+        i += len(chunk)
+    return out, info
+
+
+def _leave_out(q: _Reads, progs: dict, gone: set, say) -> bool:
+    """Takes the retired PCs' software off Aternity's totals (it adds them up for us, and has no
+    "last heard" on the installed list to filter by): each PC once per program and version, per
+    program, and per program installed for one user. False (nothing changed) when their software
+    could not be read whole."""
+    c = SOFTWARE_COLUMNS
+    D, N, V, scope = c["device"], c["name"], c["version"], c.get("scope")
+    scoped = q.has(SOFTWARE_SOURCE, scope)
+    rows, info = rows_of_pcs(q.client, gone, [D, N, V] + ([scope] if scoped else []), say)
+    if rows is None:
+        q.notes.append(f"The software of the {len(gone):,} PCs no longer in Aternity's device list could not be "
+                       f"read ({info['error']}), {NOT_LEFT_OUT}")
+        return False
+    per_v, per_n, per_u = set(), set(), set()
+    for r in rows:
+        pc, p = r.get(D), progs.get(str(r.get(N)))
+        if p is None or not pc:
+            continue
+        v = NO_VERSION if r.get(V) is None else str(r.get(V))
+        per_v.add((pc, p["name"], v))
+        per_n.add((pc, p["name"]))
+        if scoped and r.get(scope) == SOFTWARE_USER_SCOPE:
+            per_u.add((pc, p["name"]))
+    for _, name, v in per_v:
+        if v in progs[name]["versions"]:
+            progs[name]["versions"][v] = max(progs[name]["versions"][v] - 1, 0)
+    for _, name in per_n:
+        progs[name]["pcs"] = max(progs[name]["pcs"] - 1, 0)
+    for _, name in per_u:
+        progs[name]["user"] = max(progs[name]["user"] - 1, 0)
+    for name in {x[1] for x in per_n}:
+        p = progs[name]
+        p["versions"] = {v: k for v, k in p["versions"].items() if k}
+        if not p["versions"] or not p["pcs"]:
+            del progs[name]  # only on PCs that are gone
+    return True
+
+
+def _multi(q: _Reads, progs: dict, say, gone=frozenset()) -> None:
+    """2+ versions on one PC: each program with more installs than PCs, read PC by PC (the PCs
+    in `gone`, no longer in Aternity's device list, left out)."""
     S, c = SOFTWARE_SOURCE, SOFTWARE_COLUMNS
     D, N, V = c["device"], c["name"], c["version"]
     cands = sorted((p for p in progs.values() if p["type"] != SOFTWARE_OS_UPDATE
@@ -213,7 +318,8 @@ def _multi(q: _Reads, progs: dict, say) -> None:
             continue
         per: dict = {}
         for r in rows:
-            per.setdefault(r.get(D), set()).add(NO_VERSION if r.get(V) is None else str(r.get(V)))
+            if r.get(D) not in gone:
+                per.setdefault(r.get(D), set()).add(NO_VERSION if r.get(V) is None else str(r.get(V)))
         two = [vs for vs in per.values() if len(vs) > 1]
         combos = Counter(" + ".join(shown(v) for v in sorted(vs, key=order)) for vs in two)
         most = version_key(_most(p["versions"]))
@@ -634,8 +740,13 @@ def read_snapshot(client, cfg, now: datetime, local, say=lambda s: None) -> dict
     """The whole daily read: counts and names only (no PC or user names)."""
     notes: list[str] = []
     q = _Reads(client, notes)
-    progs, size = _installed(q, say)
-    _multi(q, progs, say)
+    progs, size, listed = _installed(q, say)
+    gone = _retired(q, cfg, listed, say)
+    if gone and _leave_out(q, progs, gone, say):  # only PCs still in Aternity's device list are counted
+        size.update(_sizes(progs, size["user_programs"] is not None), pcs=len(listed) - len(gone), left_out=len(gone))
+    else:
+        gone = set()
+    _multi(q, progs, say, gone)
     snap = {"as_of": now.isoformat(), "date": local.day(now).isoformat(), "list": size, "programs": progs,
             "windows": _windows(q, cfg, local, now, say), "versions": _versions(q, now, say), "notes": notes,
             "days": DAYS}
@@ -645,6 +756,7 @@ def read_snapshot(client, cfg, now: datetime, local, say=lambda s: None) -> dict
     # Aternity down: the list itself did not come. Not a day's counts (keep_reading tries again soon)
     snap["unread"] = q.error if size is None else ""
     snap["flags"] = _flags(snap)
+    snap["gone"] = sorted(gone)  # for the lists opened by a click; `Software.save` keeps it out of the file
     return snap
 
 
@@ -656,6 +768,9 @@ class Software:
         self.clock = clock  # what "today" is when old files are deleted: the tests give their own day
         self.store = Path(store) / "software" if store else None
         self.snap: dict | None = None  # the latest read
+        self.gone: set[str] = set()  # PCs left out of the latest read (no longer in Aternity's device list):
+        # in memory only (no PC name is saved), so after a restart the lists opened by a click leave
+        # them out again from the first read on
         self.saved: dict[str, dict] = {}  # date -> {flag key: PCs}, from the files
         self.status = "Starting"
         self.off: str | None = None
@@ -702,7 +817,10 @@ class Software:
             log.warning("Software: %s", self.note)
 
     def save(self, snap: dict) -> None:
+        gone = snap.pop("gone", None)  # PC names: never in the saved day
         with self.lock:
+            if gone is not None:
+                self.gone = set(gone)
             self.snap = snap
             self.saved[snap["date"]] = {f["key"]: f["pcs"] for f in snap["flags"]}
         if not self.store:
@@ -815,6 +933,9 @@ def keep_reading(sw: Software, make_client, cfg_of, sleep, clock=lambda: datetim
             log.info("Software: read in %.0f s: %s PCs, %s programs, %d red flags%s", (clock() - started).total_seconds(),
                      f"{s['pcs']:,}" if s.get("pcs") is not None else "no", f"{s.get('programs', 0):,}",
                      len(snap["flags"]), f"; {len(snap['notes'])} notes" if snap["notes"] else "")
+            if s.get("left_out"):
+                log.info("Software: %s more PCs with installed software are no longer in Aternity's device list: "
+                         "left out of every count", f"{s['left_out']:,}")
             for n in snap["notes"]:
                 log.info("Software: note: %s", n)
         except Exception as exc:  # shown on the tab; the next read tries again
@@ -845,7 +966,7 @@ def pc_counts(rows: list[dict], typed: bool = True) -> dict:
             "rows": len(other), "update_rows": len(win)}
 
 
-def programs_per_pc(client, notes: list[str]) -> dict | None:
+def programs_per_pc(client, notes: list[str], gone=frozenset()) -> dict | None:
     """Programs on every PC ({pc: {"programs", "windows_updates"}}), and how it is known.
     Every PC's list in one read is refused by the live Aternity ("Returned data too long",
     stage, Nov 2026), so Aternity adds INSTALLED_SW_COUNT up per PC (one read of ~2 rows a
@@ -870,7 +991,7 @@ def programs_per_pc(client, notes: list[str]) -> dict | None:
         return None
     per: dict = {}
     for r in summed:
-        if r.get(D):
+        if r.get(D) and str(r.get(D)) not in gone:  # PCs no longer in Aternity's device list: left out
             p = per.setdefault(str(r.get(D)), {"programs": 0, "windows_updates": 0})
             p["windows_updates" if typed and r.get(T) == SOFTWARE_OS_UPDATE else "programs"] += _int(r.get(K))
     ranked = sorted(per, key=lambda d: (-sum(per[d].values()), d))
@@ -898,9 +1019,10 @@ def programs_per_pc(client, notes: list[str]) -> dict | None:
     return None
 
 
-def pcs_with_program(client, name: str, version: str | None, prefix: bool = False) -> dict:
+def pcs_with_program(client, name: str, version: str | None, prefix: bool = False, gone=frozenset()) -> dict:
     """The PCs with a program (at one version, or `prefix`: every version starting with it),
-    read now; each PC with its versions of the program."""
+    read now; each PC with its versions of the program. The PCs in `gone` (`Software.gone`: no
+    longer in Aternity's device list) are left out, as in the daily read's counts."""
     c = SOFTWARE_COLUMNS
     flt = f"{c['name']} eq {odata_quote(name)}"
     if version not in (None, NO_VERSION) and not prefix:
@@ -912,7 +1034,7 @@ def pcs_with_program(client, name: str, version: str | None, prefix: bool = Fals
         rows = [r for r in rows if r.get(c["version"]) is not None and starts_with(r.get(c["version"]), version)]
     per: dict[str, set] = {}
     for r in rows:
-        if r.get(c["device"]):
+        if r.get(c["device"]) and str(r.get(c["device"])) not in gone:
             per.setdefault(str(r.get(c["device"])), set()).add(shown(r.get(c["version"])))
     devs = sorted(per, key=str.lower)
     what = name if version is None else f"{name} {version}.x" if prefix else f"{name} {shown(version)}"

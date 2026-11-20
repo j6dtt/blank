@@ -750,7 +750,7 @@ def programs_per_pc(today: Today, names, now: datetime, reach: Reach | None, ord
         got, notes = kept[1], list(kept[2]) + [f"Counted at {kept[3]}, kept for {PER_PC_KEEP_MIN} minutes."]
     else:
         notes = []
-        got = count(client, notes)
+        got = count(client, notes, getattr(reach.software, "gone", ()))
         if got is not None:
             _per_pc[key] = (time.monotonic(), got, list(notes), f"{today.local(now):%H:%M}")
     if got is None:

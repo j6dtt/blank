@@ -1982,6 +1982,7 @@ function renderSoftware(v) {
   $("sTiles").innerHTML = [[s.pcs, "PCs in the list"], [s.programs, "programs"], [s.installs, "installs"],
     [v.flags.length, "red flags"]].map(([x, w], i) => `<div class="tile"><div class="big">${x === null || x === undefined ? "—" : n(x)}</div>`
       + `<div class="what">${i === 3 && x ? '<span class="warn">▲</span> ' : ""}${esc(w)}</div>`
+      + (i === 0 && s.left_out ? `<div class="u" title="Aternity takes a PC off its device list about a month after it last heard from it, but keeps its installed software. Those PCs are not counted anywhere on this tab.">${n(s.left_out)} more left out: no longer in Aternity's device list</div>` : "")
       + (i === 2 && s.user_installs ? `<div class="u">${n(s.user_installs)} of them for one user only</div>` : "") + `</div>`).join("");
   $("sNotes").innerHTML = v.notes.map((x) => `<li>${esc(x)}</li>`).join("");
   renderSwFlags(v); renderSwVersions(v); renderSwBehind(v); renderSwMulti(v); renderSwUser(v); renderSwWindows(v); renderSwTail(v);

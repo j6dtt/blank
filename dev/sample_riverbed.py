@@ -173,6 +173,7 @@ AFTER_START = 10  # minutes after a logon that a launch counts as "right after"
 MAIL_NEW = {f"PC-{i:03d}" for i in range(1, 15)}
 BEHIND_BROWSER = {"PC-005", "PC-018", "PC-022", "PC-029", "PC-034"}
 BEHIND_ERP = {"PC-030", "PC-035"}
+RETIRED = ("PC-R01", "PC-R02", "PC-R03")  # in the installed software list only: no longer in the device list
 MISSING_KB = {"PC-003", "PC-010", "PC-019", "PC-025", "PC-029", "PC-033", "PC-035"}
 PDF_USERS = {"PC-003", "PC-008", "PC-017", "PC-025", "PC-033"}
 OLD_PROGRAMS = [("Sample Toolbar", "2.2"), ("Sample Fonts Legacy", "1.1"), ("Sample Codec Pack", "16.4"),
@@ -855,6 +856,11 @@ class Sample:
                     continue
                 at = _at(self.today - timedelta(days=3), 2) if kb == "KB9000105" else long_ago
                 rows.append(self._sw(dev, kb, None, "OS Update", "ALL", "Microsoft Windows", at, "Microsoft Corporation"))
+        # PCs that are gone: Aternity took them off its device list (not in `inventory`) but keeps
+        # their software (stage, Nov 20 2026: 1,266 of 6,464 PCs). The Software tab leaves them out.
+        for dev in RETIRED:
+            for name, version in (("Sample Zip", "24.08"), ("Sample Agent", "7.2.0"), ("Sample Legacy Tool", "1.0")):
+                rows.append(self._sw(dev, name, version, "Application", "ALL", None, long_ago))
         return rows
 
     def _sw(self, dev, name, version, kind, scope, related, changed, vendor=VENDOR) -> dict:

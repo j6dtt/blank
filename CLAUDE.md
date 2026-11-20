@@ -518,6 +518,24 @@ demo mode: nothing in `src/` knows about it.
   `summary`: GPT for management, held to the flags' numbers (chat's
   `numbers`/`allowed`/`RATIO`), else `our_summary`. `split_by_program`:
   an app's problems by another program's version (chat only, never a flag).
+  PCs that are gone (the user's "build it", Nov 20 2026; stage,
+  verify --inventory: 1,266 of the installed list's 6,464 PCs were no
+  longer in `DEVICE_INVENTORY`, 3 of them in use in 8 days; Aternity
+  takes a PC off its device list about a month after it last heard from
+  it and keeps its software): only PCs in the device list are counted.
+  `_retired` (the list's PCs not in the device list, names compared in
+  lower case; empty when the device list is not read whole or more than
+  `GONE_MOST` are missing), `rows_of_pcs` (their software, `GONE_BATCH`
+  PCs a read joined by "or", never used on live before: refused or cut
+  short, one PC a read from there on), `_leave_out` (each PC once per
+  program + version, per program, per one-user program, taken off
+  Aternity's totals; a program only they have goes), `_multi(gone=)`;
+  `list.left_out` (the first tile's line), and `Software.gone` for the
+  click lists (`pcs_with_program(gone=)`, `programs_per_pc(gone=)`):
+  in memory only, `save` takes it out of the snapshot, no PC name on
+  disk. Not done: a note says PCs that are gone are still counted.
+  Windows counts were already from the device list; app versions are
+  from activity. verify --inventory's 4. reads the same and times it.
 - `software_chat.py`: the Software tab's look-ups. Ask anything uses its
   blocks as they are (`agent.SOFTWARE_TOOLS`); its own chat "Ask about
   software" (`/api/software/chat`, the same loop as `chat.converse`) is

@@ -466,7 +466,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
         if not name:
             raise HTTPException(400, "name (a program) or application is needed")
         return software_read(f"the PCs with {name} {version or ''}".strip(),
-                             lambda c: pcs_with_program(c, name, version))
+                             lambda c: pcs_with_program(c, name, version, gone=software.gone))
 
     @app.get("/api/software/compare")
     def software_compare(application: str, a: str = "", b: str = ""):
