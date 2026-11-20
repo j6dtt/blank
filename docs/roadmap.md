@@ -50,13 +50,16 @@ data, then its daily data with the people and desktops. See
   (the user's screenshots, 2026-11-20): connection lights 1,123 ->
   1,132 calls in 10 minutes, failed 626 both times, no rows. Left:
   the prod copy, if that panel was stage.
-- **`verify --inventory` on stage** (built on dev 2026-11-20, "build
-  it"; the user: how does Aternity handle PCs that no longer exist,
-  is there a "last heard"?): copy `config.py`, `verify.py`, `cli.py`,
-  run it. It answers: does `DEVICE_INVENTORY` keep silent PCs and
-  for how long, what the agent's status values are, and whether
-  silent PCs are still in the installed software list. Then decide
-  whether the Software tab should leave silent PCs out.
+- **`verify --inventory` on stage, second run** (d3fd27b; its first
+  run on stage 2026-11-20: 5,211 PCs in the device list, none silent
+  over 25 days, 664 with no date; the software list has 6,464 PCs,
+  1,266 not in the device list; the user: the output "makes no
+  sense"). Rewritten in plain sentences and with one more count
+  (built on dev 2026-11-20, "build it, with plain English report"):
+  how many of those 1,266 ran an application in the last 8 days.
+  Copy `verify.py`, run it. Then the Software tab: count only PCs
+  in Aternity's device list (my suggestion, not agreed), if they
+  prove retired.
 - To watch on prod with Care step 2: how many slow start-ups a day
   (noisy or not), how many days of start-ups Aternity keeps (Show
   more says "N days with one, from ..."), which types carry the

@@ -923,14 +923,15 @@ back to dev.
   other PCs have change-log rows in the same minute.
 - **Process data:** every published data source with a process column,
   whether it has rows, and its CPU/memory/IO columns.
-- **PCs that are gone** (`verify --inventory`, only on its own): when
-  Aternity last heard from each PC (`TIME_LAST_REPORTING` in
-  `DEVICE_INVENTORY`): PCs heard today, 1 to 7, 8 to 30, 31 to 90 and
-  over 90 days ago, and the oldest it keeps; the agent's status as
-  Aternity sends it, each with when its PCs were last heard; and how
-  many PCs silent 8+ days are still in the installed software list
-  (the Software tab would count them). Riverbed's pages give no rule
-  for a PC that no longer exists, so this counts it. No PC names.
+- **PCs that are gone** (`verify --inventory`, only on its own): three
+  answers in plain sentences, no PC names. 1. Aternity's device list:
+  how many PCs it heard from today, 1 to 7, 8 to 30 and 31+ days ago,
+  how many have no date, and the one silent the longest. 2. The status
+  word Aternity gives each PC, as it sends it. 3. The PCs that are in
+  the installed software list but not in the device list, and how many
+  of them ran an application in the last 8 days: those that did not are
+  most likely retired PCs the Software tab still counts. Riverbed's
+  pages give no rule for a PC that no longer exists, so this counts it.
 - **Devices people sit at** (`verify --clients --except WT`, only on its
   own; `--hours N`, 1 to 24, default 1): virtual desktop actions by the
   device the user sat at (`CLIENT_DEVICE_NAME`, Riverbed: "the hostname

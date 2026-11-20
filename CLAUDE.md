@@ -840,13 +840,20 @@ demo mode: nothing in `src/` knows about it.
   Which value means VPN is not assumed: every value is listed.
 - `verify --inventory` (`verify.verify_inventory`, only on its own; the
   user, Nov 20 2026: how does Aternity handle PCs that no longer exist,
-  is there a "last heard"? Riverbed's pages give no rule): from
-  `DEVICE_INVENTORY`, PCs by when last heard (`INVENTORY_COLUMNS`:
-  `TIME_LAST_REPORTING`, never read on live before; `INV_AGES`, local
-  days), the oldest kept, `AGENT_CURRENT_STATUS` as sent with each
-  value's range of last reports (no value's meaning assumed), and the
-  PCs silent `INV_SILENT` (8)+ days still in `INSTALLED_SOFTWARE`. With
-  none silent it says "not answered", never "none is gone". No PC names.
+  is there a "last heard"? Riverbed's pages give no rule). Plain
+  sentences, numbered 1-3 (its first output "makes no sense": column
+  names and "PARTIAL"-style fragments; keep it sentences), no PC names:
+  1. the device list (`DEVICE_INVENTORY`) by when each PC was last heard
+  (`INVENTORY_COLUMNS`, `INV_SILENT`, `INV_OLD`, local days); 2.
+  `AGENT_CURRENT_STATUS` as sent, each with when its PCs were last
+  heard; 3. the PCs in `INSTALLED_SOFTWARE` not in the device list, and
+  how many ran an application in `INV_USE_DAYS` (daily app usage added
+  up per PC): not in use = most likely retired, mostly in use = live PCs
+  under another name, never called retired. Stage, Nov 20: 5,211 PCs,
+  none silent over 25 days (Aternity seems to drop them after about a
+  month), the date empty on 664 (578 of them 'Reporting': a blank date
+  is not "gone"), statuses 'Reporting' / 'Disconnected' / 'Stopped';
+  the software list has 6,464 PCs, 1,266 not in the device list.
 - `verify --software` (`verify._software`, only on its own), short: what
   `INSTALLED_SOFTWARE` (`SOFTWARE_SOURCE`, `SOFTWARE_COLUMNS`) gives the
   Software tab: PCs, programs, installs and `SOFTWARE_USER_SCOPE`
@@ -977,7 +984,10 @@ demo mode: nothing in `src/` knows about it.
   add one back. Files deleted after N days are judged by `Today.clock` /
   `Software.clock` (Care by its Today's): a test with a fixed day gives it
   (`clock=lambda: NOW`), or it fails once the real date passes N days
-  after it (the Care tests, dated Nov 9, failed on Nov 18 2026).
+  after it (the Care tests, dated Nov 9, failed on Nov 18 2026). The same
+  for a test that reads "the last N days" from a sample fixed in time:
+  `test_verify_finds_nothing_wrong` gives verify the sample's time (it
+  failed 7 days after the sample's day, Nov 20 2026).
 
 ## Conventions and gotchas
 

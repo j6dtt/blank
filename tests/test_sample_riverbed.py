@@ -93,7 +93,17 @@ def test_the_today_reader_reads_it(world):
     assert sum(h.status["Major"] for h in today.hours.values()) > 50
 
 
-def test_verify_finds_nothing_wrong(world):
+def test_verify_finds_nothing_wrong(world, monkeypatch):
+    """verify asks for "the last 7 days" by the real clock, the sample answers for NOW: with the
+    real date 7 days past NOW nothing was found and this failed (Nov 20 2026, 21:30 UTC). verify is
+    given the sample's time, as the tests of files deleted after N days (`clock=`)."""
+    import uxcorrelate.verify as V
+
+    class At(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW.astimezone(tz) if tz else NOW.replace(tzinfo=None)
+    monkeypatch.setattr(V, "datetime", At)
     a, n = clients(world)
     checks = verify_aternity(world[1], a) + verify_netim(world[1], n)
     assert [c.item + ": " + c.message for c in checks if c.ok is False] == []

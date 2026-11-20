@@ -750,10 +750,12 @@ def test_verify_clients_names_the_devices_not_starting_with_wt_and_sets_them_aga
             "on 1 PCs (0 starting with WT, 1 not)") in flat
 
 
-def test_verify_inventory_says_when_each_pc_was_last_heard_and_whether_silent_pcs_keep_their_software():
+def test_verify_inventory_says_in_plain_sentences_which_pcs_are_gone():
     """The user, Nov 20 2026: how does Aternity handle PCs that no longer exist, is there a "last
-    heard"? Riverbed's pages give no rule, so verify --inventory counts it: PCs by when last heard,
-    the agent's status as sent, and the silent PCs still in the installed software list. No names."""
+    heard"? Riverbed's pages give no rule, so verify --inventory counts it, in plain sentences (the
+    first output "makes no sense"): the device list by when each PC was last heard, Aternity's
+    status of each, and the PCs with software that are not in the device list, in use or not.
+    No names."""
     from datetime import datetime, timedelta, timezone
     from pathlib import Path
     from uxcorrelate.config import INVENTORY_COLUMNS
@@ -763,8 +765,9 @@ def test_verify_inventory_says_when_each_pc_was_last_heard_and_whether_silent_pc
     now = datetime.now(timezone.utc)
     at = lambda days: (now - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
     pcs = [("HOST-A", at(0), "Up"), ("HOST-B", at(0), "Up"), ("HOST-C", at(3), "Away"), ("HOST-D", at(20), "Away"),
-           ("HOST-E", at(45), "Away"), ("HOST-F", at(200), "Away"), ("HOST-G", "N/A", "N/A")]
-    state = {"pcs": pcs, "listed": ["HOST-A", "HOST-B", "HOST-C", "HOST-E", "HOST-F", "HOST-X"]}
+           ("HOST-E", at(25), "Away"), ("HOST-G", "N/A", "Up")]
+    state = {"pcs": pcs, "listed": ["HOST-A", "HOST-B", "HOST-C", "HOST-E"] + [f"HOST-X{i}" for i in range(20)],
+             "used": ["HOST-A", "HOST-B", "HOST-G", "HOST-X1"]}
 
     def handler(request):
         if request.url.path.endswith("/$metadata"):
@@ -773,6 +776,9 @@ def test_verify_inventory_says_when_each_pc_was_last_heard_and_whether_silent_pc
             return httpx.Response(200, json={"value": [
                 {"DEVICE_NAME": n, "TIME_LAST_REPORTING": t, "AGENT_CURRENT_STATUS": s} for n, t, s in state["pcs"]]})
         assert request.url.params.get("$select") == "DEVICE_NAME"  # each PC once, added up by Aternity
+        if request.url.path.endswith("/APPLICATIONS_DAILY"):
+            assert "TIMEFRAME ge " in request.url.params.get("$filter", "")
+            return httpx.Response(200, json={"value": [{"DEVICE_NAME": n} for n in state["used"]]})
         return httpx.Response(200, json={"value": [{"DEVICE_NAME": n} for n in state["listed"]]})
 
     settings = Settings()
@@ -781,17 +787,20 @@ def test_verify_inventory_says_when_each_pc_was_last_heard_and_whether_silent_pc
     text = render_checks(verify_inventory(settings, client))
     flat = " ".join(text.split())
     assert "HOST-" not in text  # no PC names
-    assert "7 rows" in flat and "7 PCs" in flat and "3 silent 8+ days, the longest 200 days" in flat
-    for line in ("today: 2 PCs", "1 to 7 days ago: 1 PCs", "8 to 30 days ago: 1 PCs", "31 to 90 days ago: 1 PCs",
-                 "over 90 days ago: 1 PCs", "no TIME_LAST_REPORTING: 1 PCs"):
+    for line in ("Aternity's device list has 6 PCs.", "Heard from today: 2 PCs.", "Last heard 1 to 7 days ago: 1 PCs.",
+                 "Last heard 8 to 30 days ago: 2 PCs.", "Last heard 31 days ago or more: 0 PCs.",
+                 "No date from Aternity: 1 PCs", "was last heard 25 days ago",
+                 "Aternity seems to take a PC off this list after about that long.",
+                 "'Up': 3 PCs; all with a date were heard today (1 have no date).",
+                 "'Away': 3 PCs; last heard between",
+                 "Aternity's installed software list has 24 PCs.", "In the device list too: 4 PCs.",
+                 "Not in the device list: 20 PCs. The Software tab counts them today.",
+                 "Of the 2 PCs in the device list silent 8 days or more, 1 still have their software listed.",
+                 "Of those 20 PCs, 1 ran an application in the last 8 days and 19 did not.",
+                 "the 19 with no use are most likely retired PCs whose software Aternity still keeps.",
+                 "of the 6 PCs in the device list, 3 ran an application in the last 8 days."):
         assert line in flat, line
-    assert "'Up': 2 PCs" in flat and "'Away': 4 PCs" in flat and "no value: 1 PCs, none with a time" in flat
-    assert "INSTALLED_SOFTWARE lists 6 PCs; 2 of the 3 PCs silent 8+ days are still in it" in flat
-    assert "last heard 8 to 30 days ago: 1 PCs, 0 of them in the list" in flat
-    assert "last heard over 90 days ago: 1 PCs, 1 of them in the list" in flat
-    assert "in the list but not in DEVICE_INVENTORY: 1 PCs" in flat
-    # every PC heard this week: said as not answered, never "no PC is gone"
-    state["pcs"] = pcs[:3]
+    # most of them in use: live PCs under another name, never called retired
+    state["used"] = state["listed"]
     flat = " ".join(render_checks(verify_inventory(settings, client)).split())
-    assert "either none is gone, or Aternity takes a silent PC off this list" in flat
-    assert "no PC is silent that long, so this is not answered here" in flat
+    assert "many of them are in use: they are live PCs the device list does not have" in flat and "retired PCs whose" not in flat
