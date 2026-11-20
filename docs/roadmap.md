@@ -46,7 +46,17 @@ data, then its daily data with the people and desktops. See
   `usage.py`, `today.py`, `software.py`, `care.py`,
   `static/admin.html`, restart. Then the admin page's Load panel:
   GPT-5.4's failed count stops growing (today's earlier calls stay
-  counted), no "rows" for it.
+  counted), no "rows" for it. f3b8459 (pushed 2026-11-19). Works
+  (the user's screenshots, 2026-11-20): connection lights 1,123 ->
+  1,132 calls in 10 minutes, failed 626 both times, no rows. Left:
+  the prod copy, if that panel was stage.
+- **`verify --inventory` on stage** (built on dev 2026-11-20, "build
+  it"; the user: how does Aternity handle PCs that no longer exist,
+  is there a "last heard"?): copy `config.py`, `verify.py`, `cli.py`,
+  run it. It answers: does `DEVICE_INVENTORY` keep silent PCs and
+  for how long, what the agent's status values are, and whether
+  silent PCs are still in the installed software list. Then decide
+  whether the Software tab should leave silent PCs out.
 - To watch on prod with Care step 2: how many slow start-ups a day
   (noisy or not), how many days of start-ups Aternity keeps (Show
   more says "N days with one, from ..."), which types carry the

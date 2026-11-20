@@ -838,6 +838,15 @@ demo mode: nothing in `src/` knows about it.
   counted), each `LOCATION_ON_VPN` value as sent (`CLIENT_COLUMNS`,
   never read on live before) against WT / not WT, physical PCs apart.
   Which value means VPN is not assumed: every value is listed.
+- `verify --inventory` (`verify.verify_inventory`, only on its own; the
+  user, Nov 20 2026: how does Aternity handle PCs that no longer exist,
+  is there a "last heard"? Riverbed's pages give no rule): from
+  `DEVICE_INVENTORY`, PCs by when last heard (`INVENTORY_COLUMNS`:
+  `TIME_LAST_REPORTING`, never read on live before; `INV_AGES`, local
+  days), the oldest kept, `AGENT_CURRENT_STATUS` as sent with each
+  value's range of last reports (no value's meaning assumed), and the
+  PCs silent `INV_SILENT` (8)+ days still in `INSTALLED_SOFTWARE`. With
+  none silent it says "not answered", never "none is gone". No PC names.
 - `verify --software` (`verify._software`, only on its own), short: what
   `INSTALLED_SOFTWARE` (`SOFTWARE_SOURCE`, `SOFTWARE_COLUMNS`) gives the
   Software tab: PCs, programs, installs and `SOFTWARE_USER_SCOPE`

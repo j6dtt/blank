@@ -106,6 +106,11 @@ SOFTWARE_COLUMNS = {"device": "DEVICE_NAME", "name": "INSTALLED_SW_NAME", "versi
 # a PC's rows; name + version alone comes added up per PC (DEVICE_COUNT), ~42 per PC.
 SOFTWARE_USER_SCOPE = "Specific User"
 SOFTWARE_OS_UPDATE = "OS Update"
+# When Aternity last heard from each PC and its agent's status (DEVICE_INVENTORY; names from
+# Riverbed's $metadata), read only by `verify --inventory` so far: does the list keep PCs that
+# are gone, for how long, and are they still in the installed software list (the user,
+# Nov 20 2026; never read on live before).
+INVENTORY_COLUMNS = {"last": "TIME_LAST_REPORTING", "status": "AGENT_CURRENT_STATUS"}
 # Windows on each PC (DEVICE_INVENTORY), for Windows updates per Windows version
 OS_COLUMNS = {"name": "OS_NAME", "version": "OS_VERSION", "updated": "OS_VERSION_UPDATE_DATE"}
 # Each application's version on what users feel (names from Riverbed's $metadata), read

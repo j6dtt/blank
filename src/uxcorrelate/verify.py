@@ -26,7 +26,7 @@ from statistics import median
 from typing import Any
 
 from .aternity import AternityClient, is_virtual, odata_quote, odata_time
-from .config import (DISK_CATEGORIES, DISK_FREE_COLUMNS, DISK_PARTS, OS_COLUMNS, OVERVIEW_SOURCES, PROCESS_COLUMN, SOFTWARE_COLUMNS,
+from .config import (DISK_CATEGORIES, DISK_FREE_COLUMNS, DISK_PARTS, INVENTORY_COLUMNS, OS_COLUMNS, OVERVIEW_SOURCES, PROCESS_COLUMN, SOFTWARE_COLUMNS,
                      SOFTWARE_OS_UPDATE,
                      SOFTWARE_REMOVED, SOFTWARE_SOURCE, SOFTWARE_USER_SCOPE, SOFTWARE_UPDATE_GAP_MIN, TIME_COLUMNS,
                      CLIENT_COLUMNS, NO_VALUE, TOP_STATUS, VDI_COLUMNS, VERSION_OPTIONAL, VERSION_SOURCES, Settings)
@@ -1568,6 +1568,119 @@ def verify_clients(settings: Settings, client: AternityClient, except_: list[str
                      f"Each value as sent (no value: empty or N/A): virtual desktop actions by the device people sat "
                      f"at, and physical PCs. A device with actions under two values is under both ({both:,} such):",
                      rows=lines))
+    return out
+
+
+INV_ROWS = 50_000  # inventory rows read by verify --inventory (the check's limit; 5,434 PCs on live)
+INV_AGES = ((0, 0, "today"), (1, 7, "1 to 7 days ago"), (8, 30, "8 to 30 days ago"), (31, 90, "31 to 90 days ago"),
+            (91, None, "over 90 days ago"))  # days since Aternity last heard from a PC, local days
+INV_SILENT = 8  # "silent": not heard from for this many days (Aternity's own "Disconnected" ends at 7)
+
+
+def verify_inventory(settings: Settings, client: AternityClient) -> list[Check]:
+    """Does Aternity's PC list keep PCs that are gone (the user, Nov 20 2026; Riverbed's pages
+    give no rule)? From DEVICE_INVENTORY: when each PC last reported (`INVENTORY_COLUMNS`), in
+    `INV_AGES`, the oldest kept; the agent's status as Aternity sends it, each with its range of
+    last reports (no value's meaning is assumed); and whether PCs silent `INV_SILENT`+ days are
+    still in the installed software list (the Software tab would count them). No PC names."""
+    try:
+        schema = parse_odata_metadata(client.http.request("GET", "/$metadata", headers={"Accept": "application/xml"}).text)
+    except (ApiError, ET.ParseError) as exc:
+        return [Check("Aternity", "connection", False, f"Could not read $metadata: {exc.short() if isinstance(exc, ApiError) else exc}",
+                      "Check aternity.base_url, aternity.username and ATERNITY_PASSWORD.")]
+    inv, dev = settings.aternity.entities.get("inventory"), settings.aternity.fields.get("inventory", {}).get("device")
+    item = "inventory: when each PC was last heard"
+    if inv not in schema or dev not in schema[inv]:
+        return [Check("Aternity", item, None, f"{inv or 'The inventory'} is not published with {dev or 'a device column'} "
+                      "by this Aternity: nothing to show.")]
+    last, status = (c if c in schema[inv] else None for c in (INVENTORY_COLUMNS["last"], INVENTORY_COLUMNS["status"]))
+    if not last:
+        return [Check("Aternity", item, None, f"{inv} is published without {INVENTORY_COLUMNS['last']}: Aternity "
+                      "does not say when it last heard from a PC.")]
+    mark, t0 = len(client.warnings), time.monotonic()
+    try:
+        rows = client.query(inv, select=[dev, last] + ([status] if status else []), top=INV_ROWS, raw=True)
+    except ApiError as exc:
+        return [Check("Aternity", item, None, f"{inv} could not be read ({exc.short()}).")]
+    secs, cut = time.monotonic() - t0, _cut_short(client, mark) + _limit(rows, INV_ROWS)
+    now = datetime.now(timezone.utc)
+    heard: dict[str, datetime] = {}  # PC -> its latest report (a PC with two rows counts once)
+    blank = set()
+    for r in rows:
+        name, t = r.get(dev), parse_time(r.get(last))
+        if name in (None, "", "N/A"):
+            continue
+        if t is None:
+            blank.add(name)
+        elif name not in heard or t > heard[name]:
+            heard[name] = t
+    blank -= set(heard)
+    age = {pc: max((local_date(now) - local_date(t)).days, 0) for pc, t in heard.items()}
+    within = lambda lo, hi: [pc for pc, d in age.items() if d >= lo and (hi is None or d <= hi)]  # noqa: E731
+    lines = [f"{label}: {len(within(lo, hi)):,} PCs" for lo, hi, label in INV_AGES]
+    if blank:
+        lines.append(f"no {last}: {len(blank):,} PCs")
+    out = []
+    if not heard:
+        out.append(Check("Aternity", item, None, f"{inv}: {len(rows):,} rows in {secs:.1f} s, none with a {last} that "
+                         "is a time: not known when Aternity last heard from a PC.", rows=lines + cut))
+        return out
+    oldest, newest = min(heard.values()), max(heard.values())
+    silent = within(INV_SILENT, None)
+    kept = (f"Aternity keeps PCs it has not heard from: {len(silent):,} silent {INV_SILENT}+ days, the longest "
+            f"{max(age.values()):,} days." if silent else
+            f"No PC here is silent {INV_SILENT}+ days: either none is gone, or Aternity takes a silent PC off this list.")
+    out.append(Check("Aternity", item, None,
+                     f"{inv}: {len(rows):,} rows in {secs:.1f} s, {len(heard) + len(blank):,} PCs. Last heard ({last}) "
+                     f"from {local_date(oldest)} to {clock(newest)}. {kept} PCs by when last heard:",
+                     rows=lines + cut))
+    # Aternity's own status of each agent, as sent, with the range of last reports under it
+    if status:
+        per: dict[str, list[datetime]] = {}
+        none = Counter()
+        for r in rows:
+            v, t = r.get(status), parse_time(r.get(last))
+            v = "no value" if v in (None, "", "N/A") else f"'{v}'"
+            if t:
+                per.setdefault(v, []).append(t)
+            else:
+                none[v] += 1
+        said = [f"{v}: {len(ts):,} PCs, last heard {local_date(min(ts))} to {clock(max(ts))}"
+                + (f"; {none[v]:,} more with no time" if none[v] else "")
+                for v, ts in sorted(per.items(), key=lambda kv: -len(kv[1]))]
+        said += [f"{v}: {n:,} PCs, none with a time" for v, n in none.items() if v not in per]
+        out.append(Check("Aternity", "inventory: the agent's status", None,
+                         f"{status} as Aternity sends it (which value means a PC is gone is not assumed: "
+                         "each with when its PCs were last heard):", rows=said))
+    else:
+        out.append(Check("Aternity", "inventory: the agent's status", None,
+                         f"{inv} is published without {INVENTORY_COLUMNS['status']}."))
+    # are the silent PCs still in the installed software list (the Software tab's counts)?
+    item = "inventory: software of silent PCs"
+    D = SOFTWARE_COLUMNS["device"]
+    if SOFTWARE_SOURCE not in schema or D not in schema[SOFTWARE_SOURCE]:
+        out.append(Check("Aternity", item, None, f"{SOFTWARE_SOURCE} is not published with {D}: not checked."))
+        return out
+    mark = len(client.warnings)
+    try:
+        listed = client.query(SOFTWARE_SOURCE, select=[D], top=SW_ONE_NAME, raw=True)
+    except ApiError as exc:
+        out.append(Check("Aternity", item, None, f"{SOFTWARE_SOURCE} could not be read ({exc.short()})."))
+        return out
+    cut = _cut_short(client, mark) + _limit(listed, SW_ONE_NAME)
+    have = {r.get(D) for r in listed} - {None, "", "N/A"}
+    lines = [f"last heard {label}: {len(pcs):,} PCs, {sum(1 for pc in pcs if pc in have):,} of them in the list"
+             for lo, hi, label in INV_AGES for pcs in [within(lo, hi)] if pcs]
+    unknown = len(have - set(heard) - blank)
+    if unknown:
+        lines.append(f"in the list but not in {inv}: {unknown:,} PCs")
+    still = sum(1 for pc in silent if pc in have)
+    verdict = ("no PC is silent that long, so this is not answered here." if not silent else
+               f"{still:,} of the {len(silent):,} PCs silent {INV_SILENT}+ days are still in it"
+               + (": the Software tab counts PCs that may be gone." if still else
+                  ": a silent PC's software is not counted by the Software tab."))
+    out.append(Check("Aternity", item, None,
+                     f"{SOFTWARE_SOURCE} lists {len(have):,} PCs; {verdict}", rows=lines + cut))
     return out
 
 
