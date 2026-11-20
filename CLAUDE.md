@@ -872,6 +872,14 @@ demo mode: nothing in `src/` knows about it.
   month), the date empty on 664 (578 of them 'Reporting': a blank date
   is not "gone"), statuses 'Reporting' / 'Disconnected' / 'Stopped';
   the software list has 6,464 PCs, 1,266 not in the device list.
+- `verify --software`, "reading every Windows update" (Nov 20 2026): the
+  Software tab's read of every Windows update was refused on stage
+  ("Returned data too long. Use $fetch_all_rows=yes to retrieve all
+  rows."), so its Windows flag was gone. verify tries four ways (the
+  tab's `$top` of `LIST_ROWS * 4`, a smaller one, none, and
+  `AternityClient.query(all_rows=True)`: `$fetch_all_rows=yes`, a name
+  from Aternity's own refusal, sent only by verify so far), each said in
+  a sentence. The tab's fix waits for its answer.
 - `verify --software` (`verify._software`, only on its own), short: what
   `INSTALLED_SOFTWARE` (`SOFTWARE_SOURCE`, `SOFTWARE_COLUMNS`) gives the
   Software tab: PCs, programs, installs and `SOFTWARE_USER_SCOPE`

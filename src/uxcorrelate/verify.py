@@ -1874,9 +1874,34 @@ def _windows(client, schema, inventory, read, c, checks) -> None:
                         + ([f"weeks (Monday): {week_line}"] if weeks else []) + cut))
     if "type" not in c:
         return
-    got, secs, cut = read("software: Windows updates per Windows version",
-                          filter=f"{c['type']} eq {odata_quote(SOFTWARE_OS_UPDATE)}", select=[c["device"], c["name"]],
-                          top=SW_ONE_NAME * 2)
+    # The Software tab's read of every Windows update was refused on stage (Nov 20 2026: "Returned
+    # data too long. Use $fetch_all_rows=yes to retrieve all rows."), so its Windows flag was gone.
+    # Each way of asking is tried and said in a sentence; the first that answers is used below.
+    from .software import LIST_ROWS
+    ask = dict(filter=f"{c['type']} eq {odata_quote(SOFTWARE_OS_UPDATE)}", select=[c["device"], c["name"]])
+    ways = (("As the Software tab asks today (at most {n:,} rows)", dict(top=LIST_ROWS * 4)),
+            ("With a smaller limit (at most {n:,} rows)", dict(top=SW_ONE_NAME * 2)),
+            ("With no limit", {}),
+            ("With no limit and Aternity's own suggestion, $fetch_all_rows=yes", dict(all_rows=True)))
+    got, secs, cut, tried = None, 0.0, [], []
+    for label, kw in ways:
+        label = label.format(n=kw.get("top") or 0)
+        mark, t0 = len(client.warnings), time.monotonic()
+        try:
+            rows = client.query(SOFTWARE_SOURCE, raw=True, **ask, **kw)
+        except ApiError as exc:
+            tried.append(f"{label}: Aternity refused ({exc.short()}), after {time.monotonic() - t0:.0f} s.")
+            continue
+        took, short = time.monotonic() - t0, _cut_short(client, mark) + _limit(rows, kw.get("top"))
+        tried.append(f"{label}: {len(rows):,} rows in {took:.0f} s"
+                     + (", but the reply was cut short, so not every update is in it." if short else ", the whole reply."))
+        if got is None and rows and not short:
+            got, secs, cut = rows, took, []
+    works = [t for t in tried if t.endswith("the whole reply.")]
+    checks.append(Check("Aternity", "software: reading every Windows update", None,
+                        ("At least one way of asking gives every Windows update of every PC; each way tried:" if works
+                         else "No way of asking gave every Windows update of every PC in one read: the Software tab "
+                              "has to read them in pieces. Each way tried:"), rows=tried))
     if not got:
         if got is not None:
             checks.append(Check("Aternity", "software: Windows updates per Windows version", None,

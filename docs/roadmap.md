@@ -61,7 +61,17 @@ data, then its daily data with the people and desktops. See
   `verify --inventory`: its 4. says how long the extra read takes
   and whether Aternity takes 25 PCs in one read ("or", never used
   on live before). Then the Software tab: about 5,198 PCs,
-  "1,266 more left out".
+  "1,266 more left out". 7ae2a74 (pushed). verify --inventory on
+  stage 2026-11-20, its 4.: read whole, 55,026 rows in 103 s, 51
+  reads, 25 PCs a read (Aternity takes "or"). Left: restart, look
+  at the tab.
+- **Software tab: Windows updates could not be read** (stage,
+  2026-11-20, a note on the tab: "Returned data too long. Use
+  $fetch_all_rows=yes to retrieve all rows."; the Windows flag is
+  gone meanwhile). Built on dev 2026-11-20 ("build it"):
+  `verify --software` tries four ways of asking and says each.
+  Copy `aternity.py`, `verify.py`, run it. Then the tab's fix: the
+  way that works, else the updates read in pieces.
 - To watch on prod with Care step 2: how many slow start-ups a day
   (noisy or not), how many days of start-ups Aternity keeps (Show
   more says "N days with one, from ..."), which types carry the

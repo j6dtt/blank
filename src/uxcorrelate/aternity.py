@@ -58,10 +58,14 @@ class AternityClient:
 
     # -- generic OData -------------------------------------------------
     def query(self, entity: str, filter: str | None = None, top: int | None = None,
-              orderby: str | None = None, select: list[str] | None = None, raw: bool = False) -> list[dict]:
+              orderby: str | None = None, select: list[str] | None = None, raw: bool = False,
+              all_rows: bool = False) -> list[dict]:
         """Rows of a data source. Aternity's "N/A" (no value) becomes None, unless
-        raw (verify shows values exactly as sent)."""
-        rows = self._query(entity, filter, top, orderby, select)
+        raw (verify shows values exactly as sent). all_rows: asks with `$fetch_all_rows=yes`, the
+        parameter Aternity's own refusal names ("Returned data too long. Use $fetch_all_rows=yes to
+        retrieve all rows.": the Software tab's read of every Windows update, stage, Nov 20 2026);
+        only verify --software sends it so far, to see what it does."""
+        rows = self._query(entity, filter, top, orderby, select, all_rows)
         if not raw:
             for row in rows:
                 for k, v in row.items():
@@ -70,7 +74,7 @@ class AternityClient:
         return rows
 
     def _query(self, entity: str, filter: str | None, top: int | None, orderby: str | None,
-               select: list[str] | None) -> list[dict]:
+               select: list[str] | None, all_rows: bool = False) -> list[dict]:
         params: dict[str, str] = {"$format": "json"}
         if filter:
             params["$filter"] = filter
@@ -80,6 +84,8 @@ class AternityClient:
             params["$top"] = str(top)
         if orderby:
             params["$orderby"] = orderby
+        if all_rows:
+            params["$fetch_all_rows"] = "yes"
         # Aternity rejects "%24filter": keep the "$" literal, encode only the values
         query = "&".join(f"{k}={quote(v, safe=chr(39) + '(),:')}" for k, v in params.items())
         rows: list[dict] = []
