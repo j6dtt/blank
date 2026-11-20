@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
+import pytest
 
 from uxcorrelate import software as sw
 from uxcorrelate.aternity import AternityClient
@@ -304,6 +305,32 @@ def test_pcs_no_longer_in_aternitys_device_list_are_left_out_of_every_count(tmp_
     t["DEVICE_INVENTORY"] = t["DEVICE_INVENTORY"][:10]
     odd = sw.read_snapshot(client(data=t)[0], s.aternity, NOW, reader)
     assert odd["list"]["left_out"] == 0 and any("too many to be PCs that are gone" in n for n in odd["notes"])
+
+
+def test_a_read_aternity_refuses_as_too_long_is_asked_again_its_own_way(tmp_path):
+    """Stage, Nov 20 2026: "Windows updates could not be read (Returned data too long. Use
+    $fetch_all_rows=yes to retrieve all rows.)", so the tab had no Windows updates flag; a smaller
+    limit and none were refused the same way, $fetch_all_rows=yes gave all 25,862 rows in 1 s. Any
+    read refused that way is asked once more with it; another refusal is still an error."""
+    inner, urls = fake(tables()), []
+
+    def handler(request):
+        urls.append(str(request.url))
+        if "OS%20Update" in str(request.url) and "fetch_all_rows" not in str(request.url):
+            return httpx.Response(400, json={"error": {"message": "Returned data too long.  Use $fetch_all_rows=yes "
+                                                                  "to retrieve all rows."}})
+        return inner(request)
+    s = Settings()
+    s.aternity.base_url = "https://aternity.test/aternity.odata/v2.0"
+    c = AternityClient(s.aternity, transport=httpx.MockTransport(handler))
+    plain = sw.read_snapshot(client()[0], s.aternity, NOW, sw.Software("", clock=lambda: NOW))
+    snap = sw.read_snapshot(c, s.aternity, NOW, sw.Software("", tmp_path, clock=lambda: NOW))
+    assert snap["windows"] == plain["windows"] and snap["notes"] == plain["notes"]  # the flag is back, no note
+    assert "windows" in {f["kind"] for f in snap["flags"]}
+    again = [u for u in urls if "fetch_all_rows" in u]
+    assert len(again) == 1 and again[0].endswith("&$fetch_all_rows=yes")
+    with pytest.raises(ApiError):  # asked without it on purpose (verify --software): the refusal is said
+        c.query("INSTALLED_SOFTWARE", filter="INSTALLED_SW_TYPE eq 'OS Update'", all_rows=False)
 
 
 def test_a_click_reads_the_pcs_of_a_program_or_of_a_version_with_a_problem():

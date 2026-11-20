@@ -1879,9 +1879,9 @@ def _windows(client, schema, inventory, read, c, checks) -> None:
     # Each way of asking is tried and said in a sentence; the first that answers is used below.
     from .software import LIST_ROWS
     ask = dict(filter=f"{c['type']} eq {odata_quote(SOFTWARE_OS_UPDATE)}", select=[c["device"], c["name"]])
-    ways = (("As the Software tab asks today (at most {n:,} rows)", dict(top=LIST_ROWS * 4)),
-            ("With a smaller limit (at most {n:,} rows)", dict(top=SW_ONE_NAME * 2)),
-            ("With no limit", {}),
+    ways = (("As the Software tab asked (at most {n:,} rows)", dict(top=LIST_ROWS * 4, all_rows=False)),
+            ("With a smaller limit (at most {n:,} rows)", dict(top=SW_ONE_NAME * 2, all_rows=False)),
+            ("With no limit", dict(all_rows=False)),
             ("With no limit and Aternity's own suggestion, $fetch_all_rows=yes", dict(all_rows=True)))
     got, secs, cut, tried = None, 0.0, [], []
     for label, kw in ways:

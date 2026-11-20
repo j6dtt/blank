@@ -628,7 +628,7 @@ def test_verify_software_shows_what_the_installed_list_holds_with_no_pc_names():
     assert "Windows 11 24H2 (2 PCs): KB5031 on 1, not on 1" in flat  # each update counted on its own version
     assert "Windows 11 23H2 (1 PCs): KB5031 on 1, not on 0" in flat
     # each way of asking for every Windows update is tried and said (the tab's own was refused on stage)
-    assert "As the Software tab asks today (at most 80,000 rows): 2 rows in 0 s, the whole reply." in flat
+    assert "As the Software tab asked (at most 80,000 rows): 2 rows in 0 s, the whole reply." in flat
     assert "Aternity's own suggestion, $fetch_all_rows=yes: 2 rows in 0 s, the whole reply." in flat
 
     one = render_checks(verify_software(settings, client, pc="HOST-C"))  # named by the person asking

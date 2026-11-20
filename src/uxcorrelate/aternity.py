@@ -23,6 +23,7 @@ from .models import (
 )
 
 log = logging.getLogger("uxcorrelate")
+ALL_ROWS = "fetch_all_rows"  # Aternity's own parameter, named in its refusal of a reply too long
 
 
 def _bare(value) -> str:
@@ -59,12 +60,14 @@ class AternityClient:
     # -- generic OData -------------------------------------------------
     def query(self, entity: str, filter: str | None = None, top: int | None = None,
               orderby: str | None = None, select: list[str] | None = None, raw: bool = False,
-              all_rows: bool = False) -> list[dict]:
+              all_rows: bool | None = None) -> list[dict]:
         """Rows of a data source. Aternity's "N/A" (no value) becomes None, unless
         raw (verify shows values exactly as sent). all_rows: asks with `$fetch_all_rows=yes`, the
         parameter Aternity's own refusal names ("Returned data too long. Use $fetch_all_rows=yes to
-        retrieve all rows.": the Software tab's read of every Windows update, stage, Nov 20 2026);
-        only verify --software sends it so far, to see what it does."""
+        retrieve all rows.": the Software tab's read of every Windows update, stage, Nov 20 2026,
+        where a smaller $top and none were refused the same way and this gave the whole reply,
+        25,862 rows in 1 s). A read refused that way is asked once more with it (`_query`); False
+        asks without it and lets the refusal through (verify --software, to say each way)."""
         rows = self._query(entity, filter, top, orderby, select, all_rows)
         if not raw:
             for row in rows:
@@ -74,7 +77,7 @@ class AternityClient:
         return rows
 
     def _query(self, entity: str, filter: str | None, top: int | None, orderby: str | None,
-               select: list[str] | None, all_rows: bool = False) -> list[dict]:
+               select: list[str] | None, all_rows: bool | None = None) -> list[dict]:
         params: dict[str, str] = {"$format": "json"}
         if filter:
             params["$filter"] = filter
@@ -85,14 +88,23 @@ class AternityClient:
         if orderby:
             params["$orderby"] = orderby
         if all_rows:
-            params["$fetch_all_rows"] = "yes"
+            params[f"${ALL_ROWS}"] = "yes"
         # Aternity rejects "%24filter": keep the "$" literal, encode only the values
         query = "&".join(f"{k}={quote(v, safe=chr(39) + '(),:')}" for k, v in params.items())
         rows: list[dict] = []
         url: str | None = f"/{entity}?{query}"
         pages = 0
         while url and pages < self.cfg.max_pages:
-            data = self.http.get_json(url)
+            try:
+                data = self.http.get_json(url)
+            except ApiError as exc:
+                # Aternity refuses a reply it finds too long and names the way to get it: asked once more so
+                if all_rows is not None or pages or ALL_ROWS not in f"{exc.reason} {exc}":
+                    raise
+                all_rows = True
+                log.info("Aternity %s: refused as too long; asked again with $%s=yes", entity, ALL_ROWS)
+                url = f"/{entity}?{query}&${ALL_ROWS}=yes"
+                continue
             rows.extend(data.get("value", []))
             url = data.get("@odata.nextLink")
             pages += 1

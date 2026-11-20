@@ -65,13 +65,15 @@ data, then its daily data with the people and desktops. See
   stage 2026-11-20, its 4.: read whole, 55,026 rows in 103 s, 51
   reads, 25 PCs a read (Aternity takes "or"). Left: restart, look
   at the tab.
-- **Software tab: Windows updates could not be read** (stage,
-  2026-11-20, a note on the tab: "Returned data too long. Use
-  $fetch_all_rows=yes to retrieve all rows."; the Windows flag is
-  gone meanwhile). Built on dev 2026-11-20 ("build it"):
-  `verify --software` tries four ways of asking and says each.
-  Copy `aternity.py`, `verify.py`, run it. Then the tab's fix: the
-  way that works, else the updates read in pieces.
+- **Stage copy: Windows updates read again** (built on dev
+  2026-11-20). The tab's note on stage: "Windows updates could
+  not be read (Returned data too long. Use $fetch_all_rows=yes to
+  retrieve all rows.)". `verify --software` on stage (30964b3):
+  the tab's limit, a smaller one and none all refused; with
+  `$fetch_all_rows=yes` the whole reply, 25,862 rows in 1 s. Now
+  any read Aternity refuses that way is asked once more with it.
+  Copy `aternity.py`, `verify.py`, restart; the note goes and the
+  Windows updates flag is back.
 - To watch on prod with Care step 2: how many slow start-ups a day
   (noisy or not), how many days of start-ups Aternity keeps (Show
   more says "N days with one, from ..."), which types carry the

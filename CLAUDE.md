@@ -878,8 +878,11 @@ demo mode: nothing in `src/` knows about it.
   rows."), so its Windows flag was gone. verify tries four ways (the
   tab's `$top` of `LIST_ROWS * 4`, a smaller one, none, and
   `AternityClient.query(all_rows=True)`: `$fetch_all_rows=yes`, a name
-  from Aternity's own refusal, sent only by verify so far), each said in
-  a sentence. The tab's fix waits for its answer.
+  from Aternity's own refusal), each said in a sentence. Stage, Nov 20:
+  the three without it refused, with it the whole reply (25,862 rows in
+  1 s). So `AternityClient._query` asks any read refused that way once
+  more with it (`ALL_ROWS`; `all_rows=False`: not, as verify's ways);
+  the refused first try counts as one failed call on the Load panel.
 - `verify --software` (`verify._software`, only on its own), short: what
   `INSTALLED_SOFTWARE` (`SOFTWARE_SOURCE`, `SOFTWARE_COLUMNS`) gives the
   Software tab: PCs, programs, installs and `SOFTWARE_USER_SCOPE`
