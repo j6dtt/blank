@@ -26,8 +26,8 @@ from datetime import datetime, timedelta, timezone
 from .chat import ROWS, SHAPE, _n, _result, _tool, converse
 from .config import NO_PROGRAM, SOFTWARE_OS_UPDATE, TOP_STATUS
 from .http import ApiError
-from .software import (CUT, DAYS, FEW_PCS, KIND, MIN_PCS, MIN_PROBLEM, PLACES, RATIO, STILL, UPDATE_DAYS, Software, app_now,
-                       before_after, flag_text,
+from .software import (CUT, DAYS, FEW_PCS, KIND, MIN_PCS, MIN_PROBLEM, PLACES, RATIO, STILL, STILL_ACTIONS, UPDATE_DAYS,
+                       Software, app_now, before_after, flag_text,
                        crashes_by_version, named_like, words,
                        compare, missing_on, order, pcs_with_problem, pcs_with_program, pcs_without_update,
                        program_view, shown, split_by_program, starts_with, version_of)
@@ -113,8 +113,9 @@ NO_COUNT = ("I can only give numbers from the counts: the red flags, a program's
 RULES = (f"Raised (a red flag): a version whose share is at least {RATIO:g} times that of the version most PCs have "
          f"(or that version's against another), or whose PCs had the problem {RATIO:g} times as often after an update "
          f"as before, virtual desktops and physical PCs apart; with {MIN_PCS} PCs or more on each side, {MIN_PROBLEM} "
-         f"or more with the problem, and still so with {STILL} more PCs with it on the other side; not raised: no "
-         "difference by these rules.")
+         f"or more with the problem, and still so with {STILL} more PCs with it on the other side (for actions rated "
+         f"Major: with {STILL_ACTIONS} more of the other side's actions rated Major); not raised: no difference by "
+         "these rules.")
 
 
 def pick(asked, names) -> tuple[str | None, list[str]]:

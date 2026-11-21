@@ -2095,15 +2095,27 @@ const swHeads = (first, cols, sub, last = "") => `<div class="hd">${first}</div>
 function swNot(v, m, with_, r, other) {
   if (!v || v.state !== "unsure") return "";
   return v.few ? `not raised: only ${n(with_)} ${swPcWord(with_)} ${m.having}, ${r.min_problem} needed`
-    : `not raised: ${r.still} more PCs ${other} would undo it`;
+    : m.k === "slow" ? `not raised: ${r.still_actions} more actions rated Major ${other} would undo it`
+      : `not raised: ${r.still} more PCs ${other} would undo it`;
+}
+// a raised version's own update, when the block shows one: the flag says a version is worse than another, the
+// table under it can say its PCs had the problem less after they got it (Outlook on stage, Nov 21 2026: raised
+// on 1,291 of 2,475 against 27 of 165, and 36 before, 15 after on the 69 desktops just updated to it)
+function swOwnUpdate(k, f, m, pw) {
+  if (f.kind === "slow") return "";  // slow actions are not compared before and after
+  const us = k.updates.filter((u) => u.to === f.version);
+  return us.map((u) => `On the ${n(u.pcs)} ${pw} just updated to ${esc(f.version)} from ${esc(u.from)}, it ${m.did} on ${n(u.before[f.kind])} before `
+    + `the update and on ${n(u.after[f.kind])} after.`).join(" ");
 }
 // one raised finding, in words: what, against what, why it is raised, what to do next
+// is this the version most PCs of the kind have? (its versions come most PCs first)
+const swMostHave = (k, version) => !!k.versions.length && k.versions[0].version === version;
 function swFound(a, K, f, r) {
   const pw = SW_PLACES[K], m = SW_MEAS.find((x) => x.k === f.kind), k = a.kinds[K];
   const click = { app: a.application, version: f.version, problem: f.kind, kind: K };
   const said = (x, of) => (f.kind === "slow" ? `${swPct(x, of)} of its actions were rated Major (${n(x)} of ${n(of)})`
     : `It ${m.did} on ${swPct(x, of)} of its ${pw} (${n(x)} of ${n(of)})`);
-  let lead, text, why, next;
+  let lead, text, why, next, own = "";
   if (f.how === "update") {
     const u = k.updates.find((x) => x.from === f.from && x.to === f.version);
     lead = f.kind === "crash" ? `More crashes after the update to ${esc(f.version)}.` : `It stops responding more after the update to ${esc(f.version)}.`;
@@ -2111,14 +2123,18 @@ function swFound(a, K, f, r) {
       + `after the update and on ${n(f.before)} before it.`;
     why = [`${n(f.n)} PCs after is at least ${r.ratio} times ${n(f.before)} before`, `${n(f.n)} PCs ${m.having} after (${r.min_problem} needed)`,
       `still so if ${r.still} more PCs had it before`];
-    next = `look at the ${n(f.n)} PCs before more PCs get ${esc(f.version)}.`;
+    // "before more PCs get it" was said of a version most PCs already had (OneNote on stage, Nov 21 2026)
+    next = swMostHave(k, f.version) ? `open the ${n(f.n)} PCs and investigate one. Most ${pw} already run this version.`
+      : `look at the ${n(f.n)} PCs before more PCs get ${esc(f.version)}.`;
     click.after = "1";
   } else {
-    const most = f.how === "most", still = f.kind === "slow" ? [] : [`still so if ${r.still} more PCs on ${esc(f.ref)} had it`];
+    const most = f.how === "most", still = f.kind === "slow" ? `still so if ${r.still_actions} more actions on ${esc(f.ref)} were rated Major`
+      : `still so if ${r.still} more PCs on ${esc(f.ref)} had it`;
     const row = k.versions.find((x) => x.version === f.version);
     lead = most ? `${esc(f.version)}, the version most ${pw} have, ${m.more}.` : `${esc(f.version)} ${m.more}.`;
     text = `${said(f.n, f.of)}. On ${esc(f.ref)}${most ? "" : `, the version most ${pw} have`}: ${swPct(f.ref_n, f.ref_of)} (${n(f.ref_n)} of ${n(f.ref_of)}).`;
-    why = [`${swPct(f.n, f.of)} is at least ${r.ratio} times ${swPct(f.ref_n, f.ref_of)}`, `${n(f.pcs)} PCs ${m.having} (${r.min_problem} needed)`, ...still];
+    why = [`${swPct(f.n, f.of)} is at least ${r.ratio} times ${swPct(f.ref_n, f.ref_of)}`, `${n(f.pcs)} PCs ${m.having} (${r.min_problem} needed)`, still];
+    own = swOwnUpdate(k, f, m, pw);
     next = most ? `open the ${n(f.pcs)} PCs and investigate one. Most ${pw} run this version.`
       : swOlder(f.version, f.ref) ? `the ${n(row ? swOn(row) : f.pcs)} ${pw} still on ${esc(f.version)} are the ones to update.`
         : `look at these PCs before more PCs get ${esc(f.version)}.`;
@@ -2126,6 +2142,7 @@ function swFound(a, K, f, r) {
   const attrs = Object.entries(click).map(([x, y]) => ` data-${x}="${esc(y)}"`).join("");
   return `<div class="vfind"><div><span class="warn">▲</span> <b>${lead}</b> ${text} <button type="button" class="link"${attrs}>Show the ${n(f.pcs)} PCs ▸</button></div>`
     + `<div class="vwhy"><b>Why ▲</b>&nbsp; ${why.map((t) => `<span class="t"><span class="ok">✓</span> ${t}</span>`).join("")}</div>`
+    + (own ? `<div class="vnext"><b>Its update:</b> ${own} See "Before and after the update" below.</div>` : "")
     + `<div class="vnext"><b>Next:</b> ${next}</div></div>`;
 }
 // one application on the kind of PC on screen: open when something is raised there, else one folded line
@@ -2166,7 +2183,7 @@ function swVersionBlock(a, i, v, K) {
         if (!x[m.of]) { h += `<div class="muted${isRef ? " ref" : ""}">${m.k === "slow" ? "no actions measured" : "—"}</div>`; continue; }
         const vd = (x.verdict || {})[m.k], up = !!vd && vd.state === "raised", other = isRef && up ? rows.find((y) => y.version === vd.against) : ref;
         const say = up ? (isRef ? `against ${other ? swPct(other[m.n], other[m.of]) : ""} on ${vd.against}` : `against ${swPct(ref[m.n], ref[m.of])} on the version most have`)
-          : swNot(vd, m, m.k === "slow" ? x.major_pcs : x[m.n], r, "on the other version");
+          : swNot(vd, m, m.k === "slow" ? x.major_pcs : x[m.n], r, isRef && vd && vd.against ? `on ${vd.against}` : "on the version most have");
         h += swCell({ ref: isRef, pair: [x[m.n], x[m.of]], max: max[m.k], unit: m.unit, up, dim: x.new && !isRef, say,
           click: { app: a.application, version: x.version, problem: m.k, kind: K } });
       }
@@ -2224,7 +2241,7 @@ function swExplain(i, which, j) {
   const list = (items, ol) => { H.push(`<${ol ? "ol" : "ul"}>${items.map((x) => `<li>${x}</li>`).join("")}</${ol ? "ol" : "ul"}>`);
     items.forEach((x, q) => L.push(`${ol ? q + 1 + "." : "-"} ${plainOf(x)}`)); };
   const rule = `A version is raised only when all three are true: the share is at least ${r.ratio} times the other's, at least ${r.min_problem} PCs had the problem, `
-    + `and it would still hold with ${r.still} more PCs with it on the other side.`;
+    + `and it would still hold with ${r.still} more PCs with it on the other side (for slow actions: with ${r.still_actions} more of the other side's actions rated Major).`;
   let title, raised = 0;
   const nexts = [];
   if (which === "update") {
@@ -2242,7 +2259,8 @@ function swExplain(i, which, j) {
         raised++;
         why.push([m.head, [`${n(A)} PCs after is at least ${r.ratio} times ${n(B)} before.`, `${n(A)} PCs ${m.having} after. ${r.min_problem} are needed, so it is not one or two unlucky PCs.`,
           `With ${r.still} more PCs before (${n(B + r.still)}), ${n(A)} would still be at least ${r.ratio} times as many.`]]);
-        nexts.push(`Look at the ${n(A)} PCs before more PCs get ${esc(u.to)}. "Show the ${n(A)} PCs ▸" lists them, and "Investigate ▸" on one shows what happened on it.`);
+        nexts.push((swMostHave(k, u.to) ? `Most ${pw} already run ${esc(u.to)}, so start with the ${n(A)} PCs.` : `Look at the ${n(A)} PCs before more PCs get ${esc(u.to)}.`)
+          + ` "Show the ${n(A)} PCs ▸" lists them, and "Investigate ▸" on one shows what happened on it.`);
       }
       return `<b>${m.head}:</b> on ${n(B)} of the ${n(u.pcs)} PCs before the update, on ${n(A)} after it. ` + (vd.state === "raised" ? `<span class="warn">▲</span> Raised.`
         : vd.state === "unsure" ? `At least ${r.ratio} times as many, but ${swNot(vd, { having: m.having + " after" }, A, r, "before")}.`
@@ -2262,7 +2280,7 @@ function swExplain(i, which, j) {
       : `Each version is put next to ${esc(ref.version)}, the version most ${pw} have (${n(swOn(ref))} of them).`)
       + (fresh.length ? ` ${fresh.map((x) => esc(x.version)).join(", ")} is new this week, so it has had less time to go wrong: it is judged before and after its update, not here.` : "")
       + (small ? ` ${n(small)} smaller ${small === 1 ? "version is" : "versions are"} listed but not compared: under ${r.min_pcs} PCs, one PC would move the share too far.` : ""));
-    const why = [];
+    const why = [], owns = [];
     let found = false;
     for (const x of rows) {
       if (x === ref || x.new || !ref) continue;
@@ -2273,14 +2291,17 @@ function swExplain(i, which, j) {
         const A = [x[m.n], x[m.of]], B = [ref[m.n], ref[m.of]], back = (ref.verdict || {})[m.k], mine = `${swPct(...A)} (${n(A[0])} of ${n(A[1])})`, most = `${swPct(...B)} (${n(B[0])} of ${n(B[1])})`;
         const refUp = back && back.state === "raised" && back.against === x.version, with_ = m.k === "slow" ? x.major_pcs : x[m.n], refWith = m.k === "slow" ? ref.major_pcs : ref[m.n];
         const steps = (hi, lo, hiV, loV, w) => [`${swPct(...hi)} is at least ${r.ratio} times ${swPct(...lo)}.`, `${n(w)} PCs ${m.having}. ${r.min_problem} are needed, so it is not one or two unlucky PCs.`]
-          .concat(m.k === "slow" ? [] : [`With ${r.still} more PCs on ${esc(loV)} (${n(lo[0] + r.still)} of ${n(lo[1])}, ${swPct(lo[0] + r.still, lo[1])}), ${swPct(...hi)} would still be at least ${r.ratio} times as high.`]);
+          .concat([m.k === "slow" ? `With ${r.still_actions} more actions rated Major on ${esc(loV)} (${n(lo[0] + r.still_actions)} of ${n(lo[1])}, ${swPct(lo[0] + r.still_actions, lo[1])}), ${swPct(...hi)} would still be at least ${r.ratio} times as high.`
+            : `With ${r.still} more PCs on ${esc(loV)} (${n(lo[0] + r.still)} of ${n(lo[1])}, ${swPct(lo[0] + r.still, lo[1])}), ${swPct(...hi)} would still be at least ${r.ratio} times as high.`]);
+        if (vd.state === "raised" || refUp) owns.push(swOwnUpdate(k, { kind: m.k, version: refUp && vd.state !== "raised" ? ref.version : x.version }, m, pw));
         if (vd.state === "raised") { raised++; why.push([`${esc(x.version)}, ${m.head.toLowerCase()}`, steps(A, B, x.version, ref.version, with_)]);
           nexts.push(swOlder(x.version, ref.version) ? `The ${n(swOn(x))} ${pw} still on ${esc(x.version)} are the ones to update.` : `Look at these PCs before more PCs get ${esc(x.version)}.`); }
         else if (refUp) { raised++; why.push([`${esc(ref.version)}, ${m.head.toLowerCase()}`, steps(B, A, ref.version, x.version, refWith)]);
           nexts.push(`Open the ${n(refWith)} PCs ${m.having} on ${esc(ref.version)} and investigate one. Most ${pw} run this version.`); }
         lines.push(`<b>${m.head}:</b> ${mine} against ${most}. ` + (vd.state === "raised" ? `<span class="warn">▲</span> Raised: ${esc(x.version)} is the worse one.`
           : refUp ? `<span class="warn">▲</span> Raised: ${esc(ref.version)} is the worse one.`
-            : vd.state === "unsure" ? `At least ${r.ratio} times as high, but ${swNot(vd, m, with_, r, "on the other version")}.`
+            : vd.state === "unsure" ? `At least ${r.ratio} times as high, but ${esc(swNot(vd, m, with_, r, "on " + ref.version))}.`
+              : vd.back && vd.back.state === "unsure" ? `${esc(ref.version)} is at least ${r.ratio} times as high, but ${esc(swNot(vd.back, m, refWith, r, "on " + x.version))}.`
               : vd.state === "more" ? `Higher, but not ${r.ratio} times as high: not raised.` : "Not higher."));
       }
       if (lines.length) { if (!found) sec("What it found"); found = true; par(`<b>${esc(x.version)}</b> (${n(swOn(x))} ${pw}) against ${esc(ref.version)}:`); list(lines); }
@@ -2290,6 +2311,8 @@ function swExplain(i, which, j) {
     sec("How far to trust it");
     par(`It shows that PCs on one version have the problem more often than PCs on another. It does not prove the version is the cause: the two groups of PCs can differ `
       + `in other ways, such as their age or what else is installed. Before and after an update is the stronger comparison, when there is one.`);
+    const own = [...new Set(owns.filter(Boolean))];
+    if (own.length) par(`<b>Its own update:</b> ${own.join(" ")} That is the same PCs on both sides, so weigh it with the comparison above.`);
   }
   if (nexts.length) { sec("Next"); list([...new Set(nexts)]); }
   const terms = (softData.terms || []).length ? `<details class="exTerms"><summary>What the terms mean</summary><dl>`

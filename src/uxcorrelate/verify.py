@@ -2023,39 +2023,64 @@ def _versions(settings: Settings, client: AternityClient, schema: dict[str, set[
                         + f". {len(byv)} versions; per version, the PCs that ran it, with a crash, with hang time:",
                         rows=[f"{v}: {len(x[0]):,} PCs, {len(x[1]):,} with a crash, {len(x[2]):,} with hang time"
                               for v, x in sorted(byv.items(), key=lambda kv: -len(kv[1][0]))[:5]] + cut))
-                # the Software tab's own read of that application (Nov 21 2026): app usage day by day, far
-                # enough back for before and after an update; how many rows and seconds that is on this Aternity
+                # the Software tab's own read (Nov 21 2026): app usage day by day, far enough back for
+                # before and after an update; how many rows and seconds that is on this Aternity. Each of the
+                # applications with the most crashes: on stage the first one alone was Trellix ENS, which
+                # Aternity lists only on PCs where it crashed (nothing for the tab to compare; the check did
+                # not say so and printed "a crash on 112 before and on 112 after" as if it were a
+                # comparison), and its read was a small one
                 from . import software as tab
-                began = time.monotonic()
-                try:
-                    got = tab.app_now(client, now, name)
-                except Exception as exc:
-                    got = {"error": short_error(exc)}
-                took = time.monotonic() - began
-                if got.get("kinds") is None or got.get("error"):
-                    checks.append(Check("Aternity", "versions: the Software tab's comparison", None,
-                                        f"{name} could not be read day by day ({got.get('error') or 'no answer'}): the "
-                                        "tab shows no comparison for an application read like this."))
-                else:
+                item, had = "versions: the Software tab's comparison", {"crash": "a crash", "hang": "hang time"}
+                asked = [a for a, x in top if x[1] > 0]
+                all_rows, all_secs = 0, 0.0
+                for i, name in enumerate(asked):
+                    began = time.monotonic()
+                    try:
+                        got = tab.app_now(client, now, name)
+                    except Exception as exc:
+                        got = {"error": short_error(exc)}
+                    took = time.monotonic() - began
+                    if got.get("kinds") is None or got.get("error"):
+                        checks.append(Check("Aternity", item, None,
+                                            f"{name} could not be read day by day ({got.get('error') or 'no answer'}): "
+                                            "the tab shows no comparison for an application read like this."))
+                        continue
+                    all_rows, all_secs = all_rows + (got.get("day_rows") or 0), all_secs + took
+                    only = [had[k] for k in got.get("only") or []]
                     lines = []
                     for on, k in got["kinds"].items():
                         big = [v for v in k["versions"] if max(v["pcs"], v["action_pcs"]) >= tab.MIN_PCS]
                         fresh = [v["version"] for v in k["versions"] if v["new"]]
-                        lines.append(f"On {tab.PLACES[on]}: {k['pcs']:,} in all. {len(big)} of its {len(k['versions'])} "
-                                     f"versions are on {tab.MIN_PCS} or more"
+                        many = len(k["versions"])
+                        lines.append(f"On {tab.PLACES[on]}: {k['pcs']:,} in all, each counted once. "
+                                     + (f"Its one version is on {'' if big else 'fewer than '}{tab.MIN_PCS} PCs"
+                                        f"{' or more' if big else ''}" if many == 1 else
+                                        f"{len(big)} of its {many} versions {'is' if len(big) == 1 else 'are'} on "
+                                        f"{tab.MIN_PCS} PCs or more")
                                      + (f"; most have {k['ref']}" if k.get("ref") else "")
                                      + (f"; new this week: {', '.join(fresh)}" if fresh else "") + ".")
-                        lines += [f"{u_['pcs']:,} of them went from {u_['from']} to {u_['to']}: a crash on "
-                                  f"{u_['before']['crash']:,} before and on {u_['after']['crash']:,} after; hang time on "
-                                  f"{u_['before']['hang']:,} before and on {u_['after']['hang']:,} after (for each PC as "
-                                  "many days after as before)." for u_ in k["updates"]]
+                        for u_ in k["updates"]:
+                            went = f"{u_['pcs']:,} of them went from {u_['from']} to {u_['to']}"
+                            lines.append(f"{went}." if only else
+                                         f"{went}: a crash on {u_['before']['crash']:,} before and on "
+                                         f"{u_['after']['crash']:,} after; hang time on {u_['before']['hang']:,} before "
+                                         f"and on {u_['after']['hang']:,} after (for each PC as many days after as "
+                                         "before).")
+                    if only:
+                        lines.append(f"Every PC Aternity lists for it had {' and '.join(only)}, so there is no PC "
+                                     "without one to compare with: the tab compares no share of crashes or hang "
+                                     "time for it, on any version or update.")
                     lines += [f"Raised: {tab.flag_text(f['kind'], dict(f, application=name))}" for f in got["found"]] \
-                        or ["Nothing is raised for it by the tab's rules."]
+                        or ["Nothing is raised for it" + ("." if only else " by the tab's rules.")]
+                    if i == len(asked) - 1 and len(asked) > 1:
+                        lines.append(f"These {len(asked)} reads together: {all_rows:,} rows of app usage, "
+                                     f"{all_secs:.1f} s.")
                     checks.append(Check(
-                        "Aternity", "versions: the Software tab's comparison", None,
+                        "Aternity", item, None,
                         f"{name}, as the Software tab reads it: app usage day by day for {tab.UPDATE_DAYS} days, "
-                        f"{got.get('day_rows') or 0:,} rows; with its actions, {took:.1f} s. The tab makes one such "
-                        f"read per application, up to {tab.APPS_MAX}, once a day.",
+                        f"{got.get('day_rows') or 0:,} rows; with its actions, {took:.1f} s."
+                        + (f" The tab makes one such read per application, up to {tab.APPS_MAX}, once a day."
+                           if i == 0 else ""),
                         rows=lines + list(got.get("notes") or [])))
 
     # actions: Aternity's Major per application version

@@ -517,9 +517,14 @@ demo mode: nothing in `src/` knows about it.
   week, `ARRIVED`, is left to before and after; the worse of the two
   is raised, `how` "version" / "most" / "update"). `_check`: `RATIO`
   times the other side's share, `MIN_PROBLEM` PCs with it, and still
-  so with `STILL` more PCs with it on the other side ("unsure" when
-  only the first holds: the page says why it is not raised); `MIN_PCS`
-  on each side. Each row keeps its `verdict`; shares are written by
+  so with `STILL` more PCs with it on the other side, for actions
+  rated Major `STILL_ACTIONS` more of the other side's actions rated
+  Major (the user's "build it", Nov 21 2026: on stage Teams was raised
+  on 1,316 of 7,112 actions against 19 of 207, one more Major action
+  there undid it); "unsure" when only the first holds: the page says
+  why it is not raised (`swNot`), also for the version most PCs have
+  (its `verdict` "unsure" with `against`; `back` on the other row for
+  Explain); `MIN_PCS` on each side. Each row keeps its `verdict`; shares are written by
   `share_text` (a percentage beside its counts: the user's choice for
   this panel; the page does the same sum, `swPct`). A day saved under
   the rule before is judged again when shown (`_versions_view`). Not
@@ -530,7 +535,11 @@ demo mode: nothing in `src/` knows about it.
   share (`only`). The page ("Application health by version",
   `renderSwVersions`, `swVersionBlock`, `swFound`, `swCell`): a switch
   between the kinds of PC (`swKind`), applications with a ▲ open and
-  the rest folded, each ▲ with "Why ▲" and "Next:", plain bars with
+  the rest folded, each ▲ with "Why ▲" and "Next:" ("before more PCs
+  get it" only when it is not the version most have, `swMostHave`;
+  a version raised against another says "Its update:" when the panel
+  shows its own before and after, `swOwnUpdate`: on stage Outlook's
+  flag and the table under it said two things), plain bars with
   share and count, "Explain ▸" beside each comparison (`swExplain`:
   our own walk-through from the numbers; its question box goes to
   `/api/explain` with the walk-through as the lines; terms from
@@ -927,11 +936,17 @@ demo mode: nothing in `src/` knows about it.
   versions per program) is no longer printed. `--pc NAME`: only that
   PC's list. No PC or user names (unless typed).
 - `verify --versions`, "the Software tab's comparison" (Nov 21 2026): for
-  the application with the most crashes, the tab's own read
+  each of the 3 applications with the most crashes, the tab's own read
   (`software.app_now`): app usage day by day for `UPDATE_DAYS`, its rows
-  and seconds (about 10 times the rows of the read before: to measure on
-  stage), then per kind of PC its versions, the PCs that changed version
-  with before and after, and what is raised, in sentences.
+  and seconds, then per kind of PC its PCs (each once) and versions, the
+  PCs that changed version with before and after, and what is raised, in
+  sentences; the reads' rows and seconds together. Stage, Nov 21: it read
+  only the first, Trellix ENS, 2,075 rows in 0.7 s (605 for the 7 days
+  added up), 45 virtual desktops and 462 physical PCs, 112 PCs updated;
+  every PC Aternity lists for it had a crash (`only`), which the check
+  did not say: it printed "a crash on 112 before and on 112 after" like
+  a comparison. Now an application like that gets the sentence and no
+  before / after counts.
 - `verify --versions` (`verify._versions`): Aternity's own
   `APPLICATION_VERSION` on what users feel (`VERSION_SOURCES`: daily app
   usage with crashes / hang time, daily actions with Major), filled? the

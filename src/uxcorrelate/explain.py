@@ -218,9 +218,11 @@ GLOSSARY: dict[str, dict[str, str]] = {
                                               f"{TOP_STATUS}) shows on at least {software.RATIO:g} times the share "
                                               f"of what it is compared with, {software.MIN_PROBLEM} PCs or more "
                                               f"have it, and it would still be {software.RATIO:g} times with "
-                                              f"{software.STILL} more PCs with it on the other side, so one or two "
-                                              "PCs never decide it. Two comparisons: before and after an update, "
-                                              "and each version against the version most PCs have.",
+                                              f"{software.STILL} more PCs with it on the other side (for slow "
+                                              f"actions: with {software.STILL_ACTIONS} more of the other side's "
+                                              f"actions rated {TOP_STATUS}), so one or two never decide it. Two "
+                                              "comparisons: before and after an update, and each version against "
+                                              "the version most PCs have.",
         "Crashed": f"The application closed by itself. A PC counts once, however many times it happened in the "
                    f"{software.DAYS} days. From Aternity's daily app usage.",
         "Stopped responding": "The application froze for a while (Windows shows \"Not responding\"). Aternity calls "

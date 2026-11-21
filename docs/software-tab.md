@@ -105,8 +105,18 @@ PCs apart:
 
 Raised: at least 2 times the other side's share, at least 5 PCs with
 the problem, and still 2 times with 2 more PCs with it on the other
-side (so one or two PCs never decide it; for actions rated Major the
-first two only). Each bar shows its share as a percentage beside the
+side, so one or two PCs never decide it. For actions rated Major the
+third check is 5 more of the other side's actions rated Major (the
+user's "build it", Nov 21 2026: on stage Teams was raised on 1,316 of
+7,112 actions against 19 of 207, and one more Major action among the
+207 would have undone it; slow actions had no third check). When a
+version is 2 times as high and not raised, its bar says which check
+failed; so does the version most PCs have. A version raised against
+another also says its own update when the panel shows one ("Its
+update: on the 69 virtual desktops just updated to it ..., it stopped
+responding on 36 before the update and on 15 after"; stage, Nov 21:
+Outlook's flag and the table under it said two things, not joined).
+Each bar shows its share as a percentage beside the
 count (the user's choice for this panel, against plain counts
 elsewhere). What is not covered: an application with one version in
 the last 7 days is not read per version, so an update that every PC

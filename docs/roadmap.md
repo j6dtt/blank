@@ -84,19 +84,67 @@ data, then its daily data with the people and desktops. See
     the "Next:" lines' wording, "2 more" being 2, the title.
   - Files: `software.py`, `software_chat.py`, `explain.py`,
     `web.py`, `verify.py`, `static/index.html`; restart.
-  - On stage: `verify --versions`, "the Software tab's comparison":
-    the rows and seconds of the day-by-day read (about 10 times the
-    rows before: an estimate) and the comparison in sentences; then
-    the tab after its first read (until then it shows the last
-    saved day, judged again with all PCs as one kind).
+  - On stage, Nov 21 2026 (pushed 7689c53; a photo of `verify
+    --versions`): the day-by-day read works. Trellix ENS: 2,075 rows
+    in 0.7 s with its actions (605 rows for the 7 days added up:
+    3.4 times, not the 10 estimated, for this application); Aternity
+    gives the virtual / physical mark (45 virtual desktops, 462
+    physical PCs, each once; the 605 are PC-and-version pairs, a PC
+    on two versions in the week is two); 112 physical PCs went from
+    one version to the next. Nothing raised, rightly: every PC
+    Aternity lists for it had a crash, so the tab compares nothing
+    for it (the rule from before).
+  - Gaps in the check, fixed on dev the same day (`verify.py` only,
+    406 tests; the tab is unchanged): it read only the application
+    with the most crashes, on stage the one the tab cannot compare,
+    and did not say so ("a crash on 112 before and on 112 after"
+    read like a comparison; "Nothing is raised" had no reason); it
+    measured one small read; "1 of its 3 versions are". Now: the 3
+    applications with the most crashes, each with its rows and
+    seconds and the three together; one that cannot be compared
+    gets a sentence and no before / after counts.
+  - The tab on stage, Nov 21 2026 (three photos; read 13:33): it
+    works. 5,193 PCs, 16 red flags, 12 of them from this panel (11
+    on virtual desktops, 1 on physical PCs); no read cut short; 76
+    applications had crashes and hangs on 2 versions or more, the
+    40 with the most were compared.
+  - Bug seen there, fixed on dev (`static/index.html`): an update
+    flag always said "Next: look at the N PCs before more PCs get"
+    the version, also when most PCs already had it (OneNote on
+    physical PCs: "the only version on 20 physical PCs or more").
+    Now: "open the N PCs and investigate one. Most physical PCs
+    already run this version." The same in its Explain.
+  - Built on dev after those photos (the user: "build it for 2 and
+    3"; 407 tests; checked in a browser with the photos' numbers):
+    1. Slow actions get the third check: still 2 times with 5 more
+       of the other side's actions rated Major (`STILL_ACTIONS`).
+       Was: none; Teams on virtual desktops was raised on 1,316 of
+       7,112 actions against 19 of 207, and one more Major action
+       among the 207 undid it. Now it is not raised, and its bar
+       says "not raised: 5 more actions rated Major on (the other
+       version) would undo it". The version most PCs have now says
+       so for crashes and hangs too ("2 more PCs on ..."): before,
+       only the other versions' bars gave the reason.
+    2. A version raised against another says its own update when
+       the panel shows one: "Its update: On the 69 virtual desktops
+       just updated to it from ..., it stopped responding on 36
+       before the update and on 15 after. See Before and after the
+       update below." Was: Outlook's flag and the table under it
+       said two things, not joined. Explain says it too. No rule
+       change.
+    The number 5 is my suggestion, taken as chosen with "build it".
+  - Next: one stage copy: `software.py`, `software_chat.py`,
+    `explain.py`, `verify.py`, `static/index.html`; restart; the
+    tab reads again at start (a few minutes): Teams' "Slower" flag
+    should be gone and Outlook's flags should have "Its update".
   - Known limits, said in the docs: an application with one version
     in the last 7 days is not read per version, so an update every
     PC had over a week ago is not compared by itself; flags of
     these three kinds show "new" once (their key now names the kind
     of PC); "Before and after an update" under Compare versions
     still counts days.
-  - 405 tests; dev shows one raised flag (the sample browser stops
-    responding more after its update).
+  - Dev shows one raised flag (the sample browser stops responding
+    more after its update).
 - To watch on prod with Care step 2: how many slow start-ups a day
   (noisy or not), how many days of start-ups Aternity keeps (Show
   more says "N days with one, from ..."), which types carry the

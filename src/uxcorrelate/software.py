@@ -44,6 +44,10 @@ RATIO = 2.0  # a version is raised at this times the share it is compared with (
 MIN_PCS = 20  # ... with at least this many PCs on each side
 MIN_PROBLEM = 5  # ... and at least this many PCs with the problem on it
 STILL = 2  # ... and still at RATIO times with this many more PCs with the problem on the other side
+# ... for actions rated Major: with this many more of the other side's actions rated Major (the user's "build it",
+# Nov 21 2026: on stage Teams was raised on 1,316 of 7,112 actions against 19 of 207, and one more Major action
+# among the 207 would have undone it; slow actions had no such check)
+STILL_ACTIONS = 5
 ARRIVED = 0.5  # "new this week": more than this share of a version's PCs got it within DAYS
 UPDATES_SHOWN = 2  # before and after an update: the changes with the most PCs, per kind of PC
 PLACES = {"virtual": "virtual desktops", "physical": "physical PCs", "all": "PCs"}  # the kinds of PC, in words
@@ -748,10 +752,10 @@ def crashes_by_version(client, now: datetime, application: str) -> dict:
 def _check(a_n, a_of, b_n, b_of, with_it, still: int) -> tuple[str, bool]:
     """One side against the other, in plain counts. "raised": a's share is at least RATIO times
     b's, MIN_PROBLEM PCs or more have the problem, and it would still be RATIO times with
-    `still` more PCs with it on b's side (so one or two PCs never decide it). "unsure": RATIO
-    times, but one of the other two fails (True: too few PCs with it; False: the "more PCs"
-    check). "more": a higher share, under RATIO times. "no": not higher. "none": nothing to
-    count on one side."""
+    `still` more with it on b's side (PCs: STILL; actions rated Major: STILL_ACTIONS), so one or
+    two never decide it. "unsure": RATIO times, but one of the other two fails (True: too few
+    PCs with it; False: the "more on the other side" check). "more": a higher share, under
+    RATIO times. "no": not higher. "none": nothing to count on one side."""
     if not a_of or not b_of:
         return "none", False
     if a_n > 0 and a_n * b_of >= RATIO * b_n * a_of:
@@ -770,10 +774,11 @@ def judge(app: dict) -> None:
     - each version against the version most PCs have (not one that is new this week): raised
       on whichever of the two has RATIO times the other's share of PCs with a crash, of PCs
       with hang time, or of actions rated Major. MIN_PCS PCs on each side.
-    Every one also needs MIN_PROBLEM PCs with the problem and, counted in PCs, to hold with
-    STILL more of them on the other side (`_check`). Each row keeps its `verdict` per count, for
-    the page's words. When every PC listed had a crash (or hang time), app usage holds the
-    application only where it failed: nothing of app usage is compared (`only`)."""
+    Every one also needs MIN_PROBLEM PCs with the problem and to hold with more of it on the
+    other side: STILL more PCs, or STILL_ACTIONS more actions rated Major (`_check`). Each row
+    keeps its `verdict` per count, for the page's words. When every PC listed had a crash (or
+    hang time), app usage holds the application only where it failed: nothing of app usage is
+    compared (`only`)."""
     vs, read = app["versions"], app["read"]
     kinds = app.setdefault("kinds", {"all": _kind_rows(vs)})
     app["raised"], app["only"] = [], []
@@ -786,7 +791,7 @@ def judge(app: dict) -> None:
     if usage and not app["only"]:  # held only where it failed: no share of either can be compared
         sides += [("crash", "crash", "pcs", "pcs", "crash", STILL), ("hang", "hang", "pcs", "pcs", "hang", STILL)]
     if "actions" in read:
-        sides += [("slow", "major", "actions", "action_pcs", "major_pcs", 0)]
+        sides += [("slow", "major", "actions", "action_pcs", "major_pcs", STILL_ACTIONS)]
     for on, k in kinds.items():
         for u in k["updates"]:
             u["verdict"] = {}
@@ -816,7 +821,16 @@ def judge(app: dict) -> None:
                     app["raised"].append(found | {"version": v["version"], "how": "version", "n": mine[0],
                                                   "of": mine[1], "ref_n": most[0], "ref_of": most[1],
                                                   "pcs": v[prob_key]})
-                if kind not in ref["verdict"] and _check(*most, *mine, ref[prob_key], still)[0] == "raised":
+                # the version most PCs have against this one. Not raised though RATIO times as high is said too
+                # (Teams on stage, Nov 21 2026): `back` for this pair, and on the version's own row the first
+                # that more on the other side would undo (too few PCs with it names no version: not there)
+                back, back_few = _check(*most, *mine, ref[prob_key], still)
+                seen = ref["verdict"].get(kind, {}).get("state")
+                if back == "unsure":
+                    v["verdict"][kind]["back"] = {"state": back, "few": back_few}
+                    if seen is None and not back_few:
+                        ref["verdict"][kind] = {"state": back, "few": False, "against": v["version"]}
+                if back == "raised" and seen != "raised":
                     ref["verdict"][kind] = {"state": "raised", "few": False, "against": v["version"]}
                     app["raised"].append(found | {"version": ref["version"], "how": "most", "ref": v["version"],
                                                   "n": most[0], "of": most[1], "ref_n": mine[0], "ref_of": mine[1],
@@ -1069,7 +1083,7 @@ class Software:
                 "%b %d, %H:%M"), "date": snap["date"], "list": snap["list"], "flags": flags, "notes": notes,
             "days": snap.get("days", DAYS),
             "rules": {"ratio": RATIO, "min_pcs": MIN_PCS, "min_problem": MIN_PROBLEM, "few": FEW_PCS, "still": STILL,
-                      "update_days": UPDATE_DAYS},
+                      "still_actions": STILL_ACTIONS, "update_days": UPDATE_DAYS},
             "behind": sorted((p for p in apps if p["behind"]), key=lambda p: (-p["behind"], p["name"]))[:100],
             "user": [{"name": p["name"], "pcs": p["user"], "of": p["pcs"]} for p in
                      sorted((p for p in progs if p["user"]), key=lambda p: (-p["user"], p["name"]))],

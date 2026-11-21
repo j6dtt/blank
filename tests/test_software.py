@@ -213,6 +213,42 @@ def test_a_version_is_judged_against_the_version_most_pcs_have():
         "15%", "3.2%", "3.8%", "0%", "under 0.1%", "13%", "13%"]  # half rounded up, as the page does
 
 
+def test_slow_actions_are_raised_only_when_five_more_major_actions_would_not_undo_it():
+    """Stage, Nov 21 2026: Teams on virtual desktops was raised as slower on 1,316 of 7,112 actions
+    rated Major (18.5%) against 19 of 207 (9.2%): one more Major action among the 207 would have
+    undone it. Crashes and hangs had "still so with 2 more PCs"; slow actions had no such check.
+    Now: still 2 times with 5 more of the other side's actions rated Major."""
+    def app(*vs):
+        return {"application": "A", "read": ["actions"], "versions": [
+            {"version": v, "pcs": 0, "crash": 0, "hang": 0, "action_pcs": pcs, "actions": actions, "major": major,
+             "major_pcs": major_pcs} for v, pcs, actions, major, major_pcs in vs]}
+    for vs, raised, verdict in (
+        ((("1", 1025, 7112, 1316, 1025), ("2", 20, 207, 19, 12)), [], "no"),  # stage: the version most have
+        ((("1", 1025, 7112, 1316, 1025), ("2", 20, 207, 10, 8)), [("1", "most")], "no"),  # 15 of 207 is 7.2%: holds
+        ((("1", 40, 400, 10, 8), ("2", 30, 300, 16, 9)), [], "unsure"),  # 5.3% against 2.5%; 5 more: 3.8%
+        ((("1", 400, 4000, 200, 150), ("2", 30, 300, 36, 20)), [("2", "version")], "raised"),  # 12% against 5.1%
+        ((("1", 400, 4000, 0, 0), ("2", 30, 300, 12, 4)), [], "unsure"),  # holds, but only 4 PCs with one
+    ):
+        a = app(*vs)
+        sw.judge(a)
+        assert [(r["version"], r["how"]) for r in a["raised"]] == raised, vs
+        assert a["kinds"]["all"]["versions"][1]["verdict"]["slow"]["state"] == verdict, vs
+    assert a["kinds"]["all"]["versions"][1]["verdict"]["slow"]["few"] is True
+    assert sw.STILL_ACTIONS == 5 and sw.STILL == 2  # the page and the glossary say both numbers
+    # why the version most PCs have is not raised though 2 times as high is kept for the page's words
+    stage = app(("1", 1025, 7112, 1316, 1025), ("2", 20, 207, 19, 12))
+    sw.judge(stage)
+    most, other = stage["kinds"]["all"]["versions"]
+    assert most["verdict"]["slow"] == {"state": "unsure", "few": False, "against": "2"}
+    assert other["verdict"]["slow"] == {"state": "no", "few": False, "back": {"state": "unsure", "few": False}}
+    word = {"application": "W", "read": ["usage"], "versions": [
+        {"version": v, "pcs": pcs, "crash": crash, "hang": 0, "action_pcs": 0, "actions": 0, "major": 0, "major_pcs": 0}
+        for v, pcs, crash in (("1", 1738, 19), ("2", 515, 2))]}
+    sw.judge(word)  # the photo of Nov 21: 19 of 1,738 against 2 of 515, undone by 2 more PCs among the 515
+    assert word["raised"] == [] and word["kinds"]["all"]["versions"][0]["verdict"]["crash"] == {
+        "state": "unsure", "few": False, "against": "2"}
+
+
 def teams() -> list[dict]:
     """Teams: PCs 1-30 went from 24.2 to 24.3 four days ago (5 days on 24.2 read, 3 on 24.3: the
     last 3 before are counted against the 3 after); PCs 31-60 stayed on 24.2. A crash after the

@@ -399,7 +399,8 @@ flags. Top to bottom:
   it was not there the day before: a version that crashes, hangs or is
   slow more than the version most PCs have, or more after its update than
   before (at least 2 times, 20 PCs on each side, 5 with the problem, and
-  still so with 2 more PCs with it on the other side), programs behind
+  still so with 2 more PCs with it on the other side, or 5 more actions
+  rated Major for slow actions), programs behind
   most PCs, 2+ versions on one
   PC, a Windows update most PCs of a Windows version have but not every
   one, programs installed for one user, programs on 5 PCs or fewer. Click

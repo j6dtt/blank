@@ -485,7 +485,8 @@ def software():
                  f"2. Each version against the version most PCs have ({S.MIN_PCS}+ PCs on each side; a version new this week "
                  "is left to 1).",
                  f"Raised: {S.RATIO:g} times the other side's share, {S.MIN_PROBLEM}+ PCs with the problem, and still so "
-                 f"with {S.STILL} more PCs with it on the other side."),
+                 f"with {S.STILL} more PCs with it on the other side ({S.STILL_ACTIONS} more actions rated Major for "
+                 "slow actions)."),
         ], [
             item("F. Installed for one user only", "Uses: installed list.",
                  "Aternity marks every install with who it is for: the whole PC (\"ALL\") or one person "

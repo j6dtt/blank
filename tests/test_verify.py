@@ -683,6 +683,61 @@ def test_verify_versions_shows_the_application_version_on_what_users_feel():
     assert "Teams Add-in: 1.26.08901 to 1.26.18801: 40 PCs" in flat
 
 
+def test_verify_versions_reads_as_the_software_tab_and_says_what_it_cannot_compare():
+    """verify --versions on stage (Nov 21 2026) read, as the Software tab does, only the application
+    with the most crashes, Trellix ENS: every PC Aternity lists for it had a crash, so the tab compares
+    nothing for it, but the check printed "a crash on 112 before and on 112 after" like a comparison
+    and "Nothing is raised" with no reason; "1 of its 3 versions are". Now each of the applications
+    with the most crashes is read so, and one like that is said."""
+    from datetime import datetime, timedelta, timezone
+    from pathlib import Path
+    from uxcorrelate.verify import verify_versions
+    day = lambda back: (datetime.now(timezone.utc) - timedelta(days=back)).strftime("%Y-%m-%dT12:00:00Z")  # noqa: E731
+    row = lambda pc, app, v, back, c: {  # noqa: E731
+        "DEVICE_NAME": pc, "APPLICATION_NAME": app, "APPLICATION_VERSION": v, "TIMEFRAME": day(back),
+        "APPLICATION_CRASHES_TOTAL": c, "APPLICATION_HANG_TIME_TOTAL": 0, "VIRTUALIZATION": "N/A"}
+    # Shield: listed only where it crashed, 22 PCs, 20 of them on a new version since yesterday
+    usage = [row(f"HOST-{i}", "Shield", "10.7", 5, 3) for i in range(22)] \
+        + [row(f"HOST-{i}", "Shield", "26.8", 1, 3) for i in range(20)] \
+        + [row(f"HOST-{i}", "Mail", "16.1", 2, 1 if i < 2 else 0) for i in range(25)] \
+        + [row(f"HOST-{i}", "Mail", "16.2", 2, 0) for i in range(25, 28)]
+    asked = []
+
+    def handler(request):
+        path, p = request.url.path, request.url.params
+        if path.endswith("/$metadata"):
+            return httpx.Response(200, text=(Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
+        if p.get("$orderby"):
+            return httpx.Response(200, json={"value": [{"TIMEFRAME": "2026-08-01T00:00:00Z"}]})
+        if path.endswith("/APPLICATIONS_DAILY"):
+            name = next((a for a in ("Shield", "Mail") if f"'{a}'" in p["$filter"]), None)
+            if name and "TIMEFRAME" in p["$select"]:
+                asked.append(name)
+            rows = [r for r in usage if name in (None, r["APPLICATION_NAME"])]
+            return httpx.Response(200, json={"value": [{k: r[k] for k in p["$select"].split(",")} for r in rows]})
+        return httpx.Response(200, json={"value": []})
+
+    settings = Settings()
+    settings.aternity.base_url = "https://aternity.test/aternity.odata/v2.0"
+    text = render_checks(verify_versions(settings, AternityClient(settings.aternity,
+                                                                  transport=httpx.MockTransport(handler))))
+    flat = " ".join(text.split())
+    assert "HOST-" not in text and asked == ["Shield", "Mail"]  # each read day by day, the most crashes first
+    assert ("Shield, as the Software tab reads it: app usage day by day for 14 days, 42 rows; with its actions, "
+            "0.0 s. The tab makes one such read per application, up to 40, once a day.") in flat
+    assert ("On physical PCs: 22 in all, each counted once. 2 of its 2 versions are on 20 PCs or more; most have "
+            "10.7; new this week: 26.8.") in flat
+    # its update with no count that reads like a comparison, and why nothing is raised
+    assert "· 20 of them went from 10.7 to 26.8. ·" in flat and "a crash on 20 before" not in flat
+    assert ("Every PC Aternity lists for it had a crash, so there is no PC without one to compare with: the tab "
+            "compares no share of crashes or hang time for it, on any version or update. · Nothing is raised "
+            "for it.") in flat
+    assert "Mail, as the Software tab reads it: app usage day by day for 14 days, 28 rows; with its actions" in flat
+    assert ("On physical PCs: 28 in all, each counted once. 1 of its 2 versions is on 20 PCs or more; most have "
+            "16.1.") in flat
+    assert "Nothing is raised for it by the tab's rules. · These 2 reads together: 70 rows of app usage" in flat
+
+
 def test_every_check_group_is_printed_and_one_failed_part_stops_only_itself():
     """config.yaml's notes were counted in "problem(s) found" but never printed; one error in a
     part stopped the whole verify, which prints only at the end; a read cut short was not said."""
