@@ -944,6 +944,18 @@ back to dev.
   list or their software cannot be read whole, or more than half the
   PCs are missing from the device list, nothing is left out and a
   note says so. `verify --inventory` (4.) times that read.
+- **What Aternity knows of each PC** (`verify --inventory --columns`,
+  the 5th answer of `verify --inventory`): for each column an
+  Inventory tab could show (model, memory, system disk, last start-up,
+  BitLocker, antivirus, agent version, ...), on how many PCs it is
+  filled and what its values look like. One read of the device list.
+  No PC, user or site names.
+- **Which applications have measured actions** (`verify --actions`,
+  only on its own): the applications Aternity measured actions of in
+  the last 7 days, each with its actions, those rated Major and its
+  activities; the activities of the first ones by name; the
+  applications in use with no measured action. Two reads added up by
+  Aternity. Application and activity names only.
 - **PCs that are gone** (`verify --inventory`, only on its own): three
   answers in plain sentences, no PC names. 1. Aternity's device list:
   how many PCs it heard from today, 1 to 7, 8 to 30 and 31+ days ago,

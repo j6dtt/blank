@@ -111,6 +111,36 @@ SOFTWARE_OS_UPDATE = "OS Update"
 # are gone, for how long, and are they still in the installed software list (the user,
 # Nov 20 2026; never read on live before).
 INVENTORY_COLUMNS = {"last": "TIME_LAST_REPORTING", "status": "AGENT_CURRENT_STATUS"}
+# What an Inventory tab could show of each PC (the user, Nov 21 2026; names from Riverbed's
+# $metadata), read only by `verify --inventory` so far: which does the live Aternity fill, and
+# with what? Per group: what it is in words, the column, how its values are said: "values" =
+# the most common as sent; "range" = lowest, middle, highest when they are numbers; "date" =
+# oldest and newest; "many" = how many different ones, never listed (they would name a PC, a
+# person or a site).
+INVENTORY_FILLED = (
+    ("What the PC is", (("Kind of device", "DEVICE_TYPE", "values"), ("Manufacturer", "DEVICE_MANUFACTURER", "values"),
+                        ("Model", "DEVICE_MODEL", "values"), ("Serial number", "DEVICE_SERIAL_NUMBER", "many"),
+                        ("Processor", "DEVICE_CPU_MODEL", "values"), ("Memory", "DEVICE_MEMORY", "values"),
+                        ("Physical memory", "DEVICE_PHYSICAL_MEMORY", "values"))),
+    ("Its system disk", (("Kind of disk", "OS_DISK_TYPE", "values"), ("Size", "OS_TOTAL_DISK_SPACE", "range"),
+                         ("Free space", "OS_FREE_DISK_SPACE", "range"))),
+    ("Restarts", (("Last start-up", "BOOT_LAST_TIMESTAMP", "date"),
+                  ("Days since the last start-up", "DEVICE_DAYS_FROM_LAST_BOOT", "range"))),
+    ("Protection and agents", (("BitLocker", "OS_BITLOCKER_PROTECTION_STATUS", "values"),
+                               ("Antivirus", "ANTIVIRUS_VENDOR", "values"),
+                               ("Real-time protection", "REAL_TIME_PROTECTION_STATUS", "values"),
+                               ("Aternity agent version", "AGENT_VERSION", "values"),
+                               ("SCCM client version", "SCCM_CLIENT_VERSION", "values"))),
+    ("Health, as Aternity rates it", (("Health status", "HEALTH_STATUS", "values"),
+                                      ("Health score", "DEVICE_HEALTH_SCORE", "range"),
+                                      ("Microsoft stability index", "MS_STABILITY_INDEX", "range"))),
+    ("Where and whose", (("Location", "BUSINESS_LOCATION", "many"), ("Last user", "USERNAME", "many"),
+                         ("Department", "USER_DEPARTMENT", "many"))),
+)
+# `verify --actions` (which applications have measured actions): with VERSION_SOURCES' columns,
+# the application's type as Aternity sends it, and its usage time in app usage (no documented
+# unit: used only to order the applications with no measured action, never printed)
+ACTION_COLUMNS = {"type": "APPLICATION_TYPE", "usage_time": "APPLICATION_USAGE_TIME_TOTAL"}
 # Windows on each PC (DEVICE_INVENTORY), for Windows updates per Windows version
 OS_COLUMNS = {"name": "OS_NAME", "version": "OS_VERSION", "updated": "OS_VERSION_UPDATE_DATE"}
 # Each application's version on what users feel (names from Riverbed's $metadata), read

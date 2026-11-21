@@ -866,6 +866,117 @@ def test_verify_clients_names_the_devices_not_starting_with_wt_and_sets_them_aga
             "on 1 PCs (0 starting with WT, 1 not)") in flat
 
 
+def test_verify_inventory_says_which_device_columns_are_filled_and_with_what():
+    """Before an Inventory tab (the user, Nov 21 2026: "For Inventory, first step is verify?"):
+    Riverbed lists 97 columns for a PC, the live Aternity may fill fewer. verify --inventory's 5th
+    answer (alone with --columns): per column a tab could show, on how many PCs it is filled and
+    what its values look like. No PC, user or site names."""
+    from datetime import datetime, timedelta, timezone
+    from pathlib import Path
+    from uxcorrelate.config import INVENTORY_FILLED
+    from uxcorrelate.models import day
+    from uxcorrelate.verify import verify_inventory
+    meta = (Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text()
+    asked = [c for _, items in INVENTORY_FILLED for _, c, _ in items]
+    assert set(asked) <= parse_odata_metadata(meta)["DEVICE_INVENTORY"] and len(asked) == len(set(asked))  # Riverbed's names
+    now = datetime.now(timezone.utc)
+    at = lambda days: (now - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
+    pcs = [{"DEVICE_NAME": f"HOST-{i}", "TIME_LAST_REPORTING": at(0), "DEVICE_MODEL": "Model A" if i < 6 else "Model B",
+            "DEVICE_MANUFACTURER": "Maker", "DEVICE_SERIAL_NUMBER": f"SN-{i}", "OS_TOTAL_DISK_SPACE": str(100 + i * 10),
+            "OS_FREE_DISK_SPACE": "N/A" if i == 0 else f"{i * 5}.5", "BOOT_LAST_TIMESTAMP": at(i),
+            "OS_BITLOCKER_PROTECTION_STATUS": "On" if i % 2 else "Off", "BUSINESS_LOCATION": f"Site {i % 3}",
+            "USERNAME": f"user{i}", "DEVICE_MEMORY": "16 GB", "DEVICE_TYPE": "N/A"} for i in range(10)]
+    pcs.append(dict(pcs[0], TIME_LAST_REPORTING=at(9), DEVICE_MODEL="Old model"))  # a PC listed twice: its latest row
+    seen = []
+
+    def handler(request):
+        if request.url.path.endswith("/$metadata"):
+            return httpx.Response(200, text=meta)
+        assert request.url.path.endswith("/DEVICE_INVENTORY")
+        seen.append(request.url.params["$select"].split(","))
+        return httpx.Response(200, json={"value": [{k: r.get(k, "N/A") for k in seen[-1]} for r in pcs]})
+
+    settings = Settings()
+    settings.aternity.base_url = "https://aternity.test/aternity.odata/v2.0"
+    checks = verify_inventory(settings, AternityClient(settings.aternity, transport=httpx.MockTransport(handler)), True)
+    assert [c.item for c in checks] == ["5. What the device list holds about each PC"] and len(seen) == 1  # one read
+    assert seen[0] == ["DEVICE_NAME", "TIME_LAST_REPORTING"] + asked
+    text = render_checks(checks)
+    flat = " ".join(text.split())
+    assert not any(w in text for w in ("HOST-", "SN-", "user1", "Site 1"))  # no PC, serial, user or site
+    assert "Aternity's device list: 10 PCs (11 rows in 0.0 s). Of what an Inventory tab could show, 23 columns" in flat
+    for line in (
+        "What the PC is: · Manufacturer: filled on 10 of 10 PCs; always 'Maker'.",
+        "Model: filled on 10 of 10 PCs; 2 different; most common: 'Model A' on 6, 'Model B' on 4.",
+        "Serial number: filled on 10 of 10 PCs; 10 different (not listed here).",
+        "Memory: filled on 10 of 10 PCs; always '16 GB'.",  # not a number: said as sent, so its form is seen
+        "Empty on every PC: Kind of device, Processor, Physical memory.",
+        "Size: filled on 10 of 10 PCs; numbers from 100 to 190, the middle one 145 (as sent, for example '100').",
+        "Free space: filled on 9 of 10 PCs; numbers from 5.5 to 45.5, the middle one 25.5 (as sent, for example",
+        f"Last start-up: filled on 10 of 10 PCs; from {day(now - timedelta(days=9))} to {day(now)}.",
+        "BitLocker: filled on 10 of 10 PCs; 2 different; most common: 'Off' on 5, 'On' on 5.",
+        "Location: filled on 10 of 10 PCs; 3 different (not listed here).",
+        "Last user: filled on 10 of 10 PCs; 10 different (not listed here).",
+        "Empty on every PC: Health status, Health score, Microsoft stability index.",
+    ):
+        assert line in flat, line
+
+
+def test_verify_actions_says_which_applications_have_measured_actions():
+    """The user, Nov 21 2026: "what actions are measure in Aternity", "which applications in prod
+    have measured actions": verify --actions. Application and activity names only."""
+    from pathlib import Path
+    from uxcorrelate.config import ACTION_COLUMNS, VERSION_SOURCES
+    from uxcorrelate.verify import verify_actions
+    meta = (Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text()
+    schema = parse_odata_metadata(meta)
+    assert ACTION_COLUMNS["type"] in schema["BUSINESS_ACTIVITIES_DAILY"]  # Riverbed's own names
+    assert ACTION_COLUMNS["usage_time"] in schema["APPLICATIONS_DAILY"]
+    assert VERSION_SOURCES["actions"]["activity"] in schema["BUSINESS_ACTIVITIES_DAILY"]
+    acts = [{"APPLICATION_NAME": a, "ACTIVITY_NAME": act, "SLA_STATUS": st, "ACTIVITY_VOLUME": n, "APPLICATION_TYPE": ty}
+            for a, act, st, n, ty in (
+                ("Mail", "Open Mail", "Normal", 900, "Desktop"), ("Mail", "Open Mail", "Major", 30, "Desktop"),
+                ("Mail", "Send", "Normal", 400, "Desktop"), ("Mail", "Send", "Minor", 20, "Desktop"),
+                ("Portal", "Page Load", "Normal", 50, "Web"), ("Portal", "Page Load", "Major", 5, "Web"),
+                ("N/A", "Launch", "Normal", 7, "N/A"))]
+    usage = [{"APPLICATION_NAME": a, "APPLICATION_USAGE_TIME_TOTAL": t} for a, t in (
+        ("Mail", 5000), ("mail", 10), ("Notepad", 300), ("Calculator", 900), ("Calculator", 100), ("Quiet", "N/A"))]
+    seen = {}
+
+    def handler(request):
+        path, p = request.url.path, request.url.params
+        if path.endswith("/$metadata"):
+            return httpx.Response(200, text=meta)
+        name = path.rsplit("/", 1)[-1]
+        seen[name] = p["$select"]
+        assert "TIMEFRAME ge " in p["$filter"] and "DEVICE_NAME" not in p["$select"] and "USERNAME" not in p["$select"]
+        return httpx.Response(200, json={"value": acts if name == "BUSINESS_ACTIVITIES_DAILY" else usage})
+
+    settings = Settings()
+    settings.aternity.base_url = "https://aternity.test/aternity.odata/v2.0"
+    client = AternityClient(settings.aternity, transport=httpx.MockTransport(handler))
+    text = render_checks(verify_actions(settings, client))
+    flat = " ".join(text.split())
+    assert seen == {"BUSINESS_ACTIVITIES_DAILY": "APPLICATION_NAME,ACTIVITY_NAME,SLA_STATUS,ACTIVITY_VOLUME,APPLICATION_TYPE",
+                    "APPLICATIONS_DAILY": "APPLICATION_NAME,APPLICATION_USAGE_TIME_TOTAL"}
+    for line in (
+        "In the last 7 days Aternity measured actions of 2 applications: 1,405 actions, 35 of them rated Major "
+        "(BUSINESS_ACTIVITIES_DAILY, 7 rows in 0.0 s). Most actions first, with the kind of application as Aternity "
+        "sends it: · Mail (Desktop): 1,350 actions, 30 rated Major, 2 activities · Portal (Web): 55 actions, 5 rated "
+        "Major, 1 activity · 7 actions come with no application name: not counted above.",
+        "For the 2 applications with the most actions, their activities by name, each with its actions and those "
+        "rated Major: · Mail: Open Mail 930 (30 Major); Send 420 (0 Major). · Portal: Page Load 55 (5 Major).",
+        # a name is counted as Aternity sends it ("Mail" and "mail" are two); measured or not is asked without capitals
+        "App usage lists 5 applications in the last 7 days (APPLICATIONS_DAILY, 6 rows in 0.0 s): 2 of them have "
+        "measured actions, 3 have none.",
+        "The 3 used the most of them, by Aternity's usage time (not shown: it has no documented unit): Calculator; "
+        "Notepad; Quiet.",
+        "1 applications with measured actions are not in app usage: Portal.",
+    ):
+        assert line in flat, line
+    assert "5000" not in flat and "5,000" not in flat and "All checks passed." in flat  # the usage time is never printed
+
+
 def test_verify_inventory_says_in_plain_sentences_which_pcs_are_gone():
     """The user, Nov 20 2026: how does Aternity handle PCs that no longer exist, is there a "last
     heard"? Riverbed's pages give no rule, so verify --inventory counts it, in plain sentences (the

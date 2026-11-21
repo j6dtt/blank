@@ -26,7 +26,8 @@ from statistics import median
 from typing import Any
 
 from .aternity import AternityClient, is_virtual, odata_quote, odata_time
-from .config import (DISK_CATEGORIES, DISK_FREE_COLUMNS, DISK_PARTS, INVENTORY_COLUMNS, OS_COLUMNS, OVERVIEW_SOURCES, PROCESS_COLUMN, SOFTWARE_COLUMNS,
+from .config import (ACTION_COLUMNS, DISK_CATEGORIES, DISK_FREE_COLUMNS, DISK_PARTS, INVENTORY_COLUMNS, INVENTORY_FILLED,
+                     OS_COLUMNS, OVERVIEW_SOURCES, PROCESS_COLUMN, SOFTWARE_COLUMNS,
                      SOFTWARE_OS_UPDATE,
                      SOFTWARE_REMOVED, SOFTWARE_SOURCE, SOFTWARE_USER_SCOPE, SOFTWARE_UPDATE_GAP_MIN, TIME_COLUMNS,
                      CLIENT_COLUMNS, NO_VALUE, TOP_STATUS, VDI_COLUMNS, VERSION_OPTIONAL, VERSION_SOURCES, Settings)
@@ -1577,7 +1578,102 @@ INV_OLD = 31  # the last age group: this many days or more
 INV_USE_DAYS = 8  # "in use": app usage in these days (Aternity keeps activity about 8 days)
 
 
-def verify_inventory(settings: Settings, client: AternityClient) -> list[Check]:
+def verify_inventory(settings: Settings, client: AternityClient, columns_only: bool = False) -> list[Check]:
+    """`verify --inventory`: answers 1-4 about PCs that are gone (`_inventory_gone`), then 5. what
+    the device list holds about each PC (`_inventory_filled`); `--columns`: only 5 (answer 4 reads
+    the software of every PC that is gone, about 100 s on stage)."""
+    try:
+        schema = parse_odata_metadata(client.http.request("GET", "/$metadata", headers={"Accept": "application/xml"}).text)
+    except (ApiError, ET.ParseError) as exc:
+        return [Check("Aternity", "connection", False, f"Could not read $metadata: {exc.short() if isinstance(exc, ApiError) else exc}",
+                      "Check aternity.base_url, aternity.username and ATERNITY_PASSWORD.")]
+    out = [] if columns_only else _inventory_gone(settings, client, schema)
+    return out + part(FILLED_ITEM, _inventory_filled, settings, client, schema, client=client)
+
+
+FILLED_ITEM = "5. What the device list holds about each PC"
+FILLED_TOP = 4  # the most common values said of a column
+
+
+def _column_said(label: str, how: str, values: list, total: int) -> str:
+    """One column of the device list in a sentence: on how many PCs it is filled, and what its
+    values look like (`how`, see INVENTORY_FILLED). Values as Aternity sends them."""
+    got = [v for v in values if v not in (None, "", *NO_VALUE)]
+    if not got:
+        return f"{label}: empty on every PC."
+    head = f"{label}: filled on {len(got):,} of {total:,} PCs"
+    kinds = Counter(str(v) for v in got)
+    num = lambda x: f"{x:,.0f}" if x == int(x) else f"{x:,.1f}"  # noqa: E731
+    if how == "many":
+        return f"{head}; {len(kinds):,} different (not listed here)."
+    if how == "date":
+        ts = [t for t in (parse_time(v) for v in got) if t]
+        if ts:
+            return (f"{head}; from {day(min(ts))} to {day(max(ts))}"
+                    + (f"; {len(got) - len(ts):,} are no date" if len(ts) < len(got) else "") + ".")
+    if how == "range":
+        nums = [x for x in (to_float(v) for v in got) if x is not None]
+        if len(nums) * 10 >= len(got) * 9:  # numbers, as good as all of them
+            return (f"{head}; numbers from {num(min(nums))} to {num(max(nums))}, the middle one {num(median(nums))} "
+                    f"(as sent, for example '{kinds.most_common(1)[0][0]}').")
+    top = kinds.most_common(FILLED_TOP)
+    more = len(kinds) - len(top)
+    if len(kinds) == 1:
+        return f"{head}; always '{top[0][0]}'."
+    return (f"{head}; {len(kinds):,} different; most common: " + ", ".join(f"'{v}' on {n:,}" for v, n in top)
+            + (f"; and {more:,} more" if more else "") + ".")
+
+
+def _inventory_filled(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
+    """5. Before an Inventory tab (the user, Nov 21 2026: "For Inventory, first step is verify?"):
+    Riverbed lists 97 columns for a PC, the live Aternity may fill fewer. For each column a tab
+    could show (INVENTORY_FILLED), on how many PCs it is filled and what its values look like,
+    from one read of the device list (one row per PC: its latest). Sentences; no PC, user or
+    site names (those columns only say how many different values they hold)."""
+    inv, dev = settings.aternity.entities.get("inventory"), settings.aternity.fields.get("inventory", {}).get("device")
+    if inv not in schema or dev not in schema[inv]:
+        return [Check("Aternity", FILLED_ITEM, None, f"This Aternity does not publish its device list ({inv or 'no source set'} "
+                      f"with {dev or 'a device column'}): nothing to show.")]
+    last = INVENTORY_COLUMNS["last"] if INVENTORY_COLUMNS["last"] in schema[inv] else None
+    have = [c for _, items in INVENTORY_FILLED for _, c, _ in items if c in schema[inv]]
+    mark, t0 = len(client.warnings), time.monotonic()
+    rows = client.query(inv, select=list(dict.fromkeys([dev] + ([last] if last else []) + have)), top=INV_ROWS, raw=True)
+    secs = time.monotonic() - t0
+    cut = _cut_short(client, mark) + _limit(rows, INV_ROWS)
+    latest: dict = {}  # PC -> (when last heard, its row): a PC listed twice is said once
+    for r in rows:
+        name, t = r.get(dev), parse_time(r.get(last)) if last else None
+        if name in (None, "", *NO_VALUE):
+            continue
+        seen = latest.get(name)
+        if seen is None or (t and (seen[0] is None or t > seen[0])):
+            latest[name] = (t, r)
+    lines, unpublished = [], []
+    for group, items in INVENTORY_FILLED:
+        lines.append(f"{group}:")
+        empty, absent = [], []  # said together, a line each: most of the list can be empty
+        for label, c, how in items:
+            if c not in schema[inv]:
+                absent.append(label)
+                continue
+            said = _column_said(label, how, [r.get(c) for _, r in latest.values()], len(latest))
+            if said.endswith(": empty on every PC."):
+                empty.append(label)
+            else:
+                lines.append("  " + said)
+        if empty:
+            lines.append("  Empty on every PC: " + ", ".join(empty) + ".")
+        if absent:
+            lines.append("  Not published by this Aternity: " + ", ".join(absent) + ".")
+        unpublished += absent
+    return [Check("Aternity", FILLED_ITEM, None,
+                  f"Aternity's device list: {len(latest):,} PCs ({len(rows):,} rows in {secs:.1f} s). Of what an "
+                  f"Inventory tab could show, {len(have):,} columns were asked for"
+                  + (f" ({len(unpublished)} more are not published)" if unpublished else "")
+                  + ". No PC, user or site name is printed.", rows=lines + cut)]
+
+
+def _inventory_gone(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:
     """Which PCs are gone, in plain sentences (the user, Nov 20 2026: how does Aternity handle PCs
     that no longer exist; the first version's output "makes no sense": said again in plain
     English). Three answers, no PC names: 1. Aternity's device list by when each PC was last
@@ -1586,11 +1682,6 @@ def verify_inventory(settings: Settings, client: AternityClient) -> list[Check]:
     software list that are not in the device list (stage: 1,266 of 6,464) and how many of those
     were in use in the last `INV_USE_DAYS` days (daily app usage): in use = a name the two lists
     write differently, not in use = most likely retired and counted by the Software tab."""
-    try:
-        schema = parse_odata_metadata(client.http.request("GET", "/$metadata", headers={"Accept": "application/xml"}).text)
-    except (ApiError, ET.ParseError) as exc:
-        return [Check("Aternity", "connection", False, f"Could not read $metadata: {exc.short() if isinstance(exc, ApiError) else exc}",
-                      "Check aternity.base_url, aternity.username and ATERNITY_PASSWORD.")]
     inv, dev = settings.aternity.entities.get("inventory"), settings.aternity.fields.get("inventory", {}).get("device")
     item = "1. Aternity's device list"
     if inv not in schema or dev not in schema[inv]:
@@ -2159,6 +2250,130 @@ def _versions(settings: Settings, client: AternityClient, schema: dict[str, set[
                                 + ". Updates (before to after) on the most PCs:",
                                 rows=[f"{n0}: {b} to {v}: {k:,} PCs" for (n0, b, v), k in ups.most_common(4)] + cut))
     return checks + flags_by_rule()
+
+
+ACT_DAYS = 7  # verify --actions: the days read, as the Software tab's
+ACT_ROWS = 20_000  # rows of one of its reads, added up by Aternity (the check's limit)
+ACT_APPS = 20  # applications said with their counts; the rest by name
+ACT_NAMES = 60  # ... at most this many names
+ACT_TOP = 6  # applications said with their activities
+ACT_EACH = 5  # activities said per application
+ACT_UNMEASURED = 15  # applications with no measured action, the most used
+
+
+def verify_actions(settings: Settings, client: AternityClient) -> list[Check]:
+    """`verify --actions` (the user, Nov 21 2026: "what actions are measure in Aternity", "which
+    applications in prod have measured actions"): 1. the applications Aternity measured actions
+    of in the last ACT_DAYS days, each with its actions, those rated Major and its activities;
+    2. the activities of the first ones, by name; 3. the applications in app usage with no
+    measured action. Two reads, added up by Aternity (no PC asked for). Application and
+    activity names only."""
+    try:
+        schema = parse_odata_metadata(client.http.request("GET", "/$metadata", headers={"Accept": "application/xml"}).text)
+    except (ApiError, ET.ParseError) as exc:
+        return [Check("Aternity", "connection", False, f"Could not read $metadata: {exc.short() if isinstance(exc, ApiError) else exc}",
+                      "Check aternity.base_url, aternity.username and ATERNITY_PASSWORD.")]
+    a, u = VERSION_SOURCES["actions"], VERSION_SOURCES["usage"]
+    E, A, ACT, ST, VOL = a["entity"], a["application"], a["activity"], a["status"], a["volume"]
+    item = "1. Applications with measured actions"
+    missing = [c for c in (A, ACT, ST, VOL, a["time"]) if c not in schema.get(E, ())]
+    if missing:
+        return [Check("Aternity", item, None, f"This Aternity does not publish its daily actions ({E}"
+                      + (f" comes without {', '.join(missing)}" if E in schema else "") + "): nothing to show.")]
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=ACT_DAYS)
+    empty = lambda v: v in (None, "", *NO_VALUE)  # noqa: E731
+    typ = ACTION_COLUMNS["type"] if ACTION_COLUMNS["type"] in schema[E] else None
+    mark, t0 = len(client.warnings), time.monotonic()
+    try:
+        rows = client.query(E, _between(a["time"], since, now), select=[A, ACT, ST, VOL] + ([typ] if typ else []),
+                            top=ACT_ROWS, raw=True)
+    except ApiError as exc:
+        return [Check("Aternity", item, None, f"Aternity's daily actions could not be read ({exc.short()}).")]
+    secs = time.monotonic() - t0
+    cut = _cut_short(client, mark) + _limit(rows, ACT_ROWS)
+    apps: dict = {}  # application -> [actions, rated Major, {activity: [actions, Major]}, its types as sent]
+    unnamed = 0.0
+    for r in rows:
+        n = to_float(r.get(VOL))
+        n = 1.0 if n is None else n
+        if empty(r.get(A)):
+            unnamed += n
+            continue
+        x = apps.setdefault(str(r.get(A)), [0.0, 0.0, {}, Counter()])
+        act = x[2].setdefault("(no name)" if empty(r.get(ACT)) else str(r.get(ACT)), [0.0, 0.0])
+        top = r.get(ST) == TOP_STATUS
+        x[0], x[1] = x[0] + n, x[1] + (n if top else 0)
+        act[0], act[1] = act[0] + n, act[1] + (n if top else 0)
+        if typ and not empty(r.get(typ)):
+            x[3][str(r.get(typ))] += n
+    by = sorted(apps.items(), key=lambda kv: (-kv[1][0], kv[0].lower()))
+    kind = lambda x: f" ({x[3].most_common(1)[0][0]})" if x[3] else ""  # noqa: E731
+    lines = [f"{name}{kind(x)}: {x[0]:,.0f} actions, {x[1]:,.0f} rated {TOP_STATUS}, "
+             f"{len(x[2]):,} {'activity' if len(x[2]) == 1 else 'activities'}" for name, x in by[:ACT_APPS]]
+    rest = [name for name, _ in by[ACT_APPS:]]
+    if rest:
+        lines.append(f"{len(rest):,} more with fewer actions: " + "; ".join(rest[:ACT_NAMES])
+                     + (f"; and {len(rest) - ACT_NAMES:,} more" if len(rest) > ACT_NAMES else "") + ".")
+    if unnamed:
+        lines.append(f"{unnamed:,.0f} actions come with no application name: not counted above.")
+    out = [Check("Aternity", item, None,
+                 f"In the last {ACT_DAYS} days Aternity measured actions of {len(apps):,} applications: "
+                 f"{sum(x[0] for x in apps.values()):,.0f} actions, {sum(x[1] for x in apps.values()):,.0f} of them "
+                 f"rated {TOP_STATUS} ({E}, {len(rows):,} rows in {secs:.1f} s)."
+                 + (" Most actions first" + (", with the kind of application as Aternity sends it:"
+                                             if any(x[3] for x in apps.values()) else ":") if apps else ""),
+                 rows=lines + cut)]
+    # 2. what is measured: the activities of the applications with the most actions
+    if apps:
+        said = []
+        for name, x in by[:ACT_TOP]:
+            acts = sorted(x[2].items(), key=lambda kv: (-kv[1][0], kv[0].lower()))
+            said.append(f"{name}: " + "; ".join(f"{act} {n[0]:,.0f} ({n[1]:,.0f} {TOP_STATUS})" for act, n in acts[:ACT_EACH])
+                        + (f"; and {len(acts) - ACT_EACH:,} more" if len(acts) > ACT_EACH else "") + ".")
+        out.append(Check("Aternity", "2. The activities measured", None,
+                         f"For the {min(ACT_TOP, len(by))} applications with the most actions, their activities by "
+                         f"name, each with its actions and those rated {TOP_STATUS}:", rows=said))
+    # 3. applications people use that have no measured action
+    item = "3. Applications in use with no measured action"
+    U, UA = u["entity"], u["application"]
+    if U not in schema or not {UA, u["time"]} <= schema[U]:
+        out.append(Check("Aternity", item, None, f"This Aternity does not publish daily app usage ({U}): not checked."))
+        return out
+    use_t = ACTION_COLUMNS["usage_time"] if ACTION_COLUMNS["usage_time"] in schema[U] else None
+    mark, t0 = len(client.warnings), time.monotonic()
+    try:
+        got = client.query(U, _between(u["time"], since, now), select=[UA] + ([use_t] if use_t else []), top=ACT_ROWS,
+                           raw=True)
+    except ApiError as exc:
+        out.append(Check("Aternity", item, None, f"Aternity's daily app usage could not be read ({exc.short()})."))
+        return out
+    secs = time.monotonic() - t0
+    cut = _cut_short(client, mark) + _limit(got, ACT_ROWS)
+    used: dict[str, float] = {}
+    for r in got:
+        if not empty(r.get(UA)):
+            used[str(r.get(UA))] = used.get(str(r.get(UA)), 0.0) + (to_float(r.get(use_t)) or 0.0 if use_t else 0.0)
+    measured = {name.strip().lower() for name in apps}
+    none = [name for name in used if name.strip().lower() not in measured]
+    timed = any(used[name] for name in none)
+    none.sort(key=lambda name: (-used[name], name.lower()))
+    in_use = {name.strip().lower() for name in used}
+    only = sorted((name for name in apps if name.strip().lower() not in in_use), key=str.lower)
+    lines = []
+    if none:
+        lines.append((f"The {min(ACT_UNMEASURED, len(none))} used the most of them, by Aternity's usage time (not shown: it has "
+                      "no documented unit): " if timed else
+                      f"{min(ACT_UNMEASURED, len(none))} of them, in name order (Aternity gives no usage time to order "
+                      "them by): ") + "; ".join((none if timed else sorted(none, key=str.lower))[:ACT_UNMEASURED]) + ".")
+    if only:
+        lines.append(f"{len(only):,} applications with measured actions are not in app usage: "
+                     + "; ".join(only[:ACT_UNMEASURED]) + (f"; and {len(only) - ACT_UNMEASURED:,} more" if len(only) > ACT_UNMEASURED else "") + ".")
+    out.append(Check("Aternity", item, None,
+                     f"App usage lists {len(used):,} applications in the last {ACT_DAYS} days ({U}, {len(got):,} rows in "
+                     f"{secs:.1f} s): {len(used) - len(none):,} of them have measured actions, {len(none):,} have none.",
+                     rows=lines + cut))
+    return out
 
 
 def _rule_before(app: dict, tab) -> list[dict]:

@@ -904,6 +904,28 @@ demo mode: nothing in `src/` knows about it.
   counted), each `LOCATION_ON_VPN` value as sent (`CLIENT_COLUMNS`,
   never read on live before) against WT / not WT, physical PCs apart.
   Which value means VPN is not assumed: every value is listed.
+- `verify --inventory`, 5. "What the device list holds about each PC"
+  (`_inventory_filled`, alone with `--columns`: answer 4 takes about
+  100 s; the user, Nov 21 2026, before an Inventory tab: "For
+  Inventory, first step is verify?"): one read of the device list, one
+  row per PC (its latest), and per column of `INVENTORY_FILLED`
+  (config.py; Riverbed's names) on how many PCs it is filled and what
+  its values look like (`_column_said`: "values" = the most common as
+  sent, "range" = lowest, middle, highest when numbers, with one as
+  sent, "date", "many" = how many different, never listed: serial
+  number, user, location, department); empty and unpublished columns
+  one line per group. Answers 1-4 are `_inventory_gone`.
+- `verify --actions` (`verify.verify_actions`, only on its own; the
+  user, Nov 21 2026: "what actions are measure in Aternity", "which
+  applications in prod have measured actions"): 1. the applications
+  with measured actions in `ACT_DAYS` (daily actions added up by
+  Aternity per application, activity and status; `ACTION_COLUMNS`'
+  type as sent), each with actions, those rated Major, activities;
+  2. the activities of the first `ACT_TOP`; 3. the applications in
+  app usage with none, the most used first (Aternity's usage time, no
+  documented unit: for the order only, never printed) and those
+  measured that app usage does not list. A name is counted as sent;
+  measured or not is asked without capitals. No PC or user names.
 - `verify --inventory` (`verify.verify_inventory`, only on its own; the
   user, Nov 20 2026: how does Aternity handle PCs that no longer exist,
   is there a "last heard"? Riverbed's pages give no rule). Plain

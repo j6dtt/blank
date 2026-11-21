@@ -40,6 +40,16 @@ data, then its daily data with the people and desktops. See
 
 ## Waiting on you
 
+- **Two checks to run on prod** (built on dev 2026-11-21, 412
+  tests; the user was updating prod to b5d92aa the same day).
+  Files: `verify.py`, `cli.py`, `config.py`; no restart needed (a
+  check is its own run). Then, each once, with a photo:
+  - `verify --inventory --columns`: which of Aternity's device
+    columns are filled and with what (23 asked for). Decides what
+    the Inventory tab can show.
+  - `verify --actions`: which applications have measured actions,
+    and which in use have none.
+
 - **Stage copy of the load counter fix** (built on dev 2026-11-18,
   the user's photo of prod: "AI service GPT-5.4 824 calls, 0 rows;
   816 failed", the light green): `http.py`, `ai.py`, `status.py`,
@@ -59,8 +69,13 @@ data, then its daily data with the people and desktops. See
   Files since f3b8459: `aternity.py`, `software.py`,
   `software_chat.py`, `agent.py`, `web.py`, `verify.py`, `cli.py`,
   `config.py`, `explain.py`, `static/index.html`; restart.
-- **Stage copy of "Application health by version"** (the Software
-  tab's versions panel; built on dev 2026-11-21). The
+- **"Application health by version": on stage, prod copy next**
+  (the Software tab's versions panel; built on dev 2026-11-21; on
+  stage the same day with 7689c53, cf8106b, b5d92aa: works, 15 red
+  flags; the user: "Are we good with Software tab? Can we move to
+  the Inventory?"). Its prod copy is the 10 files of the entry
+  above (no other file changed). Open, written below: the two
+  spellings; what was taken as chosen. The
   user, on a photo of stage: "very hard to understand charts", "I
   don't ... know where you get the 2 of 515 numbers", "Is there a
   better way to compare?", "Yes to D", then after three mock-ups
@@ -161,11 +176,51 @@ data, then its daily data with the people and desktops. See
          says how many more had nothing raised.
       The Compare dialog's "Before and after an update" keeps a PC
       the same way.
-  - Next: one stage copy: `software.py`, `verify.py`,
-    `static/index.html`; restart; after the tab's read, `verify
-    --versions` and a photo of its last part ("Software tab"). The
-    count of flags can move again (more PCs in before and after,
-    more updates judged): the check says which.
+  - On stage with b5d92aa, Nov 21 2026 (two photos of `verify
+    --versions`, "Software tab"): the saved read of 40 applications.
+    The rule before raises 24 versions, the rule now 11; 7 of the
+    24 by both; 3 raised now and not before (the version most PCs
+    have, against another). The 17 that went, as the check printed
+    them (my grouping of its lines):
+    - 6 were not real: a version listed twice, the second spelling
+      only on PCs with a crash, so "100% crashed". OneDrive
+      26.153.809.4 (84 of 84) and 24.221.1103.3 (26 of 26, beside
+      24.221.1103.0003 on 416 PCs); Windows Explorer 10.0.22621.7517
+      (79 of 79) and 10.0.26100.9974 (44 of 44, beside
+      "10.0.26100.9974 (WinBuild.160101.0800)" on 581 PCs); Settings
+      10.0.22621.7219 (20 of 20); Windows PowerShell 10.0.26100.9818
+      (26 of 26). The check files them under "new this week", "too
+      few" and "the only version": the rule now does not raise them,
+      but not because it knows they are one version.
+    - 3 thin: more on the other side would undo it (Credential
+      Manager UI Host 35 of 2,590 against 7 of 1,056; Windows Shell
+      Experience Host 13 of 1,548 against 0 of 451; Teams' slow
+      actions).
+    - 5 were a version that is the only one, or nearly, on physical
+      PCs, against versions on virtual desktops: OneDrive
+      24.221.1103.0003 (stops responding, 21 of 416 against 17 of
+      2,362), PowerPoint, Excel and OneNote 16.0.20527.20194, Edge
+      WebView2 157.0.4341.46. Version and kind of PC go together
+      there: the rule now cannot say which it is.
+    - 3 real versions new this week, left to before and after, not
+      raised there: Teams 26276.513.5241.9675 (crashes, 7 of 349),
+      SearchHost 2609.12000.100.0 (crashes, 7 of 461), Windows
+      Explorer "10.0.26100.9974 (WinBuild...)" (stops responding,
+      200 of 581 against 510 of 3,482).
+  - Gap found there, in the rule before and the rule now, not
+    built: **one version under two spellings is counted as two
+    versions.** Aternity writes a version one way on app usage rows
+    and another on rows with a crash (my reading of the photo:
+    "(WinBuild...)" left off, "0003" as "3"). So the crashes of such
+    a version are not on its own row: its crash share is too low
+    and the twin's is 100%. Plan, not to be built on its own (the
+    user, 2026-11-21; see Agreed): two
+    spellings are one version when their numbers are the same (the
+    dotted number at the start, each part as a number, the text
+    after it left out); counted and shown under the spelling on the
+    most PCs; a click asks Aternity for every spelling; the same in
+    Compare, before and after, the chat's look-ups; `verify
+    --versions` says which spellings were put together.
   - Known limits, said in the docs: an application with one version
     in the last 7 days is not read per version, so an update every
     PC had over a week ago is not compared by itself; flags of
@@ -181,11 +236,28 @@ data, then its daily data with the people and desktops. See
 
 ## Agreed
 
-- Nothing open.
+- **What actions Aternity measures** (the user, 2026-11-21: "Add
+  to do, what actions are measure in Aternity", then "I want to add
+  verify for which applications in prod have measured actions",
+  "build it for A and B"). Step 1 built on dev the same day:
+  `verify --actions` (which applications have measured actions,
+  each with its actions, those rated Major and its activities; the
+  activities of the first ones; the applications in use with none).
+  Waiting on its photo from prod (see Waiting on you). After it:
+  where on the page, if anywhere. Not decided.
+- **One version under two spellings: not on its own** (the user,
+  2026-11-21: "I don't want to fix the spellings alone"). The gap
+  and its plan are under "Waiting on you" (Application health by
+  version); it waits to go with other Software work. My reading:
+  not now as a single fix.
 
 ## Ideas
 
-- **Device inventory** (the user, 2026-11-21: "Need to integrate
+- **Device inventory: step 1 built** (the user, 2026-11-21, after
+  the Software tab: "Can we move to the Inventory?", "For Inventory,
+  first step is verify?", "build it for A and B": `verify
+  --inventory`'s 5th answer, alone with `--columns`; waiting on its
+  photo from prod). First asked the same day: "Need to integrate
   device inventory section, use the data from verify --inventory to
   start. I'll let you decide: it's on a separate tab or same as
   Software, helpful data to add on top of verify --inventory.

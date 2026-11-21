@@ -933,6 +933,10 @@ class Sample:
                          "OS_VERSION_UPDATE_DATE": _at(self.today - timedelta(days=3 if kb else 33), 2),
                          "OS_TOTAL_DISK_SPACE": pc["disk"], "SCCM_CLIENT_VERSION": "5.00.9128.1000",
                          "DEVICE_IMAGE_BUILD_NUMBER": pc["image"],
+                         # made up, for verify --inventory's 5th answer (what the live Aternity sends is not known)
+                         "DEVICE_MANUFACTURER": "Sample Virtual" if pc["virtual"] else "Sample Devices",
+                         "DEVICE_MODEL": "Virtual Desktop" if pc["virtual"] else f"Notebook {14 + pc['n'] % 2 * 2}",
+                         "BOOT_LAST_TIMESTAMP": _at(self.today - timedelta(days=pc["n"] % 12), 7),
                          "TIME_LAST_REPORTING": _sec(now - timedelta(minutes=pc["n"] % 9))})
         return rows
 
