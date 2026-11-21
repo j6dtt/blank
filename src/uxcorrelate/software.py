@@ -1190,6 +1190,29 @@ def keep_reading(sw: Software, make_client, cfg_of, sleep, clock=lambda: datetim
 PC_LIST = ("name", "version", "vendor", "type", "scope", "changed")  # a PC's own list (Ask anything)
 
 
+def pc_list(client, pc: str, local=lambda t: t) -> dict:
+    """One PC's own installed list as Aternity holds it, read now (the Inventory tab's "Its
+    software"): rows of [program, version, vendor, type, for whom, last change], Windows updates
+    last. `local`: a time in the page's time zone."""
+    notes: list[str] = []
+    q, c = _Reads(client, notes), SOFTWARE_COLUMNS
+    keys = [k for k in PC_LIST if q.has(SOFTWARE_SOURCE, c[k])]
+    got = q.rows(SOFTWARE_SOURCE, f"{pc}'s installed software", filter=f"{c['device']} eq {odata_quote(pc)}",
+                 select=[c[k] for k in keys], top=LIST_ROWS)
+    rows = []
+    for r in got or []:
+        v = {k: r.get(c[k]) for k in keys}
+        when = parse_time(v.get("changed")) if v.get("changed") else None
+        rows.append([v.get("name"), v.get("version"), v.get("vendor"), v.get("type"), v.get("scope"),
+                     f"{local(when):%b %d, %Y}" if when else None])
+    rows.sort(key=lambda r: (r[3] == SOFTWARE_OS_UPDATE, str(r[0] or "").lower(), order(r[1])))
+    if got is not None and not got:
+        notes.append(f"Aternity lists no installed software for {pc}.")
+    n = pc_counts([{c["name"]: r[0], c["type"]: r[3]} for r in rows])
+    return {"pc": pc, "read": got is not None, "rows": rows, "programs": n["programs"],
+            "columns": ["Program", "Version", "Vendor", "Type", "For", "Last change"], "notes": notes}
+
+
 def pc_list_columns(q: _Reads) -> list[str]:
     """The columns of a PC's own list that this Aternity publishes (PC_LIST)."""
     return [SOFTWARE_COLUMNS[k] for k in PC_LIST if q.has(SOFTWARE_SOURCE, SOFTWARE_COLUMNS[k])]

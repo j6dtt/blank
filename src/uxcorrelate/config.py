@@ -137,6 +137,19 @@ INVENTORY_FILLED = (
     ("Where and whose", (("Location", "BUSINESS_LOCATION", "many"), ("Last user", "USERNAME", "many"),
                          ("Department", "USER_DEPARTMENT", "many"))),
 )
+# The Inventory tab's rules: the column behind each (Riverbed's names, as INVENTORY_FILLED), and
+# Aternity's own words as the live Aternity sends them (verify --inventory, Nov 20 and 21 2026:
+# kinds of device 'Virtual Desktop' / 'Desktop' / 'Laptop'; agent statuses 'Reporting' /
+# 'Disconnected' / 'Stopped'; BitLocker 'On' / 'Off'; kinds of disk 'Virtual' / 'SSD' / 'NVMe' /
+# 'HDD-7200')
+INVENTORY_ROLES = {"kind": "DEVICE_TYPE", "agent": "AGENT_VERSION", "bitlocker": "OS_BITLOCKER_PROTECTION_STATUS",
+                   "boot": "BOOT_LAST_TIMESTAMP", "stability": "MS_STABILITY_INDEX", "free": "OS_FREE_DISK_SPACE",
+                   "disk": "OS_DISK_TYPE", "serial": "DEVICE_SERIAL_NUMBER", "user": "USERNAME",
+                   "department": "USER_DEPARTMENT", "location": "BUSINESS_LOCATION"}
+INVENTORY_WORDS = {"virtual": "virtual",  # a kind of device with this word in it is a virtual desktop
+                   "stopped": ("Stopped",),  # the agent does not run
+                   "bitlocker_off": ("Off",),
+                   "spinning": "HDD"}  # a kind of disk that starts so is a spinning hard disk
 # `verify --actions` (which applications have measured actions): with VERSION_SOURCES' columns,
 # the application's type as Aternity sends it, and its usage time in app usage (no documented
 # unit: used only to order the applications with no measured action, never printed)

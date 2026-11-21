@@ -438,6 +438,31 @@ flags. Top to bottom:
 Each chart has "Table ▾" with its numbers. Counts and names are saved in
 `$UXCORRELATE_DATA/software/<date>.json` (no PC or user names), 90 days.
 
+Inventory tab (sixth; link `#inventory`): the PCs in Aternity's device
+list. It is read every hour (about 1.4 s for 5,211 PCs), with one more
+light read of which PCs ran an application in 8 days, and held in memory:
+nothing of it is saved, and every list and card answers from that read.
+- **Tiles**: PCs in the list by Aternity's kind of device, heard from in
+  the last 7 days, retired (the Software tab's count), things to look at.
+- **Needs a look**, most PCs first, each count with its share of the PCs
+  it is counted among: an older Aternity agent than most, BitLocker off
+  on a physical PC, not used in 8 days, not restarted in over 14 days,
+  not heard from in 8 days or more, agent stopped, a stability index
+  under 5, little free space (Aternity's bands that end at 10 GB or
+  under), still on a spinning hard disk. A click lists the PCs, each with
+  "Investigate ▸" and its card. A line this Aternity has no column for is
+  said "not judged", never 0.
+- **Last heard from**, with the agent's status in Aternity's own words.
+- **Retired PCs** (software in Aternity, no longer in its device list) and
+  **In the list, but not used**.
+- **Find a PC** by name, last person or serial number: a card of every
+  column Aternity fills for it, as it sends it, the lines it is on, and
+  "Investigate ▸", "Its software ▸" (its installed list, read then), "Its
+  start-ups ▸".
+The limits are constants at the top of `inventory.py`. Step 2 (the
+charts of what the PCs are, with a virtual / physical switch) and Ask
+anything's look-ups are not built yet.
+
 ## The admin page
 
 Who uses the app and how, at `/admin`. No link from the main page: you
@@ -1071,6 +1096,7 @@ src/uxcorrelate/
   verify.py      checks the config against live Aternity / NetIM
   report.py      text report
   cli.py         command line
+  inventory.py   the Inventory tab: Aternity's device list, hourly, in memory
   usage.py       the admin page's counts and who used the app
   secureview.py  the admin page's SecureView (devices people sit at)
   actions.py     the admin page's Actions (one user's actions today)

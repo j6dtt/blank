@@ -39,7 +39,7 @@ GIVE_UP = timedelta(hours=2)  # Aternity sends rows late: a visit not placed by 
 ONE_ADDRESS = 10  # at least this many visits, all from one address: people cannot be told apart
 SAVE_EVERY_S = 60  # the day's file is written at most this often (and after each read of Aternity)
 TABS = {"today": "Today", "care": "Care list", "investigate": "Investigate", "startups": "Start-ups",
-        "software": "Software"}
+        "software": "Software", "inventory": "Inventory"}
 # what an investigation found first (answer["found"][0]["issue"], correlate._issue), in words
 FOUND = {"disk": "a failing disk", "crash": "an app crash", "hang": "an app hang", "system": "a system event",
          "background": "a background crash", "limit": "a PC limit (CPU, memory, disk queue)",

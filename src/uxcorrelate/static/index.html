@@ -239,6 +239,18 @@
   .swRows .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
   .bar { height: 10px; background: var(--accent); border-radius: 0 3px 3px 0; min-width: 2px; }
   .bar.most { box-shadow: 0 0 0 2px var(--brass); }
+  /* the Inventory tab (dv*): bars as the Software tab's, a PC's card as a list of what Aternity sends */
+  .bar.look { background: var(--warn); } .bar.faint { background: var(--muted); opacity: .5; }
+  .flag.dvLine { grid-template-columns: 270px 1fr auto; }
+  @media (max-width: 640px) { .flag.dvLine { grid-template-columns: 1fr auto; } }
+  .dvRows > div:first-child, .dvRows > button.link { overflow-wrap: anywhere; }
+  .dvNote { font-size: 12px; color: var(--muted); margin-top: 6px; max-width: 86ch; }
+  .dvHead { background: var(--bg); border-left: 4px solid var(--accent); border-radius: 4px; padding: 8px 12px; margin-top: 10px; }
+  .dvHead button.link { padding: 0; }
+  .dvCard { display: grid; grid-template-columns: minmax(120px, auto) 1fr; gap: 3px 14px; font-size: 13px; margin: 8px 0 0; }
+  .dvCard dt { color: var(--muted); } .dvCard dd { margin: 0; overflow-wrap: anywhere; }
+  .dvCard .grp { grid-column: 1 / -1; font-weight: 700; margin-top: 8px; color: var(--text); }
+  .dvHits { display: grid; gap: 4px; margin-top: 8px; } .dvHits button.link { text-align: left; padding: 2px 0; }
   .strip { display: flex; gap: 2px; height: 14px; }
   .strip i { display: block; min-width: 3px; border-radius: 2px; }
   .strip i.most { box-shadow: inset 0 0 0 2px var(--brass); }
@@ -347,7 +359,7 @@
       fill="var(--brass)" style="fill:var(--brass)">J6</text></svg>
   <div class="brand"><small>J6 Preservation Society</small><!--title--></div>
   <div id="conn" aria-label="Connections"></div></div>
-  <nav><button id="tabToday" class="on">Today</button><button id="tabCare">Care list<span class="badge" id="careCount" hidden></span></button><button id="tabInv">Investigate</button><button id="tabLog">Start-ups</button><button id="tabSoft">Software<span class="badge" id="softCount" hidden></span></button></nav>
+  <nav><button id="tabToday" class="on">Today</button><button id="tabCare">Care list<span class="badge" id="careCount" hidden></span></button><button id="tabInv">Investigate</button><button id="tabLog">Start-ups</button><button id="tabSoft">Software<span class="badge" id="softCount" hidden></span></button><button id="tabDv">Inventory</button></nav>
 </header></div>
 <main>
   <div id="todayBox">
@@ -488,6 +500,51 @@
         <button type="button" class="link" id="sPcsClose">✕ Close</button></div>
       <div class="tableWrap scroll"><table id="sPcsList"></table></div>
     </section>
+  </div>
+  <div id="dvBox" hidden>
+    <section class="panel">
+      <div class="todayHead"><h2>Inventory</h2><span class="muted" id="dvWhen"></span></div>
+      <div id="dvStatus" class="muted" style="margin-top:6px"></div>
+      <div class="tiles" id="dvTiles"></div>
+      <ul class="notes muted" id="dvNotes"></ul>
+    </section>
+    <div id="dvMain" hidden>
+      <section class="panel" style="margin-top:16px" id="dvLookBox">
+        <h2>Needs a look</h2>
+        <p class="dvNote" style="margin-top:2px">Most PCs first. Click a line for its PCs. Each count has its share of the PCs it is counted among.</p>
+        <div id="dvLines"></div>
+        <div id="dvQuiet" class="dvNote"></div>
+      </section>
+      <div class="grid2" style="margin-top:16px">
+        <section class="panel" id="dvHeardBox">
+          <h2>Last heard from</h2>
+          <p class="dvNote" style="margin-top:2px">When Aternity's agent on the PC last reported. It says nothing about whether someone used the PC.</p>
+          <div id="dvHeard"></div>
+          <div class="vsub">What Aternity says the agent is doing</div>
+          <div id="dvAgent"></div>
+        </section>
+        <section class="panel" id="dvRetiredBox">
+          <h2>Retired PCs</h2>
+          <p class="dvNote" style="margin-top:2px">PCs with installed software in Aternity that are no longer in its device list.</p>
+          <div id="dvRetired"></div>
+          <div class="vsub">In the list, but not used</div>
+          <div id="dvUsed"></div>
+        </section>
+      </div>
+      <section class="panel noExplain" style="margin-top:16px" id="dvFindBox">
+        <h2>Find a PC</h2>
+        <p class="dvNote" style="margin-top:2px">By PC name, person or serial number, from the latest read of Aternity's device list.</p>
+        <form id="dvFind" class="chatForm" autocomplete="off"><input id="dvQ" maxlength="80" placeholder="PC name, person or serial number" aria-label="PC name, person or serial number"><button>Find</button></form>
+        <div id="dvFound"></div>
+        <div id="dvPc"></div>
+      </section>
+      <section class="panel noExplain" id="dvPcs" hidden style="margin-top:16px">
+        <div class="todayHead" style="justify-content:space-between"><h2 id="dvPcsTitle"></h2>
+          <button type="button" class="link" id="dvPcsClose">✕ Close</button></div>
+        <p class="dvNote" id="dvPcsNote"></p>
+        <div class="tableWrap scroll"><table id="dvPcsList"></table></div>
+      </section>
+    </div>
   </div>
   <section class="panel" id="invForm" hidden>
     <form id="f">
@@ -688,7 +745,7 @@ async function init() {
 }
 
 // The tabs; switching keeps each tab's form and last result.
-const TAB_LINK = { today: "today", care: "care", inv: "investigate", log: "startups", soft: "software" };
+const TAB_LINK = { today: "today", care: "care", inv: "investigate", log: "startups", soft: "software", dv: "inventory" };
 let tabNow = "today";  // the tab open (Ask anything sends what it shows)
 const scrollOf = {};  // where each tab was scrolled to: a tab opens where it was left
 // top: open the tab at its top (a result is put in it now); clicking the tab that is open goes to its top too
@@ -705,11 +762,11 @@ function mode(tab, top = false) {
   if (tab !== tabNow) scrollOf[tabNow] = scrollY;
   const back = top || tab === tabNow ? 0 : scrollOf[tab] || 0;
   tabNow = tab;
-  const inv = tab === "inv", logons = tab === "log", today = tab === "today", care = tab === "care", soft = tab === "soft";
+  const inv = tab === "inv", logons = tab === "log", today = tab === "today", care = tab === "care", soft = tab === "soft", dv = tab === "dv";
   $("tabToday").classList.toggle("on", today); $("tabInv").classList.toggle("on", inv); $("tabLog").classList.toggle("on", logons);
-  $("tabCare").classList.toggle("on", care); $("tabSoft").classList.toggle("on", soft);
+  $("tabCare").classList.toggle("on", care); $("tabSoft").classList.toggle("on", soft); $("tabDv").classList.toggle("on", dv);
   $("todayBox").hidden = !today; $("careBox").hidden = !care; $("invForm").hidden = !inv; $("logForm").hidden = !logons;
-  $("softBox").hidden = !soft;
+  $("softBox").hidden = !soft; $("dvBox").hidden = !dv;
   $("out").hidden = !inv || !$("out").dataset.has; $("lout").hidden = !logons || !$("lout").dataset.has;
   $("error").textContent = "";
   history.replaceState(null, "", "#" + TAB_LINK[tab]);
@@ -717,6 +774,7 @@ function mode(tab, top = false) {
   if (today) loadToday();
   if (care) loadCare();
   if (soft) loadSoftware();
+  if (dv) loadDv();
   scrollTo(0, back);
   pinBar();
 }
@@ -742,6 +800,7 @@ $("tabCare").addEventListener("click", () => mode("care"));
 $("tabInv").addEventListener("click", () => mode("inv"));
 $("tabLog").addEventListener("click", () => mode("log"));
 $("tabSoft").addEventListener("click", () => mode("soft"));
+$("tabDv").addEventListener("click", () => mode("dv"));
 
 // ---- Today: what Aternity rated Critical or Major today, against the same kind of day before ----
 const SEV = { Critical: "var(--bad)", Major: "var(--warn)", Minor: "var(--muted)" };
@@ -1432,9 +1491,11 @@ const ASK_EXAMPLES = {
   startups: ["What took the time on the slowest start-ups?", "Which start-ups were slower than their PC's usual, and why?"],
   software: ["Which programs are most out of date?", "Which software crashed the most this week?",
     "Which PC has the most software installed?", "What does this page say needs doing first?"],
+  inventory: ["What does this page say needs a look first?", "What does \"not heard from\" mean here?",
+    "Which line has the most PCs, and what does it mean?"],
 };
 // what the tab open shows (as Explain ▸ reads a panel), sent with each question for the AI's page look-up
-const TAB_SHOWS = { today: "todayBox", care: "careBox", inv: "out", log: "lout", soft: "softBox" };
+const TAB_SHOWS = { today: "todayBox", care: "careBox", inv: "out", log: "lout", soft: "softBox", dv: "dvBox" };
 function tabShown() {
   const box = $(TAB_SHOWS[tabNow]);
   return { tab: TAB_LINK[tabNow], lines: box && !box.hidden ? shown(box).slice(0, 5000) : [] };
@@ -2498,6 +2559,169 @@ $("sPcsList").addEventListener("click", (ev) => {
   investigateNow({ device: x.device, username: x.username || "", start, end: Math.min(now, x.last ? start + 24 * 3600e3 : now) });
 });
 
+// ---- Inventory (dv*): Aternity's device list, read every hour and held by the server. Every list and card
+// answers from that read; only "Its software" reads Aternity at the click. ----
+let dvData = null, dvTimer = null, dvList = null, dvCard = null;
+const dvWhenText = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "no date");
+// rows of [name, count, bar class, the line a click opens]: a bar, the count and its share of `of`
+function dvBars(rows, of) {
+  const top = Math.max(1, ...rows.map((r) => r[1]));
+  return `<div class="swRows dvRows">` + rows.map(([name, v, cls, line]) =>
+    (line && v ? `<button type="button" class="link" data-dvline="${esc(line)}">${esc(name)}</button>` : `<div>${esc(name)}</div>`)
+    + `<div><div class="bar${cls ? " " + cls : ""}" style="width:${Math.max(0.5, v / top * 100)}%${v ? "" : ";visibility:hidden"}"></div></div>`
+    + `<span class="num"><b>${n(v)}</b>${of ? ` · ${swPct(v, of)}` : ""}</span>`).join("") + `</div>`;
+}
+async function loadDv() {
+  clearTimeout(dvTimer);
+  if ($("dvBox").hidden) return;
+  let v = null;
+  try {
+    const r = await fetch("api/inventory");
+    v = await readJson(r);
+    if (!r.ok) throw new Error(detail(v));
+    dvData = v; renderDv(v);
+  } catch (e) { $("dvStatus").textContent = "Could not load the inventory: " + e.message; }
+  dvTimer = setTimeout(loadDv, (v && v.ready && !v.reading ? 300 : 5) * 1000);
+}
+function renderDv(v) {
+  $("dvMain").hidden = !v.ready;
+  if (!v.ready) {
+    $("dvWhen").textContent = "";
+    $("dvStatus").textContent = v.off || `${v.status}… The first read takes a few seconds; this page fills in by itself.`;
+    $("dvTiles").innerHTML = $("dvNotes").innerHTML = "";
+    return;
+  }
+  $("dvWhen").textContent = `as Aternity lists the PCs · read ${v.as_of_local} (${v.zone}), every ${v.every_min} minutes`;
+  $("dvStatus").textContent = v.status === "Read" ? "" : `${v.status} The page shows the last read until then.`;
+  const h = v.heard, R = v.rules, ret = v.retired, in7 = h.today + h.week;
+  const tile = (big, what, sub, warn) => `<div class="tile"><div class="big">${big}</div><div class="what">${warn ? '<span class="warn">▲</span> ' : ""}${esc(what)}</div>`
+    + (sub ? `<div class="u">${esc(sub)}</div>` : "") + `</div>`;
+  $("dvTiles").innerHTML = tile(n(v.pcs), "PCs in Aternity's device list", v.kinds.map((k) => `${n(k.n)} ${k.kind}`).join(" · "))
+    + (h.known ? tile(n(in7), `heard from in the last ${R.silent_days - 1} days`, h.none ? `${pcs(h.none)} have no date from Aternity` : "")
+      : tile("—", "last heard from", "Aternity does not publish it"))
+    + tile(ret ? n(ret.n) : "—", "retired", ret ? "their software is still in Aternity; they are no longer in its device list"
+      : "known after the Software tab's first read")
+    + tile(n(v.lines.length), v.lines.length === 1 ? "thing to look at" : "things to look at", "the list below", v.lines.length);
+  $("dvNotes").innerHTML = v.notes.map((x) => `<li>${esc(x)}</li>`).join("");
+  // Needs a look: a count with its share of the PCs it is counted among (the user's choice: both)
+  $("dvLines").innerHTML = v.lines.length ? v.lines.map((l) => `<div class="flag dvLine" role="button" tabindex="0" data-dvline="${esc(l.key)}">`
+    + `<span class="kind">▲ ${esc(l.label)}</span><span class="ftext">${esc(l.text)}</span>`
+    + `<span class="num"><b>${pcs(l.n)}</b> · ${swPct(l.n, l.of)} of ${n(l.of)}</span></div>`).join("")
+    : `<p class="muted">Nothing needs a look in the latest read.</p>`;
+  $("dvQuiet").innerHTML = (v.quiet.length ? `No PC on: ${v.quiet.map(esc).join(" · ")}.` : "")
+    + v.unknown.map((u) => ` Not judged: ${esc(u.label)} (${esc(u.why)}).`).join("");
+  // Last heard from, and the agent's status in Aternity's own words
+  $("dvHeard").innerHTML = h.known ? dvBars([["Today", h.today], [`1 to ${R.silent_days - 1} days ago`, h.week],
+    [`${R.silent_days} to ${R.old_days - 1} days ago`, h.silent, "look", "silent"], [`${R.old_days} days ago or more`, h.old, "look", "silent"],
+    ["No date from Aternity", h.none, "faint"]], v.pcs)
+    + `<p class="dvNote">${h.longest ? (h.longest.days ? `The PC silent the longest was last heard ${n(h.longest.days)} days ago (${esc(h.longest.day)}).`
+      : "Every PC with a date was heard from today.") : ""}${h.none ? " A PC with no date is not gone: Aternity just gives no time for it." : ""}</p>`
+    : `<p class="muted">Aternity does not say when it last heard from a PC.</p>`;
+  $("dvAgent").innerHTML = v.statuses.length ? dvBars(v.statuses.map((x) => [x.status, x.n]), v.pcs)
+    : `<p class="muted">Aternity does not publish the agent's status.</p>`;
+  // Retired (the Software tab's own count) and not used
+  $("dvRetired").innerHTML = ret ? dvBars([["Still in the device list", ret.listed], ["Retired: software only", ret.n, "faint", "retired"]], ret.listed + ret.n)
+    + `<p class="dvNote">As the Software tab counted them at its read of ${esc(ret.as_of_local)}. It leaves the retired ones out of every count.</p>`
+    : `<p class="muted">Known after the Software tab's first read (a few minutes after a restart).</p>`;
+  const u = v.used;
+  $("dvUsed").innerHTML = u.known ? dvBars([[`Ran an application in the last ${R.use_days} days`, u.used], [`Not used in ${R.use_days} days`, u.unused, "look", "unused"]], u.of)
+    + `<p class="dvNote">Of the ${pcs(u.of)} not silent for ${R.silent_days} days or more. A PC that reports but runs nothing: spare stock, a kiosk, or a desktop nobody is assigned to.</p>`
+    : `<p class="muted">Not known: Aternity's app usage could not be read (see the notes at the top).</p>`;
+}
+// The PCs behind a line, from the server's read: Investigate ▸ and the PC's card
+async function openDvPcs(line, el) {
+  const box = $("dvPcs");
+  (el.closest(".panel") || $("dvLookBox")).after(box);
+  box.hidden = false;
+  $("dvPcsTitle").textContent = "Listing the PCs…"; $("dvPcsNote").textContent = ""; $("dvPcsList").innerHTML = "";
+  box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  try {
+    const r = await fetch(`api/inventory/pcs?${new URLSearchParams({ line })}`);
+    const w = await readJson(r);
+    if (!r.ok) throw new Error(detail(w));
+    dvList = w;
+    $("dvPcsTitle").textContent = `${w.what}: ${pcs(w.total)}` + (w.total > w.rows.length ? ` (the first ${n(w.rows.length)} shown)` : "");
+    $("dvPcsNote").textContent = w.text + (w.as_of_local ? ` From the read of ${w.as_of_local}.` : "");
+    const bare = line === "retired";
+    $("dvPcsList").innerHTML = w.rows.length ? (bare ? `<tr><th>PC</th><th></th></tr>` : `<tr><th></th><th>PC</th><th>Kind</th><th>Last user</th><th>Department</th><th>Last heard</th><th></th></tr>`)
+      + w.rows.map((x, i) => bare ? `<tr><td>${esc(x.name)}</td><td class="muted">${esc(x.what)}</td></tr>`
+        : `<tr><td><button type="button" class="link" data-dvinv="${i}">Investigate ▸</button></td>`
+          + `<td><button type="button" class="link" data-dvpc="${esc(x.name)}">${esc(x.name)}</button></td><td>${esc(x.kind ?? "—")}</td><td>${esc(x.username ?? "—")}</td>`
+          + `<td>${esc(x.department ?? "—")}</td><td>${esc(dvWhenText(x.heard))}</td><td>${esc(x.what ?? "")}</td></tr>`).join("")
+      : `<tr><td class="muted">${w.total ? "Their names are not held yet." : "None in the latest read."}</td></tr>`;
+  } catch (e) { $("dvPcsTitle").textContent = "Could not list the PCs: " + e.message; }
+}
+function dvInvestigate(x) {  // the last 24 hours of that PC (and its last user, when Aternity names one)
+  investigateNow({ device: x.name, username: x.username || "", start: Date.now() - 24 * 3600e3, end: Date.now() });
+}
+// One PC's card: every column Aternity fills for it, as it sends it
+async function openDvPc(name) {
+  $("dvFound").innerHTML = ""; $("dvPc").innerHTML = `<p class="muted">Looking up ${esc(name)}…</p>`;
+  $("dvFindBox").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  try {
+    const r = await fetch(`api/inventory/pc?${new URLSearchParams({ name })}`);
+    const c = await readJson(r);
+    if (!r.ok) throw new Error(detail(c));
+    dvCard = c;
+    const R = dvData ? dvData.rules : {}, days = (d) => (d === null || d === undefined ? "" : d === 0 ? " (today)" : ` (${n(d)} ${d === 1 ? "day" : "days"} ago)`);
+    let group = "";
+    const fields = c.fields.map((f) => (f.group !== group ? `<div class="grp">${esc(group = f.group)}</div>` : "") + `<dt>${esc(f.label)}</dt><dd>${esc(f.value)}</dd>`).join("");
+    $("dvPc").innerHTML = `<div class="dvHead"><b>${esc(c.name)}</b>${c.kind ? ` · ${esc(c.kind)}` : ""} · <button type="button" class="link" id="dvPcInv">Investigate ▸</button>`
+      + ` · <button type="button" class="link" id="dvPcSw">Its software ▸</button> · <button type="button" class="link" id="dvPcLog">Its start-ups ▸</button></div>`
+      + `<p class="dvNote">${c.lines.length ? `<span class="warn">▲</span> On "Needs a look": ${c.lines.map(esc).join(" · ")}.` : `On no line of "Needs a look".`}</p>`
+      + `<dl class="dvCard"><dt>Last heard from</dt><dd>${esc(dvWhenText(c.heard))}${days(c.heard_days)}${c.status ? ` · agent '${esc(c.status)}'` : ""}</dd>`
+      + `<dt>In use</dt><dd>${c.used === null ? "not known" : c.used ? `ran an application in the last ${n(c.use_days)} days` : `no application ran on it in ${n(c.use_days)} days`}</dd>`
+      + (c.boot_days === null || c.boot_days === undefined ? "" : `<dt>Since its last start-up</dt><dd>${n(c.boot_days)} ${c.boot_days === 1 ? "day" : "days"}</dd>`)
+      + fields + `</dl><p class="dvNote">As Aternity's device list had it at the read of ${esc(c.as_of_local)}. Windows versions and updates are on the Software tab.</p>`;
+  } catch (e) { $("dvPc").innerHTML = `<p class="muted">Could not show ${esc(name)}: ${esc(e.message)}</p>`; }
+}
+$("dvFind").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const q = $("dvQ").value.trim();
+  $("dvPc").innerHTML = ""; $("dvFound").innerHTML = `<p class="muted">Looking…</p>`;
+  try {
+    const r = await fetch(`api/inventory/find?${new URLSearchParams({ q })}`);
+    const w = await readJson(r);
+    if (!r.ok) throw new Error(detail(w));
+    if (w.short) { $("dvFound").innerHTML = `<p class="muted">Type at least ${dvData ? dvData.rules.find_min : 2} characters.</p>`; return; }
+    if (w.rows.length === 1) { openDvPc(w.rows[0].name); return; }
+    $("dvFound").innerHTML = w.rows.length ? `<div class="dvHits">` + w.rows.map((x) => `<button type="button" class="link" data-dvpc="${esc(x.name)}">${esc(x.name)}`
+      + `<span class="muted" style="font-weight:400"> · ${esc(x.kind ?? "kind not given")}${x.username ? ` · ${esc(x.username)}` : ""}${x.department ? ` · ${esc(x.department)}` : ""}</span></button>`).join("")
+      + `</div>` + (w.more ? `<p class="dvNote">… and ${n(w.more)} more: type more of the name.</p>` : "")
+      : `<p class="muted">No PC in Aternity's device list has "${esc(q)}" in its name, last user or serial number.</p>`;
+  } catch (e) { $("dvFound").innerHTML = `<p class="muted">Could not search: ${esc(e.message)}</p>`; }
+});
+$("dvPcsClose").addEventListener("click", () => { $("dvPcs").hidden = true; });
+$("dvBox").addEventListener("click", async (ev) => {
+  const line = ev.target.closest("[data-dvline]"), pc = ev.target.closest("[data-dvpc]"), inv = ev.target.closest("[data-dvinv]");
+  if (line) openDvPcs(line.dataset.dvline, line);
+  else if (pc) openDvPc(pc.dataset.dvpc);
+  else if (inv && dvList) dvInvestigate(dvList.rows[Number(inv.dataset.dvinv)]);
+  else if (ev.target.id === "dvPcInv" && dvCard) dvInvestigate(dvCard);
+  else if (ev.target.id === "dvPcLog" && dvCard) {  // its start-ups of the last 7 days, on the Start-ups tab
+    const f = $("lf");
+    f.username.value = ""; f.device.value = dvCard.name; f.location.value = "";
+    f.start.value = toLocalInput(new Date(Date.now() - 7 * 86400e3)); f.end.value = toLocalInput(new Date());
+    mode("log", true);
+    f.requestSubmit();
+  } else if (ev.target.id === "dvPcSw" && dvCard) {  // its own installed list, read from Aternity now
+    const name = dvCard.name;
+    swDialog(`${name}: installed software`, `<p class="muted">Reading from Aternity…</p>`);
+    try {
+      const r = await fetch(`api/inventory/software?${new URLSearchParams({ pc: name })}`);
+      const w = await readJson(r);
+      if (!r.ok) throw new Error(detail(w));
+      swDialog(`${name}: ${n(w.programs)} programs installed`, (w.notes.length ? `<p class="dvNote">${w.notes.map(esc).join(" ")}</p>` : "")
+        + (w.rows.length ? `<div class="tableWrap scroll"><table><tr>${w.columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>`
+          + w.rows.map((x) => `<tr>${x.map((c) => `<td>${esc(c ?? "—")}</td>`).join("")}</tr>`).join("") + `</table></div>` : ""));
+    } catch (e) { swDialog(`${name}: installed software`, `<p class="muted">Could not read it: ${esc(e.message)}</p>`); }
+  }
+});
+$("dvLines").addEventListener("keydown", (ev) => {
+  const line = ev.target.closest("[data-dvline]");
+  if (line && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); openDvPcs(line.dataset.dvline, line); }
+});
+
 // Compare versions: one line per kind of issue; ● the first version, ○ the second
 function swDumbbell(lines, la, lb) {
   if (!lines.length) return `<p class="muted">Nothing to line up.</p>`;
@@ -2670,7 +2894,7 @@ $("dlgBody").addEventListener("submit", (ev) => {
   if (q && explaining) explainNow(explaining.tab, explaining.panel, explaining.lines, q);
 });
 // Software, Investigate and Start-ups: the same link at the bottom right of every panel that shows data
-for (const [box, tab] of [["softBox", "software"], ["out", "investigate"], ["lout", "startups"]]) {
+for (const [box, tab] of [["softBox", "software"], ["dvBox", "inventory"], ["out", "investigate"], ["lout", "startups"]]) {
   $(box).querySelectorAll("section.panel:not(.noExplain)").forEach((p) => p.insertAdjacentHTML("beforeend",
     `<div class="exRow noExplain"><button type="button" class="link explain" data-tab="${tab}">Explain ▸</button></div>`));
 }

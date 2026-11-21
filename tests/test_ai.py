@@ -96,7 +96,7 @@ def test_a_good_service_passes_every_check_and_the_key_is_never_printed():
     assert [c.ok for c in checks.values()] == [None, True, True, True, True, True, True, True]
     assert "Right for 7 of 7 open questions" in checks["answers open questions (Ask anything)"].message
     assert "A verdict line, 2 points (2 with their label) and a next step" in checks["writes the assessment"].message
-    assert "Right for 10 of 10 made-up panels" in checks["explains a panel"].message
+    assert "Right for 12 of 12 made-up panels" in checks["explains a panel"].message
     assert "right up to 40,000." in checks["explains a long page"].message
     assert len(checks["explains a long page"].rows) == 3
     assert "Right in 12 of 12 tries" in checks["picks the right software look-up"].message
@@ -171,7 +171,7 @@ def test_explain_a_number_of_its_own_fails_and_a_long_page_is_measured():
     checks, text = run(explains="invents")
     assert checks["writes the assessment"].ok is False and "(5000)" in checks["writes the assessment"].message
     c = checks["explains a panel"]
-    assert c.ok is False and "Right for 0 of 10" in c.message and len(c.rows) == 10
+    assert c.ok is False and "Right for 0 of 12" in c.message and len(c.rows) == 12
     assert "a number that is not on the panel (37.5)" in c.rows[0] and c.rows[0].startswith("Today, \"Major slow actions\"")
     checks, _ = run(reads=20_000)  # reads a tile and a whole tab, not a whole investigation
     c = checks["explains a long page"]

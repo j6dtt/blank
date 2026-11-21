@@ -584,6 +584,41 @@ demo mode: nothing in `src/` knows about it.
   disk. Not done: a note says PCs that are gone are still counted.
   Windows counts were already from the device list; app versions are
   from activity. verify --inventory's 4. reads the same and times it.
+- `inventory.py`: the "Inventory" tab, sixth (`/api/inventory`,
+  `#inventory`; the user's "build it" for the first cut, Nov 21 2026,
+  with "1. hourly, 2. keep it, 3. you recommendations, 4. both";
+  proposal 2 in docs/roadmap.md, built on what the live Aternity fills:
+  verify --inventory --columns, 18 of 23 columns published, 4,326 of
+  5,211 PCs virtual desktops). One reader (`keep_reading`, every
+  `READ_EVERY_MIN` 60, `RETRY_MIN` after a failure with the last read
+  kept; the schema asked again after `SCHEMA_HOURS`) reads the device
+  list with every published column of `config.INVENTORY_FILLED`, one
+  row per PC (its latest), and which PCs ran an application in
+  `USE_DAYS` (daily app usage, each PC once: the Today reader's names
+  hold only 24 hours after a restart). In memory only: no PC, user or
+  serial number on disk. "Needs a look" (`LINES`, `_judged`; each line
+  n of the PCs it is counted among, a count with its share on the
+  page: the user's "both"): an agent older than the version most PCs
+  have, BitLocker off on a physical PC (`is_virtual`: Aternity's kind
+  of device has `INVENTORY_WORDS["virtual"]`), not used, no restart in
+  over `RESTART_DAYS` (from `BOOT_LAST_TIMESTAMP`; a PC with none is
+  not judged), not heard from in `SILENT_DAYS`, agent stopped
+  (`INVENTORY_WORDS["stopped"]`), stability index under
+  `STABILITY_LOW`, little free space (`band_top_gb`: Aternity sends
+  bands of words, those that end at `FREE_LOW_GB` or under; the low
+  bands were not seen by name), a spinning disk (starts with "HDD").
+  A line whose column is not published, or "used" when app usage
+  failed, is `unknown` ("not judged"), never 0. `line_pcs`, `find`
+  (name, last user, serial number), `card` answer from the read held;
+  only `/api/inventory/software` reads Aternity at the click
+  (`software.pc_list`). Retired PCs are the Software tab's own count
+  and names (`retired_pcs` in web.py: `list.left_out`,
+  `Software.gone`). No AD on it: the main page has no login and AD
+  look-ups there stay with the Care list; the card shows Aternity's
+  own last user and department. Page: `dv*` functions and `dvBox` in
+  index.html (the tab's key is `dv`: `inv` is Investigate). Not built:
+  step 2 (the hardware charts with a virtual / physical switch), Ask
+  anything's look-ups, a drawing for the tab.
 - `software_chat.py`: the Software tab's look-ups. Ask anything uses its
   blocks as they are (`agent.SOFTWARE_TOOLS`); its own chat "Ask about
   software" (`/api/software/chat`, the same loop as `chat.converse`) is
@@ -1083,7 +1118,7 @@ demo mode: nothing in `src/` knows about it.
   always (20 kept by count dropped running ones).
 - `static/index.html` is the single-page UI. It is dependency-free and draws
   its charts with inline SVG. Tabs, in order: Today, Care list,
-  Investigate, Start-ups, Software (`mode()`; each with a link,
+  Investigate, Start-ups, Software, Inventory (`mode()`; each with a link,
   `TAB_LINK`). A tab opens where it was left (`scrollOf`), at its top when
   a result is put in it (`mode(tab, true)`) or it is clicked when open.
   Scrolled down to the tabs, the bar pins as one slim row (`pinBar`,

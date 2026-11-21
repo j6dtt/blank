@@ -933,11 +933,25 @@ class Sample:
                          "OS_VERSION_UPDATE_DATE": _at(self.today - timedelta(days=3 if kb else 33), 2),
                          "OS_TOTAL_DISK_SPACE": pc["disk"], "SCCM_CLIENT_VERSION": "5.00.9128.1000",
                          "DEVICE_IMAGE_BUILD_NUMBER": pc["image"],
-                         # made up, for verify --inventory's 5th answer (what the live Aternity sends is not known)
+                         # made up, for the Inventory tab and verify --inventory's 5th answer, in the forms the
+                         # live Aternity sends (stage, Nov 21 2026: kinds of device, sizes as text, bands of words)
+                         "DEVICE_TYPE": "Virtual Desktop" if pc["virtual"] else ("Laptop" if pc["n"] % 3 else "Desktop"),
                          "DEVICE_MANUFACTURER": "Sample Virtual" if pc["virtual"] else "Sample Devices",
                          "DEVICE_MODEL": "Virtual Desktop" if pc["virtual"] else f"Notebook {14 + pc['n'] % 2 * 2}",
-                         "BOOT_LAST_TIMESTAMP": _at(self.today - timedelta(days=pc["n"] % 12), 7),
-                         "TIME_LAST_REPORTING": _sec(now - timedelta(minutes=pc["n"] % 9))})
+                         "DEVICE_SERIAL_NUMBER": f"SN{pc['n']:05d}", "DEVICE_MEMORY": "8GB" if pc["virtual"] else "16GB",
+                         "OS_DISK_TYPE": "Virtual" if pc["virtual"] else ("HDD-7200" if pc["n"] % 17 == 0 else "SSD"),
+                         "OS_FREE_DISK_SPACE": ("5 GB to 10 GB" if pc["n"] % 13 == 0 else "10 GB to 20 GB" if pc["virtual"]
+                                                else "200 GB to 500 GB"),
+                         "BOOT_LAST_TIMESTAMP": _at(self.today - timedelta(days=pc["n"] % 12 + (9 if pc["n"] % 7 == 0 else 0)), 7),
+                         "OS_BITLOCKER_PROTECTION_STATUS": "On" if not pc["virtual"] and pc["n"] % 4 else "Off",
+                         "AGENT_VERSION": "12.9.1.31" if pc["n"] % 6 == 0 else "12.9.1.40",
+                         "AGENT_CURRENT_STATUS": ("Stopped" if pc["n"] % 23 == 0 else "Disconnected" if pc["n"] % 11 == 0
+                                                  else "Reporting"),
+                         "MS_STABILITY_INDEX": str(round(3.5 + pc["n"] % 14 / 2, 1)),
+                         "USERNAME": (f"sample{37 + (pc['n'] - 101) % 14:02d}" if pc["virtual"] else f"sample{pc['n']:02d}"),
+                         "USER_DEPARTMENT": ("Sample Finance", "Sample Claims", "Sample Sales")[pc["n"] % 3],
+                         "TIME_LAST_REPORTING": _sec(now - (timedelta(days=9 + pc["n"] % 5) if pc["n"] % 19 == 0
+                                                            else timedelta(minutes=pc["n"] % 9)))})
         return rows
 
     # -- daily sums (APPLICATIONS_DAILY, BUSINESS_ACTIVITIES_DAILY) -------------

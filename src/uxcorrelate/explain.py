@@ -21,7 +21,7 @@ from __future__ import annotations
 import re
 import unicodedata
 
-from . import after_start, care, impact, logons, normal, software, today
+from . import after_start, care, impact, inventory, logons, normal, software, today
 from .assess import HOURS, ISOLATED, MIN_ACTIONS, MIN_STARTS, VERDICT_PCS, WIDESPREAD
 from .chat import RATIO, allowed, clean, numbers
 from .cause import DISK_BACK
@@ -268,10 +268,47 @@ GLOSSARY: dict[str, dict[str, str]] = {
         "A program": "One installed program: the PCs on each of its versions, and the PCs behind.",
         "PCs per day": f"Small bars: the flag's PCs on each saved day (kept {software.KEEP_DAYS} days).",
     },
+    "inventory": {
+        "Inventory tab": f"Every PC in Aternity's device list, read every {inventory.READ_EVERY_MIN} minutes. The "
+                         "lists and the cards answer from that read; nothing is saved.",
+        "PCs in Aternity's device list": "A PC is in the list while Aternity's agent on it reports. Aternity seems "
+                                         "to take a PC off the list about a month after it last heard from it.",
+        "virtual desktop": "A PC whose kind of device, as Aternity gives it, says virtual. Every other kind (a "
+                           "desktop, a laptop) is a physical PC.",
+        "heard from": "When Aternity's agent on the PC last reported to Aternity. It says nothing about whether "
+                      "someone used the PC.",
+        "No date from Aternity": "Aternity gives no time for when it last heard from the PC. That does not mean "
+                                 "the PC is gone.",
+        "retired": "A PC with installed software in Aternity that is no longer in its device list. Nothing else is "
+                   "known of it, and the Software tab leaves it out of every count.",
+        "Needs a look": "One line per kind of thing to check, the most PCs first. A click lists the PCs. Each "
+                        "count has its share of the PCs it is counted among, which the line names (\"of N\").",
+        inventory.LINES["agent"]: "The PC's Aternity agent is an older version than the one most PCs have.",
+        inventory.LINES["bitlocker"]: "A desktop or laptop that reports BitLocker as off to Aternity. Virtual "
+                                      "desktops are not counted.",
+        inventory.LINES["unused"]: f"In the list and not silent, but no application ran on the PC in "
+                                   f"{inventory.USE_DAYS} days, by Aternity's daily app usage.",
+        inventory.LINES["restart"]: f"The last start-up Aternity has for the PC is more than "
+                                    f"{inventory.RESTART_DAYS} days ago. A PC with no start-up time is not judged.",
+        inventory.LINES["silent"]: f"Aternity last heard from the PC {inventory.SILENT_DAYS} days ago or more. It "
+                                   "is still in the list.",
+        inventory.LINES["stopped"]: "Aternity's own status of the PC's agent says it does not run. It sends "
+                                    "nothing until it runs again.",
+        inventory.LINES["stability"]: f"Microsoft's own score of how stable a PC is, from 1 (least stable) to 10. "
+                                      f"Listed under {inventory.STABILITY_LOW}.",
+        inventory.LINES["free"]: f"Aternity gives a PC's free space as a band of sizes, not a number. Listed: the "
+                                 f"bands that end at {inventory.FREE_LOW_GB} GB or under.",
+        inventory.LINES["spinning"]: "Aternity's kind of disk says a spinning hard disk, not an SSD or NVMe.",
+        "In the list, but not used": f"PCs that report to Aternity but ran no application in "
+                                     f"{inventory.USE_DAYS} days: spare stock, a kiosk, or a desktop nobody is "
+                                     "assigned to.",
+        "Find a PC": "By PC name, the last person on it, or its serial number, from the latest read. The card "
+                     "shows what Aternity's device list holds for the PC, as Aternity sends it.",
+    },
 }
 
 TABS = {"today": "Today", "care": "Care list", "investigate": "Investigate", "startups": "Start-ups",
-        "software": "Software"}
+        "software": "Software", "inventory": "Inventory"}
 
 SYSTEM = (f"You explain one panel of a web page to IT staff in plain English. The page shows the experience of "
           f"the company's PC users, from Riverbed Aternity. You are given the panel's lines exactly as the page "
@@ -524,6 +561,16 @@ SAMPLES = (
         "every one; most: KB5550001 not on 2,037 of the 4,636 PCs on Sample Windows 11 23H2; 1,204 of those have "
         "KB5550002. | 2,037 PCs",
     ], "Are those 2,037 PCs unpatched?", ("later", "in its place", "kb5550002", "1,204")),
+    ("inventory", "Needs a look", [
+        "On an older agent than most | An Aternity agent older than 12.9.1.40, the version most PCs have. | 310 PCs "
+        "· 12% of 2,600",
+        "Still on a spinning hard disk | Aternity's kind of disk starts with 'HDD': 'HDD-7200'. | 12 PCs · 2.4% of 500",
+    ], "What does on an older agent than most mean?", ("12.9.1.40", "version", "older")),
+    ("inventory", "Last heard from", [
+        "Today 1,900 · 73%", "1 to 7 days ago 420 · 16%", "8 to 30 days ago 80 · 3.1%",
+        "No date from Aternity 200 · 7.7%",
+        "A PC with no date is not gone: Aternity just gives no time for it.",
+    ], "Are the 200 PCs with no date gone?", ("not gone", "does not mean", "no time", "not")),
 )
 SIZES = (4_000, 12_000, 40_000)  # characters of panel lines: a tile, a whole tab, a whole investigation
 LONG_QUESTION = "How many PCs does the line about update KB5559999 give, and what does that line mean?"

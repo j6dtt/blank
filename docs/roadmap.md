@@ -40,15 +40,49 @@ data, then its daily data with the people and desktops. See
 
 ## Waiting on you
 
-- **Two checks to run on prod** (built on dev 2026-11-21, 412
-  tests; the user was updating prod to b5d92aa the same day).
-  Files: `verify.py`, `cli.py`, `config.py`; no restart needed (a
-  check is its own run). Then, each once, with a photo:
-  - `verify --inventory --columns`: which of Aternity's device
-    columns are filled and with what (23 asked for). Decides what
-    the Inventory tab can show.
-  - `verify --actions`: which applications have measured actions,
-    and which in use have none.
+- **The two checks, run on 2026-11-21 (596cd86; three photos).**
+  Next: the user's questions on them, then Inventory ("we'll
+  discuss Inventory later").
+  - `verify --inventory --columns`: 5,211 PCs in 1.4 s; 18 of the
+    23 columns are published. Kind of device: 4,326 'Virtual
+    Desktop', 721 'Desktop', 164 'Laptop'. Filled on (nearly) every
+    PC: manufacturer, model (28), processor (36), memory and disk
+    size as text ('10GB', '63GB'), kind of disk ('Virtual', 'SSD',
+    'NVMe', 'HDD-7200'), agent version (3), Microsoft stability
+    index (1 to 10), location (9), last user (2,721), department
+    (94); serial number on 5,194. As bands of words, not numbers:
+    free space ('10 GB to 20 GB') and days since the last start-up
+    ('Less than 24 hours', '7 - 14 days'). In part: last start-up
+    on 4,354 (Jul 13 to Nov 21), BitLocker 'Off' 5,074 / 'On' 120
+    (not split by kind of device yet), SCCM client on 900. Not
+    published: antivirus, real-time protection, health status,
+    health score, physical memory: the mock-up's antivirus line
+    cannot be built.
+  - `verify --actions`: 18 applications with measured actions in 7
+    days, 469,390 actions, 12,153 rated Major; Outlook 374,002
+    (Preview Mail 299,823). Major on 6 only: Outlook 9,369, Teams
+    1,505, OneNote 762 of 963, Word 244, PowerPoint 153, Firefox
+    120 of 263. 12 of the 18 have one activity. Two are of kind
+    'Web' (73 and 40 actions). App usage lists 295 applications:
+    277 have no measured action, "Web Browsing" the most used.
+  - The user's questions on it, answered from Riverbed's help
+    (help.aternity.com, the 12.3 glossary and the Edge extension
+    page, read through search extracts: the pages did not open):
+    a web application is its own entry only when an admin adds it
+    as managed, and its activities are page loads (or custom
+    ones) measured by the Aternity browser extension; other sites
+    are the one entry "Web browsing". Edge is supported (Chromium
+    88+, Agent 12.1+, the Aternity Extension for Microsoft Edge;
+    without it only clicks and navigation, no page load). Status:
+    one response time against the activity's recent expected one;
+    automatic limits per activity and location, Minor at the
+    slowest 10%, Major at the slowest 3%; or manual per activity
+    (Gear > Managed Applications > Managed Activities > Edit).
+    Riverbed's caveat: a baseline moves with chronic slowness.
+    My reading, not confirmed: 762 of 963 and 0 of 16,291 both do
+    not fit a 3% limit, so some activities have manual limits or
+    none. Offered, not built: `verify --actions` with every
+    application's activities and each status counted.
 
 - **Stage copy of the load counter fix** (built on dev 2026-11-18,
   the user's photo of prod: "AI service GPT-5.4 824 calls, 0 rows;
@@ -253,16 +287,79 @@ data, then its daily data with the people and desktops. See
 
 ## Ideas
 
-- **Device inventory: step 1 built** (the user, 2026-11-21, after
-  the Software tab: "Can we move to the Inventory?", "For Inventory,
-  first step is verify?", "build it for A and B": `verify
-  --inventory`'s 5th answer, alone with `--columns`; waiting on its
-  photo from prod). First asked the same day: "Need to integrate
+- **Device inventory: first cut built on dev, stage copy next**
+  (the user, 2026-11-21: "build it"; 420 tests; clicked through in
+  a browser on dev). The tab INVENTORY, sixth: tiles, Needs a look
+  (nine lines), Last heard from with the agent's status, Retired
+  PCs and not used, Find a PC with a card. Files for the copy:
+  `inventory.py` (new), `web.py`, `software.py`, `explain.py`,
+  `usage.py`, `config.py`, `static/index.html`; restart.
+  - Different from what was said before the build, each for a
+    reason: the lists and the card answer from the hourly read held
+    in memory, not from a read at the click (no load on Aternity;
+    only "Its software" reads then); "not used in 8 days" needs one
+    more light read of daily app usage, as the Today reader's names
+    hold only 24 hours after a restart; no name from AD on the
+    card (the main page has no login and AD look-ups there stay
+    with the Care list), it shows Aternity's own last user and
+    department; "no restart in over 14 days" is counted from the
+    start-up date, not Aternity's bands, so its count can differ a
+    little from the 301 of the bands.
+  - To see on stage: which of Aternity's low bands of free space
+    the line "Little free space" names (they were not seen by
+    name; the rule takes any band that ends at 10 GB or under);
+    the count on "BitLocker off on a physical PC"; the tile's
+    kinds of device.
+  - Not built: step 2 (the hardware charts with the virtual /
+    physical switch), step 3 (Ask anything), a drawing of the
+    tab's rules (docs/diagrams has one per tab).
+  - The choices (the user, 2026-11-21, on the four asked: "1. hourly, 2.
+  keep it, 3. you recommendations, 4. both"). So: 1. read every
+  hour; 2. the BitLocker line stays ("BitLocker off on a physical
+  PC"); 3. limits as suggested: not heard from in 8 days, not used
+  in 8 days, no restart in over 14 days, stability index under 5,
+  an agent older than the one most PCs have; 4. a count with its
+  share beside it. Asked for: (the
+  user, 2026-11-21: "Provide proposal for Inventory with data
+  collected", after step 1's photo from prod; a second mock-up was
+  shown, on the same link as the first). Nothing built. Earlier the
+  same day: "Can we move to the Inventory?", "For Inventory, first
+  step is verify?", "build it for A and B" (`verify --inventory`'s
+  5th answer). First asked: "Need to integrate
   device inventory section, use the data from verify --inventory to
   start. I'll let you decide: it's on a separate tab or same as
   Software, helpful data to add on top of verify --inventory.
-  Provide proposals and mockups"). Proposed, not chosen, nothing
-  built; a mock-up was shown.
+  Provide proposals and mockups").
+  - Proposal 2, what the data changed: 4,326 of 5,211 PCs are
+    virtual desktops, 885 physical, so every panel gets the
+    Software tab's switch (virtual desktops / physical PCs). Gone:
+    antivirus, real-time protection, health status and score (not
+    published); "8 GB of memory or less" as a warning ('7GB' on
+    873 PCs looks chosen). New lines: an older agent than most
+    (884), no restart in over 14 days (301, Aternity's two longest
+    bands), still on a spinning hard disk (25). Free space and
+    days since the last start-up are shown in Aternity's own
+    bands. The read is 1.4 s: every hour, not once a day.
+  - Panels: tiles; Needs a look (9 lines: older agent, BitLocker
+    off on a physical PC, not used in 8 days, no restart in over
+    14 days, not heard from in 8 days, agent stopped, low
+    stability index, little free space, spinning hard disk); Last
+    heard from with the agent's status; Retired and not used; What
+    the PCs are (kind, model, memory, kind of disk); Restarts,
+    disk space and agents; Find a PC (a card of every filled
+    column, the person's name from AD, Investigate / software /
+    start-ups).
+  - The four choices asked of the user: 1. read every hour (my
+    recommendation) or once a day; 2. the BitLocker line: only 120
+    PCs report 'On', so keep it only if BitLocker is how the disks
+    are encrypted; 3. the limits (8 days not heard, 8 days not
+    used, over 14 days no restart or a number of days from the
+    date, stability index under 5, an agent older than most); 4. a
+    share beside each count or counts only.
+  - Build order: 1. first cut (the read, tiles, Needs a look, Last
+    heard from, Retired and not used, Find a PC); 2. the two
+    hardware panels with the switch; 3. Ask anything.
+  - The first proposal, before the data:
   - My decision: its own tab, INVENTORY, last. Software is already
     the longest tab and answers "what is installed"; this answers
     "what PCs do we have and which need a look". No new load: the

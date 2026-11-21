@@ -33,6 +33,8 @@ from .names import KINDS, NameList
 from .software import (Software, before_after, compare, missing_on, pcs_after_update, pcs_with_problem, pcs_with_program,
                        pcs_without_update)
 from .software import keep_reading as keep_reading_software
+from .inventory import Inventory
+from .inventory import keep_reading as keep_reading_inventory
 from .software import summary as software_summary
 from .status import Status, keep_checking
 from .today import NO_APP, Today, keep_reading
@@ -50,7 +52,8 @@ ADMIN_HOURS = 8  # a login lasts this long (Log out ends it; a restart too)
 ADMIN_TRIES = 5  # wrong passwords from one address before it is locked ...
 ADMIN_LOCK_MIN = 15  # ... for this long
 # what the calls to Riverbed are for, by the page's request (the admin page's "Load on Riverbed")
-PURPOSES = (("/api/software", "Software tab"), ("/api/explain", "Explain"), ("/api/care", "Care list (page)"),
+PURPOSES = (("/api/software", "Software tab"), ("/api/inventory", "Inventory tab"), ("/api/explain", "Explain"),
+            ("/api/care", "Care list (page)"),
             ("/api/today", "Today tab"), ("/api/investigate", "investigations"), ("/api/names", "name boxes"),
             ("/admin/api", "admin page"))
 log = logging.getLogger("uxcorrelate")
@@ -188,6 +191,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
     care = app.state.care = Care(today, lambda: load_settings(config_path).care_list,
                                  os.environ.get("UXCORRELATE_DATA") or None, names)
     software = app.state.software = Software(zone, os.environ.get("UXCORRELATE_DATA") or None)
+    inventory = app.state.inventory = Inventory(zone)  # the Inventory tab: Aternity's device list, in memory only
     status = app.state.status = Status()  # the connection lights in the top bar
     # the admin page's counts: each use, and every call to Riverbed and the AI services (http.METER)
     usage = app.state.usage = Usage(today, os.environ.get("UXCORRELATE_DATA") or None)
@@ -247,6 +251,11 @@ def create_app(config_path: str | None = None) -> FastAPI:
                              args=(software, aternity_client,
                                                                  lambda: load_settings(config_path).aternity, time.sleep),
                              daemon=True, name="software").start()
+        if not inventory.started:  # every hour: Aternity's device list and which PCs are in use
+            inventory.started = True
+            threading.Thread(target=_http.as_doing("Inventory reader", keep_reading_inventory),
+                             args=(inventory, aternity_client, lambda: load_settings(config_path).aternity, time.sleep),
+                             daemon=True, name="inventory").start()
         if not status.started:
             status.started = True
             threading.Thread(target=_http.as_doing("connection lights", keep_checking),
@@ -426,6 +435,54 @@ def create_app(config_path: str | None = None) -> FastAPI:
             return {"ready": v["ready"], "flags": len(v.get("flags", []))}
         from .explain import version_terms
         return dict(v, terms=version_terms())  # our meaning of each term, for the Explain of a comparison
+
+    # ---- the Inventory tab: everything from the reader's own read, in memory ----
+    def retired_pcs() -> dict | None:
+        """PCs with installed software that Aternity's device list no longer has: the Software
+        tab's own count (it leaves them out). None until its first read."""
+        snap = software.snap
+        size = (snap or {}).get("list") or {}
+        if not snap or size.get("pcs") is None:
+            return None
+        return {"n": size.get("left_out") or 0, "listed": size["pcs"], "names": len(software.gone),
+                "as_of_local": software.local(datetime.fromisoformat(snap["as_of"])).strftime("%b %d, %H:%M")}
+
+    @app.get("/api/inventory")
+    def inventory_view():
+        return inventory.view(retired=retired_pcs())
+
+    @app.get("/api/inventory/pcs")
+    def inventory_pcs(line: str):
+        """The PCs behind a line of "Needs a look", or the retired ones (names only: Aternity's
+        device list no longer has them)."""
+        if line == "retired":
+            gone = sorted(software.gone, key=str.lower)
+            got = retired_pcs() or {"n": 0}
+            return {"what": "Retired PCs: their software is still in Aternity", "total": got["n"],
+                    "text": "No longer in Aternity's device list, so nothing else is known of them."
+                    + ("" if gone or not got["n"] else " Their names are known after the Software tab's next read."),
+                    "rows": [{"name": name, "what": "software only"} for name in gone[:200]]}
+        got = inventory.line_pcs(line)
+        if got is None:
+            raise HTTPException(404, "That line is not in the latest read of Aternity's device list.")
+        return got
+
+    @app.get("/api/inventory/find")
+    def inventory_find(q: str = ""):
+        return inventory.find(q)
+
+    @app.get("/api/inventory/pc")
+    def inventory_pc(name: str):
+        got = inventory.card(name)
+        if got is None:
+            raise HTTPException(404, f"{name} is not in Aternity's device list as it was last read.")
+        return got
+
+    @app.get("/api/inventory/software")
+    def inventory_software(pc: str):
+        """One PC's own installed list, read from Aternity now (the card's "Its software")."""
+        from .software import pc_list
+        return software_read(f"{pc}'s installed software", lambda c: pc_list(c, pc, software.local))
 
     @app.get("/api/software/program")
     def software_program(name: str):

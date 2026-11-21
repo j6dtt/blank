@@ -20,8 +20,13 @@ questions.md`).
 ## Activities (`BUSINESS_ACTIVITIES_RAW`)
 
 **M1. `SLA_STATUS` 'Minor' / 'Major' means the action was slow for the user.**
-ASSUMED. Aternity's own verdict against each activity's limits; the
-limits and what 'Undefined' means are not known. Values seen in one hour
+ASSUMED. Aternity's own verdict against each activity's limits. Riverbed's
+help (the 12.3 glossary, read Nov 21 2026 through search extracts): one
+response time against the activity's recent expected one; automatic
+limits per activity and location, Minor at the slowest 10%, Major at the
+slowest 3%, or manual limits set by an admin per activity; a baseline
+moves with chronic slowness. Which our Aternity uses per activity, and
+what 'Undefined' means, are not known. Values seen in one hour
 (OBSERVED, Nov 9 2026): Normal 9,170 rows, Undefined 794, Minor 347, Major
 243; no 'Critical'. 'Major' is taken as the worst ("Today" tab).
 Rests on it: every "slow action" count, the headline, the "Today" tab.
