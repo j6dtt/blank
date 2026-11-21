@@ -509,7 +509,14 @@ demo mode: nothing in `src/` knows about it.
   other 515 PCs would have undone its flag). Now, per kind of PC
   (`_kinds`: Aternity's virtual / physical mark, `PLACES`; "all" when
   it gives none), two comparisons: before and after an update
-  (`_updates`, `_changed_once`: PCs whose version changed once in
+  (`_updates`, `_changed_once`, `_one_change`: a day a PC ran both
+  versions, the day of the update itself, is on neither side and the
+  PC stays, `both`; it was left out whole though the comment said the
+  day; every change `MIN_PCS` PCs made is judged, the page gets the
+  `UPDATES_SHOWN` biggest and every raised one, `updates_more` the
+  rest: only the 2 biggest were judged; both found on the user's
+  question of Nov 21 2026, "How did we go from 28 red flags to 15
+  ... Did we break something"; PCs whose version changed once in
   `UPDATE_DAYS`, for each PC as many days after as before, counted in
   PCs with a crash / hang time; app usage is read day by day for it,
   `_app_rows`, one read per application as before) and each version
@@ -935,6 +942,17 @@ demo mode: nothing in `src/` knows about it.
   own Windows version's PCs. What was settled on stage (filled columns,
   versions per program) is no longer printed. `--pc NAME`: only that
   PC's list. No PC or user names (unless typed).
+- `verify --versions`, "the red flags, by the rule before and the rule
+  now" (`flags_by_rule`, system "Software tab"; the user's question
+  above): the tab's latest saved day in `$UXCORRELATE_DATA/software`,
+  no Aternity read, judged by the rule before (`_rule_before`, kept in
+  verify only: a version against its other versions added together,
+  all PCs mixed) and by `software.judge`: how many versions each
+  raises, how many both, and each one raised before and not now with
+  why (`_why_not_now`, `_rule_reasons`: more on the other side would
+  undo it, not `RATIO` times the version it is compared with, new this
+  week, too few once the kinds of PC are apart, nothing to compare
+  with), `RULE_LINES` at most; those raised now and not before by `how`.
 - `verify --versions`, "the Software tab's comparison" (Nov 21 2026): for
   each of the 3 applications with the most crashes, the tab's own read
   (`software.app_now`): app usage day by day for `UPDATE_DAYS`, its rows

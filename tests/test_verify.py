@@ -738,6 +738,64 @@ def test_verify_versions_reads_as_the_software_tab_and_says_what_it_cannot_compa
     assert "Nothing is raised for it by the tab's rules. · These 2 reads together: 70 rows of app usage" in flat
 
 
+def test_verify_says_which_red_flags_the_rule_before_raised_and_the_rule_now_does_not(tmp_path):
+    """The user, Nov 21 2026: "How did we go from 28 red flags to 15 after this update? Did we
+    break something or there was a really bad bug?" The tab's saved read, judged by both rules."""
+    import json
+    from uxcorrelate import software as sw
+    from uxcorrelate.verify import flags_by_rule
+
+    def row(v, pcs, crash, new=False):
+        return {"version": v, "pcs": pcs, "crash": crash, "hang": 0, "virtual": 0, "action_pcs": 0, "actions": 0,
+                "major": 0, "major_pcs": 0, "new": new}
+
+    def app(name, rows, kinds):
+        return {"application": name, "read": ["usage"], "only": [], "raised": [], "versions": [row(*r) for r in rows],
+                "kinds": {on: {"pcs": sum(r[1] for r in rs), "versions": [row(*r) for r in rs], "updates": ups}
+                          for on, (rs, ups) in kinds.items()}}
+    up = {"from": "2", "to": "3", "pcs": 30, "both": 4, "first": "2026-11-15", "last": "2026-11-16",
+          "before": {"crash": 1, "hang": 0}, "after": {"crash": 9, "hang": 0}}
+    apps = [
+        # the photo: 19 of 1,738 against 2 of 515 added together; now 2 more PCs on the other version undo it
+        app("Word", [("1", 1738, 19), ("2", 515, 2)], {"physical": ([("1", 1738, 19), ("2", 515, 2)], [])}),
+        # version 2: 2 times its other versions together (10 of 100 against 24 of 790), not the version most PCs
+        # have (24 of 400); that one is raised by both rules
+        app("Mail", [("1", 400, 24), ("2", 100, 10), ("3", 390, 0)],
+            {"virtual": ([("1", 400, 24), ("2", 100, 10), ("3", 390, 0)], [])}),
+        # 30 PCs in all, 15 of each kind: too few once they are apart
+        app("Notes", [("1", 300, 3), ("2", 30, 6)],
+            {"virtual": ([("1", 150, 2), ("2", 15, 3)], []), "physical": ([("1", 150, 1), ("2", 15, 3)], [])}),
+        # raised by both, and a version new this week raised by its update only
+        app("Chat", [("1", 200, 2), ("2", 60, 12), ("3", 30, 2)],
+            {"physical": ([("1", 200, 2), ("2", 60, 12), ("3", 30, 2, True)], [up])}),
+    ]
+    assert flags_by_rule(str(tmp_path))[0].message.startswith("The tab's saved reads are not here")
+    (tmp_path / "software").mkdir()
+    (tmp_path / "software" / "2026-11-20.json").write_text(json.dumps({"versions": {"Old": {"versions": []}}}))
+    assert "is from before virtual desktops and physical PCs were looked at apart" in flags_by_rule(str(tmp_path))[0].message
+    (tmp_path / "software" / "2026-11-21.json").write_text(json.dumps({"versions": {a["application"]: a for a in apps}}))
+    check = flags_by_rule(str(tmp_path))[0]
+    assert check.system == "Software tab" and check.ok is None
+    assert check.message == (
+        "The tab's saved read of 2026-11-21, 4 applications, judged twice (no Aternity read). The rule before (each "
+        "version against its other versions added together, all PCs mixed) raises 5 versions. The rule now raises "
+        "3, counted per kind of PC as on the tab. 2 of the 5 are raised by both.")
+    assert check.rows == [
+        "3 raised before, not now:",
+        "  1: more of it on the other side would undo it (2 more PCs, or 5 more actions rated Major)",
+        "  1: 2 times its other versions added together, but not 2 times the one version it is compared with now",
+        "  1: under 20 PCs, or under 5 with the problem, once virtual desktops and physical PCs are apart",
+        "  Word 1, crashes: 1.1% (19 of 1,738) against 0.4% (2 of 515) on its other versions together. Now on "
+        "physical PCs: more on the other side would undo it.",
+        "  Mail 2, crashes: 10% (10 of 100) against 3% (24 of 790) on its other versions together. Now on virtual "
+        "desktops: not 2 times the version it is compared with.",
+        "  Notes 2, crashes: 20% (6 of 30) against 1% (3 of 300) on its other versions together. Now on virtual "
+        "desktops: too few PCs there.",
+        "1 raised now, not before: 1 after an update (the rule before had no before and after).",
+    ]
+    assert sw.MIN_PCS == 20 and sw.RATIO == 2  # the numbers in those sentences are the code's
+
+
 def test_every_check_group_is_printed_and_one_failed_part_stops_only_itself():
     """config.yaml's notes were counted in "problem(s) found" but never printed; one error in a
     part stopped the whole verify, which prints only at the end; a read cut short was not said."""

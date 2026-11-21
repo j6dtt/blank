@@ -116,6 +116,16 @@ another also says its own update when the panel shows one ("Its
 update: on the 69 virtual desktops just updated to it ..., it stopped
 responding on 36 before the update and on 15 after"; stage, Nov 21:
 Outlook's flag and the table under it said two things, not joined).
+Found on the user's question of the same day ("How did we go from 28
+red flags to 15 after this update? Did we break something"), two gaps
+in before and after, both closed: a PC that ran both versions on the
+day of its update was left out whole (now that day is on neither side
+and the PC stays; the panel says how many), and only the 2 updates
+with the most PCs were judged (now every update 20 PCs or more made
+is judged; the panel shows the 2 biggest and every raised one, and
+says how many more had nothing raised). `verify --versions` judges the
+tab's saved read by the rule before and the rule now and says why
+each flag went.
 Each bar shows its share as a percentage beside the
 count (the user's choice for this panel, against plain counts
 elsewhere). What is not covered: an application with one version in

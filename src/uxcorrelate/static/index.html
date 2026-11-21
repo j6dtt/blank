@@ -2108,6 +2108,8 @@ function swOwnUpdate(k, f, m, pw) {
     + `the update and on ${n(u.after[f.kind])} after.`).join(" ");
 }
 // one raised finding, in words: what, against what, why it is raised, what to do next
+// PCs that ran both versions on the day of their update: that day is on neither side
+const swBoth = (u) => (u.both ? ` ${n(u.both)} of them ran both versions on the day of the update: that day is on neither side.` : "");
 // is this the version most PCs of the kind have? (its versions come most PCs first)
 const swMostHave = (k, version) => !!k.versions.length && k.versions[0].version === version;
 function swFound(a, K, f, r) {
@@ -2165,10 +2167,12 @@ function swVersionBlock(a, i, v, K) {
     }
     const pad = cols.some((m) => m.k === "slow") ? [`<div class="hd muted">Slow actions<small>not compared before and after</small></div>`, "<div></div>"] : ["", ""];
     body += `<div class="vsub">Before and after the update ${ex("update|" + j)}</div><div class="muted" style="font-size:12px;max-width:86ch">The same ${n(u.pcs)} ${pw}, `
-      + `before and after they went from ${esc(u.from)} to ${esc(u.to)} (${swDays(u)}). For each PC the same number of days is counted on each side.</div>`
+      + `before and after they went from ${esc(u.from)} to ${esc(u.to)} (${swDays(u)}). For each PC the same number of days is counted on each side.${swBoth(u)}</div>`
       + `<div class="multWrap"><div class="vgrid" style="grid-template-columns:minmax(200px,24%) repeat(${cols.length},minmax(180px,1fr))">`
       + swHeads("The same PCs", usage, `of the same ${n(u.pcs)} PCs`, pad[0]) + before + pad[1] + after + pad[1] + `</div></div>`;
   });
+  if (usage.length && k.updates_more) body += `<div class="muted" style="font-size:12px;margin-top:6px">${n(k.updates_more)} more ${k.updates_more === 1 ? "update" : "updates"} `
+    + `that ${r.min_pcs} ${pw} or more made ${k.updates_more === 1 ? "was" : "were"} compared the same way: nothing raised, not shown.</div>`;
   // 2. version by version, against the version most PCs have
   const rows = k.versions.filter((x) => swOn(x) >= r.min_pcs), small = k.versions.filter((x) => swOn(x) < r.min_pcs);
   const ref = rows.find((x) => x.version === k.ref);
@@ -2250,7 +2254,7 @@ function swExplain(i, which, j) {
     sec("What is compared");
     par(`The same ${n(u.pcs)} ${pw}, before and after their ${esc(a.application)} went from ${esc(u.from)} to ${esc(u.to)} (${swDays(u)}). Only PCs whose version `
       + `changed once in the last ${r.update_days} days are in it. For each PC the same number of days is counted on each side: a PC with 3 days on the new `
-      + `version is counted for those 3 days and for its last 3 days on the old one.`);
+      + `version is counted for those 3 days and for its last 3 days on the old one.${swBoth(u)}`);
     sec("What it found");
     const why = [];
     list(cols.filter((m) => m.k !== "slow").map((m) => {

@@ -49,7 +49,9 @@ STILL = 2  # ... and still at RATIO times with this many more PCs with the probl
 # among the 207 would have undone it; slow actions had no such check)
 STILL_ACTIONS = 5
 ARRIVED = 0.5  # "new this week": more than this share of a version's PCs got it within DAYS
-UPDATES_SHOWN = 2  # before and after an update: the changes with the most PCs, per kind of PC
+# before and after an update: the changes with the most PCs shown per kind of PC, and every raised one. All
+# are judged: only these 2 were, so a third could never be raised (found on a question of Nov 21 2026)
+UPDATES_SHOWN = 2
 PLACES = {"virtual": "virtual desktops", "physical": "physical PCs", "all": "PCs"}  # the kinds of PC, in words
 FEW_PCS = 5  # flag 6: programs on this many PCs or fewer
 WIN_MOST = 0.5  # flag 5: an update on more than half the PCs of its Windows version
@@ -544,43 +546,59 @@ def _app_rows(q: _Reads, key: str, a: str, start: datetime, now: datetime, vs: d
     return True
 
 
-def _changed_once(by: dict) -> tuple | None:
+def _one_change(by: dict) -> tuple | None:
     """A PC whose version of the application changed once in the days read: (from, to, the day
-    it changed, its days before, its days after), the same number of days on each side (the
-    last ones before, the first ones after), so neither side had more time to go wrong. None
-    when it did not change, changed more than once, or ran 2 versions on one day (that day is
-    on neither side)."""
+    it changed, its days before, its days after, did it run both on a day). A day it ran both
+    versions (the day of the update itself, when it came while the PC was in use) is on neither
+    side: the PC stays. It was left out whole, though the comment said the day (found on a
+    question of Nov 21 2026: of 2,475 virtual desktops on one version, 69 were in its before and
+    after). None when it did not change, changed more than once, or ran a third version."""
     seq = sorted(by.items())
-    if any(len(x[0]) != 1 for _, x in seq):
-        return None
-    vs = [next(iter(x[0])) for _, x in seq]
+    one = [(day, x) for day, x in seq if len(x[0]) == 1]
+    vs = [next(iter(x[0])) for _, x in one]
     changes = [i for i in range(1, len(vs)) if vs[i] != vs[i - 1]]
     if len(changes) != 1:
         return None
     i = changes[0]
-    k = min(i, len(seq) - i)
-    return vs[0], vs[i], seq[i][0], seq[i - k:i], seq[i:i + k]
+    both = [(day, x) for day, x in seq if len(x[0]) > 1]
+    # a day with both belongs between the two sides; with a third version, or anywhere else, it is no clean change
+    if any(not x[0] <= {vs[0], vs[i]} or not one[i - 1][0] < day < one[i][0] for day, x in both):
+        return None
+    return vs[0], vs[i], (both[0][0] if both else one[i][0]), one[:i], one[i:], bool(both)
+
+
+def _changed_once(by: dict) -> tuple | None:
+    """`_one_change` with the same number of days on each side (the last ones before, the first
+    ones after), so neither side had more time to go wrong."""
+    got = _one_change(by)
+    if not got:
+        return None
+    f, t, when, before, after, both = got
+    k = min(len(before), len(after))
+    return f, t, when, before[-k:], after[:k], both
 
 
 def _updates(days: dict, inn) -> list[dict]:
     """Before and after an update, on the same PCs (those of one kind, `inn`): per change of
     version that MIN_PCS PCs or more made, the PCs with a crash and with hang time on their
-    days before and on as many days after. The changes with the most PCs."""
+    days before and on as many days after; `both`: those that ran both versions on the day of
+    the change. Most PCs first; every one is judged (`judge` keeps the ones to show)."""
     pairs: dict = {}
     for d, by in days.items():
         got = _changed_once(by) if inn(d) else None
         if not got:
             continue
-        f, t, when, before, after = got
-        p = pairs.setdefault((f, t), {"from": f, "to": t, "pcs": 0, "first": when, "last": when,
+        f, t, when, before, after, both = got
+        p = pairs.setdefault((f, t), {"from": f, "to": t, "pcs": 0, "both": 0, "first": when, "last": when,
                                       "before": {"crash": 0, "hang": 0}, "after": {"crash": 0, "hang": 0}})
         p["pcs"] += 1
+        p["both"] += both
         p["first"], p["last"] = min(p["first"], when), max(p["last"], when)
         for side, part in (("before", before), ("after", after)):
             p[side]["crash"] += any(x[1] for _, x in part)
             p[side]["hang"] += any(x[2] for _, x in part)
     out = sorted((p for p in pairs.values() if p["pcs"] >= MIN_PCS), key=lambda p: (-p["pcs"], order(p["to"])))
-    return [dict(p, first=p["first"].isoformat(), last=p["last"].isoformat()) for p in out[:UPDATES_SHOWN]]
+    return [dict(p, first=p["first"].isoformat(), last=p["last"].isoformat()) for p in out]
 
 
 def _new(v: str, pcs: set, days: dict) -> bool:
@@ -802,6 +820,10 @@ def judge(app: dict) -> None:
                 if state == "raised":
                     app["raised"].append({"kind": kind, "version": u["to"], "on": on, "how": "update",
                                           "from": u["from"], "n": n, "of": u["pcs"], "before": before, "pcs": n})
+        shown = [u for j, u in enumerate(k["updates"]) if j < UPDATES_SHOWN
+                 or any(vd["state"] == "raised" for vd in u["verdict"].values())]
+        k["updates_more"] = k.get("updates_more", 0) + len(k["updates"]) - len(shown)  # judged, nothing raised
+        k["updates"] = shown
         for v in k["versions"]:
             v["verdict"] = {}
         judged = [v for v in k["versions"] if max(v["pcs"], v["action_pcs"]) >= MIN_PCS]
@@ -1519,20 +1541,15 @@ def before_after(client, now: datetime, application: str) -> dict:
         x[2] += (to_float(r.get(u["hang_time"])) or 0) > 0
     pairs: dict = {}
     for d, by in days.items():
-        seq = sorted(by.items())
-        if any(len(x[0]) > 1 for _, x in seq):
-            continue  # 2 versions on one day: the day of the change is not on either side
-        vs = [next(iter(x[0])) for _, x in seq]
-        changes = [i for i in range(1, len(vs)) if vs[i] != vs[i - 1]]
-        if len(changes) != 1:
+        got = _one_change(by)  # a day with both versions is on neither side (the PC was left out whole)
+        if not got:
             continue
-        i = changes[0]
-        p = pairs.setdefault((vs[0], vs[i]), {"pcs": 0, "before": [0, 0, 0], "after": [0, 0, 0],
-                                              "crash_pcs": [0, 0], "hang_pcs": [0, 0], "first": seq[i][0],
-                                              "last": seq[i][0]})
+        f, t, when, before, after, _ = got
+        p = pairs.setdefault((f, t), {"pcs": 0, "before": [0, 0, 0], "after": [0, 0, 0],
+                                      "crash_pcs": [0, 0], "hang_pcs": [0, 0], "first": when, "last": when})
         p["pcs"] += 1
-        p["first"], p["last"] = min(p["first"], seq[i][0]), max(p["last"], seq[i][0])
-        for side, part, k in (("before", seq[:i], 0), ("after", seq[i:], 1)):
+        p["first"], p["last"] = min(p["first"], when), max(p["last"], when)
+        for side, part, k in (("before", before, 0), ("after", after, 1)):
             p[side][0] += len(part)
             p[side][1] += sum(1 for _, x in part if x[1])
             p[side][2] += sum(1 for _, x in part if x[2])

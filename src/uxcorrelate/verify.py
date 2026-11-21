@@ -2060,12 +2060,17 @@ def _versions(settings: Settings, client: AternityClient, schema: dict[str, set[
                                      + (f"; most have {k['ref']}" if k.get("ref") else "")
                                      + (f"; new this week: {', '.join(fresh)}" if fresh else "") + ".")
                         for u_ in k["updates"]:
-                            went = f"{u_['pcs']:,} of them went from {u_['from']} to {u_['to']}"
+                            went = (f"{u_['pcs']:,} of them went from {u_['from']} to {u_['to']}"
+                                    + (f" ({u_['both']:,} ran both versions on the day of the update: that day is on "
+                                       "neither side)" if u_.get("both") else ""))
                             lines.append(f"{went}." if only else
                                          f"{went}: a crash on {u_['before']['crash']:,} before and on "
                                          f"{u_['after']['crash']:,} after; hang time on {u_['before']['hang']:,} before "
                                          f"and on {u_['after']['hang']:,} after (for each PC as many days after as "
                                          "before).")
+                        if k.get("updates_more"):
+                            lines.append(f"{k['updates_more']:,} more updates that {tab.MIN_PCS} of them or more made "
+                                         "were compared the same way: nothing raised.")
                     if only:
                         lines.append(f"Every PC Aternity lists for it had {' and '.join(only)}, so there is no PC "
                                      "without one to compare with: the tab compares no share of crashes or hang "
@@ -2153,7 +2158,141 @@ def _versions(settings: Settings, client: AternityClient, schema: dict[str, set[
                                 + ", ".join(f"{k} {n:,} ({before[k]:,})" for k, n in kinds.most_common())
                                 + ". Updates (before to after) on the most PCs:",
                                 rows=[f"{n0}: {b} to {v}: {k:,} PCs" for (n0, b, v), k in ups.most_common(4)] + cut))
-    return checks
+    return checks + flags_by_rule()
+
+
+def _rule_before(app: dict, tab) -> list[dict]:
+    """The Software tab's rule until Nov 21 2026, kept here only to compare the two: a version
+    against its other versions added together, all PCs as one kind (RATIO times their share,
+    MIN_PCS PCs on each side, MIN_PROBLEM PCs with the problem)."""
+    vs, read, out = app["versions"], app.get("read", ()), []
+    sides = []
+    if "usage" in read and not app.get("only"):
+        sides += [("crash", "crash", "pcs", "pcs", "crash"), ("hang", "hang", "pcs", "pcs", "hang")]
+    if "actions" in read:
+        sides += [("slow", "major", "actions", "action_pcs", "major_pcs")]
+    for kind, n_key, of_key, pcs_key, prob_key in sides:
+        tn, tof, tpcs = (sum(v[k] for v in vs) for k in (n_key, of_key, pcs_key))
+        for v in vs:
+            n, of, on, oof = v[n_key], v[of_key], tn - v[n_key], tof - v[of_key]
+            if (v[pcs_key] >= tab.MIN_PCS and tpcs - v[pcs_key] >= tab.MIN_PCS and v[prob_key] >= tab.MIN_PROBLEM
+                    and of > 0 and oof > 0 and n * oof >= tab.RATIO * on * of and n * oof > on * of):
+                out.append({"kind": kind, "version": v["version"], "n": n, "of": of, "others_n": on, "others_of": oof})
+    return out
+
+
+def _rule_reasons(tab) -> dict[str, tuple[str, str]]:
+    """Why the rule now does not raise what the rule before did: (the count's line, the words
+    after a version), in the order they are printed."""
+    r = f"{tab.RATIO:g} times"
+    return {
+        "more": (f"more of it on the other side would undo it ({tab.STILL} more PCs, or {tab.STILL_ACTIONS} more "
+                 "actions rated Major)", "more on the other side would undo it"),
+        "ratio": (f"{r} its other versions added together, but not {r} the one version it is compared with now",
+                  f"not {r} the version it is compared with"),
+        "new": ("new this week: left to before and after its update", "new this week, left to before and after"),
+        "few": (f"under {tab.MIN_PCS} PCs, or under {tab.MIN_PROBLEM} with the problem, once virtual desktops and "
+                "physical PCs are apart", "too few PCs there"),
+        "alone": (f"the only version on {tab.MIN_PCS} PCs or more of that kind: nothing to compare it with",
+                  f"the only version on {tab.MIN_PCS} PCs or more"),
+    }
+
+
+def _why_not_now(app: dict, f: dict, tab) -> tuple[str, str]:
+    """(reason, where): why the rule now does not raise a version the rule before did, on the
+    kind of PC where the version has the most PCs (that is where the old flag mostly came from)."""
+    kind, pcs_key = f["kind"], "action_pcs" if f["kind"] == "slow" else "pcs"
+    best = None
+    for on, k in app["kinds"].items():
+        row = next((v for v in k["versions"] if v["version"] == f["version"]), None)
+        if row and (best is None or row[pcs_key] > best[2][pcs_key]):
+            best = (on, k, row)
+    if best is None:
+        return "few", ""
+    on, k, row = best
+    where = f"on {tab.PLACES[on]}" if on != "all" else ""
+    others = [v for v in k["versions"] if v is not row and v[pcs_key] >= tab.MIN_PCS]
+    vd = (row.get("verdict") or {}).get(kind) or {}
+    if row[pcs_key] < tab.MIN_PCS:
+        return "few", where
+    if not others:
+        return "alone", where
+    if row.get("new") and k.get("ref") != row["version"]:
+        return "new", where
+    if vd.get("state") == "unsure":
+        return ("few" if vd.get("few") else "more"), where
+    return "ratio", where
+
+
+def flags_by_rule(store: str | None = None) -> list[Check]:
+    """The user, Nov 21 2026: "How did we go from 28 red flags to 15 after this update? Did we
+    break something or there was a really bad bug?" Nothing on dev can say which flags went: the
+    tab's own saved read on the host can. The latest saved day, judged by the rule before
+    (`_rule_before`) and by the rule now (`software.judge`): how many versions each raises, and
+    for each one raised before and not now, why. No Aternity read. Names of applications and
+    versions only."""
+    import json
+    import os
+    from pathlib import Path
+    from . import software as tab
+    item = "versions: the red flags, by the rule before and the rule now"
+    store = store or os.environ.get("UXCORRELATE_DATA")
+    files = sorted((Path(store) / "software").glob("*.json")) if store else []
+    if not files:
+        return [Check("Software tab", item, None, "The tab's saved reads are not here"
+                      + (f" ({store}/software is empty)" if store else " (UXCORRELATE_DATA is not set)")
+                      + ": run this in the app's container, after the tab's first read.")]
+    try:
+        snap = json.loads(files[-1].read_text())
+    except (OSError, ValueError) as exc:
+        return [Check("Software tab", item, None, f"The saved read of {files[-1].stem} could not be read ({exc}).")]
+    apps = [a for a in (snap.get("versions") or {}).values() if a.get("kinds")]
+    if not apps:
+        return [Check("Software tab", item, None, f"The saved read of {files[-1].stem} is from before virtual desktops "
+                      "and physical PCs were looked at apart: wait for the tab's next read.")]
+    name = {"crash": "crashes", "hang": "stops responding", "slow": "slow actions"}
+    old, gone, how_now, both, now_n = 0, [], Counter(), 0, 0
+    for a in apps:
+        before = _rule_before(a, tab)
+        tab.judge(a)  # by the rule as it is in this code, whatever the code that saved the day
+        now = a["raised"]
+        now_n += len(now)
+        old += len(before)
+        seen = {(r["kind"], r["version"]) for r in now}
+        for f in before:
+            if (f["kind"], f["version"]) in seen:
+                both += 1
+            else:
+                gone.append((a["application"], f, *_why_not_now(a, f, tab)))
+        was = {(f["kind"], f["version"]) for f in before}
+        how_now.update(r["how"] for r in now if (r["kind"], r["version"]) not in was)
+    reasons, words = Counter(g[2] for g in gone), _rule_reasons(tab)
+    rows = [f"{len(gone)} raised before, not now:"] if gone else []
+    rows += [f"  {reasons[k]}: {text[0]}" for k, text in words.items() if reasons[k]]
+    order = list(words)
+    for application, f, why, where in sorted(gone, key=lambda g: (order.index(g[2]), g[0].lower()))[:RULE_LINES]:
+        rows.append(f"  {application} {f['version']}, {name[f['kind']]}: {tab.share_text(f['n'], f['of'])} "
+                    f"({f['n']:,} of {f['of']:,}) against {tab.share_text(f['others_n'], f['others_of'])} "
+                    f"({f['others_n']:,} of {f['others_of']:,}) on its other versions together. Now"
+                    f"{' ' + where if where else ''}: {words[why][1]}.")
+    if len(gone) > RULE_LINES:
+        rows.append(f"  ... and {len(gone) - RULE_LINES} more.")
+    fresh = sum(how_now.values())
+    if fresh:
+        said = [f"{how_now[k]} {text}" for k, text in (
+            ("update", "after an update (the rule before had no before and after)"),
+            ("version", "against the version most PCs have"),
+            ("most", "the version most PCs have, against another")) if how_now[k]]
+        rows.append(f"{fresh} raised now, not before: " + "; ".join(said) + ".")
+    return [Check("Software tab", item, None,
+                  f"The tab's saved read of {files[-1].stem}, {len(apps)} applications, judged twice (no Aternity "
+                  f"read). The rule before (each version against its other versions added together, all PCs mixed) "
+                  f"raises {old} versions. The rule now raises {now_n}, counted per kind of PC as on the tab. "
+                  + (f"{both} of the {old} {'is' if both == 1 else 'are'} raised by both." if old else ""),
+                  rows=rows)]
+
+
+RULE_LINES = 25  # at most this many versions listed one by one
 
 
 def _overview(settings: Settings, client: AternityClient, schema: dict[str, set[str]]) -> list[Check]:

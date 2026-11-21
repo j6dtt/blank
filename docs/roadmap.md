@@ -133,10 +133,39 @@ data, then its daily data with the people and desktops. See
        said two things, not joined. Explain says it too. No rule
        change.
     The number 5 is my suggestion, taken as chosen with "build it".
-  - Next: one stage copy: `software.py`, `software_chat.py`,
-    `explain.py`, `verify.py`, `static/index.html`; restart; the
-    tab reads again at start (a few minutes): Teams' "Slower" flag
-    should be gone and Outlook's flags should have "Its update".
+  - On stage, Nov 21 2026 (pushed cf8106b; two photos): works. 15
+    red flags (10 on virtual desktops, 1 on physical PCs from this
+    panel): Teams' "Slower" flag is gone, Outlook's flags have "Its
+    update", OneNote's "Next:" says most already run the version.
+  - The user, on those photos: "How did we go from 28 red flags to
+    15 after this update? Did we break something or there was a
+    really bad bug?" Not broken as far as the code and the photos
+    say: the rule before was looser (the one the user questioned);
+    16 to 15 is Teams. Which flags went, one by one, only the
+    stage's saved read can say. Built on dev for it (410 tests):
+    - `verify --versions`, "the red flags, by the rule before and
+      the rule now": the tab's saved read judged by both rules; how
+      many each raises; each one raised before and not now with
+      why. No Aternity read.
+    - Two gaps found in before and after while looking, both in the
+      new code, both able to hide a real flag:
+      1. A PC that ran both versions on the day of its update was
+         left out whole (the comment said only that day). On stage
+         69 of 2,475 virtual desktops on a version were in its
+         before and after. Now the day is on neither side and the
+         PC stays; the panel says how many did.
+      2. Only the 2 updates with the most PCs (per kind of PC) were
+         judged, as only they are shown: a third could never be
+         raised. Now every update 20 PCs or more made is judged;
+         the panel shows the 2 biggest and every raised one, and
+         says how many more had nothing raised.
+      The Compare dialog's "Before and after an update" keeps a PC
+      the same way.
+  - Next: one stage copy: `software.py`, `verify.py`,
+    `static/index.html`; restart; after the tab's read, `verify
+    --versions` and a photo of its last part ("Software tab"). The
+    count of flags can move again (more PCs in before and after,
+    more updates judged): the check says which.
   - Known limits, said in the docs: an application with one version
     in the last 7 days is not read per version, so an update every
     PC had over a week ago is not compared by itself; flags of

@@ -4,7 +4,7 @@ A fake Aternity adds rows up the way the live tenant does (stage, Nov 10): group
 columns asked for, measures summed, DEVICE_COUNT = distinct PCs."""
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -275,7 +275,8 @@ def test_before_and_after_an_update_on_the_same_pcs_with_as_many_days_on_each_si
     a = sw.app_now(c, NOW, "Teams")
     assert set(a["kinds"]) == {"physical"} and a["day_rows"] == 420  # no PC is marked virtual; read day by day
     k = a["kinds"]["physical"]
-    assert k["updates"] == [{"from": "24.2", "to": "24.3", "pcs": 30, "first": "2026-11-07", "last": "2026-11-07",
+    assert k["updates_more"] == 0
+    assert k["updates"] == [{"from": "24.2", "to": "24.3", "pcs": 30, "both": 0, "first": "2026-11-07", "last": "2026-11-07",
                              "before": {"crash": 2, "hang": 0}, "after": {"crash": 12, "hang": 0},
                              "verdict": {"crash": {"state": "raised", "few": False}, "hang": {"state": "no", "few": False}}}]
     assert a["found"] == [{"kind": "crash", "version": "24.3", "on": "physical", "how": "update", "from": "24.2",
@@ -293,6 +294,55 @@ def test_before_and_after_an_update_on_the_same_pcs_with_as_many_days_on_each_si
     assert got["what"] == "Teams: physical PCs with a crash after their update to 24.3, last 14 days"
     assert sw.pcs_after_update(c, NOW, "Teams", "24.3", "crash", "virtual")["total"] == 0
     assert sw.pcs_after_update(c, NOW, "Teams", "24.2", "crash")["total"] == 0  # no PC changed to 24.2
+
+
+def test_a_pc_updated_during_a_day_of_use_stays_in_before_and_after():
+    """A PC that ran both versions on the day of its update was left out of before and after
+    whole, though the code's own comment said that day is on neither side (found on the user's
+    question of Nov 21 2026, "Did we break something": on stage 69 of 2,475 virtual desktops on a
+    version were in its before and after). Now the day is left out and the PC stays."""
+    d = lambda n: date(2026, 11, n)  # noqa: E731
+    x = lambda *vs, crash=False: [set(vs), crash, False, True]  # noqa: E731
+    by = {d(1): x("1"), d(2): x("1"), d(3): x("1", "2", crash=True), d(4): x("2"), d(5): x("2", crash=True),
+          d(6): x("2")}
+    f, t, when, before, after, both = sw._changed_once(by)
+    assert (f, t, when, both) == ("1", "2", d(3), True)  # it changed on the day it ran both
+    assert [day for day, _ in before] == [d(1), d(2)] and [day for day, _ in after] == [d(4), d(5)]  # 2 and 2
+    assert sw._one_change(by)[4][-1][0] == d(6)  # every day after, for the Compare dialog's days
+    assert sw._changed_once({d(1): x("1"), d(2): x("2")})[5] is False
+    for no in ({d(1): x("1", "2"), d(2): x("2")},  # no day on the version before alone: nothing to compare
+               {d(1): x("1"), d(2): x("1", "2"), d(3): x("1"), d(4): x("2")},  # back and forth
+               {d(1): x("1"), d(2): x("1", "3"), d(3): x("2")},  # a third version
+               {d(1): x("1"), d(2): x("2"), d(3): x("1")}, {d(1): x("1"), d(2): x("1")}):
+        assert sw._changed_once(no) is None, no
+    # counted: 25 PCs, 10 of them updated during a day of use; a crash after on 12, before on 2
+    days = {pc(i): ({d(1): x("1", crash=i <= 2), d(2): x("1", "2", crash=True), d(3): x("2", crash=i <= 12)} if i <= 10
+                    else {d(1): x("1", crash=i <= 2), d(3): x("2", crash=i <= 12)}) for i in range(1, 26)}
+    assert sw._updates(days, lambda _: True) == [{
+        "from": "1", "to": "2", "pcs": 25, "both": 10, "first": "2026-11-02", "last": "2026-11-03",
+        "before": {"crash": 2, "hang": 0}, "after": {"crash": 12, "hang": 0}}]
+
+
+def test_every_update_is_judged_not_only_the_two_with_the_most_pcs():
+    """Only the 2 changes of version with the most PCs (per kind of PC) were judged, as only they
+    are shown: a third could never be raised. Now all are judged; the page gets the 2 biggest and
+    every raised one, and how many more were judged with nothing raised."""
+    up = lambda f, t, pcs, before, after: {"from": f, "to": t, "pcs": pcs, "both": 0, "first": "2026-11-05",  # noqa: E731
+                                           "last": "2026-11-06", "before": {"crash": before, "hang": 0},
+                                           "after": {"crash": after, "hang": 0}}
+    row = {"version": "4", "pcs": 200, "crash": 9, "hang": 0, "action_pcs": 0, "actions": 0, "major": 0, "major_pcs": 0,
+           "new": False}
+    a = {"application": "A", "read": ["usage"], "versions": [dict(row)], "kinds": {"physical": {
+        "pcs": 200, "versions": [dict(row)],
+        "updates": [up("1", "2", 60, 1, 1), up("2", "3", 40, 0, 2), up("3", "4", 25, 1, 9), up("1", "3", 20, 3, 3)]}}}
+    sw.judge(a)
+    k = a["kinds"]["physical"]
+    assert [(u["from"], u["to"]) for u in k["updates"]] == [("1", "2"), ("2", "3"), ("3", "4")]  # 2 biggest + the raised
+    assert k["updates_more"] == 1 and all("verdict" in u for u in k["updates"])
+    assert a["raised"] == [{"kind": "crash", "version": "4", "on": "physical", "how": "update", "from": "3", "n": 9,
+                            "of": 25, "before": 1, "pcs": 9}]
+    sw.judge(a)  # judged again (a saved day when shown): the count of those not shown stays
+    assert len(a["kinds"]["physical"]["updates"]) == 3 and a["kinds"]["physical"]["updates_more"] == 1
 
 
 def test_a_day_saved_under_the_rule_before_is_judged_again_not_shown_with_its_old_words():
