@@ -83,8 +83,9 @@ def tables() -> dict:
     """60 PCs. Edge: 40 on 121.0 (most, newest), 15 on 120.0, 5 on 119.0 (20 behind). Java: 8.1 on
     10 PCs and 11.0 on 6 of them. Zoom: 3 PCs, for one user. Rare Tool: 1 PC. Windows 23H2 on 58
     PCs: KB1 on 50, the 8 others have KB2 instead; 24H2 on 2. Outlook: 16.1 on PCs 1-40 (a crash
-    on 12), 16.2 on PCs 41-60 (a crash on 2; 400 of its 2,400 actions Major); PCs 41-50 ran 16.1
-    two weeks ago (before and after). Trellix ENS: every PC listed crashed."""
+    on 12; PCs 31-40 are virtual desktops), 16.2 on PCs 41-60 (a crash on 2; 400 of its 2,400
+    actions Major); PCs 41-50 ran 16.1 two weeks ago (before and after). Trellix ENS: every PC
+    listed crashed."""
     inst = [sw_row(i, "Microsoft Edge", "121.0" if i <= 40 else "120.0" if i <= 55 else "119.0") for i in range(1, 61)]
     inst += [sw_row(i, "Java", "8.1") for i in range(1, 11)] + [sw_row(i, "Java", "11.0") for i in range(1, 7)]
     inst += [sw_row(i, "Zoom", "5.1", scope="Specific User") for i in range(1, 4)] + [sw_row(7, "Rare Tool", "1.0")]
@@ -98,7 +99,7 @@ def tables() -> dict:
         crash = i <= 12 or i in (41, 42)
         for d in (1, 2):  # two days each: Aternity adds the days up per PC and version
             usage.append({"DEVICE_NAME": pc(i), "USERNAME": f"user{i}", "APPLICATION_NAME": "Outlook",
-                          "APPLICATION_VERSION": v, "TIMEFRAME": day(d), "VIRTUALIZATION": "true" if i > 50 else "false",
+                          "APPLICATION_VERSION": v, "TIMEFRAME": day(d), "VIRTUALIZATION": "true" if 31 <= i <= 40 else "false",
                           "APPLICATION_CRASHES_TOTAL": 1 if crash and d == 1 else 0, "APPLICATION_HANG_TIME_TOTAL": 0})
         if 41 <= i <= 50:  # before their update, outside the 7 days compared
             usage += [{"DEVICE_NAME": pc(i), "APPLICATION_NAME": "Outlook", "APPLICATION_VERSION": "16.1",
@@ -114,12 +115,12 @@ def tables() -> dict:
         for act, n in (("Send Mail", 60), ("Open Calendar", 40)):
             acts.append({"DEVICE_NAME": pc(i), "APPLICATION_NAME": "Outlook", "APPLICATION_VERSION": v, "TIMEFRAME": day(1),
                          "ACTIVITY_NAME": act, "SLA_STATUS": "Normal", "ACTIVITY_VOLUME": n,
-                         "VIRTUALIZATION": "true" if i > 50 else "false"})
+                         "VIRTUALIZATION": "true" if 31 <= i <= 40 else "false"})
         major = 1 if i <= 5 else 20 if i > 40 else 0
         if major:
             acts.append({"DEVICE_NAME": pc(i), "USERNAME": f"user{i}", "APPLICATION_NAME": "Outlook", "APPLICATION_VERSION": v,
                          "TIMEFRAME": day(1), "ACTIVITY_NAME": "Send Mail", "SLA_STATUS": "Major", "ACTIVITY_VOLUME": major,
-                         "VIRTUALIZATION": "true" if i > 50 else "false"})
+                         "VIRTUALIZATION": "true" if 31 <= i <= 40 else "false"})
     health = [{"DEVICE_NAME": pc(i), "APPLICATION_NAME": "Outlook", "HEALTH_EVENT_NAME": "Application Crash",
                "TIMEFRAME": (NOW - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%SZ")} for i in (1, 2, 3, 41)]
     return {"INSTALLED_SOFTWARE": inst, "DEVICE_INVENTORY": inv, "APPLICATIONS_DAILY": usage,
@@ -140,10 +141,12 @@ def test_every_red_flag_with_its_counts_ranked_by_pcs(tmp_path):
                             "user_installs": 3}
     got = [(f["kind"], f["pcs"], f["text"]) for f in snap["flags"]]
     assert got == [
-        ("slow", 20, "Outlook 16.2: 400 of 2,400 actions rated Major, on 20 PCs; its other versions: 5 of 4,005 actions."),
+        ("slow", 20, "Outlook 16.2, physical PCs: 17% of its actions were rated Major (400 of 2,400, on 20 PCs). On the "
+                     "version most have, 16.1: 0.2% (5 of 3,005)."),
         ("behind", 20, "1 programs have 5 PCs or more on a version older than the one most of their PCs have; most: "
                        "Microsoft Edge, 20 of 60 PCs older than 121.0."),
-        ("crash", 12, "Outlook 16.1: a crash on 12 of 40 PCs; its other versions: 2 of 20 PCs."),
+        ("crash", 12, "Outlook 16.1, physical PCs, the version most have: it crashed on 40% of its physical PCs "
+                      "(12 of 30). On 16.2: 10% (2 of 20)."),
         ("windows", 8, "1 Windows updates are on most PCs of their Windows version but not on every one; most: KB1 "
                        "not on 8 of the 58 PCs on Microsoft Windows 11 Enterprise 23H2; 8 of those have KB2."),
         ("multi", 6, "1 programs have 2 or more versions on one PC, 6 PCs in all; most: Java on 6 of its 10 PCs "
@@ -154,13 +157,22 @@ def test_every_red_flag_with_its_counts_ranked_by_pcs(tmp_path):
     assert snap["notes"] == []
     trellix = snap["versions"]["Trellix ENS"]
     assert trellix["only"] == ["crash"] and trellix["raised"] == []  # every PC listed crashed: no share
-    assert trellix["others"] == {}  # nor of hang time: the PCs that ran it without a failure are not known
+    # nor of hang time: the PCs that ran it without a failure are not known
+    assert all(not v["verdict"] for k in trellix["kinds"].values() for v in k["versions"])
     assert "Word" not in snap["versions"]  # one version: nothing to compare
     out = snap["versions"]["Outlook"]
     assert [v["version"] for v in out["versions"]] == ["16.1", "16.2"]
-    assert out["versions"][1] | {"others": None} == {
-        "version": "16.2", "pcs": 20, "crash": 2, "hang": 0, "virtual": 10, "action_pcs": 20, "action_virtual": 10,
-        "actions": 2400, "major": 400, "major_pcs": 20, "others": None}
+    assert out["versions"][1] == {
+        "version": "16.2", "pcs": 20, "crash": 2, "hang": 0, "virtual": 0, "action_pcs": 20, "action_virtual": 0,
+        "actions": 2400, "major": 400, "major_pcs": 20}
+    # virtual desktops and physical PCs apart: PCs 31-40 are virtual, 10 of them, too few to judge
+    phys, virt = out["kinds"]["physical"], out["kinds"]["virtual"]
+    assert phys["ref"] == "16.1" and [(v["version"], v["pcs"], v["crash"]) for v in phys["versions"]] == [
+        ("16.1", 30, 12), ("16.2", 20, 2)]
+    assert phys["versions"][0]["verdict"]["crash"] == {"state": "raised", "few": False, "against": "16.2"}
+    assert phys["versions"][1]["verdict"] == {"crash": {"state": "no", "few": False}, "hang": {"state": "no", "few": False},
+                                              "slow": {"state": "raised", "few": False}}
+    assert virt["ref"] is None and [(v["version"], v["pcs"], v["verdict"]) for v in virt["versions"]] == [("16.1", 10, {})]
     win = snap["windows"]
     assert win["pcs"] == 60 and win["older"] == 30 and win["dated"] == 60 and sum(n for _, n in win["weeks"]) == 30
     w23 = win["versions"][0]
@@ -170,23 +182,100 @@ def test_every_red_flag_with_its_counts_ranked_by_pcs(tmp_path):
     assert "PC-" not in json.dumps(snap)  # counts and names only
 
 
-def test_a_version_needs_enough_pcs_on_each_side_and_with_the_problem():
+def test_a_version_is_judged_against_the_version_most_pcs_have():
+    """Each version against the version most PCs have, and that one against each other (the user,
+    Nov 21 2026: "I don't ... know where you get the 2 of 515 numbers": its other versions added
+    together were on the page only as a marker). Raised: 2 times the other's share, 5 PCs with
+    it, and still 2 times with 2 more PCs with it on the other side."""
     def app(*vs):
         return {"application": "A", "read": ["usage"], "versions": [
             {"version": v, "pcs": pcs, "crash": crash, "hang": 0, "action_pcs": 0, "actions": 0, "major": 0,
              "major_pcs": 0} for v, pcs, crash in vs]}
-    for vs, raised in (
-        ((("1", 40, 12), ("2", 20, 2)), ["1"]),  # 30% against 10%
-        ((("1", 40, 8), ("2", 20, 2)), ["1"]),  # 20% against 10%: 2 times, raised
-        ((("1", 40, 7), ("2", 20, 2)), []),  # 17.5%: under 2 times
-        ((("1", 19, 12), ("2", 40, 2)), []),  # too few PCs on it
-        ((("1", 40, 12), ("2", 19, 0)), []),  # too few PCs on its other versions
-        ((("1", 40, 4), ("2", 40, 0)), []),  # too few PCs with the problem
-        ((("1", 40, 5), ("2", 40, 0)), ["1"]),  # none on its other versions
+    for vs, raised, verdict in (
+        ((("1", 40, 2), ("2", 20, 6)), [("2", "version")], "raised"),  # 30% against 5%; 10% with 2 more there
+        ((("1", 40, 4), ("2", 20, 5)), [], "unsure"),  # 25% against 10%, but 15% with 2 more PCs there
+        ((("1", 40, 0), ("2", 20, 4)), [], "unsure"),  # 2 times, but only 4 PCs with it
+        ((("1", 40, 7), ("2", 20, 2)), [], "no"),  # the version most PCs have: 17.5% against 10%, under 2 times
+        ((("1", 40, 12), ("2", 20, 0)), [("1", "most")], "no"),  # the version most PCs have is the worse one
+        ((("1", 1738, 19), ("2", 515, 2)), [], "no"),  # stage, Nov 21: one more crash among the 515 undid the flag
+        ((("1", 40, 12), ("2", 19, 0)), [], None),  # too few PCs on the other version: not compared
     ):
         a = app(*vs)
         sw.judge(a)
-        assert [r["version"] for r in a["raised"]] == raised, vs
+        assert [(r["version"], r["how"]) for r in a["raised"]] == raised, vs
+        most, other = a["kinds"]["all"]["versions"]
+        assert a["kinds"]["all"]["ref"] == "1" and (other["verdict"].get("crash") or {}).get("state") == verdict, vs
+    assert a["kinds"]["all"]["versions"][1]["verdict"] == {} and "few" not in most["verdict"]
+    few = app(("1", 40, 0), ("2", 20, 4))
+    sw.judge(few)
+    assert few["kinds"]["all"]["versions"][1]["verdict"]["crash"] == {"state": "unsure", "few": True}
+    assert [sw.share_text(*x) for x in ((45, 300), (60, 1900), (1, 26), (0, 9), (1, 3000), (5, 40), (1, 8))] == [
+        "15%", "3.2%", "3.8%", "0%", "under 0.1%", "13%", "13%"]  # half rounded up, as the page does
+
+
+def teams() -> list[dict]:
+    """Teams: PCs 1-30 went from 24.2 to 24.3 four days ago (5 days on 24.2 read, 3 on 24.3: the
+    last 3 before are counted against the 3 after); PCs 31-60 stayed on 24.2. A crash after the
+    update on PCs 1-12; before it on PCs 1-2, and on PC 3 on a day too far back to be counted."""
+    def row(i, v, d, crash=0):
+        return {"DEVICE_NAME": pc(i), "APPLICATION_NAME": "Teams", "APPLICATION_VERSION": v, "TIMEFRAME": day(d),
+                "APPLICATION_CRASHES_TOTAL": crash, "APPLICATION_HANG_TIME_TOTAL": 0}
+    rows = []
+    for i in range(1, 31):
+        rows += [row(i, "24.2", d, crash=int((d == 7 and i <= 2) or (d == 10 and i == 3))) for d in (10, 9, 8, 7, 6)]
+        rows += [row(i, "24.3", d, crash=int(d == 2 and i <= 12)) for d in (3, 2, 1)]
+    for i in range(31, 61):
+        rows += [row(i, "24.2", d, crash=int(d == 1 and i == 31)) for d in (10, 8, 6, 4, 2, 1)]
+    return rows
+
+
+def test_before_and_after_an_update_on_the_same_pcs_with_as_many_days_on_each_side():
+    """The same PCs before and after their version changed, for each PC as many days after as
+    before, counted in PCs (the user, Nov 21 2026: "days of..." was confusing). A version most
+    of whose PCs got it this week is "new": judged by this only, not side by side."""
+    data = tables()
+    data["APPLICATIONS_DAILY"] += teams()
+    c, _ = client(data=data)
+    a = sw.app_now(c, NOW, "Teams")
+    assert set(a["kinds"]) == {"physical"} and a["day_rows"] == 420  # no PC is marked virtual; read day by day
+    k = a["kinds"]["physical"]
+    assert k["updates"] == [{"from": "24.2", "to": "24.3", "pcs": 30, "first": "2026-11-07", "last": "2026-11-07",
+                             "before": {"crash": 2, "hang": 0}, "after": {"crash": 12, "hang": 0},
+                             "verdict": {"crash": {"state": "raised", "few": False}, "hang": {"state": "no", "few": False}}}]
+    assert a["found"] == [{"kind": "crash", "version": "24.3", "on": "physical", "how": "update", "from": "24.2",
+                           "n": 12, "of": 30, "before": 2, "pcs": 12}]
+    assert sw.flag_text("crash", dict(a["found"][0], application="Teams")) == (
+        "Teams 24.3, physical PCs: more crashes after the update from 24.2. Of the 30 PCs that got it, it crashed "
+        "on 12 after the update and on 2 before it.")
+    rows = {v["version"]: v for v in k["versions"]}
+    assert k["ref"] == "24.2" and rows["24.2"]["pcs"] == 60 and rows["24.2"]["new"] is False
+    assert rows["24.3"]["pcs"] == 30 and rows["24.3"]["new"] is True and rows["24.3"]["verdict"] == {}
+    # the PCs behind it, read now by the same rule
+    got = sw.pcs_after_update(c, NOW, "Teams", "24.3", "crash", "physical")
+    assert got["total"] == 12 and got["rows"][0] == {"device": "PC-01", "username": None, "days": 1, "count": 1,
+                                                    "last": "2026-11-08T00:00:00+00:00"}
+    assert got["what"] == "Teams: physical PCs with a crash after their update to 24.3, last 14 days"
+    assert sw.pcs_after_update(c, NOW, "Teams", "24.3", "crash", "virtual")["total"] == 0
+    assert sw.pcs_after_update(c, NOW, "Teams", "24.2", "crash")["total"] == 0  # no PC changed to 24.2
+
+
+def test_a_day_saved_under_the_rule_before_is_judged_again_not_shown_with_its_old_words():
+    """After the copy, the page shows the last saved day until the first read: its applications
+    have no kinds of PC and its raised versions are the old rule's."""
+    old = {"Outlook": {"application": "Outlook", "read": ["usage"], "only": [], "others": {}, "totals": None,
+                       "raised": [{"kind": "crash", "version": "16.1", "n": 12, "of": 40, "others_n": 2, "others_of": 20,
+                                   "pcs": 12}],
+                       "versions": [{"version": "16.1", "pcs": 40, "crash": 12, "hang": 0, "virtual": 0, "action_pcs": 0,
+                                     "actions": 0, "major": 0, "major_pcs": 0, "action_virtual": 0},
+                                    {"version": "16.2", "pcs": 20, "crash": 0, "hang": 0, "virtual": 0, "action_pcs": 0,
+                                     "actions": 0, "major": 0, "major_pcs": 0, "action_virtual": 0}]}}
+    v = sw._versions_view(old)[0]
+    assert list(v["kinds"]) == ["all"] and v["kinds"]["all"]["ref"] == "16.1" and v["raised"] == 1
+    assert v["found"] == [{"kind": "crash", "on": "all", "ref": "16.2", "version": "16.1", "how": "most", "n": 12,
+                           "of": 40, "ref_n": 0, "ref_of": 20, "pcs": 12}]
+    assert sw.flag_text("crash", dict(v["found"][0], application="Outlook")) == (
+        "Outlook 16.1, the version most have: it crashed on 30% of its PCs (12 of 40). On 16.2: 0% (0 of 20).")
+    assert "others" in old["Outlook"] and "kinds" not in old["Outlook"]  # the saved day itself is not changed
 
 
 def test_the_saved_days_mark_new_flags_and_keep_their_days(tmp_path):
@@ -375,7 +464,7 @@ def test_compare_lines_up_two_versions_on_every_kind_of_issue():
     assert lines["PCs with Application Crash"] == ([3, 40], [1, 20])  # by the version the PC ran
     assert lines["Actions rated Major"] == ([5, 4005], [400, 2400])
     assert lines["Send Mail"] == ([5, 2405], [400, 1600]) and lines["Open Calendar"] == ([0, 1600], [0, 800])
-    assert got["kind"] == {"a": [0, 40], "b": [10, 20]}  # virtual desktops on each
+    assert got["kind"] == {"a": [10, 40], "b": [0, 20]}  # virtual desktops on each
     one = sw.compare(c, s.aternity, NOW, "Word")
     assert one["lines"] == [] and "nothing to compare" in one["notes"][0]
 
@@ -409,10 +498,10 @@ def test_the_summary_for_management_is_held_to_the_flags_numbers(tmp_path):
     got = sw.summary(v, good)
     assert got == {"text": good.text, "ours": False, "note": None}
     given = good.asked[0][1]["content"]
-    assert given.startswith("As of ") and "- Slower: Outlook 16.2: 400 of 2,400 actions" in given and "PC-" not in given
+    assert given.startswith("As of ") and "- Slower: Outlook 16.2, physical PCs: 17% of its actions were rated Major (400 of 2,400" in given and "PC-" not in given
     made_up = sw.summary(v, FakeAI("Outlook 16.2 is slower on 37 PCs."))
     assert made_up["ours"] and made_up["note"] == "The AI's summary had numbers not in the flags (37), so these are our own sentences."
-    assert made_up["text"].startswith("Slower: Outlook 16.2: 400 of 2,400")
+    assert made_up["text"].startswith("Slower: Outlook 16.2, physical PCs: 17% of its actions")
     worked = sw.summary(v, FakeAI("Outlook 16.2 has 2 times more Major actions."))
     assert worked["ours"] and "a worked-out comparison" in worked["note"]
     assert "No AI service is set" in sw.summary(v, None)["note"]

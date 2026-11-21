@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -39,9 +40,13 @@ READ_EVERY_H = 24  # the whole read, once a day (and at start)
 RETRY_MIN = 15     # ... and this soon again when Aternity did not answer for the list itself
 KEEP_DAYS = 90  # saved days, for "new" and each flag's days
 DAYS = 7  # application versions: the days counted
-RATIO = 2.0  # a version is raised at this times its other versions' share (decision 1)
+RATIO = 2.0  # a version is raised at this times the share it is compared with (decision 1)
 MIN_PCS = 20  # ... with at least this many PCs on each side
 MIN_PROBLEM = 5  # ... and at least this many PCs with the problem on it
+STILL = 2  # ... and still at RATIO times with this many more PCs with the problem on the other side
+ARRIVED = 0.5  # "new this week": more than this share of a version's PCs got it within DAYS
+UPDATES_SHOWN = 2  # before and after an update: the changes with the most PCs, per kind of PC
+PLACES = {"virtual": "virtual desktops", "physical": "physical PCs", "all": "PCs"}  # the kinds of PC, in words
 FEW_PCS = 5  # flag 6: programs on this many PCs or fewer
 WIN_MOST = 0.5  # flag 5: an update on more than half the PCs of its Windows version
 MULTI_MAX = 200  # flag 4: programs read PC by PC, most extra installs first (143 on the live tenant)
@@ -412,7 +417,7 @@ def _windows(q: _Reads, cfg, local, now: datetime, say) -> dict | None:
 
 def _blank() -> dict:
     return {"pcs": set(), "crash": set(), "hang": set(), "virtual": set(), "apcs": set(), "avirtual": set(),
-            "major_pcs": set(), "actions": 0.0, "major": 0.0}
+            "major_pcs": set(), "actions": 0.0, "major": 0.0, "dev": {}}  # dev: PC -> [actions, Major actions]
 
 
 def _span(spec: dict, start: datetime, end: datetime) -> str:
@@ -423,6 +428,7 @@ def _versions(q: _Reads, now: datetime, say) -> dict:
     """Per application and version: PCs that ran it, with a crash, with hang time, on virtual
     desktops (app usage); actions, Major actions, PCs with a Major action (actions)."""
     apps: dict[str, dict] = {}
+    extras: dict[str, dict] = {}  # per application: its days, its virtual desktops (`_app_rows`)
     read: dict[str, set] = {}
     cut: set[str] = set()  # applications whose rows were cut short
     start = now - timedelta(days=DAYS)
@@ -460,54 +466,170 @@ def _versions(q: _Reads, now: datetime, say) -> dict:
                            "the most were compared.")
         for i, a in enumerate(cands[:APPS_MAX]):
             say(f"Reading application versions on {problem}: {i} of {min(len(cands), APPS_MAX)} applications")
-            if _app_rows(q, key, a, start, now, apps.setdefault(a, {})):
+            if _app_rows(q, key, a, start, now, apps.setdefault(a, {}), extras.setdefault(a, {})):
                 read.setdefault(a, set()).add(key)
                 if q.cut:
                     cut.add(a)
-    return {a: _judged(a, vs, read.get(a, ()), a in cut) for a, vs in apps.items() if a in read}
+    return {a: _judged(a, vs, read.get(a, ()), a in cut, extras.get(a), now) for a, vs in apps.items() if a in read}
 
 
-def _app_rows(q: _Reads, key: str, a: str, start: datetime, now: datetime, vs: dict) -> bool:
+def _app_rows(q: _Reads, key: str, a: str, start: datetime, now: datetime, vs: dict,
+              extra: dict | None = None) -> bool:
     """One application's rows of one source (VERSION_SOURCES), per PC and version, added to
-    `vs`; False when they could not be read."""
+    `vs`; False when they could not be read. App usage is read day by day back to UPDATE_DAYS
+    (one read, as before): only its days from `start` are counted per version, and every day
+    goes to `extra["days"]` (PC -> day -> [its versions, a crash, hang time, counted]) for before
+    and after an update and "new this week". `extra["virtual"]`: the PCs Aternity marks virtual;
+    `extra["marked"]`: the sources that gave the mark; `extra["rows"]`: rows per source."""
     s = VERSION_SOURCES[key]
     E, V = s["entity"], s["version"]
     if (q.schema is not None and E not in q.schema) or not q.has(E, V):
         return False
+    extra = extra if extra is not None else {}
+    usage = key == "usage"
     virt = s.get("virtual") if q.has(E, s.get("virtual")) else None
-    sel = [s["device"], V] + ([s["crashes"], s["hang_time"]] if key == "usage" else [s["status"], s["volume"]]) \
+    sel = [s["device"], V] + ([s["time"], s["crashes"], s["hang_time"]] if usage else [s["status"], s["volume"]]) \
         + ([virt] if virt else [])
-    rows = q.rows(E, f"{a}, per PC and version", select=sel, top=LIST_ROWS * 2,
-                  filter=f"{_span(s, start, now)} and {s['application']} eq {odata_quote(a)}")
+    since = min(start, now - timedelta(days=UPDATE_DAYS)) if usage else start
+    rows = q.rows(E, f"{a}, per PC and version" + (", day by day" if usage else ""), select=sel,
+                  top=LIST_ROWS * (5 if usage else 2),
+                  filter=f"{_span(s, since, now)} and {s['application']} eq {odata_quote(a)}")
     if rows is None:
         return False
+    if virt:
+        extra.setdefault("marked", set()).add(key)
+    extra.setdefault("rows", {})[key] = len(rows)
+    days, virtual = extra.setdefault("days", {}), extra.setdefault("virtual", set())
     for r in rows:
         v, d = r.get(V), r.get(s["device"])
         if v is None or d is None:
             continue
-        x = vs.setdefault(str(v), _blank())
-        if key == "usage":
+        if virt and is_virtual(r.get(virt)):
+            virtual.add(d)
+        if usage:
+            crash, hang = (to_float(r.get(s["crashes"])) or 0) > 0, (to_float(r.get(s["hang_time"])) or 0) > 0
+            t = parse_time(r.get(s["time"]))
+            if t is not None:
+                day = days.setdefault(d, {}).setdefault(t.date(), [set(), False, False, t >= start])
+                day[0].add(str(v))
+                day[1], day[2] = day[1] or crash, day[2] or hang
+                if t < start:  # before the days counted: only for before and after an update
+                    continue
+            x = vs.setdefault(str(v), _blank())  # a row with no day is counted (it was asked for by day)
             x["pcs"].add(d)
-            if (to_float(r.get(s["crashes"])) or 0) > 0:
+            if crash:
                 x["crash"].add(d)
-            if (to_float(r.get(s["hang_time"])) or 0) > 0:
+            if hang:
                 x["hang"].add(d)
             if virt and is_virtual(r.get(virt)):
                 x["virtual"].add(d)
         else:
+            x = vs.setdefault(str(v), _blank())
             n = to_float(r.get(s["volume"]))
             n = 1.0 if n is None else n
             x["apcs"].add(d)
             x["actions"] += n
+            dev = x["dev"].setdefault(d, [0.0, 0.0])
+            dev[0] += n
             if r.get(s["status"]) == TOP_STATUS:
                 x["major"] += n
                 x["major_pcs"].add(d)
+                dev[1] += n
             if virt and is_virtual(r.get(virt)):
                 x["avirtual"].add(d)
     return True
 
 
-def _judged(a: str, vs: dict, read, partial: bool = False) -> dict:
+def _changed_once(by: dict) -> tuple | None:
+    """A PC whose version of the application changed once in the days read: (from, to, the day
+    it changed, its days before, its days after), the same number of days on each side (the
+    last ones before, the first ones after), so neither side had more time to go wrong. None
+    when it did not change, changed more than once, or ran 2 versions on one day (that day is
+    on neither side)."""
+    seq = sorted(by.items())
+    if any(len(x[0]) != 1 for _, x in seq):
+        return None
+    vs = [next(iter(x[0])) for _, x in seq]
+    changes = [i for i in range(1, len(vs)) if vs[i] != vs[i - 1]]
+    if len(changes) != 1:
+        return None
+    i = changes[0]
+    k = min(i, len(seq) - i)
+    return vs[0], vs[i], seq[i][0], seq[i - k:i], seq[i:i + k]
+
+
+def _updates(days: dict, inn) -> list[dict]:
+    """Before and after an update, on the same PCs (those of one kind, `inn`): per change of
+    version that MIN_PCS PCs or more made, the PCs with a crash and with hang time on their
+    days before and on as many days after. The changes with the most PCs."""
+    pairs: dict = {}
+    for d, by in days.items():
+        got = _changed_once(by) if inn(d) else None
+        if not got:
+            continue
+        f, t, when, before, after = got
+        p = pairs.setdefault((f, t), {"from": f, "to": t, "pcs": 0, "first": when, "last": when,
+                                      "before": {"crash": 0, "hang": 0}, "after": {"crash": 0, "hang": 0}})
+        p["pcs"] += 1
+        p["first"], p["last"] = min(p["first"], when), max(p["last"], when)
+        for side, part in (("before", before), ("after", after)):
+            p[side]["crash"] += any(x[1] for _, x in part)
+            p[side]["hang"] += any(x[2] for _, x in part)
+    out = sorted((p for p in pairs.values() if p["pcs"] >= MIN_PCS), key=lambda p: (-p["pcs"], order(p["to"])))
+    return [dict(p, first=p["first"].isoformat(), last=p["last"].isoformat()) for p in out[:UPDATES_SHOWN]]
+
+
+def _new(v: str, pcs: set, days: dict) -> bool:
+    """"New this week": more than ARRIVED of the version's PCs got it within the days counted
+    (their first day on it is one of those days, after a day on another version). It has had
+    less time to go wrong than the others, so it is judged before and after its update only."""
+    got = 0
+    for d in pcs:
+        by = days.get(d) or {}
+        on = [day for day, x in by.items() if v in x[0]]
+        if on and by[min(on)][3] and any(day < min(on) for day in by):
+            got += 1
+    return bool(pcs) and got > ARRIVED * len(pcs)
+
+
+def _kind_rows(versions: list[dict]) -> dict:
+    """All PCs as one kind, from the rows per version (a day saved before the kinds of PC, or
+    Aternity gives no virtual / physical mark)."""
+    rows = [{k: v.get(k, 0) for k in ("version", "pcs", "crash", "hang", "action_pcs", "actions", "major",
+                                       "major_pcs")} | {"new": False} for v in versions]
+    return {"pcs": sum(max(r["pcs"], r["action_pcs"]) for r in rows), "versions": rows, "updates": []}
+
+
+def _kinds(vs: dict, extra: dict) -> dict:
+    """The application's versions per kind of PC (Aternity's virtual / physical mark; all PCs as
+    one kind, "all", when it gives none): a virtual desktop and a physical PC are compared apart,
+    as one version can behave differently on each. Per kind: its versions (most PCs first), each
+    with its PCs, those with a crash and with hang time, its actions and those rated Major, and
+    whether it is new this week; the PCs that changed version (`_updates`)."""
+    virtual, days = set(extra.get("virtual", ())), extra.get("days") or {}
+    out = {}
+    for on in (("virtual", "physical") if extra.get("marked") else ("all",)):
+        inn = {"all": lambda d: True, "virtual": lambda d: d in virtual, "physical": lambda d: d not in virtual}[on]
+        rows, every = [], set()
+        for v, x in vs.items():
+            pcs, apcs = {d for d in x["pcs"] if inn(d)}, {d for d in x["apcs"] if inn(d)}
+            if not pcs and not apcs:
+                continue
+            every |= pcs | apcs
+            acts = [n for d, n in x["dev"].items() if inn(d)]
+            rows.append({"version": v, "pcs": len(pcs), "crash": len(x["crash"] & pcs), "hang": len(x["hang"] & pcs),
+                         "action_pcs": len(apcs), "actions": int(round(sum(n[0] for n in acts))),
+                         "major": int(round(sum(n[1] for n in acts))), "major_pcs": len(x["major_pcs"] & apcs),
+                         "new": _new(v, pcs, days)})
+        rows.sort(key=lambda r: (-max(r["pcs"], r["action_pcs"]), order(r["version"])))
+        ups = _updates(days, inn)
+        if rows or ups:
+            out[on] = {"pcs": len(every), "versions": rows, "updates": ups}
+    return out
+
+
+def _judged(a: str, vs: dict, read, partial: bool = False, extra: dict | None = None,
+            now: datetime | None = None) -> dict:
     rows = [{"version": v, "pcs": len(x["pcs"]), "crash": len(x["crash"]), "hang": len(x["hang"]),
              "virtual": len(x["virtual"]), "action_pcs": len(x["apcs"]), "action_virtual": len(x["avirtual"]),
              "actions": int(round(x["actions"])), "major": int(round(x["major"])),
@@ -517,7 +639,8 @@ def _judged(a: str, vs: dict, read, partial: bool = False) -> dict:
     # the application's PCs across its versions, each PC once (for "which crashed the most")
     app = {"application": a, "read": sorted(read), "versions": rows, "partial": partial,
            "totals": {"pcs": union("pcs"), "crash": union("crash"), "hang": union("hang"),
-                      "action_pcs": union("apcs"), "slow": union("major_pcs")}}
+                      "action_pcs": union("apcs"), "slow": union("major_pcs")},
+           "kinds": _kinds(vs, extra or {})}
     judge(app)
     return app
 
@@ -529,12 +652,14 @@ def app_now(client, now: datetime, application: str) -> dict:
     q = _Reads(client, notes)
     vs: dict = {}
     read, cut = [], False
+    extra: dict = {}
     for key in ("usage", "actions"):
-        if _app_rows(q, key, application, now - timedelta(days=DAYS), now, vs):
+        if _app_rows(q, key, application, now - timedelta(days=DAYS), now, vs, extra):
             read.append(key)
             cut = cut or q.cut
-    app = _judged(application, vs, read, cut)
-    return dict(_versions_view({application: app})[0], notes=notes, error=q.error if not read else "")
+    app = _judged(application, vs, read, cut, extra, now)
+    return dict(_versions_view({application: app})[0], notes=notes, error=q.error if not read else "",
+                day_rows=extra.get("rows", {}).get("usage"))
 
 
 # words that name no program by themselves: "Microsoft Edge" is looked for as "edge"
@@ -620,47 +745,116 @@ def crashes_by_version(client, now: datetime, application: str) -> dict:
             "pcs": len(set().union(*(x["pcs"] for x in per.values()))) if per else 0}
 
 
+def _check(a_n, a_of, b_n, b_of, with_it, still: int) -> tuple[str, bool]:
+    """One side against the other, in plain counts. "raised": a's share is at least RATIO times
+    b's, MIN_PROBLEM PCs or more have the problem, and it would still be RATIO times with
+    `still` more PCs with it on b's side (so one or two PCs never decide it). "unsure": RATIO
+    times, but one of the other two fails (True: too few PCs with it; False: the "more PCs"
+    check). "more": a higher share, under RATIO times. "no": not higher. "none": nothing to
+    count on one side."""
+    if not a_of or not b_of:
+        return "none", False
+    if a_n > 0 and a_n * b_of >= RATIO * b_n * a_of:
+        few = with_it < MIN_PROBLEM
+        holds = a_n * b_of >= RATIO * (b_n + still) * a_of
+        return ("raised", False) if holds and not few else ("unsure", few)
+    return ("more" if a_n * b_of > b_n * a_of else "no"), False
+
+
 def judge(app: dict) -> None:
-    """Flag 1 (decision 1): a version is raised when its share of PCs with a crash (or hang
-    time), or of actions rated Major, is at least RATIO times its other versions' share, with
-    MIN_PCS PCs on each side and MIN_PROBLEM PCs with the problem on it. When every PC listed
-    had a crash (or hang time), app usage holds the application only where it failed: no
-    share of either can be compared, so none is raised and the reason is kept (`only`)."""
+    """Flag 1 (decision 1, as changed on Nov 21 2026: the user could not tell where "its other
+    versions: 2 of 515" came from, and one more crash among those 515 would have undone the
+    flag). Per kind of PC (`_kinds`), two comparisons a person can see on the page:
+    - before and after an update, on the same PCs with the same number of days on each side:
+      raised when the PCs with a crash (or hang time) after are RATIO times those before;
+    - each version against the version most PCs have (not one that is new this week): raised
+      on whichever of the two has RATIO times the other's share of PCs with a crash, of PCs
+      with hang time, or of actions rated Major. MIN_PCS PCs on each side.
+    Every one also needs MIN_PROBLEM PCs with the problem and, counted in PCs, to hold with
+    STILL more of them on the other side (`_check`). Each row keeps its `verdict` per count, for
+    the page's words. When every PC listed had a crash (or hang time), app usage holds the
+    application only where it failed: nothing of app usage is compared (`only`)."""
     vs, read = app["versions"], app["read"]
-    app["raised"], app["only"], app["others"] = [], [], {}
-    sides = []
-    if "usage" in read:
+    kinds = app.setdefault("kinds", {"all": _kind_rows(vs)})
+    app["raised"], app["only"] = [], []
+    usage = "usage" in read
+    if usage:
         tof = sum(v["pcs"] for v in vs)
         app["only"] = [k for k in ("crash", "hang") if sum(v[k] for v in vs) >= MIN_PROBLEM
                        and sum(v[k] for v in vs) == tof]
-        if not app["only"]:  # held only where it failed: no share of either can be compared
-            sides += [("crash", "crash", "pcs", "pcs", "crash"), ("hang", "hang", "pcs", "pcs", "hang")]
+    sides = []
+    if usage and not app["only"]:  # held only where it failed: no share of either can be compared
+        sides += [("crash", "crash", "pcs", "pcs", "crash", STILL), ("hang", "hang", "pcs", "pcs", "hang", STILL)]
     if "actions" in read:
-        sides += [("slow", "major", "actions", "action_pcs", "major_pcs")]
-    for kind, n_key, of_key, pcs_key, prob_key in sides:
-        tn, tof, tpcs = (sum(v[k] for v in vs) for k in (n_key, of_key, pcs_key))
-        for v in vs:
-            n, of, on, oof = v[n_key], v[of_key], tn - v[n_key], tof - v[of_key]
-            app["others"].setdefault(v["version"], {})[kind] = [on, oof]
-            if (v[pcs_key] >= MIN_PCS and tpcs - v[pcs_key] >= MIN_PCS and v[prob_key] >= MIN_PROBLEM
-                    and of > 0 and oof > 0 and n * oof >= RATIO * on * of and n * oof > on * of):
-                app["raised"].append({"kind": kind, "version": v["version"], "n": n, "of": of, "others_n": on,
-                                      "others_of": oof, "pcs": v[prob_key]})
+        sides += [("slow", "major", "actions", "action_pcs", "major_pcs", 0)]
+    for on, k in kinds.items():
+        for u in k["updates"]:
+            u["verdict"] = {}
+            for kind in ("crash", "hang") if usage and not app["only"] else ():
+                n, before = u["after"][kind], u["before"][kind]
+                state, few = _check(n, u["pcs"], before, u["pcs"], n, STILL)
+                u["verdict"][kind] = {"state": state, "few": few}
+                if state == "raised":
+                    app["raised"].append({"kind": kind, "version": u["to"], "on": on, "how": "update",
+                                          "from": u["from"], "n": n, "of": u["pcs"], "before": before, "pcs": n})
+        for v in k["versions"]:
+            v["verdict"] = {}
+        judged = [v for v in k["versions"] if max(v["pcs"], v["action_pcs"]) >= MIN_PCS]
+        ref = next((v for v in judged if not v["new"]), judged[0] if judged else None)
+        k["ref"] = ref["version"] if ref else None
+        for v in judged:
+            if v is ref or v["new"]:
+                continue
+            for kind, n_key, of_key, pcs_key, prob_key, still in sides:
+                if v[pcs_key] < MIN_PCS or ref[pcs_key] < MIN_PCS:
+                    continue
+                mine, most = (v[n_key], v[of_key]), (ref[n_key], ref[of_key])
+                state, few = _check(*mine, *most, v[prob_key], still)
+                v["verdict"][kind] = {"state": state, "few": few}
+                found = {"kind": kind, "on": on, "ref": ref["version"]}
+                if state == "raised":
+                    app["raised"].append(found | {"version": v["version"], "how": "version", "n": mine[0],
+                                                  "of": mine[1], "ref_n": most[0], "ref_of": most[1],
+                                                  "pcs": v[prob_key]})
+                if kind not in ref["verdict"] and _check(*most, *mine, ref[prob_key], still)[0] == "raised":
+                    ref["verdict"][kind] = {"state": "raised", "few": False, "against": v["version"]}
+                    app["raised"].append(found | {"version": ref["version"], "how": "most", "ref": v["version"],
+                                                  "n": most[0], "of": most[1], "ref_n": mine[0], "ref_of": mine[1],
+                                                  "pcs": ref[prob_key]})
+
+
+def share_text(n, of) -> str:
+    """A share as the page writes it: a whole percentage from 10%, one decimal under it, half
+    rounded up (the page does the same sum, so the two never differ). Always beside its counts."""
+    if not n or not of:
+        return "0%"
+    v = n / of * 100
+    if v < 0.05:
+        return "under 0.1%"
+    return f"{math.floor(v + 0.5)}%" if v >= 10 else f"{math.floor(v * 10 + 0.5) / 10:g}%"
+
+
+DID = {"crash": "crashed", "hang": "stopped responding"}
 
 
 def flag_text(kind: str, f: dict) -> str:
-    """The red flag's sentence: what was counted, in plain counts."""
+    """The red flag's sentence: what was compared with what, each share with its counts."""
     a, v = f.get("application"), f.get("version")
-    if kind == "crash":
-        return (f"{a} {v}: a crash on {f['n']:,} of {f['of']:,} PCs; its other versions: {f['others_n']:,} of "
-                f"{f['others_of']:,} PCs.")
-    if kind == "hang":
-        return (f"{a} {v}: hang time on {f['n']:,} of {f['of']:,} PCs; its other versions: {f['others_n']:,} of "
-                f"{f['others_of']:,} PCs.")
-    if kind == "slow":
-        return (f"{a} {v}: {f['n']:,} of {f['of']:,} actions rated {TOP_STATUS}, on {f['pcs']:,} PCs; its other "
-                f"versions: {f['others_n']:,} of {f['others_of']:,} actions.")
-    return f.get("text", "")
+    if kind not in ("crash", "hang", "slow"):
+        return f.get("text", "")
+    on = PLACES.get(f.get("on"), PLACES["all"])
+    where = f", {on}" if f.get("on") in ("virtual", "physical") else ""
+    if f.get("how") == "update":
+        more = "more crashes" if kind == "crash" else "it stops responding more"
+        return (f"{a} {v}{where}: {more} after the update from {f['from']}. Of the {f['of']:,} PCs that got it, it "
+                f"{DID[kind]} on {f['n']:,} after the update and on {f['before']:,} before it.")
+    mine, other = share_text(f["n"], f["of"]), share_text(f["ref_n"], f["ref_of"])
+    what = (f"{mine} of its actions were rated {TOP_STATUS} ({f['n']:,} of {f['of']:,}, on {f['pcs']:,} PCs)"
+            if kind == "slow" else f"it {DID[kind]} on {mine} of its {on} ({f['n']:,} of {f['of']:,})")
+    theirs = f"{other} ({f['ref_n']:,} of {f['ref_of']:,})"
+    if f.get("how") == "most":
+        return f"{a} {v}{where}, the version most have: {what}. On {f['ref']}: {theirs}."
+    return f"{a} {v}{where}: {what}. On the version most have, {f['ref']}: {theirs}."
 
 
 def program_view(p: dict) -> dict:
@@ -686,13 +880,20 @@ def _flags(snap: dict) -> list[dict]:
     """The red flags, one line each, ranked by PCs: each raised version (flag 1), then one
     line per other kind naming the program with the most PCs."""
     flags = []
+    seen = set()
     for a in snap.get("versions", {}).values():
-        for r in a["raised"]:
+        # one flag per version, count and kind of PC: before and after its update first (the same
+        # PCs on both sides is the stronger comparison)
+        for r in sorted(a["raised"], key=lambda r: r.get("how") != "update"):
+            on = r.get("on", "all")
+            key = f"{r['kind']}|{a['application']}|{r['version']}" + (f"|{on}" if on != "all" else "")
+            if key in seen:
+                continue
+            seen.add(key)
             f = dict(r, application=a["application"])
-            flags.append({"key": f"{r['kind']}|{a['application']}|{r['version']}", "kind": r["kind"],
-                          "label": KIND[r["kind"]], "pcs": r["pcs"],
+            flags.append({"key": key, "kind": r["kind"], "label": KIND[r["kind"]], "pcs": r["pcs"],
                           "text": flag_text(r["kind"], f) + (f" {CUT}" if a.get("partial") else ""),
-                          "application": a["application"], "version": r["version"]})
+                          "application": a["application"], "version": r["version"], "on": on})
     progs = [program_view(p) for p in snap.get("programs", {}).values()]
     apps = [p for p in progs if p["type"] != SOFTWARE_OS_UPDATE]
     behind = sorted((p for p in apps if (p["behind"] or 0) >= MIN_PROBLEM), key=lambda p: (-p["behind"], p["name"]))
@@ -867,7 +1068,8 @@ class Software:
             "as_of": snap["as_of"], "as_of_local": self.local(datetime.fromisoformat(snap["as_of"])).strftime(
                 "%b %d, %H:%M"), "date": snap["date"], "list": snap["list"], "flags": flags, "notes": notes,
             "days": snap.get("days", DAYS),
-            "rules": {"ratio": RATIO, "min_pcs": MIN_PCS, "min_problem": MIN_PROBLEM, "few": FEW_PCS},
+            "rules": {"ratio": RATIO, "min_pcs": MIN_PCS, "min_problem": MIN_PROBLEM, "few": FEW_PCS, "still": STILL,
+                      "update_days": UPDATE_DAYS},
             "behind": sorted((p for p in apps if p["behind"]), key=lambda p: (-p["behind"], p["name"]))[:100],
             "user": [{"name": p["name"], "pcs": p["user"], "of": p["pcs"]} for p in
                      sorted((p for p in progs if p["user"]), key=lambda p: (-p["user"], p["name"]))],
@@ -889,11 +1091,13 @@ def _versions_view(apps: dict) -> list[dict]:
     """Applications with a raised version first (most PCs with the problem), then the others."""
     out = []
     for a in apps.values():
+        if "kinds" not in a or any("how" not in r for r in a.get("raised", [])):
+            a = dict(a, kinds={"all": _kind_rows(a["versions"])})  # a day saved under the rule before: judged again
+            judge(a)
         raised = {(r["version"], r["kind"]) for r in a["raised"]}
-        vs = [dict(v, raised=sorted(k for (ver, k) in raised if ver == v["version"]),
-                   others=a["others"].get(v["version"], {})) for v in a["versions"]]
+        vs = [dict(v, raised=sorted(k for (ver, k) in raised if ver == v["version"])) for v in a["versions"]]
         out.append({"application": a["application"], "read": a["read"], "only": a["only"], "versions": vs,
-                    "totals": a.get("totals"),
+                    "totals": a.get("totals"), "kinds": a["kinds"], "found": a["raised"],
                     "raised": len(a["raised"]), "problem": sum(v["crash"] + v["hang"] + v["major_pcs"] for v in vs)})
     out.sort(key=lambda a: (-a["raised"], -a["problem"], a["application"].lower()))
     return out
@@ -1042,9 +1246,10 @@ def pcs_with_program(client, name: str, version: str | None, prefix: bool = Fals
             "rows": [{"device": d, "version": ", ".join(sorted(per[d], key=order))} for d in devs[:PCS_SHOWN]]}
 
 
-def pcs_with_problem(client, now: datetime, application: str, version: str, problem: str) -> dict:
+def pcs_with_problem(client, now: datetime, application: str, version: str, problem: str, kind: str = "") -> dict:
     """The PCs with a crash, hang time or a Major action on one application version over the
-    last DAYS days, read now: user, days with it, the last of them (for Investigate)."""
+    last DAYS days, read now: user, days with it, the last of them (for Investigate). `kind`
+    (virtual / physical): only the PCs Aternity marks so, as the count that was clicked."""
     start = now - timedelta(days=DAYS)
     key = "actions" if problem == "slow" else "usage"
     s = VERSION_SOURCES[key]
@@ -1057,29 +1262,90 @@ def pcs_with_problem(client, now: datetime, application: str, version: str, prob
         count = s["crashes"] if problem == "crash" else s["hang_time"]
         flt += f" and {count} gt 0"
     sel = [s["device"], s["time"], count]
-    try:  # the user, when Aternity publishes it on this source
-        rows = client.query(s["entity"], filter=flt, select=sel + [s["username"]], top=LIST_ROWS)
-    except Exception:
-        rows = client.query(s["entity"], filter=flt, select=sel, top=LIST_ROWS)
+    kind = kind if kind in ("virtual", "physical") else ""
+    tries = ([[s["username"], s["virtual"]], [s["virtual"]]] if kind else []) + [[s["username"]], []]
+    for more in tries:  # the user and the virtual mark, when Aternity publishes them on this source
+        try:
+            rows = client.query(s["entity"], filter=flt, select=sel + more, top=LIST_ROWS)
+            break
+        except Exception:
+            if not more:
+                raise
+    marked = s["virtual"] in more
     per: dict = {}
     for r in rows:
         d, t = r.get(s["device"]), parse_time(r.get(s["time"]))
         if not d or t is None:
             continue
-        x = per.setdefault(str(d), {"device": str(d), "username": None, "days": set(), "count": 0.0, "last": t})
+        x = per.setdefault(str(d), {"device": str(d), "username": None, "days": set(), "count": 0.0, "last": t,
+                                    "virtual": False})
+        x["virtual"] = x["virtual"] or (marked and is_virtual(r.get(s["virtual"])))
         x["days"].add(t.date())
         x["last"] = max(x["last"], t)
         if problem != "hang":  # hang time has no documented unit: never shown
             x["count"] += to_float(r.get(count)) or (1 if problem == "slow" else 0)
         if r.get(s.get("username")):
             x["username"] = str(r.get(s["username"]))
+    if kind and marked:
+        per = {d: x for d, x in per.items() if x["virtual"] == (kind == "virtual")}
     out = sorted(per.values(), key=lambda x: (-len(x["days"]), -x["last"].timestamp(), x["device"].lower()))
     words = {"crash": "a crash", "hang": "hang time", "slow": f"a {TOP_STATUS} action"}[problem]
-    return {"what": f"{application} {version}: PCs with {words}, last {DAYS} days", "total": len(out),
+    who = PLACES[kind] if kind and marked else "PCs"
+    unmarked = " (Aternity gave no virtual / physical mark here: every PC is listed)" if kind and not marked else ""
+    return {"what": f"{application} {version}: {who} with {words}, last {DAYS} days{unmarked}", "total": len(out),
             "problem": problem,
             "rows": [{"device": x["device"], "username": x["username"], "days": len(x["days"]),
                       "count": int(round(x["count"])) if problem != "hang" else None,
                       "last": x["last"].isoformat()} for x in out[:PCS_SHOWN]]}
+
+
+def pcs_after_update(client, now: datetime, application: str, version: str, problem: str, kind: str = "") -> dict:
+    """The PCs behind "more after the update": those whose version of the application changed
+    once to `version` in the last UPDATE_DAYS days and had a crash (or hang time) on their days
+    after it, read now by the daily read's own rule (`_changed_once`: as many days after as
+    before). `kind` as in `pcs_with_problem`."""
+    u = VERSION_SOURCES["usage"]
+    kind = kind if kind in ("virtual", "physical") else ""
+    sel = [u["device"], u["time"], u["version"], u["crashes"], u["hang_time"]]
+    flt = f"{_span(u, now - timedelta(days=UPDATE_DAYS), now)} and {u['application']} eq {odata_quote(application)}"
+    for more in ([[u["virtual"]]] if kind else []) + [[]]:
+        try:
+            rows = client.query(u["entity"], filter=flt, select=sel + more, top=LIST_ROWS * 5)
+            break
+        except Exception:
+            if not more:
+                raise
+    marked = bool(more)
+    days: dict = {}
+    virtual = set()
+    for r in rows:
+        d, t, v = r.get(u["device"]), parse_time(r.get(u["time"])), r.get(u["version"])
+        if d is None or t is None or v is None:
+            continue
+        crashes = to_float(r.get(u["crashes"])) or 0
+        day = days.setdefault(str(d), {}).setdefault(t.date(), [set(), False, False, True, 0.0, t])
+        day[0].add(str(v))
+        day[1], day[2] = day[1] or crashes > 0, day[2] or (to_float(r.get(u["hang_time"])) or 0) > 0
+        day[4] += crashes
+        if marked and is_virtual(r.get(u["virtual"])):
+            virtual.add(str(d))
+    hit_at = 1 if problem == "crash" else 2
+    out = []
+    for d, by in days.items():
+        if kind and marked and (d in virtual) != (kind == "virtual"):
+            continue
+        got = _changed_once(by)
+        hit = [x for _, x in got[4] if x[hit_at]] if got and got[1] == version else []
+        if hit:
+            out.append({"device": d, "username": None, "days": len(hit),
+                        "count": int(round(sum(x[4] for x in hit))) if problem == "crash" else None,
+                        "last": max(x[5] for x in hit)})
+    out.sort(key=lambda x: (-x["days"], -x["last"].timestamp(), x["device"].lower()))
+    words = "a crash" if problem == "crash" else "hang time"
+    who = PLACES[kind] if kind and marked else "PCs"
+    return {"what": f"{application}: {who} with {words} after their update to {version}, last {UPDATE_DAYS} days",
+            "total": len(out), "problem": problem,
+            "rows": [dict(x, last=x["last"].isoformat()) for x in out[:PCS_SHOWN]]}
 
 
 def missing_on(snap: dict | None, update: str, windows: str | None = None) -> tuple[list[str], list[str]]:

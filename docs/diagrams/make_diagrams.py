@@ -453,7 +453,7 @@ def software():
             item("Device list", "One row per PC Aternity still knows:", "· the PC's name", "· its Windows version",
                  "· when Windows was last updated", "Aternity takes a PC off this list about a month after it last "
                  "heard from it."),
-            item(f"App usage and actions, last {S.DAYS} days", "Per application and version:",
+            item(f"App usage ({S.UPDATE_DAYS} days, day by day) and actions ({S.DAYS} days)", "Per application, version and PC:",
                  "· PCs that ran it", "· PCs with a crash", "· PCs with hang time",
                  f"· actions, and those Aternity rated {TOP_STATUS}"),
             item(f"Crash events, last {S.DAYS} days", "Every crash by application, program file and version.",
@@ -478,11 +478,14 @@ def software():
                  "PCs are grouped by Windows version. An update is counted only on its own Windows version's PCs. It is "
                  f"\"missing\" when more than {S.WIN_MOST:.0%} of those PCs have it and at least {S.MIN_PROBLEM} do not. For "
                  "the PCs without it: what they have instead (a later update may replace it)."),
-            item("E. Does one version have more problems?", "Uses: app usage and actions.",
-                 f"Applications with 2+ versions and a problem (the {S.APPS_MAX} with the most) are read per PC and "
-                 f"version. A version is raised when its share is at least {S.RATIO:g} times the share of the other "
-                 f"versions together, with {S.MIN_PCS}+ PCs on each side and {S.MIN_PROBLEM}+ PCs with the problem. "
-                 "Three problems: PCs with a crash, PCs with hang time, actions rated " + TOP_STATUS + "."),
+            item("E. Does one version have more problems?", "Uses: app usage (day by day) and actions. Virtual desktops and "
+                 "physical PCs are looked at apart.",
+                 f"1. Before and after an update: PCs whose version changed once in {S.UPDATE_DAYS} days, for each PC as many "
+                 "days after as before; the PCs with a crash (or hang time) after against those before.",
+                 f"2. Each version against the version most PCs have ({S.MIN_PCS}+ PCs on each side; a version new this week "
+                 "is left to 1).",
+                 f"Raised: {S.RATIO:g} times the other side's share, {S.MIN_PROBLEM}+ PCs with the problem, and still so "
+                 f"with {S.STILL} more PCs with it on the other side."),
         ], [
             item("F. Installed for one user only", "Uses: installed list.",
                  "Aternity marks every install with who it is for: the whole PC (\"ALL\") or one person "
@@ -506,9 +509,9 @@ def software():
                  "raised. It is shown, with the PCs that failed, but not as a red flag."),
         ]]),
         ("4. Red flags", "One line per kind, most PCs first", "result", [[
-            item(K["crash"], "From E. One line per raised version:", "\"a crash on N of M PCs; its other versions: n of m PCs\"."),
-            item(K["hang"], "From E. One line per raised version:", "\"hang time on N of M PCs; its other versions: n of m\"."),
-            item(K["slow"], "From E. One line per raised version:", f"\"N of M actions rated {TOP_STATUS}, on P PCs\"."),
+            item(K["crash"], "From E. One line per raised version:", "\"it crashed on N% of its PCs (n of m); on the version most have: ...\", or \"more crashes after the update\"."),
+            item(K["hang"], "From E. One line per raised version:", "The same, for PCs where it stopped responding."),
+            item(K["slow"], "From E. One line per raised version:", f"\"N% of its actions were rated {TOP_STATUS} (n of m, on P PCs)\"."),
             item(K["windows"], "From D. One line: how many updates are missing somewhere, and the one missing on the "
                  "most PCs."),
         ], [
@@ -530,7 +533,7 @@ def software():
             item("Tiles", "PCs in the list (and how many more were left out as gone), programs, installs (and those "
                  "for one user), red flags."),
             item("Red flags", "The list from 4. A click on a line opens its section or the PCs behind it."),
-            item("Sections", "Crashes, hangs and slow actions by version · Compare versions · Behind most PCs · 2+ "
+            item("Sections", "Application health by version · Compare versions · Behind most PCs · 2+ "
                  "versions on one PC · Installed for one user · Windows · rare programs."),
             item("Summary for management", "The AI words up to 5 sentences from the top flags. Every number must be one "
                  "of the flags' own; otherwise our own sentence is shown."),

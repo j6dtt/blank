@@ -213,11 +213,36 @@ GLOSSARY: dict[str, dict[str, str]] = {
                     "software, so these are PCs that are gone. They are not counted anywhere on the tab.",
         "red flag": "Something on the installed software worth raising to management. One line per kind, the "
                     "most PCs first.",
-        "Crashes more / Hangs more / Slower": f"One version of an application has the problem (PCs with a crash, "
-                                              f"PCs with a hang, or actions rated {TOP_STATUS}) at at least "
-                                              f"{software.RATIO:g} times the share of its other versions, with "
-                                              f"at least {software.MIN_PCS} PCs on each side and "
-                                              f"{software.MIN_PROBLEM} PCs with the problem.",
+        "Crashes more / Hangs more / Slower": f"A version of an application is raised (▲) when the problem (PCs with "
+                                              f"a crash, PCs where it stopped responding, or actions rated "
+                                              f"{TOP_STATUS}) shows on at least {software.RATIO:g} times the share "
+                                              f"of what it is compared with, {software.MIN_PROBLEM} PCs or more "
+                                              f"have it, and it would still be {software.RATIO:g} times with "
+                                              f"{software.STILL} more PCs with it on the other side, so one or two "
+                                              "PCs never decide it. Two comparisons: before and after an update, "
+                                              "and each version against the version most PCs have.",
+        "Crashed": f"The application closed by itself. A PC counts once, however many times it happened in the "
+                   f"{software.DAYS} days. From Aternity's daily app usage.",
+        "Stopped responding": "The application froze for a while (Windows shows \"Not responding\"). Aternity calls "
+                              "it hang time and gives no unit for how long, so none is shown. A PC counts once if "
+                              "it had any.",
+        "Slow actions": f"The share of a version's actions that Aternity rated {TOP_STATUS}, its word for clearly "
+                        "slower than usual.",
+        "the version most PCs have": f"The yardstick: of an application's versions on {software.MIN_PCS} PCs or more, "
+                                     "the one on the most PCs (not one that is new this week). Every other version "
+                                     "is compared with it.",
+        "new this week": f"Most of the version's PCs got it within the last {software.DAYS} days, so it has had less "
+                         "time to go wrong than the others. It is judged before and after its update, not side by "
+                         "side.",
+        "Before and after the update": f"PCs whose version of the application changed once in the last "
+                                       f"{software.UPDATE_DAYS} days. For each PC the same number of days is counted "
+                                       "before and after, so neither side had more time to go wrong. The same PCs "
+                                       "and people are on both sides, so the version is what changed.",
+        "too few to judge": f"A version on under {software.MIN_PCS} PCs of that kind. One PC with a problem would "
+                            "move its share too far to mean anything, so it is listed but not compared.",
+        "virtual desktops and physical PCs": "Aternity marks each PC as one or the other. They are compared apart, "
+                                             "because the same version can behave differently on each: mixed "
+                                             "together, the version would be blamed for what is the kind of PC.",
         "not compared": "Every PC listed for that application had the problem, so no version can be said to "
                         "be worse than another.",
         "Behind most PCs": "PCs on a version older than the one most PCs of that program have.",
@@ -289,6 +314,16 @@ def _nth(n: int) -> str:
 
 
 set_refresh(today.REFRESH_MIN)  # the default; web.py sets config.yaml's
+
+
+# the terms of the Software tab's "Application health by version", for its own Explain dialogs
+VERSION_TERMS = ("the version most PCs have", "Crashed", "Stopped responding", "Slow actions",
+                 "Crashes more / Hangs more / Slower", "new this week", "Before and after the update",
+                 "too few to judge", "virtual desktops and physical PCs")
+
+
+def version_terms() -> list[dict]:
+    return [{"term": t, "meaning": GLOSSARY["software"][t]} for t in VERSION_TERMS]
 
 
 def meanings(tab: str) -> dict[str, str]:
@@ -478,7 +513,8 @@ SAMPLES = (
         "Main causes: none: no part was longer than normal on every PC",
     ], "Why was this start-up slow?", ("sample sync agent", "96")),
     ("software", "Red flag: Crashes more", [
-        "Crashes more | Sample Viewer 12.4: a crash on 61 of 240 PCs; its other versions: 9 of 310 PCs. | 61 PCs "
+        "Crashes more | Sample Viewer 12.4, physical PCs: it crashed on 25% of its physical PCs (61 of 240). On the "
+        "version most have, 12.3: 2.9% (9 of 310). | 61 PCs "
         "| new",
     ], "Explain this red flag.", ("12.4", "61")),
     ("software", "Red flag: Windows update not on every PC", [

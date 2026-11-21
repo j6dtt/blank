@@ -84,7 +84,37 @@ its PCs (read now, 0.5 s) ── Investigate ▸
 
 ### 1. One version crashes, hangs or is slow more than the others
 
-Rule, per application, over 7 days:
+**Changed on Nov 21, 2026** (the user, on a photo of stage: "very hard
+to understand charts", "I don't ... know where you get the 2 of 515
+numbers", "Is there a better way to compare?"). The comparison with
+"its other versions" added together is gone: that sum was on the page
+only as a dashed marker, one more crash in it would have undone Word's
+flag (19 of 1,738 against 2 of 515), and it mixed virtual desktops
+with physical PCs. Now, per application, virtual desktops and physical
+PCs apart:
+
+- **Before and after an update.** PCs whose version changed once in
+  the last 14 days, 20 or more for one change. For each PC as many
+  days after as before (the last ones before, the first ones after).
+  Counted: the PCs with a crash, and with hang time, on each side.
+- **Each version against the version most PCs have** (of the versions
+  on 20 PCs or more; not one that is "new this week": more than half
+  of its PCs got it within the 7 days, so it had less time to go
+  wrong, and it is left to before and after). The ▲ goes to whichever
+  of the two is the worse one.
+
+Raised: at least 2 times the other side's share, at least 5 PCs with
+the problem, and still 2 times with 2 more PCs with it on the other
+side (so one or two PCs never decide it; for actions rated Major the
+first two only). Each bar shows its share as a percentage beside the
+count (the user's choice for this panel, against plain counts
+elsewhere). What is not covered: an application with one version in
+the last 7 days is not read per version, so an update that every PC
+had more than a week ago is not compared automatically ("Before and
+after an update ▸" under Compare versions still reads any
+application).
+
+The rule before, kept for the record, per application, over 7 days:
 - crash: the PCs with a crash on a version, against the PCs that
   ran it, compared with the same count on its other versions;
 - hang: the same, with PCs that had hang time (Aternity gives no
@@ -526,7 +556,7 @@ Every way to use it (as built on dev):
 
 1. Flag 1: raise at 2 times the other versions' share, with 20 PCs
    on each side and 5 with the problem (recommended), or other
-   values?
+   values? (Changed Nov 21, 2026: see flag 1 above.)
 2. "Behind": older than the version most PCs have (recommended), or
    older than the newest seen?
 3. Tab after Slow start-ups, its own chat box, counts kept 90 days

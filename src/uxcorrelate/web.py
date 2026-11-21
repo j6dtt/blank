@@ -30,7 +30,7 @@ from .http import ApiError, short_error
 from .logons import logon_report
 from .models import utc
 from .names import KINDS, NameList
-from .software import (Software, before_after, compare, missing_on, pcs_with_problem, pcs_with_program,
+from .software import (Software, before_after, compare, missing_on, pcs_after_update, pcs_with_problem, pcs_with_program,
                        pcs_without_update)
 from .software import keep_reading as keep_reading_software
 from .software import summary as software_summary
@@ -422,7 +422,10 @@ def create_app(config_path: str | None = None) -> FastAPI:
     def software_view(brief: bool = False):
         """The Software tab; brief: only how many red flags (the tab's label, from any tab)."""
         v = software.view()
-        return {"ready": v["ready"], "flags": len(v.get("flags", []))} if brief else v
+        if brief:
+            return {"ready": v["ready"], "flags": len(v.get("flags", []))}
+        from .explain import version_terms
+        return dict(v, terms=version_terms())  # our meaning of each term, for the Explain of a comparison
 
     @app.get("/api/software/program")
     def software_program(name: str):
@@ -446,7 +449,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
     @app.get("/api/software/pcs")
     def software_pcs(name: str = "", version: str | None = None, application: str = "", problem: str = "",
-                     update: str = "", windows: str = ""):
+                     update: str = "", windows: str = "", kind: str = "", after: bool = False):
         """The PCs with a program (at a version), with a crash, hang time or a Major action on an
         application version, or without a Windows update most PCs of their Windows version have:
         read from Aternity now."""
@@ -461,8 +464,13 @@ def create_app(config_path: str | None = None) -> FastAPI:
         if application:
             if problem not in ("crash", "hang", "slow") or not version:
                 raise HTTPException(400, "problem must be crash, hang or slow, with a version")
+            if after:  # the PCs with it after their update to this version (before and after an update)
+                if problem == "slow":
+                    raise HTTPException(400, "before and after an update compares crashes and hang time only")
+                return software_read(f"the PCs with {problem} after their update to {application} {version}",
+                                     lambda c: pcs_after_update(c, now, application, version, problem, kind))
             return software_read(f"the PCs with {problem} on {application} {version}",
-                                 lambda c: pcs_with_problem(c, now, application, version, problem))
+                                 lambda c: pcs_with_problem(c, now, application, version, problem, kind))
         if not name:
             raise HTTPException(400, "name (a program) or application is needed")
         return software_read(f"the PCs with {name} {version or ''}".strip(),

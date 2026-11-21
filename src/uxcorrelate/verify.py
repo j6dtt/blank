@@ -2023,6 +2023,40 @@ def _versions(settings: Settings, client: AternityClient, schema: dict[str, set[
                         + f". {len(byv)} versions; per version, the PCs that ran it, with a crash, with hang time:",
                         rows=[f"{v}: {len(x[0]):,} PCs, {len(x[1]):,} with a crash, {len(x[2]):,} with hang time"
                               for v, x in sorted(byv.items(), key=lambda kv: -len(kv[1][0]))[:5]] + cut))
+                # the Software tab's own read of that application (Nov 21 2026): app usage day by day, far
+                # enough back for before and after an update; how many rows and seconds that is on this Aternity
+                from . import software as tab
+                began = time.monotonic()
+                try:
+                    got = tab.app_now(client, now, name)
+                except Exception as exc:
+                    got = {"error": short_error(exc)}
+                took = time.monotonic() - began
+                if got.get("kinds") is None or got.get("error"):
+                    checks.append(Check("Aternity", "versions: the Software tab's comparison", None,
+                                        f"{name} could not be read day by day ({got.get('error') or 'no answer'}): the "
+                                        "tab shows no comparison for an application read like this."))
+                else:
+                    lines = []
+                    for on, k in got["kinds"].items():
+                        big = [v for v in k["versions"] if max(v["pcs"], v["action_pcs"]) >= tab.MIN_PCS]
+                        fresh = [v["version"] for v in k["versions"] if v["new"]]
+                        lines.append(f"On {tab.PLACES[on]}: {k['pcs']:,} in all. {len(big)} of its {len(k['versions'])} "
+                                     f"versions are on {tab.MIN_PCS} or more"
+                                     + (f"; most have {k['ref']}" if k.get("ref") else "")
+                                     + (f"; new this week: {', '.join(fresh)}" if fresh else "") + ".")
+                        lines += [f"{u_['pcs']:,} of them went from {u_['from']} to {u_['to']}: a crash on "
+                                  f"{u_['before']['crash']:,} before and on {u_['after']['crash']:,} after; hang time on "
+                                  f"{u_['before']['hang']:,} before and on {u_['after']['hang']:,} after (for each PC as "
+                                  "many days after as before)." for u_ in k["updates"]]
+                    lines += [f"Raised: {tab.flag_text(f['kind'], dict(f, application=name))}" for f in got["found"]] \
+                        or ["Nothing is raised for it by the tab's rules."]
+                    checks.append(Check(
+                        "Aternity", "versions: the Software tab's comparison", None,
+                        f"{name}, as the Software tab reads it: app usage day by day for {tab.UPDATE_DAYS} days, "
+                        f"{got.get('day_rows') or 0:,} rows; with its actions, {took:.1f} s. The tab makes one such "
+                        f"read per application, up to {tab.APPS_MAX}, once a day.",
+                        rows=lines + list(got.get("notes") or [])))
 
     # actions: Aternity's Major per application version
     a = usable("actions", "versions: actions")

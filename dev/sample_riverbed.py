@@ -637,6 +637,15 @@ class Sample:
                 add(s, t, "Application Crash", "Major", "Application", comp, cver, app, sub,
                     "0.0.0.0 (DLL Version)" if sub.startswith("unknown") else "3.4.1 (DLL Version)",
                     crash=1, exc="0xc0000005")
+        # Sample Browser 131.0.2 stops responding on physical PCs once they have it: the Software tab's
+        # "before and after an update" has more PCs with hang time after than before. Its own dice, so
+        # the rest of the day is as it was.
+        rb = _rng("browser-hang", d)
+        fresh = [x for x in working if not PCS[x.dev]["virtual"] and x.dev not in BEHIND_BROWSER
+                 and x.start >= self.browser_update(x.dev)]
+        for _ in range(3 if fresh else 0):
+            s, t = moment(rb, fresh)
+            add(s, t, "hang", None, None, app="Sample Browser", hang=round(rb.uniform(5, 30)), event=False, rr=rb)
         s, t = moment(r, [x for x in working if x.dev not in MAIL_NEW or x.start < self.mail_update(x.dev)])
         if s and r.random() < 0.5:  # Sample Mail 16.1.900 crashes now and then, elsewhere
             comp, cver = proc("Sample Mail", s.dev, t)

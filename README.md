@@ -397,16 +397,25 @@ start; the first read takes a few minutes). The tab's count is the red
 flags. Top to bottom:
 - **Red flags**, most PCs first, each with its PCs per day and "new" when
   it was not there the day before: a version that crashes, hangs or is
-  slow more than its others (at least 2 times their share, 20 PCs on each
-  side, 5 with the problem), programs behind most PCs, 2+ versions on one
+  slow more than the version most PCs have, or more after its update than
+  before (at least 2 times, 20 PCs on each side, 5 with the problem, and
+  still so with 2 more PCs with it on the other side), programs behind
+  most PCs, 2+ versions on one
   PC, a Windows update most PCs of a Windows version have but not every
   one, programs installed for one user, programs on 5 PCs or fewer. Click
   a line to go to its chart. **Summary for management ▸** opens a short
   summary (GPT, every number checked; else our own sentences) with Copy.
-- **Crashes, hangs and slow actions by version**: per application, each
-  version's share of PCs (or actions) with the problem, its other
-  versions' as a dashed line. Click a bar for those PCs (read now), each
-  with Investigate ▸ for its last day with it.
+- **Application health by version**: virtual desktops and physical PCs
+  apart (a switch; each button says how many ▲ it has). An application
+  with a ▲ is open, the others are one folded line. Two comparisons, each
+  shown whole: **before and after the update** (the same PCs, for each PC
+  as many days after as before) and **version by version** (each version
+  next to the version most PCs have, shaded). A bar is a share, with its
+  percentage and the count behind it; every ▲ says why it is raised and
+  what to do next. **Explain ▸** beside a comparison walks through it
+  with its own numbers (our words; a question under it goes to the AI).
+  The "i" beside the title says how to read a row. Click a bar for those
+  PCs (read now), each with Investigate ▸ for its last day with it.
 - **Compare versions**: two versions of an application on every kind of
   issue (crash, hang time, its health events, Major actions per activity,
   virtual desktops); **Before and after an update ▸**: the PCs whose

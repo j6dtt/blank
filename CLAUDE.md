@@ -501,10 +501,42 @@ demo mode: nothing in `src/` knows about it.
   (`snap["unread"]`), nothing is saved (it would empty the day's flags),
   the last good read stays and it is tried again every `RETRY_MIN` (15;
   it waited a day before: stage, Nov 2026). Red flags (`_flags`, one
-  line per kind, each raised version of flag 1 its own): `judge` (`RATIO`,
-  `MIN_PCS`, `MIN_PROBLEM`; an app whose every listed PC failed, as
+  line per kind, each raised version of flag 1 its own): `judge` (the
+  user, Nov 21 2026, on a photo of stage: "very hard to understand
+  charts", "I don't ... know where you get the 2 of 515 numbers": the
+  comparison with "its other versions" added together is gone; it was
+  on the page only as a dashed marker, and one more crash among Word's
+  other 515 PCs would have undone its flag). Now, per kind of PC
+  (`_kinds`: Aternity's virtual / physical mark, `PLACES`; "all" when
+  it gives none), two comparisons: before and after an update
+  (`_updates`, `_changed_once`: PCs whose version changed once in
+  `UPDATE_DAYS`, for each PC as many days after as before, counted in
+  PCs with a crash / hang time; app usage is read day by day for it,
+  `_app_rows`, one read per application as before) and each version
+  against the version most PCs have (`ref`; a version `_new` this
+  week, `ARRIVED`, is left to before and after; the worse of the two
+  is raised, `how` "version" / "most" / "update"). `_check`: `RATIO`
+  times the other side's share, `MIN_PROBLEM` PCs with it, and still
+  so with `STILL` more PCs with it on the other side ("unsure" when
+  only the first holds: the page says why it is not raised); `MIN_PCS`
+  on each side. Each row keeps its `verdict`; shares are written by
+  `share_text` (a percentage beside its counts: the user's choice for
+  this panel; the page does the same sum, `swPct`). A day saved under
+  the rule before is judged again when shown (`_versions_view`). Not
+  covered: an application with one version in the last `DAYS` is not
+  read per version, so an update every PC had over a week ago is not
+  compared by itself. An app whose every listed PC failed, as
   Trellix ENS on live, is held only where it failed: no crash or hang
-  share, `only`), behind (older than the version most PCs have, decision
+  share (`only`). The page ("Application health by version",
+  `renderSwVersions`, `swVersionBlock`, `swFound`, `swCell`): a switch
+  between the kinds of PC (`swKind`), applications with a ▲ open and
+  the rest folded, each ▲ with "Why ▲" and "Next:", plain bars with
+  share and count, "Explain ▸" beside each comparison (`swExplain`:
+  our own walk-through from the numbers; its question box goes to
+  `/api/explain` with the walk-through as the lines; terms from
+  `explain.VERSION_TERMS`), "i" beside the title (`swHow`). The PCs
+  behind a click: `pcs_with_problem(kind=)`, `pcs_after_update`.
+  Then behind (older than the version most PCs have, decision
   2; PC by PC when read so), 2+ versions, one user, Windows updates on
   more than `WIN_MOST` of a version's PCs (and what the PCs without one
   have: a later one may be in its place), `FEW_PCS`. Saved per day in
@@ -894,6 +926,12 @@ demo mode: nothing in `src/` knows about it.
   own Windows version's PCs. What was settled on stage (filled columns,
   versions per program) is no longer printed. `--pc NAME`: only that
   PC's list. No PC or user names (unless typed).
+- `verify --versions`, "the Software tab's comparison" (Nov 21 2026): for
+  the application with the most crashes, the tab's own read
+  (`software.app_now`): app usage day by day for `UPDATE_DAYS`, its rows
+  and seconds (about 10 times the rows of the read before: to measure on
+  stage), then per kind of PC its versions, the PCs that changed version
+  with before and after, and what is raised, in sentences.
 - `verify --versions` (`verify._versions`): Aternity's own
   `APPLICATION_VERSION` on what users feel (`VERSION_SOURCES`: daily app
   usage with crashes / hang time, daily actions with Major), filled? the

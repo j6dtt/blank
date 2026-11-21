@@ -42,12 +42,17 @@ def test_names_are_matched_to_the_latest_read():
 def test_the_red_flags_and_each_kinds_whole_list(tmp_path):
     r, v, _, _ = reader(tmp_path)
     got = run("flags", {}, r, v)
-    assert got["rows"][0] == ["Slower", "Outlook 16.2: 400 of 2,400 actions rated Major, on 20 PCs; its other "
-                                        "versions: 5 of 4,005 actions.", 20, ""]
+    assert got["rows"][0] == ["Slower", "Outlook 16.2, physical PCs: 17% of its actions were rated Major (400 of 2,400, "
+                                        "on 20 PCs). On the version most have, 16.1: 0.2% (5 of 3,005).", 20, ""]
     assert got["total"] == "7 red flags" and got["notes"][0].startswith("Raised (a red flag): a version")
     assert run("flags", {"kind": "behind"}, r, v)["rows"] == [["Microsoft Edge", 20, 60, "121.0", "121.0"]]
     crash = run("flags", {"kind": "crash"}, r, v)
-    assert crash["rows"] == [["Outlook", "16.1", 12, 40, 2, 20]]
+    assert crash["rows"] == [["Outlook", "16.1", "physical PCs", 12, 30, "16.2", 2, 20]]  # the version most have, worse
+    assert crash["columns"][5:] == ["Compared with", "PCs with a crash there", "of PCs there"]
+    assert crash["say"] == ("Crashes more: Outlook 16.1, physical PCs, the version most have: it crashed on 40% of its "
+                            "physical PCs (12 of 30). On 16.2: 10% (2 of 20).")
+    slow = run("flags", {"kind": "slow"}, r, v)["rows"]
+    assert slow == [["Outlook", "16.2", "physical PCs", 400, 2400, "16.1, the version most have", 5, 3005]]
     assert "Not compared: Trellix ENS: every PC listed had a crash" in crash["notes"][1]
     assert run("flags", {"kind": "hang"}, r, v)["rows"] == []
     assert run("flags", {"kind": "windows"}, r, v)["rows"] == [["Microsoft Windows 11 Enterprise 23H2", "KB1", 8, 58,
@@ -86,7 +91,7 @@ def test_the_blocks_read_now_compare_split_and_list_pcs(tmp_path):
     cmp = run("compare", {"application": "outlook", "a": "16.2"}, r, v, c, s)
     assert cmp["title"] == "Outlook: 16.2 against 16.1" and cmp["rows"][0] == ["PCs with a crash", 2, 20, 12, 40]
     assert ["Send Mail: actions rated Major", 400, 1600, 5, 2405] in cmp["rows"]
-    assert "On virtual desktops: 10 of 20 PCs on 16.2, 0 of 40 on 16.1." in cmp["notes"]
+    assert "On virtual desktops: 0 of 20 PCs on 16.2, 10 of 40 on 16.1." in cmp["notes"]
     ba = run("before_after", {"application": "Outlook"}, r, v, c, s)
     assert ba["rows"] == [["16.1", "16.2", 10, 20, 0, 0, 20, 2, 0]]
     split = run("program_split", {"application": "Outlook", "program": "edge"}, r, v, c, s)

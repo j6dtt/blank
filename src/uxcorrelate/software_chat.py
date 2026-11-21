@@ -26,7 +26,8 @@ from datetime import datetime, timedelta, timezone
 from .chat import ROWS, SHAPE, _n, _result, _tool, converse
 from .config import NO_PROGRAM, SOFTWARE_OS_UPDATE, TOP_STATUS
 from .http import ApiError
-from .software import (CUT, DAYS, FEW_PCS, KIND, MIN_PCS, MIN_PROBLEM, RATIO, UPDATE_DAYS, Software, app_now, before_after,
+from .software import (CUT, DAYS, FEW_PCS, KIND, MIN_PCS, MIN_PROBLEM, PLACES, RATIO, STILL, UPDATE_DAYS, Software, app_now,
+                       before_after, flag_text,
                        crashes_by_version, named_like, words,
                        compare, missing_on, order, pcs_with_problem, pcs_with_program, pcs_without_update,
                        program_view, shown, split_by_program, starts_with, version_of)
@@ -50,7 +51,7 @@ TOOLS = [
         "kind": {"type": "string", "enum": ["all"] + list(KIND),
                  "description": "all = every red flag, one line each: use it unless the question asks for one kind. "
                                 "One kind, with its whole list: crash, hang, slow = application versions with "
-                                "more crashes, hang time or Major slow actions than their other versions; windows = "
+                                "more crashes, hang time or Major slow actions than the version most PCs have, or after an update; windows = "
                                 "Windows updates not on every PC; multi = 2 or more versions of a program on one PC; "
                                 "behind = programs with PCs on a version older than most PCs have (out of date); "
                                 "user = installed for one user only; few = programs on few PCs."}}, ("kind",)),
@@ -109,9 +110,11 @@ SYSTEM = ("You answer questions from IT staff and management about the software 
 NO_COUNT = ("I can only give numbers from the counts: the red flags, a program's versions, an application's crashes, "
             "hang time and slow actions per version, two versions side by side, before and after an update, "
             "which PCs, or which PCs lack a Windows update.")
-RULES = (f"Raised (a red flag): a version whose share is at least {RATIO:g} times its other versions' share, with "
-         f"{MIN_PCS} PCs or more on each side and {MIN_PROBLEM} or more with the problem; not raised: no difference "
-         "by these rules.")
+RULES = (f"Raised (a red flag): a version whose share is at least {RATIO:g} times that of the version most PCs have "
+         f"(or that version's against another), or whose PCs had the problem {RATIO:g} times as often after an update "
+         f"as before, virtual desktops and physical PCs apart; with {MIN_PCS} PCs or more on each side, {MIN_PROBLEM} "
+         f"or more with the problem, and still so with {STILL} more PCs with it on the other side; not raised: no "
+         "difference by these rules.")
 
 
 def pick(asked, names) -> tuple[str | None, list[str]]:
@@ -172,23 +175,29 @@ def flags(sw: Software, view: dict, args: dict, kind: str | None = None) -> dict
                        rows, [RULES], total=_n(len(fl), "red flag"), say=say)
     label = KIND[kind]
     if kind in ("crash", "hang", "slow"):
-        rows, only = [], []
-        for a in snap.get("versions", {}).values():
-            rows += [[a["application"], r["version"], r["n"], r["of"], r["others_n"], r["others_of"]]
-                     for r in a["raised"] if r["kind"] == kind]
+        rows, only, said = [], [], []
+        for a in view.get("versions", []):  # as the tab judges them (a day saved under the rule before: judged again)
+            for r in a.get("found", []):
+                if r["kind"] != kind:
+                    continue
+                update = r["how"] == "update"  # the same PCs, after against before; else against another version
+                rows.append([a["application"], r["version"], PLACES[r["on"]], r["n"], r["of"],
+                             f"before its update from {r['from']}" if update else
+                             r["ref"] + (", the version most have" if r["how"] == "version" else ""),
+                             r["before"] if update else r["ref_n"], r["of"] if update else r["ref_of"]])
+                said.append((r["n"], flag_text(kind, dict(r, application=a["application"]))))
             if kind in ("crash", "hang") and a.get("only"):  # neither is compared (software.judge)
                 only.append(a["application"])
-        rows.sort(key=lambda r: (-r[2], r[0].lower()))
+        rows.sort(key=lambda r: (-r[3], r[0].lower()))
         unit = "actions" if kind == "slow" else "PCs"
         with_ = {"crash": "PCs with a crash", "hang": "PCs with hang time", "slow": f"Actions rated {TOP_STATUS}"}[kind]
         notes = [RULES] + ([f"Not compared: {', '.join(sorted(only))}: every PC listed had a crash or hang time "
                             "(app usage holds it only where it failed)."] if only else [])
-        say = (f"{label}: " + "; ".join(f"{r[0]} {r[1]}: {r[2]:,} of {r[3]:,} {unit}, its other versions {r[4]:,} of "
-                                        f"{r[5]:,}" for r in rows[:3]) + "." if rows else
+        say = (f"{label}: " + " ".join(t for _, t in sorted(said, key=lambda x: -x[0])[:3]) if rows else
                f"No application version is raised for {PROBLEM[kind]} in the latest read, by the rules of the tab.")
         return _result("flags", args, f"{label}: raised versions", f"the last {DAYS} days, as of the latest read",
-                       ["Application", "Version", with_, f"of {unit}", f"Its other versions: {with_.lower()}",
-                        f"of {unit}"], rows[:ROWS], notes, total=f"{len(rows):,} raised", say=say)
+                       ["Application", "Version", "Kind of PC", with_, f"of {unit}", "Compared with", f"{with_} there",
+                        f"of {unit} there"], rows[:ROWS], notes, total=f"{len(rows):,} raised", say=say)
     progs = [program_view(p) for p in snap.get("programs", {}).values()]
     apps = [p for p in progs if p["type"] != SOFTWARE_OS_UPDATE]
     if kind == "behind":
