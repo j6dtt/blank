@@ -50,30 +50,15 @@ data, then its daily data with the people and desktops. See
   (the user's screenshots, 2026-11-20): connection lights 1,123 ->
   1,132 calls in 10 minutes, failed 626 both times, no rows. Left:
   the prod copy, if that panel was stage.
-- **Stage copy: Software tab leaves PCs that are gone out** (built
-  on dev 2026-11-20, "build it"). From `verify --inventory` on
-  stage (a95d34c): the installed software list has 6,464 PCs,
-  1,266 no longer in Aternity's device list, 3 of them in use in
-  8 days. Now only PCs in the device list are counted; the first
-  tile says how many were left out. Copy `software.py`,
-  `software_chat.py`, `agent.py`, `web.py`, `verify.py`,
-  `explain.py`, `static/index.html`, restart. First
-  `verify --inventory`: its 4. says how long the extra read takes
-  and whether Aternity takes 25 PCs in one read ("or", never used
-  on live before). Then the Software tab: about 5,198 PCs,
-  "1,266 more left out". 7ae2a74 (pushed). verify --inventory on
-  stage 2026-11-20, its 4.: read whole, 55,026 rows in 103 s, 51
-  reads, 25 PCs a read (Aternity takes "or"). Left: restart, look
-  at the tab.
-- **Stage copy: Windows updates read again** (built on dev
-  2026-11-20). The tab's note on stage: "Windows updates could
-  not be read (Returned data too long. Use $fetch_all_rows=yes to
-  retrieve all rows.)". `verify --software` on stage (30964b3):
-  the tab's limit, a smaller one and none all refused; with
-  `$fetch_all_rows=yes` the whole reply, 25,862 rows in 1 s. Now
-  any read Aternity refuses that way is asked once more with it.
-  Copy `aternity.py`, `verify.py`, restart; the note goes and the
-  Windows updates flag is back.
+- **Prod copy of the Software tab changes** (all on stage
+  2026-11-20, the user: "All good on stage, note is gone"):
+  7ae2a74 only PCs in Aternity's device list are counted (stage:
+  5,198 PCs, "1,266 more left out"), 4b3e190 a read refused as too
+  long is asked again with `$fetch_all_rows=yes` (the Windows
+  updates are back), with `verify --inventory` (d3fd27b, a95d34c).
+  Files since f3b8459: `aternity.py`, `software.py`,
+  `software_chat.py`, `agent.py`, `web.py`, `verify.py`, `cli.py`,
+  `config.py`, `explain.py`, `static/index.html`; restart.
 - To watch on prod with Care step 2: how many slow start-ups a day
   (noisy or not), how many days of start-ups Aternity keeps (Show
   more says "N days with one, from ..."), which types carry the
