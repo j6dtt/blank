@@ -566,17 +566,23 @@ demo mode: nothing in `src/` knows about it.
   page ("Application health by version", `renderSwVersions`,
   `swVersionBlock`, `swCell`): a switch between the kinds of PC
   (`swKind`), applications with a ▲ open and the rest folded. One
-  red flag is one line in the list, one ▲ in the tables and one on
-  its button (`swMarks`; the user, Nov 22 2026, on photos of stage:
-  "That number doesn't add up": the button said 7 ▲, the list had 7
-  lines for virtual desktops, the tables carried 8 ▲; then "WE
-  REVIEWED THE CODES TO ELIMINATE ALL GAPS AND BUGS. WHY HAPPENED
-  AGAIN?"): the ▲ is on the count the flag's line quotes (as
-  `_flags`: its update first, the biggest first, else its row in
-  "Version by version"); another raised count of the same version
-  and problem keeps its amber bar and says "Counted as one red flag
-  with its update, below" (`swCell`'s `mark`; Explain says the
-  same). The button's number comes from `swMarks` too. No
+  red flag is one line in the list, one raised count in the tables
+  and one on its button (`swMarks`; the user, Nov 22 2026, on photos
+  of stage: "That number doesn't add up": the button said 7 ▲, the
+  list had 7 lines for virtual desktops, the tables showed 8 raised
+  counts; then "WE REVIEWED THE CODES TO ELIMINATE ALL GAPS AND BUGS.
+  WHY HAPPENED AGAIN?"; a first fix, a0acbd5, took only the ▲ off the
+  second count and left its amber bar and bold words: "Button says 7
+  but I count 8 raises just like before"). A raise is what looks
+  raised: the amber bar, the bold words, the ▲ and "Show the N PCs"
+  always go together (`swCell`'s `up`), never one without the others.
+  The flag is drawn raised on the count its line quotes (as `_flags`:
+  its update first, the biggest first, else its row in "Version by
+  version"); another count of the same version and problem that
+  passes the checks too is drawn as not raised (green bar, muted
+  words: "not raised a second time: this version is raised after its
+  update, below"; Explain says the same and does not count it as
+  raised). The button's number comes from `swMarks` too. No
   headline box over an application (it said the tables' numbers a
   second time and could name a table that said the opposite; do not
   add one back): "Version by version" first, then "Before and after
@@ -603,10 +609,13 @@ demo mode: nothing in `src/` knows about it.
   (`dev/page_check.py`; dev only, never bundled): a real Chrome opens
   a made-up Software tab with the shapes seen on stage (judged by
   `software.judge`) and the dev app's every tab, and counts what is
-  DRAWN against every number that stands for it (a button's number,
-  the ▲ in the tables and the list's lines; a tab's number, its tile
-  and its lines; "Show the N PCs"; a count of 1 with a plural after
-  it; script errors), then every count the app gives against its list
+  DRAWN against every number that stands for it (a button's number
+  against everything that looks like a raise, each counted on its
+  own: amber bars, bold raised words, ▲, "Show the N PCs", and the
+  list's lines; its first cut counted ▲ only and passed a page with
+  one amber bar too many; a tab's number, its tile and its lines; a
+  count of 1 with a plural after it; script errors), then every count
+  the app gives against its list
   (the 118 comparisons of the review of Nov 22 2026, whose script was
   not kept: it compared the button with the list, 7 and 7, and never
   counted the marks on the page). Run it before every copy to stage

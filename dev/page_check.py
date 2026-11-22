@@ -6,8 +6,12 @@ it. Why (the user, Nov 22 2026, on photos of stage: "That number doesn't add up 
 REVIEWED THE CODES TO ELIMINATE ALL GAPS AND BUGS. WHY HAPPENED AGAIN?"): a button said "7 ▲" and
 the tables under it carried 8 ▲. The review of that morning had compared numbers with numbers (the
 button against the red flags list: 7 and 7) by a script that was not kept, and never counted the
-marks on the page; the user did. A count is right only when it equals what the eye can count under
-it AND the list it stands for. So this looks at the page itself, on two pages:
+marks on the page; the user did. A first fix took the ▲ off the second count and left its amber bar
+and bold words, and the first cut of this check counted ▲ only: "Button says 7 but I count 8 raises
+just like before". A raise is whatever LOOKS raised: the amber bar, the bold words and the ▲ are
+counted each on its own and must all be the same number. A count is right only when it equals what
+the eye can count under it AND the list it stands for. So this looks at the page itself, on two
+pages:
 
   1. a made-up Software tab with the shapes seen on stage (a version raised both after its update
      and against another version, by two updates, by its update only, the version most have raised
@@ -257,10 +261,10 @@ JS_KIND = r"""
     return m && swPct(Number(m[1].replace(/,/g, "")), Number(m[2].replace(/,/g, ""))) !== c.querySelector(".vpct").innerText; }).length;
   return {
     said: btn ? Number(said) : null, marks: marked.length, glyphs: (box.textContent.match(/▲/g) || []).length, lines: lines.length, off,
-    amber: amber.length,
-    amberSilent: amber.filter((c) => !c.querySelector(".warn") && !/Counted as one red flag/.test(c.innerText)).map((c) => c.innerText.replace(/\s+/g, " ").slice(0, 90)),
-    plain: cells.filter((c) => c.querySelector(".warn") && !c.querySelector(".vtrk i.up")).length,
-    counted: amber.filter((c) => !c.querySelector(".warn")).map((c) => c.innerText.replace(/\s+/g, " ").slice(0, 200)),
+    amber: amber.length, bold: box.querySelectorAll(".vsay.up").length, go: box.querySelectorAll(".go").length,
+    // a count that passes the checks but is raised on another count: it must not look raised in any way
+    second: cells.filter((c) => /not raised a second time/.test(c.innerText)).map((c) => c.innerText.replace(/\s+/g, " ").slice(0, 200)),
+    secondRaised: cells.filter((c) => /not raised a second time/.test(c.innerText) && c.querySelector(".vtrk i.up, .warn, .vsay.up, .go")).map((c) => c.innerText.replace(/\s+/g, " ").slice(0, 90)),
     openNoMark: [...box.querySelectorAll(".vblock")].filter((x) => !x.querySelector(".warn")).map((x) => x.querySelector(".vhead b").innerText),
     foldedRaised: [...box.querySelectorAll("details.vcalm")].filter((x) => x.querySelector(".warn, .vtrk i.up")).map((x) => x.querySelector("summary").innerText),
     show, pct,
@@ -286,15 +290,17 @@ def software(b: Browser, t: Tally, where: str) -> dict:
         seen[K] = k
         total += k["lines"]
         name = {"virtual": "virtual desktops", "physical": "physical PCs", "all": "all PCs"}.get(K, K)
+        # everything that looks like a raise, each counted on its own: amber bars, bold words, ▲, "Show the N PCs"
+        looks = (k["amber"], k["bold"], k["marks"], k["go"])
         if k["said"] is None:  # one kind of PC only: no switch, so no button
-            t.same(f"{where}, {name}: the ▲ in the tables and the list's lines about a version", k["marks"], k["lines"])
+            t.same(f"{where}, {name}: amber bars / bold raised words / ▲ / \"Show the N PCs\" in the tables / the list's lines "
+                   "about a version", *looks, k["lines"])
         else:
-            t.same(f"{where}, {name}: the button's number, the ▲ drawn in the tables and the list's lines about a version",
-                   k["said"], k["marks"], k["lines"])
+            t.same(f"{where}, {name}: the button's number / amber bars / bold raised words / ▲ / \"Show the N PCs\" in the "
+                   "tables / the list's lines about a version", k["said"], *looks, k["lines"])
         t.same(f"{where}, {name}: every ▲ in the tables is a mark on a count (no ▲ in a sentence)", k["glyphs"], k["marks"])
         t.none(f"{where}, {name}: a line of the list without its one ▲ on the count it quotes", k["off"])
-        t.none(f"{where}, {name}: an amber count that neither has the ▲ nor says which red flag it is counted with", k["amberSilent"])
-        t.same(f"{where}, {name}: a ▲ that is not on an amber bar", k["plain"], 0)
+        t.none(f"{where}, {name}: a count that says \"not raised a second time\" and still looks raised", k["secondRaised"])
         t.none(f"{where}, {name}: an application drawn open with no ▲", k["openNoMark"])
         t.none(f"{where}, {name}: a folded application with something raised in it", k["foldedRaised"])
         t.none(f"{where}, {name}: \"Show the N PCs\" with another N than its count", k["show"])
@@ -314,11 +320,13 @@ def look(out: str) -> int:
     else:
         seen = software(b, t, b.where)
         grammar(b, t, b.where, "#softBox")
-        doubled = sum(len(k["counted"]) for k in seen.values())
-        t.same("Software, made-up: counts raised a second way that say \"Counted as one red flag\" (4 in the data)", doubled, 4)
+        doubled = sum(len(k["second"]) for k in seen.values())
+        t.same("Software, made-up: counts that pass the checks a second way and say \"not raised a second time\" (4 in the data)", doubled, 4)
         for K, k in seen.items():
-            for c in k["counted"]:
-                print(f"    {K}: {c}")
+            print(f"    {K}: the button says {k['said']}; amber bars {k['amber']}, bold raised words {k['bold']}, ▲ {k['marks']}, "
+                  f"list lines {k['lines']}")
+            for c in k["second"]:
+                print(f"      {c}")
         # a failed read is said on the tab, with the last read under it
         said = b.ev("""(() => { const v = { ...softData, reading: false, status: "The software read failed (timed out); trying again in 24 hours." };
             renderSoftware(v); const s = document.getElementById("sStatus").innerText; renderSoftware(softData); return [s, document.getElementById("sStatus").innerText]; })()""")
@@ -330,13 +338,14 @@ def look(out: str) -> int:
             blk.querySelector('[data-vex$="versions"]').click(); const body = document.getElementById("dlgBody");
             const r = { open: !document.getElementById("dlg").hidden, marks: body.querySelectorAll(".warn").length, text: body.innerText.replace(/\\s+/g, " ") };
             document.getElementById("dlgClose").click(); return r; })()""")
-        t.same("Software, made-up: Explain of a count raised a second way has no ▲ and says it is one red flag with its update",
-               (ex["open"], ex["marks"], "counted as one red flag with its update" in ex["text"]), (True, 0, True))
+        t.same("Software, made-up: Explain of a count that passes a second way has no ▲ and says it is not raised a second time",
+               (ex["open"], ex["marks"], "not raised a second time" in ex["text"].lower(), "why it is raised" in ex["text"].lower()),
+               (True, 0, True, False))  # the headings are drawn in capitals
         ex = b.ev("""(() => { const blk = [...document.querySelectorAll("#sVersions .vblock")].find((x) => /Sample Shell/.test(x.querySelector(".vhead b").innerText));
             blk.querySelector('[data-vex*="update"]').click(); const body = document.getElementById("dlgBody");
             const r = { marks: body.querySelectorAll(".warn").length, text: body.innerText.replace(/\\s+/g, " ") };
             document.getElementById("dlgClose").click(); return r; })()""")
-        t.same("Software, made-up: Explain of the update that carries the mark has its one ▲", ex["marks"], 1)
+        t.same("Software, made-up: Explain of the update that is raised has its one ▲ and says why", (ex["marks"], "why it is raised" in ex["text"].lower()), (1, True))
         for width, mobile in ((420, True),):
             b.cmd("Emulation.setDeviceMetricsOverride", width=width, height=900, deviceScaleFactor=1, mobile=mobile)
             b.time.sleep(0.6)

@@ -550,8 +550,8 @@ def software():
         ], [
             item("Application health by version", "Virtual desktops and physical PCs by a switch. Per application: "
                  "version by version first, then before and after each update. One red flag is one line in the list, "
-                 "one ▲ on the count that line quotes and one on its button; a second raised count of the same "
-                 "version and problem says it is counted with it. No box of sentences above the tables. A version not raised because of "
+                 "one raised count (amber, with ▲) on the count that line quotes and one on its button; a second "
+                 "count of the same version and problem is not raised a second time and says so. No box of sentences above the tables. A version not raised because of "
                  "the PCs that ran both says so on its count. A table with a percentage beside each count."),
             item("Other sections", "Compare versions · Behind most PCs · 2+ versions on one PC · Installed for one "
                  "user · Windows · rare programs. Every table has a percentage beside each count."),

@@ -206,7 +206,8 @@
   .picks li.on, .picks li:hover { background: var(--bg); }
   .picks li.note { color: var(--muted); font-size: 12px; cursor: default; background: none; }
   /* Software: red flags on installed software and application versions. The warning colour is only
-     for a raised count, always with its words; a red flag has one ▲ (swMarks); charts use the page's own colours. */
+     for a raised flag, always with ▲ and its words, and a red flag is drawn raised once (swMarks); charts use
+     the page's own colours. */
   /* Software, application health by version: plain bars with their share and count; the version most PCs have shaded */
   .info { display: inline-block; width: 21px; height: 21px; padding: 0; margin-left: 9px; border: 1px solid var(--border); border-radius: 999px;
           background: none; color: var(--muted); font-size: 13px; line-height: 19px; font-weight: 400; vertical-align: 3px; }
@@ -515,7 +516,7 @@
       <section class="panel" id="sVersionsBox" style="margin-top:16px">
         <h2>Application health by version<button type="button" class="info" id="sHow" aria-label="How to read a row" title="How to read a row">i</button></h2>
         <div class="muted" style="font-size:12px" id="sVersionsHow"></div>
-        <div class="vswitch" id="sKinds" hidden><span class="vseg" id="sKindsSeg"></span><span class="muted" style="font-size:12px">Looked at apart: the same version can behave differently on each. A button's number is its red flags: one mark each in the tables, one line each in the list above.</span></div>
+        <div class="vswitch" id="sKinds" hidden><span class="vseg" id="sKindsSeg"></span><span class="muted" style="font-size:12px">Looked at apart: the same version can behave differently on each. A button's number is its red flags: each is raised once in the tables (amber, with a mark) and has one line in the list above.</span></div>
         <div id="sVersions"></div>
       </section>
       <section class="panel" id="sCompareBox" style="margin-top:16px">
@@ -2263,7 +2264,7 @@ function swCell(o) {  // one count: its bar, its share, the count behind it, and
   const attrs = o.click && a ? Object.entries(o.click).map(([k, v]) => ` data-${k}="${esc(v)}"`).join("") : " disabled";
   return `<button type="button" class="vcell${o.ref ? " ref" : ""}"${attrs}><span class="vtrk"><i class="${o.up ? "up" : o.dim ? "dim" : ""}" `
     + `style="width:${w}%"></i></span><span class="vpct">${swPct(a, b)}</span><span class="vnum">${n(a)} of ${n(b)} ${o.unit}</span>`
-    + (o.say ? `<span class="vsay${o.up ? " up" : ""}">${o.up && o.mark !== false ? '<span class="warn">▲</span> ' : ""}${esc(o.say)}`
+    + (o.say ? `<span class="vsay${o.up ? " up" : ""}">${o.up ? '<span class="warn">▲</span> ' : ""}${esc(o.say)}`
       + (o.up && o.pcs && o.click ? `<span class="go">Show the ${n(o.pcs)} ${swPcWord(o.pcs)} ▸</span>` : "") + `</span>` : "") + `</button>`;
 }
 const swHeads = (first, cols, sub, last = "") => `<div class="hd">${first}</div>` + cols.map((m) =>
@@ -2299,13 +2300,16 @@ const swUp = (u) => (u.down ? "change of version" : "update");
 const swAlso = (a, version) => ((a.spellings || {})[version] || []);
 // PCs that ran both versions on the day of their update: that day is on neither side
 const swBoth = (u) => (u.both ? ` ${n(u.both)} of them ran both versions on the day of the ${u.down ? "change" : "update"}: that day is on neither side.` : "");
-// One red flag is one line in the list, one ▲ in the tables and one on its button (the user, Nov 22 2026, on photos
-// of stage: "That number doesn't add up": the button said 7 ▲, the list had 7 lines for virtual desktops and the
-// tables carried 8 ▲. A version raised for one problem both after its update and against another version had a ▲ on
-// each count; the review of that morning had lowered the button from 2 to 1 and left both marks). The ▲ is on the
-// count the flag's line quotes (software._flags: its update first, the biggest first, else its own row in "Version
-// by version"). Another raised count of the same version and problem keeps its amber bar and its words, and says
-// which count it is counted with. Returns {"problem|version": "u|<from>" or "v"} for the kind of PC K.
+// One red flag is one line in the list, one raised count in the tables and one on its button (the user, Nov 22
+// 2026, on photos of stage: "That number doesn't add up": the button said 7 ▲, the list had 7 lines for virtual
+// desktops and the tables showed 8 raised counts. A version that passes the checks for one problem both after its
+// update and against another version was drawn raised on each count; the review of that morning had lowered the
+// button from 2 to 1 and left both). A first fix the same day took only the ▲ off the second count and left its
+// amber bar and bold words: "Button says 7 but I count 8 raises just like before". A raise is what looks raised:
+// the amber bar, the bold words and the ▲ always go together (swCell's `up`). The flag is drawn raised on the
+// count its line quotes (software._flags: its update first, the biggest first, else its own row in "Version by
+// version"); another count of the same version and problem that passes the checks too is drawn as not raised and
+// says where it is raised. Returns {"problem|version": "u|<from>" or "v"} for the kind of PC K.
 function swMarks(a, K) {
   const at = {};
   for (const f of a.found.filter((x) => x.on === K).sort((x, y) => (x.how !== "update") - (y.how !== "update"))) {
@@ -2333,10 +2337,11 @@ function swVersionBlock(a, i, v, K) {
     let before = `<div><b>Before</b> · on ${esc(u.from)}</div>`, after = `<div><b>After</b> · on ${esc(u.to)}</div>`;
     for (const m of usage) {
       const A = [u.after[m.k], u.pcs], B = [u.before[m.k], u.pcs], max = Math.max(swShare(...A), swShare(...B)), vd = (u.verdict || {})[m.k];
-      const up = vd && vd.state === "raised", where = at[m.k + "|" + u.to] || "", mark = up && where === "u|" + u.from;
+      const passes = vd && vd.state === "raised", where = at[m.k + "|" + u.to] || "", up = passes && where === "u|" + u.from;
       before += swCell({ pair: B, max, unit: "PCs" });
-      after += swCell({ pair: A, max, unit: "PCs", up, mark, pcs: A[0],
-        say: up ? `more after the ${swUp(u)}.` + (mark ? "" : ` Counted as one red flag with the change from ${where.slice(2)}, above.`) : swNot(vd, { having: m.having + " after" }, A[0], r, "before"),
+      after += swCell({ pair: A, max, unit: "PCs", up, pcs: A[0],
+        say: up ? `more after the ${swUp(u)}.` : passes ? `not raised a second time: ${u.to} is raised after the change from ${where.slice(2)}, above`
+          : swNot(vd, { having: m.having + " after" }, A[0], r, "before"),
         click: { app: a.application, version: u.to, problem: m.k, kind: K, after: "1", was: u.from, expect: A[0] } });
     }
     const pad = cols.some((m) => m.k === "slow") ? [`<div class="hd muted">Slow actions<small>not compared before and after</small></div>`, "<div></div>"] : ["", ""];
@@ -2365,15 +2370,15 @@ function swVersionBlock(a, i, v, K) {
         + (also.length ? `<div class="muted valso">also written ${also.map(esc).join(", ")}: counted as one version</div>` : "") + `</div>`;
       for (const m of cols) {
         if (!x[m.of]) { h += `<div class="muted${isRef ? " ref" : ""}">${m.k === "slow" ? "no actions measured" : "—"}</div>`; continue; }
-        const vd = (x.verdict || {})[m.k], up = !!vd && vd.state === "raised", other = isRef && up ? rows.find((y) => y.version === vd.against) : ref;
+        // the red flag is drawn raised on this count, or on its update below (swMarks)
+        const vd = (x.verdict || {})[m.k], passes = !!vd && vd.state === "raised", where = at[m.k + "|" + x.version] || "", up = passes && where === "v";
+        const other = isRef && up ? rows.find((y) => y.version === vd.against) : ref, its = k.updates.find((u) => u.to === x.version && "u|" + u.from === where);
         const them = isRef && vd && vd.against ? vd.against : yardWord;
-        // the red flag's ▲ is on this count, or on its update below (swMarks)
-        const where = at[m.k + "|" + x.version] || "", mark = up && where === "v", its = k.updates.find((u) => u.to === x.version && "u|" + u.from === where);
         const say = up ? (isRef ? `against ${other ? swPct(other[m.n], other[m.of]) : ""} on ${vd.against}.` : `against ${swPct(ref[m.n], ref[m.of])} on ${yardWord}.`) + swBothSaid(vd, them)
-            + (mark ? "" : ` Counted as one red flag with its ${its ? swUp(its) : "update"}, below.`)
+          : passes ? `not raised a second time: this version is raised after its ${its ? swUp(its) : "update"}, below`
           : vd && vd.state === "same" ? swSameNot(vd, them, r)
             : swNot(vd, m, m.k === "slow" ? x.major_pcs : x[m.n], r, isRef && vd && vd.against ? `on ${vd.against}` : `on ${yardWord}`);
-        h += swCell({ ref: isRef, pair: [x[m.n], x[m.of]], max: max[m.k], unit: m.unit, up, mark, pcs: m.k === "slow" ? x.major_pcs : x[m.n], dim: x.new && !isRef, say,
+        h += swCell({ ref: isRef, pair: [x[m.n], x[m.of]], max: max[m.k], unit: m.unit, up, pcs: m.k === "slow" ? x.major_pcs : x[m.n], dim: x.new && !isRef, say,
           click: { app: a.application, version: x.version, problem: m.k, kind: K, expect: m.k === "slow" ? x.major_pcs : x[m.n] } });
       }
       return h;
@@ -2449,8 +2454,10 @@ function swExplain(i, which, j) {
       + (b.decides ? "." : `, too few to tell (${r.min_problem} needed on one of the two).`));
   let title, raised = 0;
   const nexts = [], at = swMarks(a, K);
-  // raised here, with the red flag's one ▲ on this count or on another count of the same version and problem
-  const upSaid = (mark, rest, other) => (mark ? `<span class="warn">▲</span> Raised${rest}` : `Raised${rest} It is counted as one red flag with ${other}: the ▲ is there.`);
+  // a count that passes the checks is raised here, or, when its red flag is drawn on another count of the same
+  // version and problem, said to be raised there: one red flag is raised once
+  let second = false;
+  const onceSaid = (other) => `It passes the checks, but it is not raised a second time: this version is raised after ${other}, and one red flag is shown once.`;
   if (which === "update") {
     const u = k.updates[j];
     const upd = swUp(u);
@@ -2463,7 +2470,10 @@ function swExplain(i, which, j) {
     sec("What it found");
     const why = [];
     list(cols.filter((m) => m.k !== "slow").map((m) => {
-      const A = u.after[m.k], B = u.before[m.k], vd = (u.verdict || {})[m.k] || {};
+      const A = u.after[m.k], B = u.before[m.k], was = (u.verdict || {})[m.k] || {};
+      // drawn raised on another update to this version: not raised a second time here
+      const vd = was.state === "raised" && at[m.k + "|" + u.to] !== "u|" + u.from ? { state: "second" } : was;
+      if (vd.state === "second") second = true;
       if (vd.state === "raised") {
         raised++;
         why.push([m.head, [`${n(A)} PCs after is at least ${r.ratio} times ${n(B)} before.`, `${n(A)} PCs ${m.having} after. ${r.min_problem} are needed, so it is not one or two unlucky PCs.`,
@@ -2471,13 +2481,13 @@ function swExplain(i, which, j) {
         nexts.push((swMostHave(k, u.to) ? `Most ${pw} already run ${esc(u.to)}, so start with the ${n(A)} PCs.` : `Look at the ${n(A)} PCs before more PCs get ${esc(u.to)}.`)
           + ` "Show the ${n(A)} PCs ▸" lists them, and "Investigate ▸" on one shows what happened on it.`);
       }
-      const where = at[m.k + "|" + u.to] || "";
-      return `<b>${m.head}:</b> on ${n(B)} of the ${n(u.pcs)} PCs before the ${upd}, on ${n(A)} after it. ` + (vd.state === "raised" ? upSaid(where === "u|" + u.from, ".", `the change from ${esc(where.slice(2))}`)
+      return `<b>${m.head}:</b> on ${n(B)} of the ${n(u.pcs)} PCs before the ${upd}, on ${n(A)} after it. ` + (vd.state === "raised" ? `<span class="warn">▲</span> Raised.`
+        : vd.state === "second" ? onceSaid(`the change from ${esc((at[m.k + "|" + u.to] || "").slice(2))}`)
         : vd.state === "unsure" ? `At least ${r.ratio} times as many, but ${swNot(vd, { having: m.having + " after" }, A, r, "before")}.`
           : A > B ? `More after, but not ${r.ratio} times as many: not raised.` : `No more after the ${upd}.`);
     }));
     if (why.length) { sec("Why it is raised"); why.forEach(([h, steps]) => { par(`<b>${h}:</b>`); list(steps, true); }); }
-    else { sec("Why nothing is raised"); par(rule); }
+    else { sec("Why nothing is raised"); par(rule + (second ? " A change that passes them for a version already raised after another change is not raised a second time." : "")); }
     sec("How far to trust it");
     par(`This is the strongest comparison on the page: the same PCs and the same people are on both sides, with the same number of days, so the version is what changed. `
       + `It cannot rule out that something else changed on those PCs in the same days, such as a Windows update. An investigation of one of the PCs lists what changed on it.`);
@@ -2497,9 +2507,13 @@ function swExplain(i, which, j) {
       if (x === ref || x.new || !ref) continue;
       const lines = [];
       for (const m of cols) {
-        const vd = (x.verdict || {})[m.k];
-        if (!vd) continue;
-        const A = [x[m.n], x[m.of]], B = [ref[m.n], ref[m.of]], back = (ref.verdict || {})[m.k], mine = `${swPct(...A)} (${n(A[0])} of ${n(A[1])})`, most = `${swPct(...B)} (${n(B[0])} of ${n(B[1])})`;
+        const was = (x.verdict || {})[m.k];
+        if (!was) continue;
+        // drawn raised on an update of this version (swMarks): not raised a second time here
+        const onRow = (ver) => at[m.k + "|" + ver] === "v", itsUp = (ver) => { const u = k.updates.find((y) => y.to === ver && "u|" + y.from === at[m.k + "|" + ver]); return `its ${u ? swUp(u) : "update"}`; };
+        const vd = was.state === "raised" && !onRow(x.version) ? { ...was, state: "second" } : was;
+        const A = [x[m.n], x[m.of]], B = [ref[m.n], ref[m.of]], back0 = (ref.verdict || {})[m.k],
+          back = back0 && back0.state === "raised" && back0.against === x.version && !onRow(ref.version) ? { ...back0, state: "second" } : back0, mine = `${swPct(...A)} (${n(A[0])} of ${n(A[1])})`, most = `${swPct(...B)} (${n(B[0])} of ${n(B[1])})`;
         const refUp = back && back.state === "raised" && back.against === x.version, with_ = m.k === "slow" ? x.major_pcs : x[m.n], refWith = m.k === "slow" ? ref.major_pcs : ref[m.n];
         const steps = (hi, lo, hiV, loV, w) => [`${swPct(...hi)} is at least ${r.ratio} times ${swPct(...lo)}.`, `${n(w)} PCs ${m.having}. ${r.min_problem} are needed, so it is not one or two unlucky PCs.`]
           .concat([m.k === "slow" ? `With ${r.still_actions} more actions rated Major on ${esc(loV)} (${n(lo[0] + r.still_actions)} of ${n(lo[1])}, ${swPct(lo[0] + r.still_actions, lo[1])}), ${swPct(...hi)} would still be at least ${r.ratio} times as high.`
@@ -2510,9 +2524,11 @@ function swExplain(i, which, j) {
           nexts.push(swOlder(x.version, ref.version) ? `The ${n(swOn(x))} ${pw} still on ${esc(x.version)} are the ones to update.` : `Look at these PCs before more PCs get ${esc(x.version)}.`); }
         else if (refUp) { raised++; why.push([`${esc(ref.version)}, ${m.head.toLowerCase()}`, steps(B, A, ref.version, x.version, refWith).concat(agree(back.same, ref.version, x.version))]);
           nexts.push(`Open the ${n(refWith)} PCs ${m.having} on ${esc(ref.version)} and investigate one. Most ${pw} run this version.`); }
-        const onRow = (ver) => at[m.k + "|" + ver] === "v", itsUp = (ver) => { const u = k.updates.find((y) => y.to === ver && "u|" + y.from === at[m.k + "|" + ver]); return `its ${u ? swUp(u) : "update"}`; };
-        lines.push(`<b>${m.head}:</b> ${mine} against ${most}. ` + (vd.state === "raised" ? upSaid(onRow(x.version), `: ${esc(x.version)} is the worse one.${bothSaid(vd.same, m, x.version, ref.version)}`, itsUp(x.version))
-          : refUp ? upSaid(onRow(ref.version), `: ${esc(ref.version)} is the worse one.${bothSaid(back.same, m, ref.version, x.version)}`, itsUp(ref.version))
+        if (vd.state === "second" || (back && back.state === "second")) second = true;
+        lines.push(`<b>${m.head}:</b> ${mine} against ${most}. ` + (vd.state === "raised" ? `<span class="warn">▲</span> Raised: ${esc(x.version)} is the worse one.${bothSaid(vd.same, m, x.version, ref.version)}`
+          : refUp ? `<span class="warn">▲</span> Raised: ${esc(ref.version)} is the worse one.${bothSaid(back.same, m, ref.version, x.version)}`
+          : vd.state === "second" ? `${esc(x.version)} is the worse one. ${onceSaid(itsUp(x.version))}`
+          : back && back.state === "second" ? `${esc(ref.version)} is the worse one. ${onceSaid(itsUp(ref.version))}`
             : vd.state === "same" ? `${esc(x.version)} is at least ${r.ratio} times as high and passes the other checks, but it is not raised.${bothSaid(vd.same, m, x.version, ref.version)} ${notShown(vd.same, x.version, ref.version)}`
             : sameRef ? `${esc(ref.version)} is at least ${r.ratio} times as high and passes the other checks, but it is not raised.${bothSaid(back.same, m, ref.version, x.version)} ${notShown(back.same, ref.version, x.version)}`
             : vd.state === "unsure" ? `At least ${r.ratio} times as high, but ${esc(swNot(vd, m, with_, r, "on " + ref.version))}.`
@@ -2522,7 +2538,7 @@ function swExplain(i, which, j) {
       if (lines.length) { if (!found) sec("What it found"); found = true; par(`<b>${esc(x.version)}</b> (${n(swOn(x))} ${pw}) against ${esc(ref.version)}:`); list(lines); }
     }
     if (why.length) { sec("Why it is raised"); why.forEach(([h, steps]) => { par(`<b>${h}:</b>`); list(steps, true); }); }
-    else if (found) { sec("Why nothing is raised"); par(rule + " No version here passes all three."); }
+    else if (found) { sec("Why nothing is raised"); par(rule + (second ? " A version that passes them here and is already raised after its update is not raised a second time." : " No version here passes all three.")); }
     sec("How far to trust it");
     par(`It shows that PCs on one version have the problem more often than PCs on another. It does not prove the version is the cause: the two groups of PCs can differ `
       + `in other ways, such as who uses them, how much, or what else is installed. That is why the PCs that ran both versions decide when there are enough of them: `
@@ -2549,10 +2565,10 @@ function swHow() {  // the "i" beside the panel's title
     + `<div><span class="top"><span class="vtrk" style="width:100%"><i class="up" style="width:85%"></i></span></span><span class="cap">a longer bar is a larger share</span></div>`
     + `<div><span class="top"><b>15%</b></span><span class="cap">the share of its PCs with the problem</span></div>`
     + `<div><span class="top muted">45 of 300 PCs</span><span class="cap">the count behind the share</span></div>`
-    + `<div><span class="top"><span class="warn">▲</span></span><span class="cap">a red flag: clearly worse than what it is compared with</span></div></div>`
+    + `<div><span class="top"><span class="warn">▲</span></span><span class="cap">raised: clearly worse than what it is compared with</span></div></div>`
     + `<div class="vex"><ul><li>The shaded row is the version most PCs have. Every other version is compared with it.</li>`
-    + `<li>A green bar is not raised. An amber bar is raised: clearly worse than what it is compared with. A grey bar is a version new this week: it is judged before and after its update only.</li>`
-    + `<li>One red flag is one line in the Red flags list, one <span class="warn">▲</span> in the tables and one on its button. When a version is raised for the same problem both after its update and against another version, the mark is on the count the list's line quotes, its update; the other count keeps its amber bar and says it is counted with it.</li>`
+    + `<li>A green bar is not raised. An amber bar with <span class="warn">▲</span> is raised. A grey bar is a version new this week: it is judged before and after its update only.</li>`
+    + `<li>One red flag is one line in the Red flags list, one amber count with <span class="warn">▲</span> in the tables and one on its button. A version that is worse for the same problem both after its update and against another version is raised once, after its update: the other count is not raised a second time and says so.</li>`
     + `<li>Bars are compared within one column of one table only. A bar is full at the column's highest share, or at ${SW_BAR_FULL * 100}% when every share in it is lower, so a small share stays a short bar.</li>`
     + `<li>A version that looks worse than another is raised only when the PCs that ran both versions show it too: they are the same PCs on both sides. Its row says so, with their counts.</li>`
     + `<li>A version Aternity writes in more than one way is one row: "also written" under its name.</li>`

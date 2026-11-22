@@ -420,11 +420,12 @@ flags. Top to bottom:
   summary (GPT, every number checked; else our own sentences) with Copy.
 - **Application health by version**: virtual desktops and physical PCs
   apart (a switch; each button says its red flags). One red flag is one
-  line in the Red flags list, one ▲ in the tables and one on its button:
-  when a version is raised for one problem both after its update and
-  against another version, the ▲ is on the count the list's line quotes
-  (its update) and the other count says "Counted as one red flag with its
-  update, below". An application
+  line in the Red flags list, one raised count in the tables (amber bar,
+  bold words, ▲) and one on its button: a version that is worse for one
+  problem both after its update and against another version is raised
+  once, on the count the list's line quotes (its update); the other count
+  is drawn as not raised and says "not raised a second time: this version
+  is raised after its update, below". An application
   with a ▲ is open, the others are one folded line. Two comparisons, each
   shown whole: first **version by version** (each version next to the
   version most PCs have, shaded; every PC that ran it in the last 7
@@ -899,7 +900,8 @@ dev/page_check.sh                           # the page check, before a copy to s
 
 The page check opens the pages in a real Chrome (the `uitest-chrome` image
 on the dev host) and counts what is drawn against every number that stands
-for it: a button's number against the ▲ under it and the lines of the list,
+for it: a button's number against everything that looks raised under it
+(amber bars, bold words, ▲, each counted on its own) and the lines of the list,
 a tab's number against its tile and its lines, "Show the N PCs" against its
 count, a count of 1 with a plural after it, script errors; then every count
 the app gives against the list behind it. It looks at a made-up Software tab

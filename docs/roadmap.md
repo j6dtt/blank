@@ -54,9 +54,10 @@ data, then its daily data with the people and desktops. See
   the rule works, 5 of the 9 version flags still wrong; the user:
   "fix it"; fixed the same day (47d6300, 436 tests); on stage
   2026-11-22 (third photo): works. Seven more photos the same
-  day: one count does not add up; fixed on dev with a page
-  check in the repo (below); stage copy of 2 files next,
-  then prod.**
+  day: one count does not add up; fixed with a page check in
+  the repo (a0acbd5, below); on stage the same day: the
+  second count still read as a raise; fixed again on dev;
+  stage copy of 1 file next, then prod (11 files).**
   - On stage (photo, same application, virtual desktops, a read
     a day later so the counts moved a little): no headline box,
     "Version by version" on top. X crashed on 149 of 2,476 (6%),
@@ -223,6 +224,50 @@ data, then its daily data with the people and desktops. See
     - Stage copy: `src/uxcorrelate/static/index.html` and
       `src/uxcorrelate/software.py`. Prod after it: the eight
       files in one go.
+    - On stage with a0acbd5 (photo, 2026-11-22): the new page
+      is there. The button says "7 ▲"; the count "147 of 410"
+      has its amber bar and no ▲ and says "Counted as one red
+      flag with its update, below"; the sentence beside the
+      buttons says what their number is. The user: "Still says
+      the same" (the button's 7, which was left as it was on
+      purpose: the extra ▲ went, not the number). Asked which
+      number the button should show: "7 is right".
+    - Wrong, said plainly: the user had not meant the number.
+      "No. Button says 7 but I count 8 raises just like
+      before". a0acbd5 took the ▲ off "147 of 410" and left
+      its amber bar and bold words, so it still looked raised
+      (the page's own legend: an amber bar is raised). The
+      page check had counted ▲ only: the same mistake as the
+      morning's, checking my own idea of "drawn" and not what
+      a reader counts.
+    - Fixed on dev (436 tests; not committed): a red flag is
+      drawn raised once. A raise is the amber bar, the bold
+      words, the ▲ and "Show the N PCs" together (`swCell`'s
+      `up`), never one without the others. A second count of
+      the same version and problem that passes the checks too
+      is drawn as every other count that is not raised: a
+      green bar and the muted words "not raised a second time:
+      this version is raised after its update, below" (a
+      second update: "... after the change from X, above").
+      Explain says the same and does not count it as raised.
+      The page check now counts each sign of a raise on its
+      own (amber bars, bold words, ▲, "Show the N PCs") against
+      the button and the list: on the page of a0acbd5 it says
+      "button 8 / amber 11 / bold 11 / ▲ 8 / list 8", on the
+      new page 174 agree, 0 do not. It also caught a script
+      error of mine in Explain before any copy. A picture of
+      the new table was sent to the user before the copy step.
+      Stage copy: `src/uxcorrelate/static/index.html` only.
+    - Prod list corrected: 11 files, not 8. The 8 took it that
+      prod already had the usage charts and the look switch
+      (cfea4d4); nothing I have says so. The last version
+      known on prod is the one of Nov 21 (596cd86, its verify
+      checks ran there), so prod gets every file of `src`
+      changed since: `cli.py`, `config.py`, `explain.py`,
+      `inventory.py`, `software.py`, `software_chat.py`,
+      `usage.py`, `verify.py`, `web.py`, `static/admin.html`,
+      `static/index.html`. No change to the image, compose,
+      the Kubernetes files or config.yaml.
   - Seen on stage now: the "also written" line, "Before and
     after the change of version" (51 PCs that went to a lower
     version). Not seen yet: the Compare dialog, the Inventory
