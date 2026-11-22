@@ -73,7 +73,7 @@ USAGE_FILE = "usage.json"  # in <data>/inventory
 R, W = INVENTORY_ROLES, INVENTORY_WORDS
 LAST, STATUS = INVENTORY_COLUMNS["last"], INVENTORY_COLUMNS["status"]
 # "Needs a look": key -> the line's name, most PCs first on the page
-LINES = {"agent": "On an older agent than most", "bitlocker": "BitLocker off on a physical PC",
+LINES = {"agent": "On an older agent than most",
          "unused": f"Not used in {USE_DAYS} days", "restart": f"Not restarted in over {RESTART_DAYS} days",
          "silent": f"Not heard from in {SILENT_DAYS} days or more", "stopped": "Agent stopped",
          "stability": "Low stability index", "free": "Little free space on the system disk",
@@ -486,7 +486,6 @@ class Inventory:
         it cannot be said}. Called under the lock."""
         pcs = list(self.pcs.values())
         val = lambda pc, role: pc["row"].get(R[role]) if R[role] in self.have else None  # noqa: E731
-        physical = [pc for pc in pcs if not is_virtual(val(pc, "kind"))]
         out: dict[str, dict] = {}
 
         def line(key, hits, of, text, unknown=None):
@@ -508,12 +507,6 @@ class Inventory:
                      and (version_key(val(pc, "agent")) or mk) < mk]
             line("agent", older, sum(vs.values()),
                  f"An Aternity agent older than {most}, the version most PCs have." if most else "")
-        # BitLocker off, physical PCs only (a virtual desktop's disk is not the PC's to encrypt)
-        if not missing("bitlocker", "bitlocker", "BitLocker's status") and not missing("bitlocker", "kind",
-                                                                                     "the kind of device"):
-            on = sum(1 for pc in pcs if val(pc, "bitlocker") and val(pc, "bitlocker") not in W["bitlocker_off"])
-            line("bitlocker", [(pc, str(val(pc, "bitlocker"))) for pc in physical if val(pc, "bitlocker") in W["bitlocker_off"]],
-                 len(physical), f"As the PC reports it to Aternity. {on:,} PCs in all report it on.")
         # in the list and heard from, but no application ran on it
         alive = [pc for pc in pcs if (self.age(pc["heard"], now) or 0) < SILENT_DAYS]
         if self.used is None:

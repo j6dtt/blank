@@ -406,11 +406,13 @@ application versions, as Aternity lists them, read once a day (and at
 start; the first read takes a few minutes). The tab's count is the red
 flags. Top to bottom:
 - **Red flags**, most PCs first, each with its PCs per day and "new" when
-  it was not there the day before: a version that crashes, hangs or is
-  slow more than the version most PCs have, or more after its update than
-  before (at least 2 times, 20 PCs on each side, 5 with the problem, and
-  still so with 2 more PCs with it on the other side, or 5 more actions
-  rated Major for slow actions), programs behind
+  it was not there the day before: a version that crashes, stops
+  responding or is slow more than the version most PCs have, or more
+  after its update than before (at least 2 times, 20 PCs on each side, 5
+  with the problem, and still so with 2 more PCs with it on the other
+  side, or 5 more actions rated Major for slow actions; a version that
+  is worse than another is not raised when the PCs that ran both
+  versions say otherwise), programs behind
   most PCs, 2+ versions on one
   PC, a Windows update most PCs of a Windows version have but not every
   one, programs installed for one user, programs on 5 PCs or fewer. Click
@@ -419,19 +421,37 @@ flags. Top to bottom:
 - **Application health by version**: virtual desktops and physical PCs
   apart (a switch; each button says how many ▲ it has). An application
   with a ▲ is open, the others are one folded line. Two comparisons, each
-  shown whole: **before and after the update** (the same PCs, for each PC
-  as many days after as before) and **version by version** (each version
-  next to the version most PCs have, shaded). A bar is a share, with its
-  percentage and the count behind it; every ▲ says why it is raised and
-  what to do next. **Explain ▸** beside a comparison walks through it
-  with its own numbers (our words; a question under it goes to the AI).
-  The "i" beside the title says how to read a row. Click a bar for those
-  PCs (read now), each with Investigate ▸ for its last day with it.
+  shown whole: first **version by version** (each version next to the
+  version most PCs have, shaded; every PC that ran it in the last 7
+  days), then **before and after the update** (the same PCs, for each PC
+  as many days after as before; only those days, so a version's
+  percentage there is not its percentage version by version). A bar is a
+  share, with its percentage and the count behind it; a bar is full at
+  its column's highest share, or at 10% when every share is lower.
+  - There is no headline box over an application: the ▲ is on the count
+    it is about, with what it is against and "Show the N PCs ▸".
+  - **The same PCs decide.** Two versions side by side are different
+    PCs. When 20 PCs or more went from one of the two versions to the
+    other, they ran both: if 5 of them or more had the problem on one of
+    the two and no more of them had it on the version that looks worse,
+    that version is not raised and its count says so ("not raised: the
+    53 PCs that ran both had it on 7 with this version and on 9 with
+    ..."). When they agree, the ▲ gives their counts.
+  - **Table ▾** under the versions: every version on the kind of PC on
+    screen, each count with its percentage.
+  - **Explain ▸** beside a comparison walks through it with its own
+    numbers: why something is raised or not, and what to do next (our
+    words; a question under it goes to the AI). The "i" beside the title
+    says how to read a row. Click a count for those PCs (read now; the
+    list says when it counts other than the tab's daily read did), each
+    with Investigate ▸ for its last day with it.
 - **Compare versions**: two versions of an application on every kind of
-  issue (crash, hang time, its health events, Major actions per activity,
-  virtual desktops); **Before and after an update ▸**: the PCs whose
-  version changed once in 14 days, days with a crash or hang time before
-  and after.
+  issue (crash, hang time, its health events, Major actions per
+  activity), on the kind of PC the tables above are on, each share with
+  its counts; **Before and after an update ▸**: the PCs whose version
+  changed once in 14 days, counted as the tables above (PCs with a crash
+  or hang time, as many days after as before). Both are read now and say
+  so. Every **Table ▾** on the tab has a percentage beside each count.
 - **Behind most PCs** (version strips, oldest to newest), **2+ versions on
   one PC**, **Installed for one user**, **Windows** (per version, the week
   it was last updated, updates not on every PC and what those PCs have;
@@ -477,11 +497,11 @@ device, no PC or user name).
     usage is on each bar. Days and months from before the tab's first
     read are set against the list of that day.
 - **Needs a look**, most PCs first, each count with its share of the PCs
-  it is counted among: an older Aternity agent than most, BitLocker off
-  on a physical PC, not used in 8 days, not restarted in over 14 days,
-  not heard from in 8 days or more, agent stopped, a stability index
-  under 5, little free space (Aternity's bands that end at 10 GB or
-  under), still on a spinning hard disk. A click lists the PCs, each with
+  it is counted among: an older Aternity agent than most, not used in
+  8 days, not restarted in over 14 days, not heard from in 8 days or
+  more, agent stopped, a stability index under 5, little free space
+  (Aternity's bands that end at 10 GB or under), still on a spinning
+  hard disk. A click lists the PCs, each with
   "Investigate ▸" and its card. A line this Aternity has no column for is
   said "not judged", never 0.
 - **Last heard from**, with the agent's status in Aternity's own words.
@@ -1005,7 +1025,7 @@ back to dev.
 - **What Aternity knows of each PC** (`verify --inventory --columns`,
   the 5th answer of `verify --inventory`): for each column an
   Inventory tab could show (model, memory, system disk, last start-up,
-  BitLocker, antivirus, agent version, ...), on how many PCs it is
+  antivirus, agent version, ...), on how many PCs it is
   filled and what its values look like. One read of the device list.
   No PC, user or site names.
 - **Which applications have measured actions** (`verify --actions`,

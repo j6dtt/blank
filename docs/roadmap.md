@@ -40,6 +40,99 @@ data, then its daily data with the people and desktops. See
 
 ## Waiting on you
 
+- **Software tab: the headline box is gone, the same PCs decide,
+  and a full review for discrepancies (the user, 2026-11-22, on two
+  photos of stage: "Am I seeing discrepancies here? Look at the
+  headline panels and comparison below. It's either confusing still
+  or don't match"; "What's the purpose of the headliner and when do I
+  see it?"; "Fix the discrepancies, I still don't know what they are
+  'cause it's confusing to look at. GET RID OF THE HEADLINE, I think
+  it add more confusing. Thooughts?"; "Add percentage to tables";
+  "Move version by version on top of before and after"; "DO FULL
+  CODES REVIEW FOR GAPS, DISCREPANCIES ON SOFTWARE and OTHER").
+  Built on dev, 434 tests; stage copy next.**
+  - What the photos showed (an application on virtual desktops; X =
+    the version most have, 2,475 PCs; Y = the next, 165 PCs; Z =
+    the version before X):
+    - Headline "X stops responding more": 52% (1,291 of 2,475)
+      against 16% on Y (27 of 165). But on the same PCs with the
+      same days on each side: the 53 that went from X to Y stopped
+      responding on 7 with X and on 9 with Y; the 71 that came to X
+      from Z, on 36 before and on 15 after.
+    - Headline "X crashes more": 5.9% (147 of 2,475) against 0.6%
+      (1 of 165). The 53 PCs bear it out (8 with X, 0 with Y), but
+      its "Its update" line named only the 71 (1 before, 2 after).
+    - X had three percentages for one thing (5.9%, 2.8%, 15%):
+      different PCs and days each time, which the page did not say.
+  - Built:
+    1. The same PCs decide. A version worse than another is raised
+       only when the PCs that ran both versions (20 or more went
+       from one to the other) do not say otherwise: when 5 of them
+       or more had the problem on one of the two and no more of
+       them had it on this version, it is not raised and its count
+       says why with their numbers. On the photos: the "stops
+       responding" flag goes, the crash flag stays and gives the 53
+       PCs' counts. The tab's count of flags will move at the first
+       read after the copy; `verify --versions` (the rule before and
+       the rule now) names each one that went for this reason.
+    2. No headline box over an application. The ▲ is on the count it
+       is about, with what it is against, the PCs that ran both and
+       "Show the N PCs ▸". Why and what next are in "Explain ▸".
+    3. "Version by version" is on top, "Before and after the update"
+       under it. Each says the days it counts.
+    4. Percentages in every "Table ▾" of the tab, beside each count;
+       the Compare chart writes each share beside its counts too.
+  - The review, Software tab: 8 more gaps found and closed (listed
+    in docs/software-tab.md): Compare counted all PCs together under
+    tables per kind of PC, and its before and after counted PC-days;
+    the list behind "more after the update" held PCs of other
+    updates; the switch counted a version twice; "the version most
+    have" was said of a version with fewer PCs in a roll-out week; a
+    1.3% bar was as long as a 52% one beside it; "Hangs more" beside
+    "Stopped responding"; the table under an application was all PCs
+    mixed; a list read now against a count read in the morning.
+  - The review, the other tabs: 118 counts compared on dev by a
+    script, each against the list or panel that should match it
+    (Today's Major actions, PCs and users against its hours, its
+    lists and each application's list; active PCs and users; the
+    Care list's tiles against their bars, their lists, the tab's
+    count and the status feed; the Inventory tab's tiles, lines,
+    lists, last heard, statuses and usage charts; the Software
+    tab's flags, counts, lists, Compare and before and after). All
+    agree after the fixes; the one that did not was Compare read a
+    few minutes after the tab (3,431 actions against 3,429), which
+    the page now says.
+  - Not covered by the review, said plainly: the dev day was a
+    Sunday with no Critical or Major event, so Today's event tiles
+    were compared by reading the code (one list, `Today.health`,
+    feeds the tile and its list), not by numbers; investigations'
+    wording was not re-read (it has its own snapshot diff and
+    real-case tests); the admin page was not cross-checked.
+  - The Software tab's drawing (docs/diagrams/05) has the new rule.
+  - **The logic drawings (the user, 2026-11-22: "Update logic
+    diagrams and add missing if needed").** All eight are made from
+    the code's own settings by `docs/diagrams/make_diagrams.py`.
+    - Updated: 05 Software (the same PCs decide; the page without
+      the headline box, version by version first, percentages in
+      the tables; Compare and before / after counted as the tables;
+      "Stops responding more").
+    - New: 07 Inventory tab (the hourly read, what stays in memory,
+      the 8 "Needs a look" lines, last heard from, PCs in use per
+      day and per month, the safety rules, what a click does).
+    - New: 08 Ask anything, Explain and the top bar (what every tab
+      shares: what the AI is given, the look-ups with and without a
+      read of Aternity, the limits per question, how numbers are
+      checked, the connection lights, the names offered, the look).
+    - Checked and left as they are: 01 Today, 02 Care list, 03
+      Investigate, 04 Start-ups, 06 Admin page (made again from the
+      code: no number in them changed, and each sentence still says
+      what the code does).
+    - The export crashed on dev ("Illegal instruction") until
+      draw.io ran with more shared memory and without the
+      container's system-call filter; the command that works is in
+      the script's header.
+  - Also seen on the photos: the dark look is on stage and reads.
+
 - **The two checks, run on 2026-11-21 (596cd86; three photos).**
   Next: the user's questions on them, then Inventory ("we'll
   discuss Inventory later").
@@ -509,6 +602,23 @@ data, then its daily data with the people and desktops. See
         PC name is kept: it would be a read of Aternity at the
         click); the dev sample still gives rows for today, which
         the charts do not use.
+- **BitLocker is off the Inventory tab (the user, 2026-11-22:
+  "remove bitlocker"). Built on dev, 432 tests; goes to stage in
+  the same copy as the usage charts and the switch.**
+  - Why it had nothing to say: on stage BitLocker is 'Off' on
+    5,074 PCs and 'On' on 120, and the line "BitLocker off on a
+    physical PC" held 755 of 886. It was kept on 2026-11-21
+    ("2. keep it") to see the count on stage first.
+  - Gone: the "Needs a look" line (8 lines now), "BitLocker" on a
+    PC's card, its meaning in Explain, and the column itself: the
+    tab no longer asks Aternity for it, and
+    `verify --inventory --columns` no longer lists it (22 columns
+    asked about, it was 23). The tile "things to look at" counts
+    the 8 lines.
+  - One more file to move than the six of the charts and the
+    switch: `config.py` (the column lives there, with the others).
+  - Dev: the sample's device list no longer sends a made-up
+    BitLocker status.
 - **A switch between the current look and a dark one (the user,
   2026-11-22: "Add dark and current theme switch on page", then
   "Mockups of dark themes", then "Build A and admin too"). Built on
@@ -586,8 +696,8 @@ data, then its daily data with the people and desktops. See
     the count on "BitLocker off on a physical PC"; the tile's
     kinds of device.
   - Not built: step 2 (the hardware charts with the virtual /
-    physical switch), step 3 (Ask anything), a drawing of the
-    tab's rules (docs/diagrams has one per tab).
+    physical switch), step 3 (Ask anything). Its drawing was made
+    on 2026-11-22 (docs/diagrams/07).
   - The choices (the user, 2026-11-21, on the four asked: "1. hourly, 2.
   keep it, 3. you recommendations, 4. both"). So: 1. read every
   hour; 2. the BitLocker line stays ("BitLocker off on a physical

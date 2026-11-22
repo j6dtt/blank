@@ -93,7 +93,7 @@ def test_the_blocks_read_now_compare_split_and_list_pcs(tmp_path):
     assert ["Send Mail: actions rated Major", 400, 1600, 5, 2405] in cmp["rows"]
     assert "On virtual desktops: 0 of 20 PCs on 16.2, 10 of 40 on 16.1." in cmp["notes"]
     ba = run("before_after", {"application": "Outlook"}, r, v, c, s)
-    assert ba["rows"] == [["16.1", "16.2", 10, 20, 0, 0, 20, 2, 0]]
+    assert ba["rows"] == [["16.1", "16.2", 10, 0, 2, 0, 0]]  # PCs with a crash before, after; with hang time
     split = run("program_split", {"application": "Outlook", "program": "edge"}, r, v, c, s)
     assert split["rows"] == [["121.0", 40, 12], ["120.0", 15, 2], ["119.0", 5, 0]]
     assert split["columns"][-1] == "with a crash" and any("never a red flag" in n for n in split["notes"])

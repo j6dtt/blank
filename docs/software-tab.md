@@ -112,10 +112,69 @@ user's "build it", Nov 21 2026: on stage Teams was raised on 1,316 of
 207 would have undone it; slow actions had no third check). When a
 version is 2 times as high and not raised, its bar says which check
 failed; so does the version most PCs have. A version raised against
-another also says its own update when the panel shows one ("Its
+another also said its own update when the panel shows one ("Its
 update: on the 69 virtual desktops just updated to it ..., it stopped
 responding on 36 before the update and on 15 after"; stage, Nov 21:
 Outlook's flag and the table under it said two things, not joined).
+That line is gone with the headline box (Nov 22 2026, below).
+
+**The same PCs decide (the user, Nov 22 2026, on two photos of stage:
+"Am I seeing discrepancies here? Look at the headline panels and
+comparison below. It's either confusing still or don't match"; then
+"Fix the discrepancies ... GET RID OF THE HEADLINE, I think it add
+more confusing", "Add percentage to tables", "Move version by version
+on top of before and after", "DO FULL CODES REVIEW FOR GAPS,
+DISCREPANCIES ON SOFTWARE and OTHER").** On stage a version was raised
+for stopping to respond on 1,291 of its 2,475 virtual desktops against
+27 of 165 on another, while the 53 desktops that went from the one to
+the other had it on 7 with the first and on 9 with the second, and
+the 71 that came to it from the version before had it on 36 before
+and on 15 after. Two versions side by side are two groups of PCs,
+which differ in who uses them and how much; the PCs that ran both are
+the same PCs and people with the same number of days on each. So:
+
+- A version that passes the checks against another version is raised
+  only when the PCs that ran both do not say otherwise. They speak
+  when 5 of them or more had the problem on one of the two versions;
+  if then no more of them had it on the version that looks worse, it
+  is not raised, and its count says why with their numbers. When they
+  agree the ▲ gives their numbers; when they are too few to tell it
+  says so; when no 20 PCs went from one to the other the flag stands
+  as before. Slow actions have no before and after: unchanged.
+- The headline box over an application is gone: its numbers were the
+  tables' own, said twice, and its "Its update" line could name a
+  table that said the opposite. The ▲ is on the count it is about,
+  with "Show the N PCs ▸". Why it is raised and what to do next are
+  in "Explain ▸".
+- "Version by version" is first, "Before and after the update" under
+  it. Each says the days it counts (every PC that ran the version in
+  the 7 days; only a PC's days around its update), which is why one
+  version has two percentages.
+
+Found in the review asked for with it, each closed:
+
+1. Compare versions counted all PCs together under tables that are per
+   kind of PC: now the kind on screen. Its "Before and after an
+   update" counted PC-days with every day on each side: now PCs, as
+   many days after as before, as the tables (the chat's look-up too).
+   Both say they are read now. Each share is written beside its counts.
+2. The PCs behind "more after the update" listed every PC that came to
+   the version, from any version: now those of the change clicked.
+3. The switch's "N ▲" counted a version twice when both its update and
+   another version raised it; the red flags list counted it once.
+4. In the week of a roll-out the new version can be on more PCs than
+   the yardstick: the chip and the flag's sentence still said "the
+   version most have" of the older one.
+5. A column whose highest share was 1.3% drew that bar as long as 52%
+   in the column beside it: a bar is full at the column's highest
+   share, or at 10% when every share in it is lower.
+6. The flag's label said "Hangs more", the tables "Stopped
+   responding": one word now.
+7. The table under an application was all PCs mixed, under bars per
+   kind of PC: now the kind on screen, with a percentage beside each
+   count (every Table on the tab has them).
+8. A list opened from a count is read now, the count is the tab's
+   daily read: when they differ the list says both.
 Found on the user's question of the same day ("How did we go from 28
 red flags to 15 after this update? Did we break something"), two gaps
 in before and after, both closed: a PC that ran both versions on the
@@ -336,7 +395,8 @@ Building blocks (as built on dev, Nov 10):
   and which are raised.
 - `compare`: 2 versions of an application side by side on every kind
   of issue (read now).
-- `before_after`: the same PCs before and after an update (read now).
+- `before_after`: the same PCs before and after an update (read now,
+  counted as the tab's tables: PCs, as many days after as before).
 - `program_split`: an application's crashes, hangs or slow actions,
   split by the version of an installed program (read now; on demand
   only, never a red flag).

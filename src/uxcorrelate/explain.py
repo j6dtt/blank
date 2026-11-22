@@ -213,7 +213,7 @@ GLOSSARY: dict[str, dict[str, str]] = {
                     "software, so these are PCs that are gone. They are not counted anywhere on the tab.",
         "red flag": "Something on the installed software worth raising to management. One line per kind, the "
                     "most PCs first.",
-        "Crashes more / Hangs more / Slower": f"A version of an application is raised (▲) when the problem (PCs with "
+        "Crashes more / Stops responding more / Slower": f"A version of an application is raised (▲) when the problem (PCs with "
                                               f"a crash, PCs where it stopped responding, or actions rated "
                                               f"{TOP_STATUS}) shows on at least {software.RATIO:g} times the share "
                                               f"of what it is compared with, {software.MIN_PROBLEM} PCs or more "
@@ -222,9 +222,19 @@ GLOSSARY: dict[str, dict[str, str]] = {
                                               f"actions: with {software.STILL_ACTIONS} more of the other side's "
                                               f"actions rated {TOP_STATUS}), so one or two never decide it. Two "
                                               "comparisons: before and after an update, and each version against "
-                                              "the version most PCs have.",
+                                              "the version most PCs have. A version that is worse than another is "
+                                              "not raised when the PCs that ran both versions say otherwise.",
+        "the PCs that ran both": f"PCs that went from one of the two versions to the other in the last "
+                                 f"{software.UPDATE_DAYS} days, each with the same number of days on both. They are "
+                                 "the same PCs and people on both versions, so they are the stronger comparison: "
+                                 f"when {software.MIN_PROBLEM} of them or more had the problem on one of the two "
+                                 "versions and no more of them had it on the version that looks worse, that version "
+                                 "is not raised. Two versions set side by side are different PCs, which can differ "
+                                 "in who uses them and how much.",
         "Crashed": f"The application closed by itself. A PC counts once, however many times it happened in the "
-                   f"{software.DAYS} days. From Aternity's daily app usage.",
+                   f"{software.DAYS} days. From Aternity's daily app usage. Under \"Before and after the update\" "
+                   "only a PC's days just before and just after its own update are counted, so a version's "
+                   "percentage there is not the one it has version by version.",
         "Stopped responding": "The application froze for a while (Windows shows \"Not responding\"). Aternity calls "
                               "it hang time and gives no unit for how long, so none is shown. A PC counts once if "
                               "it had any.",
@@ -305,8 +315,6 @@ GLOSSARY: dict[str, dict[str, str]] = {
         "Needs a look": "One line per kind of thing to check, the most PCs first. A click lists the PCs. Each "
                         "count has its share of the PCs it is counted among, which the line names (\"of N\").",
         inventory.LINES["agent"]: "The PC's Aternity agent is an older version than the one most PCs have.",
-        inventory.LINES["bitlocker"]: "A desktop or laptop that reports BitLocker as off to Aternity. Virtual "
-                                      "desktops are not counted.",
         inventory.LINES["unused"]: f"In the list and not silent, but no application ran on the PC in "
                                    f"{inventory.USE_DAYS} days, by Aternity's daily app usage.",
         inventory.LINES["restart"]: f"The last start-up Aternity has for the PC is more than "
@@ -378,7 +386,8 @@ set_refresh(today.REFRESH_MIN)  # the default; web.py sets config.yaml's
 
 # the terms of the Software tab's "Application health by version", for its own Explain dialogs
 VERSION_TERMS = ("the version most PCs have", "Crashed", "Stopped responding", "Slow actions",
-                 "Crashes more / Hangs more / Slower", "new this week", "Before and after the update",
+                 "Crashes more / Stops responding more / Slower", "the PCs that ran both", "new this week",
+                 "Before and after the update",
                  "too few to judge", "virtual desktops and physical PCs")
 
 

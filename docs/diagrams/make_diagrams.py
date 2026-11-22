@@ -8,7 +8,12 @@ drawings are made again when one changes. No host, PC or user names.
     then each .drawio to .png and .pdf with the draw.io image (rlespinasse/drawio-desktop-headless -x -f png).
 
 01-today-tab-logic, 02-care-list-logic, 03-investigate-logic, 04-start-ups-logic,
-05-software-tab-logic, 06-admin-page-logic.
+05-software-tab-logic, 06-admin-page-logic, 07-inventory-tab-logic, 08-every-tab-logic (Ask anything,
+Explain and the top bar: what every tab shares).
+The export that works on the dev host (draw.io's Electron needs both options there):
+    docker run --rm --shm-size=1g --security-opt seccomp=unconfined -u $(id -u):$(id -g) -e HOME=/tmp \
+        -v "$PWD/docs/diagrams":/data -w /data rlespinasse/drawio-desktop-headless:v1.74.0 \
+        -x -f png -o NAME.png NAME.drawio        (and: -x -f pdf --crop -o NAME.pdf NAME.drawio)
 """
 import html
 import math
@@ -18,8 +23,9 @@ from pathlib import Path
 
 OUT = Path(__file__).parent
 sys.path.insert(0, str(OUT.parent.parent / "src"))
-from uxcorrelate import (actions, after_start, assess, care, cause, correlate, impact, logons, names,  # noqa: E402
-                         normal, secureview, usage, web)
+from uxcorrelate import (actions, after_start, agent, assess, care, cause, chat, correlate, impact, logons,  # noqa: E402
+                         names, normal, secureview, status, usage, web)
+from uxcorrelate import inventory as I  # noqa: E402, E741
 from uxcorrelate import software as S  # noqa: E402
 from uxcorrelate import today as T  # noqa: E402
 from uxcorrelate.config import REFRESH_RANGE, SOFTWARE_USER_SCOPE as S_USER, TILE_SEVERITIES, TOP_STATUS  # noqa: E402
@@ -364,8 +370,8 @@ def investigate():
         ("5. By a click", "", "click", [[
             item("Explain", "On every panel: the panel's lines worded by the AI, checked against the lines."),
             item("Open in Start-ups", "From a start-up in the answer: that tab for the same user or PC."),
-            item("Ask anything", f"Can run one whole investigation per question and read its report (at most "
-                 "5 reads of Aternity per question)."),
+            item("Ask anything", "Can run one whole investigation per question and read its report (at most "
+                 f"{agent.MAX_READS} reads of Aternity per question)."),
             item("Link", "#investigate opens this tab; a result stays while other tabs are used."),
         ]]),
     ])
@@ -486,7 +492,10 @@ def software():
                  "is left to 1).",
                  f"Raised: {S.RATIO:g} times the other side's share, {S.MIN_PROBLEM}+ PCs with the problem, and still so "
                  f"with {S.STILL} more PCs with it on the other side ({S.STILL_ACTIONS} more actions rated Major for "
-                 "slow actions)."),
+                 "slow actions).",
+                 "The same PCs decide: a version that is worse than another in 2 is not raised when the PCs that ran "
+                 f"both versions say otherwise ({S.MIN_PROBLEM}+ of them had the problem on one of the two, and no more "
+                 "of them on this version). Two versions side by side are different PCs."),
         ], [
             item("F. Installed for one user only", "Uses: installed list.",
                  "Aternity marks every install with who it is for: the whole PC (\"ALL\") or one person "
@@ -510,7 +519,7 @@ def software():
                  "raised. It is shown, with the PCs that failed, but not as a red flag."),
         ]]),
         ("4. Red flags", "One line per kind, most PCs first", "result", [[
-            item(K["crash"], "From E. One line per raised version:", "\"it crashed on N% of its PCs (n of m); on the version most have: ...\", or \"more crashes after the update\"."),
+            item(K["crash"], "From E. One line per raised version:", "\"it crashed on N% of its PCs (n of m); on the version most have: ...\", with the counts of the PCs that ran both versions, or \"more crashes after the update\"."),
             item(K["hang"], "From E. One line per raised version:", "The same, for PCs where it stopped responding."),
             item(K["slow"], "From E. One line per raised version:", f"\"N% of its actions were rated {TOP_STATUS} (n of m, on P PCs)\"."),
             item(K["windows"], "From D. One line: how many updates are missing somewhere, and the one missing on the "
@@ -522,8 +531,8 @@ def software():
                  "program on the most PCs."),
             item(K["few"], "From G. One line: how many of the programs are that rare."),
         ], [
-            item("Ranked", "By PCs, most first. Equal: crashes, hangs, slower, then Windows, 2+ versions, behind, one "
-                 "user, rare."),
+            item("Ranked", "By PCs, most first. Equal: crashes, stops responding, slower, then Windows, 2+ versions, "
+                 "behind, one user, rare."),
             item("New", "A flag is \"new\" when the latest day before that had any flag did not have it. A day saved "
                  "empty does not make every flag new."),
             item("Bars", "Each flag's PCs per day, from the saved days."),
@@ -534,18 +543,26 @@ def software():
             item("Tiles", "PCs in the list (and how many more were left out as gone), programs, installs (and those "
                  "for one user), red flags."),
             item("Red flags", "The list from 4. A click on a line opens its section or the PCs behind it."),
-            item("Sections", "Application health by version · Compare versions · Behind most PCs · 2+ "
-                 "versions on one PC · Installed for one user · Windows · rare programs."),
             item("Summary for management", "The AI words up to 5 sentences from the top flags. Every number must be one "
                  "of the flags' own; otherwise our own sentence is shown."),
+        ], [
+            item("Application health by version", "Virtual desktops and physical PCs by a switch. Per application: "
+                 "version by version first, then before and after each update. A ▲ sits on the count it is about, "
+                 "with what it is against; no box of sentences above the tables. A version not raised because of "
+                 "the PCs that ran both says so on its count. A table with a percentage beside each count."),
+            item("Other sections", "Compare versions · Behind most PCs · 2+ versions on one PC · Installed for one "
+                 "user · Windows · rare programs. Every table has a percentage beside each count."),
         ]]),
         ("6. By a click", "Read now. Names of PCs and users appear only here", "click", [[
             item("PCs with a program", "The PCs with a program, or one version of it, each with its versions. PCs that "
                  "are gone are left out, as in the counts."),
             item("PCs with a problem", f"The PCs with a crash, hang time or {TOP_STATUS} actions on one version in the "
-                 f"last {S.DAYS} days: user, days, the last time. \"Investigate\" runs an investigation."),
+                 f"last {S.DAYS} days: user, days, the last time. \"Investigate\" runs an investigation. After an update: "
+                 "the PCs of that change of version only. When the list counts other than the tab's daily read "
+                 "did, it says both."),
             item("Compare and before / after", f"Two versions side by side on every kind of issue. Or the same PCs "
-                 f"{S.UPDATE_DAYS} days before and after their update."),
+                 f"before and after their update ({S.UPDATE_DAYS} days read). Both count as the tab's own tables do: "
+                 "the kind of PC on screen, for each PC as many days after as before."),
             item("PCs without a Windows update", "The PCs of that Windows version without the update, with what each "
                  "has instead. Same names as the daily read, so the total matches the flag."),
         ]]),
@@ -620,9 +637,163 @@ def admin():
     ])
 
 
+# ------------------------------------------------------------------------------------ 07 Inventory
+def inventory():
+    lines = len(I.LINES)
+    drawing("07-inventory-tab-logic", "Inventory tab: every rule behind it",
+            "What Aternity knows about each PC, the PCs that need a look, and how many PCs are in use. Read top to bottom.", [
+        ("1. When", "One background reader", "when", [[
+            item("The device list", f"Read every {I.READ_EVERY_MIN} minutes. When Aternity does not answer: again after "
+                 f"{I.RETRY_MIN} minutes, and the last read stays on the page. Which columns Aternity publishes is asked "
+                 f"again every {I.SCHEMA_HOURS} hours."),
+            item("PCs in use", "After each read of the list: the finished days not kept yet, a day at a time. A day is "
+                 f"read again until it is {I.SETTLE_DAYS} days old, then kept for good. The first read takes every day "
+                 "Aternity keeps (about 90 small reads, once)."),
+            item("What is held in memory only", "The device list itself: PC names, last users, serial numbers. "
+                 "Nothing of it is written to disk."),
+            item("What is kept", f"Only the usage charts' counts, per kind of device: days {I.KEEP_DAYS} days, months "
+                 f"{I.KEEP_MONTHS} months. No PC or user name."),
+        ]]),
+        ("2. Read", "From Aternity only", "source", [[
+            item("Device list", "One row per PC, its latest: every column Aternity publishes of those the tab can "
+                 "show (kind of device, model, serial number, memory, system disk, last start-up, agent version and "
+                 "status, stability index, last user, department, location, when it was last heard from)."),
+            item(f"App usage, last {I.USE_DAYS} days", "Which PCs ran an application, each PC once. For \"not used\"."),
+            item("App usage, day by day", "For each finished day: the PCs with a row of that day (a row counts only "
+                 "when its own time is of that day). Aternity has no row for today until the day is over."),
+            item("App usage, a month", "One read asking for the PC only, so Aternity adds the month's days up: a row "
+                 "per PC used at least once. Only while Aternity keeps the month whole."),
+        ]]),
+        ("3. Worked out", "A to F", "step", [[
+            item("A. Tiles", "PCs in the list, by Aternity's own kind of device. Heard from in the last 7 days. "
+                 "Retired (the Software tab's count: software still in Aternity, PC no longer in its list). Things "
+                 "to look at."),
+            item(f"B. Needs a look: {lines} lines", "An agent older than the version most PCs have · not used in "
+                 f"{I.USE_DAYS} days · not restarted in over {I.RESTART_DAYS} days · not heard from in {I.SILENT_DAYS} "
+                 f"days or more · agent stopped · stability index under {I.STABILITY_LOW} · little free space "
+                 f"(Aternity's bands that end at {I.FREE_LOW_GB} GB or under) · a spinning hard disk.",
+                 "Each line: its PCs, and the PCs it is counted among (a count with its share)."),
+            item("C. Last heard from", f"PCs by when Aternity last heard from them: today, 1 to 7 days, "
+                 f"{I.SILENT_DAYS} to {I.OLD_DAYS - 1} days, {I.OLD_DAYS} or more, no date. And the agent's status in "
+                 "Aternity's own words."),
+        ], [
+            item("D. In use each day", "The PCs an application ran on, per kind of device, against the PCs of that "
+                 f"kind in the list at that read. The last {I.CHART_DAYS} finished days; yesterday is the last bar."),
+            item("E. In use each month", "PCs used at least once in the month, counted by Aternity itself; the "
+                 f"busiest day of the month from the days kept. Up to {I.CHART_MONTHS} months, growing as the tab "
+                 "keeps each month. This month is \"so far\"."),
+            item("F. Four figures", "A typical working day and a typical weekend day (the middle value of the days "
+                 "shown), the busiest day, this month so far. Each a count with its share of the list."),
+        ]]),
+        ("Safety rules", "They guard the counts above", "safe", [[
+            item("Not judged is not 0", "A line whose column this Aternity does not publish, or \"not used\" when app "
+                 "usage could not be read, says \"not judged\" and why."),
+            item("No row is a gap", "A day Aternity has no row for is a gap on the chart, never 0. A day that could "
+                 f"not be read, or was cut short, is said and tried again; {I.FAILS_STOP} failed days in a row end a pass."),
+            item("Only PCs in the list count", "A PC with usage that is not in the device list is counted apart and "
+                 "said on its bar, so a share is never over 100%."),
+            item("What cannot be counted is not", "A month Aternity no longer keeps whole is never counted. A saved "
+                 "file that cannot be read is set aside, not written over."),
+        ]]),
+        ("4. On the page", "The Inventory tab, top to bottom", "page", [[
+            item("Tiles and Desktop usage", "The tiles, then two charts: bars for the PCs in use, a line for the PCs "
+                 "in the list (100%). A switch between all PCs and each kind of device; the four figures under them."),
+            item("Needs a look", "The lines, most PCs first. Lines with no PC are named in one sentence."),
+            item("Last heard from · Retired PCs", "By age, with the agent's status. Retired PCs, and PCs in the "
+                 "list that nobody uses."),
+            item("Find a PC", "By part of a PC name, a person or a serial number."),
+        ]]),
+        ("5. By a click", "Names of PCs and users appear only here", "click", [[
+            item("A line's PCs", f"Up to {I.PCS_SHOWN}, each with its own value for that line, \"Investigate\" and "
+                 "its card. From the read held: no extra read of Aternity."),
+            item("Find a PC", f"From {I.FIND_MIN} characters: up to {I.FIND_MAX} PCs whose name, last user or serial "
+                 "number has them."),
+            item("A PC's card", "Everything Aternity fills for it, the lines it is on, \"Investigate\", \"Its "
+                 "start-ups\", and \"Its software\": the one read of Aternity made at a click."),
+            item("Explain · link", "\"Explain\" on each panel, with the tab's own meanings. #inventory opens this "
+                 "tab."),
+        ]]),
+    ], foot="No Active Directory on this tab: the main page has no login, and AD look-ups there stay with the Care list.")
+
+
+# ------------------------------------------------------------------------------------ 08 What every tab shares
+def every_tab():
+    drawing("08-every-tab-logic", "Ask anything, Explain and the top bar: every rule behind them",
+            "What every tab shares: the one chat, the explanation of a panel, the connection lights, the names offered as "
+            "you type.", [
+        ("1. When", "", "when", [[
+            item("Ask anything", "Only when a question is asked. It runs as a job in the background; the page shows "
+                 "each look-up as it starts."),
+            item("Explain", "Only at a click on a panel's \"Explain\". Nothing is saved."),
+            item("Connection lights", f"One small read of each system every {status.CHECK_EVERY_S} seconds "
+                 f"(it waits {status.CHECK_TIMEOUT_S:g} seconds at most, with no second try)."),
+            item("Names", "Every username and PC name seen in Aternity's activity, kept by the Today reader. A name "
+                 f"not seen for {names.KEEP_DAYS} days is dropped."),
+        ]]),
+        ("2. The AI gets", "It reads nothing itself", "source", [[
+            item("The question", f"With the last {agent.HISTORY} questions and answers, and a line of what was looked "
+                 "up for them."),
+            item("The tab that is open", "As the page shows it, with our written meaning of each term on that tab."),
+            item("Aternity's own names", f"The kinds of event Aternity uses (up to {agent.KINDS_MAX}, the most PCs "
+                 "first), so the AI picks the ones meant: \"hard drive issue\" is not a name Aternity has."),
+            item("Look-ups", "A list of look-ups our code can run. The AI asks for them; our code counts and hands "
+                 "back rows."),
+        ]]),
+        ("3. Worked out", "A to F", "step", [[
+            item("A. Look-ups from what is already held", "No read of Aternity: find a user or PC by name · events · "
+                 "measured actions · the day's overview · what a term means · the tab on screen."),
+            item("B. Look-ups that read Aternity now", "Who logged in where · start-ups · a PC's software · a PC's "
+                 "changes · programs per PC · the Software tab's look-ups (versions, compare, before and after, PCs) "
+                 "· one whole investigation."),
+            item("C. Limits per question", f"{agent.MAX_STEPS} look-ups, {agent.MAX_READS} of them reading Aternity, "
+                 f"{agent.MAX_INVESTIGATIONS} investigation ({agent.INVESTIGATE_HOURS} hours unless asked, "
+                 f"{agent.INVESTIGATE_MAX_H} at most). A step shows up to {agent.ROWS_MAX} rows."),
+        ], [
+            item("D. The answer", f"One line that answers, 2 to 4 points, a last line \"Next: ...\" (at most "
+                 f"{chat.LINES_MAX} lines). In the AI's own words, from the rows it was handed."),
+            item("E. Explain", "A panel's own lines and our meaning of each term go to the AI, which words them. A "
+                 "question can be asked under it. For a Software comparison our own walk-through is shown first."),
+            item("F. A name sent the wrong way", "A name known only as a user, sent as a PC (or the other way), is "
+                 "looked up as what it is, and that is said."),
+        ]]),
+        ("Safety rules", "They guard the answers above", "safe", [[
+            item("Numbers are checked", "Ask anything: a number in none of the look-ups, or a comparison the AI "
+                 "worked out (\"twice as many\"), is marked on the answer. Explain: such an answer is refused and "
+                 "our own written meanings are shown."),
+            item("A failed look-up is said", "It is a step that says what failed, never a lost question. A read "
+                 "cut short says its counts are partial."),
+            item("No AI service", "Explain shows our own written meanings. The lights prove connection and "
+                 "login, not the quality of a model's answers."),
+            item("No login on the main page", "So Ask anything never asks Active Directory: on the main page only "
+                 "the Care list does, for its own users."),
+        ]]),
+        ("4. On the page", "On every tab", "page", [[
+            item("Ask anything", "At the bottom of every tab, with examples for the tab that is open. Answers stay "
+                 "when the tab changes. \"What I looked at\" lists every step."),
+            item("Explain", "At the bottom right of a panel: a dialog with the explanation, \"What the terms mean\" "
+                 "and a box for a question."),
+            item("Top bar", "The lights for Aternity, NetIM and each AI service: green, amber (the model is not in "
+                 "the service's list), red and flashing (no answer, or login refused). The look: Parchment | Dark."),
+            item("Tabs", "Today · Care list · Investigate · Start-ups · Software · Inventory. Each has a link and "
+                 "opens where it was left. Scrolled down, the bar stays as one slim row with \"Top\"."),
+        ]]),
+        ("5. By a click", "", "click", [[
+            item("A row of a step", "\"Investigate\" runs an investigation of that user and PC. \"Open this "
+                 "investigation\" shows the one the chat ran, without a second run."),
+            item("A light", "One \"Connections\" dialog: since when, the reply time, which model the chat uses, and "
+                 "what in config.yaml is not used."),
+            item("A name box", f"Names are offered as you type (up to {names.MATCHES}); any name can still be typed."),
+            item("The look", "Kept in the browser; the main page and the admin page share it when opened under one "
+                 "address. Until someone picks, the PC's own light or dark setting decides."),
+        ]]),
+    ])
+
+
 today()
 care_list()
 investigate()
 startups()
 software()
 admin()
+inventory()
+every_tab()

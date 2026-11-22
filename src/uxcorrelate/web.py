@@ -507,7 +507,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
     @app.get("/api/software/pcs")
     def software_pcs(name: str = "", version: str | None = None, application: str = "", problem: str = "",
-                     update: str = "", windows: str = "", kind: str = "", after: bool = False):
+                     update: str = "", windows: str = "", kind: str = "", after: bool = False, was: str = ""):
         """The PCs with a program (at a version), with a crash, hang time or a Major action on an
         application version, or without a Windows update most PCs of their Windows version have:
         read from Aternity now."""
@@ -526,7 +526,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
                 if problem == "slow":
                     raise HTTPException(400, "before and after an update compares crashes and hang time only")
                 return software_read(f"the PCs with {problem} after their update to {application} {version}",
-                                     lambda c: pcs_after_update(c, now, application, version, problem, kind))
+                                     lambda c: pcs_after_update(c, now, application, version, problem, kind, was))
             return software_read(f"the PCs with {problem} on {application} {version}",
                                  lambda c: pcs_with_problem(c, now, application, version, problem, kind))
         if not name:
@@ -535,18 +535,20 @@ def create_app(config_path: str | None = None) -> FastAPI:
                              lambda c: pcs_with_program(c, name, version, gone=software.gone))
 
     @app.get("/api/software/compare")
-    def software_compare(application: str, a: str = "", b: str = ""):
-        """Two versions of an application side by side on every kind of issue."""
+    def software_compare(application: str, a: str = "", b: str = "", kind: str = ""):
+        """Two versions of an application side by side on every kind of issue; `kind`: the kind
+        of PC the tab's tables are on (virtual / physical)."""
         now = datetime.now(timezone.utc)
         return software_read(f"{application} versions compared",
                              lambda c: compare(c, load_settings(config_path).aternity, now, application,
-                                               a or None, b or None))
+                                               a or None, b or None, kind))
 
     @app.get("/api/software/update")
-    def software_update(application: str):
-        """Before and after an update of the application, on the same PCs."""
+    def software_update(application: str, kind: str = ""):
+        """Before and after an update of the application, on the same PCs (`kind` as above)."""
         now = datetime.now(timezone.utc)
-        return software_read(f"{application} before and after its updates", lambda c: before_after(c, now, application))
+        return software_read(f"{application} before and after its updates",
+                             lambda c: before_after(c, now, application, kind))
 
     @app.post("/api/software/summary")
     def software_summary_for_management():

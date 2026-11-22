@@ -68,7 +68,7 @@ TAIL = ((1, 1), (2, 5), (6, 20), (21, 100), (101, 1000), (1001, None))  # flag 6
 NO_VERSION = ""  # how a row with no version is kept (Aternity's "N/A")
 
 KIND = {  # flag kinds: the words on the page, most important first
-    "crash": "Crashes more", "hang": "Hangs more", "slow": "Slower",
+    "crash": "Crashes more", "hang": "Stops responding more", "slow": "Slower",
     "windows": "Windows update not on every PC", "multi": "2+ versions on one PC",
     "behind": "Behind most PCs", "user": "Installed for one user", "few": f"On {FEW_PCS} PCs or fewer",
 }
@@ -578,9 +578,9 @@ def _changed_once(by: dict) -> tuple | None:
     return f, t, when, before[-k:], after[:k], both
 
 
-def _updates(days: dict, inn) -> list[dict]:
+def _updates(days: dict, inn, least: int = MIN_PCS) -> list[dict]:
     """Before and after an update, on the same PCs (those of one kind, `inn`): per change of
-    version that MIN_PCS PCs or more made, the PCs with a crash and with hang time on their
+    version that `least` PCs or more made (MIN_PCS: the ones the tab judges), the PCs with a crash and with hang time on their
     days before and on as many days after; `both`: those that ran both versions on the day of
     the change. Most PCs first; every one is judged (`judge` keeps the ones to show)."""
     pairs: dict = {}
@@ -597,7 +597,7 @@ def _updates(days: dict, inn) -> list[dict]:
         for side, part in (("before", before), ("after", after)):
             p[side]["crash"] += any(x[1] for _, x in part)
             p[side]["hang"] += any(x[2] for _, x in part)
-    out = sorted((p for p in pairs.values() if p["pcs"] >= MIN_PCS), key=lambda p: (-p["pcs"], order(p["to"])))
+    out = sorted((p for p in pairs.values() if p["pcs"] >= least), key=lambda p: (-p["pcs"], order(p["to"])))
     return [dict(p, first=p["first"].isoformat(), last=p["last"].isoformat()) for p in out]
 
 
@@ -783,6 +783,30 @@ def _check(a_n, a_of, b_n, b_of, with_it, still: int) -> tuple[str, bool]:
     return ("more" if a_n * b_of > b_n * a_of else "no"), False
 
 
+def same_pcs(updates: list[dict], x: str, y: str, kind: str) -> dict | None:
+    """The PCs that ran both versions `x` and `y`: those that went from one to the other
+    (`_updates`: MIN_PCS PCs or more, each PC with the same number of days on each side).
+    {"pcs", "with": those with the problem on their days on x, "other": on their days on y,
+    "decides": MIN_PROBLEM of them or more had it on one of the two, so they can tell}.
+    None when no PCs made that change."""
+    pcs = a = b = 0
+    for u in updates:
+        if (u["from"], u["to"]) == (y, x):
+            pcs, a, b = pcs + u["pcs"], a + u["after"][kind], b + u["before"][kind]
+        elif (u["from"], u["to"]) == (x, y):
+            pcs, a, b = pcs + u["pcs"], a + u["before"][kind], b + u["after"][kind]
+    return {"pcs": pcs, "with": a, "other": b, "decides": max(a, b) >= MIN_PROBLEM} if pcs else None
+
+
+def _both(ups: list[dict], spoke: set, x: str, y: str, kind: str) -> dict | None:
+    """`same_pcs` for a crash or hang time (slow actions have no before and after); the changes
+    of version it read are noted in `spoke`, so the page gets their table."""
+    got = same_pcs(ups, x, y, kind) if kind in ("crash", "hang") else None
+    if got:
+        spoke.update({(x, y), (y, x)})
+    return got
+
+
 def judge(app: dict) -> None:
     """Flag 1 (decision 1, as changed on Nov 21 2026: the user could not tell where "its other
     versions: 2 of 515" came from, and one more crash among those 515 would have undone the
@@ -794,7 +818,17 @@ def judge(app: dict) -> None:
       with hang time, or of actions rated Major. MIN_PCS PCs on each side.
     Every one also needs MIN_PROBLEM PCs with the problem and to hold with more of it on the
     other side: STILL more PCs, or STILL_ACTIONS more actions rated Major (`_check`). Each row
-    keeps its `verdict` per count, for the page's words. When every PC listed had a crash (or
+    keeps its `verdict` per count, for the page's words.
+    The same PCs decide (the user, Nov 22 2026, on a photo of stage: "Am I seeing discrepancies
+    here?"; a version was raised for stopping to respond on 1,291 of 2,475 PCs against 27 of 165
+    on another, while the 53 PCs that went from one to the other had it on 7 with the first and
+    on 9 with the second). A version against another version is two different groups of PCs;
+    the PCs that ran both (`same_pcs`) are the same PCs and people with the same number of days
+    on each. So a version that passes the checks against another is raised only when the PCs
+    that ran both do not say otherwise: when MIN_PROBLEM of them or more had the problem on one
+    of the two and no more of them had it on this version than on the other, it is not raised
+    (`verdict` "same", with their counts). When they agree, or are too few to tell, it is raised
+    and keeps their counts (`same`; no such PCs: no `same`). Slow actions have no before and after: unchanged. When every PC listed had a crash (or
     hang time), app usage holds the application only where it failed: nothing of app usage is
     compared (`only`)."""
     vs, read = app["versions"], app["read"]
@@ -820,15 +854,16 @@ def judge(app: dict) -> None:
                 if state == "raised":
                     app["raised"].append({"kind": kind, "version": u["to"], "on": on, "how": "update",
                                           "from": u["from"], "n": n, "of": u["pcs"], "before": before, "pcs": n})
-        shown = [u for j, u in enumerate(k["updates"]) if j < UPDATES_SHOWN
-                 or any(vd["state"] == "raised" for vd in u["verdict"].values())]
-        k["updates_more"] = k.get("updates_more", 0) + len(k["updates"]) - len(shown)  # judged, nothing raised
-        k["updates"] = shown
+        ups, spoke = k["updates"], set()  # spoke: the changes of version a version's verdict rests on
         for v in k["versions"]:
             v["verdict"] = {}
         judged = [v for v in k["versions"] if max(v["pcs"], v["action_pcs"]) >= MIN_PCS]
         ref = next((v for v in judged if not v["new"]), judged[0] if judged else None)
         k["ref"] = ref["version"] if ref else None
+        # a version new this week can be on more PCs than the yardstick: it is then not "the version most have"
+        # (review of Nov 22 2026: the page and the flag's sentence said so of the older version)
+        k["ref_most"] = ref is None or ref is judged[0]
+        less = {} if k["ref_most"] else {"ref_most": False}
         for v in judged:
             if v is ref or v["new"]:
                 continue
@@ -838,11 +873,16 @@ def judge(app: dict) -> None:
                 mine, most = (v[n_key], v[of_key]), (ref[n_key], ref[of_key])
                 state, few = _check(*mine, *most, v[prob_key], still)
                 v["verdict"][kind] = {"state": state, "few": few}
-                found = {"kind": kind, "on": on, "ref": ref["version"]}
+                found = {"kind": kind, "on": on, "ref": ref["version"]} | less
                 if state == "raised":
-                    app["raised"].append(found | {"version": v["version"], "how": "version", "n": mine[0],
-                                                  "of": mine[1], "ref_n": most[0], "ref_of": most[1],
-                                                  "pcs": v[prob_key]})
+                    both = _both(ups, spoke, v["version"], ref["version"], kind)
+                    if both and both["decides"] and both["with"] <= both["other"]:
+                        v["verdict"][kind] = {"state": "same", "few": False, "same": both}  # they say otherwise
+                    else:
+                        v["verdict"][kind] |= {"same": both} if both else {}  # they agree, or are too few to tell
+                        app["raised"].append(found | {"version": v["version"], "how": "version", "n": mine[0],
+                                                      "of": mine[1], "ref_n": most[0], "ref_of": most[1],
+                                                      "pcs": v[prob_key]} | ({"same": both} if both else {}))
                 # the version most PCs have against this one. Not raised though RATIO times as high is said too
                 # (Teams on stage, Nov 21 2026): `back` for this pair, and on the version's own row the first
                 # that more on the other side would undo (too few PCs with it names no version: not there)
@@ -853,10 +893,22 @@ def judge(app: dict) -> None:
                     if seen is None and not back_few:
                         ref["verdict"][kind] = {"state": back, "few": False, "against": v["version"]}
                 if back == "raised" and seen != "raised":
-                    ref["verdict"][kind] = {"state": "raised", "few": False, "against": v["version"]}
+                    both = _both(ups, spoke, ref["version"], v["version"], kind)
+                    if both and both["decides"] and both["with"] <= both["other"]:
+                        if seen != "same":  # they say otherwise: the first such version is the one named
+                            ref["verdict"][kind] = {"state": "same", "few": False, "against": v["version"],
+                                                    "same": both}
+                        continue
+                    ref["verdict"][kind] = {"state": "raised", "few": False, "against": v["version"]} \
+                        | ({"same": both} if both else {})
                     app["raised"].append(found | {"version": ref["version"], "how": "most", "ref": v["version"],
                                                   "n": most[0], "of": most[1], "ref_n": mine[0], "ref_of": mine[1],
-                                                  "pcs": ref[prob_key]})
+                                                  "pcs": ref[prob_key]} | ({"same": both} if both else {}))
+        # the page gets the biggest changes of version, every raised one, and every one a verdict above rests on
+        shown = [u for j, u in enumerate(ups) if j < UPDATES_SHOWN or (u["from"], u["to"]) in spoke
+                 or any(vd["state"] == "raised" for vd in u["verdict"].values())]
+        k["updates_more"] = k.get("updates_more", 0) + len(ups) - len(shown)  # judged, nothing raised
+        k["updates"] = shown
 
 
 def share_text(n, of) -> str:
@@ -888,9 +940,13 @@ def flag_text(kind: str, f: dict) -> str:
     what = (f"{mine} of its actions were rated {TOP_STATUS} ({f['n']:,} of {f['of']:,}, on {f['pcs']:,} PCs)"
             if kind == "slow" else f"it {DID[kind]} on {mine} of its {on} ({f['n']:,} of {f['of']:,})")
     theirs = f"{other} ({f['ref_n']:,} of {f['ref_of']:,})"
+    b = f.get("same") or {}
+    both = (f" Of the {b['pcs']:,} PCs that ran both versions, it {DID[kind]} on {b['with']:,} with {v} and on "
+            f"{b['other']:,} with {f['ref']}." if b.get("decides") and kind in DID else "")
+    most = f.get("ref_most", True)  # False: a version new this week is on more PCs than the yardstick
     if f.get("how") == "most":
-        return f"{a} {v}{where}, the version most have: {what}. On {f['ref']}: {theirs}."
-    return f"{a} {v}{where}: {what}. On the version most have, {f['ref']}: {theirs}."
+        return f"{a} {v}{where}{', the version most have' if most else ''}: {what}. On {f['ref']}: {theirs}.{both}"
+    return f"{a} {v}{where}: {what}. On {'the version most have, ' if most else ''}{f['ref']}: {theirs}.{both}"
 
 
 def program_view(p: dict) -> dict:
@@ -1358,11 +1414,14 @@ def pcs_with_problem(client, now: datetime, application: str, version: str, prob
                       "last": x["last"].isoformat()} for x in out[:PCS_SHOWN]]}
 
 
-def pcs_after_update(client, now: datetime, application: str, version: str, problem: str, kind: str = "") -> dict:
+def pcs_after_update(client, now: datetime, application: str, version: str, problem: str, kind: str = "",
+                     was: str = "") -> dict:
     """The PCs behind "more after the update": those whose version of the application changed
-    once to `version` in the last UPDATE_DAYS days and had a crash (or hang time) on their days
-    after it, read now by the daily read's own rule (`_changed_once`: as many days after as
-    before). `kind` as in `pcs_with_problem`."""
+    once to `version` (from `was`, when given: the count clicked is of that change only; PCs
+    that came to it from another version were listed with them, review of Nov 22 2026) in the
+    last UPDATE_DAYS days and had a crash (or hang time) on their days after it, read now by the
+    daily read's own rule (`_changed_once`: as many days after as before). `kind` as in
+    `pcs_with_problem`."""
     u = VERSION_SOURCES["usage"]
     kind = kind if kind in ("virtual", "physical") else ""
     sel = [u["device"], u["time"], u["version"], u["crashes"], u["hang_time"]]
@@ -1394,7 +1453,7 @@ def pcs_after_update(client, now: datetime, application: str, version: str, prob
         if kind and marked and (d in virtual) != (kind == "virtual"):
             continue
         got = _changed_once(by)
-        hit = [x for _, x in got[4] if x[hit_at]] if got and got[1] == version else []
+        hit = [x for _, x in got[4] if x[hit_at]] if got and got[1] == version and (not was or got[0] == was) else []
         if hit:
             out.append({"device": d, "username": None, "days": len(hit),
                         "count": int(round(sum(x[4] for x in hit))) if problem == "crash" else None,
@@ -1402,7 +1461,8 @@ def pcs_after_update(client, now: datetime, application: str, version: str, prob
     out.sort(key=lambda x: (-x["days"], -x["last"].timestamp(), x["device"].lower()))
     words = "a crash" if problem == "crash" else "hang time"
     who = PLACES[kind] if kind and marked else "PCs"
-    return {"what": f"{application}: {who} with {words} after their update to {version}, last {UPDATE_DAYS} days",
+    return {"what": f"{application}: {who} with {words} after their update {f'from {was} ' if was else ''}to {version}, "
+                    f"last {UPDATE_DAYS} days",
             "total": len(out), "problem": problem,
             "rows": [dict(x, last=x["last"].isoformat()) for x in out[:PCS_SHOWN]]}
 
@@ -1448,17 +1508,26 @@ def pcs_without_update(client, cfg, update: str, windows: list[str], instead=())
             "rows": rows[:PCS_SHOWN], "notes": notes}
 
 
-def compare(client, cfg, now: datetime, application: str, a: str | None = None, b: str | None = None) -> dict:
+def compare(client, cfg, now: datetime, application: str, a: str | None = None, b: str | None = None,
+            kind: str = "") -> dict:
     """Two versions of an application side by side on every kind of issue Aternity records,
     over the last DAYS days, as shares of the PCs (or actions) on each: PCs with a crash, with
     hang time, with each kind of health event of the application (matched by the version the
     PC ran), actions rated Major (overall and on the busiest activities), and how many of
-    each version's PCs are virtual desktops."""
+    each version's PCs are virtual desktops. `kind` (virtual / physical): only the PCs Aternity
+    marks so, as the tab's own tables count them (`on` in the reply: the kind that was applied;
+    it counted all PCs together under tables that are per kind of PC: review of Nov 22 2026)."""
     start = now - timedelta(days=DAYS)
     notes: list[str] = []
     q = _Reads(client, notes)
     u, ac = VERSION_SOURCES["usage"], VERSION_SOURCES["actions"]
     virt = u.get("virtual") if q.has(u["entity"], u.get("virtual")) else None
+    avirt = ac.get("virtual") if q.has(ac["entity"], ac.get("virtual")) else None
+    kind = kind if kind in ("virtual", "physical") else ""
+    if kind and not virt:
+        notes.append("Aternity gives no virtual / physical mark here: all PCs are counted together.")
+        kind = ""
+    mine = lambda r, col: not kind or is_virtual(r.get(col)) == (kind == "virtual")  # noqa: E731
     rows = q.rows(u["entity"], f"{application}, per PC and version",
                   select=[u["device"], u["version"], u["crashes"], u["hang_time"]] + ([virt] if virt else []),
                   filter=f"{_span(u, start, now)} and {u['application']} eq {odata_quote(application)}",
@@ -1467,7 +1536,7 @@ def compare(client, cfg, now: datetime, application: str, a: str | None = None, 
     pc_versions: dict = {}
     for r in rows:
         v, d = r.get(u["version"]), r.get(u["device"])
-        if v is None or d is None:
+        if v is None or d is None or not mine(r, virt):
             continue
         x = per.setdefault(str(v), _blank())
         x["pcs"].add(d)
@@ -1479,14 +1548,18 @@ def compare(client, cfg, now: datetime, application: str, a: str | None = None, 
         if virt and is_virtual(r.get(virt)):
             x["virtual"].add(d)
     by_act = q.has(ac["entity"], ac.get("activity"))
+    split = bool(kind and avirt)  # actions of that kind of PC only: Aternity adds them up per mark too
     acts = q.rows(ac["entity"], f"{application} actions per version",
-                  select=([ac["activity"]] if by_act else []) + [ac["version"], ac["status"], ac["volume"]],
+                  select=([ac["activity"]] if by_act else []) + [ac["version"], ac["status"], ac["volume"]]
+                  + ([avirt] if split else []),
                   filter=f"{_span(ac, start, now)} and {ac['application']} eq {odata_quote(application)}",
                   top=AGG_ROWS) if q.has(ac["entity"], ac["version"]) else None
+    if kind and acts and not split:
+        notes.append("Its actions are those of all PCs: Aternity gives no virtual / physical mark on them.")
     act: dict = {}
     for r in acts or []:
         v = r.get(ac["version"])
-        if v is None:
+        if v is None or (split and not mine(r, avirt)):
             continue
         n = to_float(r.get(ac["volume"]))
         n = 1.0 if n is None else n
@@ -1499,9 +1572,10 @@ def compare(client, cfg, now: datetime, application: str, a: str | None = None, 
             y[1] += n
     versions = sorted(per, key=lambda v: (-max(len(per[v]["pcs"]), per[v]["actions"]), order(v)))
     if len(versions) < 2:
-        return {"application": application, "versions": versions, "a": None, "b": None, "lines": [],
-                "notes": notes + [f"{application} ran on {len(versions)} version(s) in the last {DAYS} days: "
-                                  "nothing to compare."], "days": DAYS}
+        where = f" on {PLACES[kind]}" if kind else ""
+        return {"application": application, "versions": versions, "a": None, "b": None, "lines": [], "on": kind,
+                "notes": notes + [f"{application} ran on {len(versions)} version(s){where} in the last {DAYS} "
+                                  "days: nothing to compare."], "days": DAYS}
     a = version_of(a, per) or versions[0]
     b = version_of(b, per)
     b = b if b and b != a else next(v for v in versions if v != a)
@@ -1531,61 +1605,62 @@ def compare(client, cfg, now: datetime, application: str, a: str | None = None, 
         for k in busy:
             ya, yb = act[k].get(a, [0, 0]), act[k].get(b, [0, 0])
             line(k, "activity", ya[1], ya[0], yb[1], yb[0], "actions")
-    kind = None
-    if virt and A["pcs"] and B["pcs"]:
-        kind = {"a": [len(A["virtual"]), len(A["pcs"])], "b": [len(B["virtual"]), len(B["pcs"])]}
+    mixed = None  # all PCs together: how many of each version's PCs are virtual desktops
+    if virt and not kind and A["pcs"] and B["pcs"]:
+        mixed = {"a": [len(A["virtual"]), len(A["pcs"])], "b": [len(B["virtual"]), len(B["pcs"])]}
     table = [{"version": v, "pcs": len(per[v]["pcs"]), "crash": len(per[v]["crash"]), "hang": len(per[v]["hang"]),
-              "virtual": len(per[v]["virtual"]) if virt else None, "actions": int(round(per[v]["actions"])),
-              "major": int(round(per[v]["major"]))} for v in versions]
+              "virtual": len(per[v]["virtual"]) if virt and not kind else None,
+              "actions": int(round(per[v]["actions"])), "major": int(round(per[v]["major"]))} for v in versions]
     return {"application": application, "a": a, "b": b, "versions": versions, "table": table, "lines": lines,
-            "kind": kind, "notes": notes, "days": DAYS}
+            "kind": mixed, "on": kind, "notes": notes, "days": DAYS}
 
 
-def before_after(client, now: datetime, application: str) -> dict:
-    """Before and after an update, on the same PCs: each PC whose version of the application
-    changed once in the last UPDATE_DAYS days (Aternity's own version, day by day), with its
-    days on each side, and the days with a crash or hang time on each side. Plain counts of
-    PC-days, as each side has its own number of days."""
+def before_after(client, now: datetime, application: str, kind: str = "") -> dict:
+    """Before and after an update, on the same PCs, read now and counted as the tab's own
+    tables count it (`_updates`: each PC whose version of the application changed once in the
+    last UPDATE_DAYS days, as many days after as before, the PCs with a crash and with hang
+    time on each side; a day with both versions is on neither). It counted PC-days, with every
+    day a PC had on each side, all PCs together: the same update had other numbers here than in
+    the table above it (review of Nov 22 2026). Every change of version, most PCs first, also
+    those under MIN_PCS PCs, which the tab does not judge. `kind` as in `compare`."""
     u = VERSION_SOURCES["usage"]
     start = now - timedelta(days=UPDATE_DAYS)
+    kind = kind if kind in ("virtual", "physical") else ""
+    sel = [u["device"], u["time"], u["version"], u["crashes"], u["hang_time"]]
+    flt = f"{_span(u, start, now)} and {u['application']} eq {odata_quote(application)}"
     mark, top = len(client.warnings), LIST_ROWS * 5
-    rows = client.query(u["entity"], select=[u["device"], u["time"], u["version"], u["crashes"], u["hang_time"]],
-                        filter=f"{_span(u, start, now)} and {u['application']} eq {odata_quote(application)}",
-                        top=top)
+    for more in ([[u["virtual"]]] if kind and u.get("virtual") else []) + [[]]:
+        try:
+            rows = client.query(u["entity"], select=sel + more, filter=flt, top=top)
+            break
+        except Exception:
+            if not more:
+                raise
+    marked = bool(more)
     cut = _partial(client, mark, rows, top)
     days: dict = {}
+    virtual = set()
     for r in rows:
         d, t, v = r.get(u["device"]), parse_time(r.get(u["time"])), r.get(u["version"])
         if d is None or t is None or v is None:
             continue
-        x = days.setdefault(d, {}).setdefault(t.date(), [set(), 0, 0])
+        x = days.setdefault(d, {}).setdefault(t.date(), [set(), False, False, True])
         x[0].add(str(v))
-        x[1] += (to_float(r.get(u["crashes"])) or 0) > 0
-        x[2] += (to_float(r.get(u["hang_time"])) or 0) > 0
-    pairs: dict = {}
-    for d, by in days.items():
-        got = _one_change(by)  # a day with both versions is on neither side (the PC was left out whole)
-        if not got:
-            continue
-        f, t, when, before, after, _ = got
-        p = pairs.setdefault((f, t), {"pcs": 0, "before": [0, 0, 0], "after": [0, 0, 0],
-                                      "crash_pcs": [0, 0], "hang_pcs": [0, 0], "first": when, "last": when})
-        p["pcs"] += 1
-        p["first"], p["last"] = min(p["first"], when), max(p["last"], when)
-        for side, part, k in (("before", before, 0), ("after", after, 1)):
-            p[side][0] += len(part)
-            p[side][1] += sum(1 for _, x in part if x[1])
-            p[side][2] += sum(1 for _, x in part if x[2])
-            p["crash_pcs"][k] += any(x[1] for _, x in part)
-            p["hang_pcs"][k] += any(x[2] for _, x in part)
-    out = sorted(({"from": f, "to": t, **p, "first": p["first"].isoformat(), "last": p["last"].isoformat()}
-                  for (f, t), p in pairs.items()), key=lambda p: (-p["pcs"], order(p["to"])))
+        x[1] = x[1] or (to_float(r.get(u["crashes"])) or 0) > 0
+        x[2] = x[2] or (to_float(r.get(u["hang_time"])) or 0) > 0
+        if marked and is_virtual(r.get(u["virtual"])):
+            virtual.add(d)
+    apart = bool(kind and marked)
+    pairs = _updates(days, (lambda d: (d in virtual) == (kind == "virtual")) if apart else (lambda d: True), least=1)
     every = rows and all((to_float(r.get(u["crashes"])) or 0) > 0 for r in rows)
     notes = [f"Every day listed for {application} had a crash: app usage holds it only where it failed, so before "
              "and after cannot be compared."] if every else []
+    if kind and not marked:
+        notes.append("Aternity gives no virtual / physical mark here: all PCs are counted together.")
     if cut:
         notes.insert(0, f"{CUT} Read: {len(rows):,} rows.")
-    return {"application": application, "days": UPDATE_DAYS, "pairs": out[:5], "notes": notes}
+    return {"application": application, "days": UPDATE_DAYS, "pairs": pairs[:5], "more": max(0, len(pairs) - 5),
+            "on": kind if apart else "", "min_pcs": MIN_PCS, "notes": notes}
 
 
 def split_by_program(client, now: datetime, application: str, program: str, problem: str = "crash") -> dict:

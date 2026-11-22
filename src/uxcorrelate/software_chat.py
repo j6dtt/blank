@@ -114,8 +114,9 @@ RULES = (f"Raised (a red flag): a version whose share is at least {RATIO:g} time
          f"(or that version's against another), or whose PCs had the problem {RATIO:g} times as often after an update "
          f"as before, virtual desktops and physical PCs apart; with {MIN_PCS} PCs or more on each side, {MIN_PROBLEM} "
          f"or more with the problem, and still so with {STILL} more PCs with it on the other side (for actions rated "
-         f"Major: with {STILL_ACTIONS} more of the other side's actions rated Major); not raised: no difference by "
-         "these rules.")
+         f"Major: with {STILL_ACTIONS} more of the other side's actions rated Major); a version worse than another "
+         "is not raised when the PCs that ran both versions do not show it; not raised: no difference by these "
+         "rules.")
 
 
 def pick(asked, names) -> tuple[str | None, list[str]]:
@@ -516,7 +517,8 @@ def compare_block(client, cfg, now: datetime, view: dict, known, args: dict, app
     if asked:
         notes.append(f"Not one version of {name} in the last {DAYS} days for {', '.join(asked)}: compared the two "
                      "with the most PCs instead.")
-    notes.append("Side by side, not judged: the red flags use the rules of the Software tab.")
+    notes.append("Side by side, not judged: the red flags use the rules of the Software tab. All PCs together: the "
+                 "tab's own tables count virtual desktops and physical PCs apart, so their shares are not these.")
     say = (f"{name} {A} against {B}, last {DAYS} days: " + "; ".join(
         f"{r[0]}: {r[1]:,} of {r[2]:,} against {r[3]:,} of {r[4]:,}" for r in rows[:3]) + ".")
     return _result("compare", args, f"{name}: {A} against {B}", _live(),
@@ -529,22 +531,23 @@ def before_after_block(client, now: datetime, view: dict, known, args: dict, app
     if name is None:
         return _not_one("before_after", args, "application", application, names, _live(UPDATE_DAYS))
     ba = before_after(client, now, name)
-    rows = [[p["from"], p["to"], p["pcs"], p["before"][0], p["before"][1], p["before"][2], p["after"][0],
-             p["after"][1], p["after"][2]] for p in ba["pairs"]]
-    notes = list(ba["notes"]) + ["PC-days: each PC's days on each side, added up; a day with 2 versions is on "
-                                 "neither side."]
+    rows = [[p["from"], p["to"], p["pcs"], p["before"]["crash"], p["after"]["crash"], p["before"]["hang"],
+             p["after"]["hang"]] for p in ba["pairs"]]
+    notes = list(ba["notes"]) + ["The same PCs on each side, counted as the Software tab counts them: for each PC as "
+                                 "many days after its update as before; a day with 2 versions is on neither side. "
+                                 "All PCs together: the tab's tables count virtual desktops and physical PCs apart."]
     if ba["pairs"]:
         p = ba["pairs"][0]
         notes.append(f"{p['from']} to {p['to']}: changed between {p['first']} and {p['last']}.")
-        say = (f"{name}, last {UPDATE_DAYS} days: {p['pcs']:,} PCs went from {p['from']} to {p['to']}; before: a "
-               f"crash on {p['before'][1]:,} of {p['before'][0]:,} PC-days; after: {p['after'][1]:,} of "
-               f"{p['after'][0]:,}.")
+        say = (f"{name}, last {UPDATE_DAYS} days: {p['pcs']:,} PCs went from {p['from']} to {p['to']}; a crash on "
+               f"{p['before']['crash']:,} of them before and on {p['after']['crash']:,} after; it stopped responding "
+               f"on {p['before']['hang']:,} before and on {p['after']['hang']:,} after.")
     else:
         say = f"No PC changed its version of {name} once in the last {UPDATE_DAYS} days{_of_read(notes)}."
         notes += _like(name, names)
     return _result("before_after", args, f"{name}: before and after an update", _live(UPDATE_DAYS),
-                   ["From", "To", "PCs", "PC-days before", "with a crash", "with hang time", "PC-days after",
-                    "with a crash", "with hang time"], rows, notes, total=_n(sum(r[2] for r in rows), "PC"), say=say)
+                   ["From", "To", "PCs", "with a crash before", "with a crash after", "with hang time before",
+                    "with hang time after"], rows, notes, total=_n(sum(r[2] for r in rows), "PC"), say=say)
 
 
 def program_split(client, now: datetime, sw: Software, view: dict, known, args: dict, application=None,

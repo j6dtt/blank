@@ -25,7 +25,7 @@ def pc(name, **over) -> dict:
            "DEVICE_TYPE": "Laptop", "DEVICE_MANUFACTURER": "Maker", "DEVICE_MODEL": "Model A",
            "DEVICE_SERIAL_NUMBER": f"SN-{name}", "DEVICE_MEMORY": "16GB", "OS_DISK_TYPE": "SSD",
            "OS_TOTAL_DISK_SPACE": "472GB", "OS_FREE_DISK_SPACE": "200 GB to 500 GB", "BOOT_LAST_TIMESTAMP": at(1),
-           "OS_BITLOCKER_PROTECTION_STATUS": "On", "AGENT_VERSION": "12.2.4.113", "MS_STABILITY_INDEX": "8.2",
+           "AGENT_VERSION": "12.2.4.113", "MS_STABILITY_INDEX": "8.2",
            "BUSINESS_LOCATION": "Site", "USERNAME": f"user-{name.lower()}", "USER_DEPARTMENT": "Dept"}
     return {**row, **over}
 
@@ -60,8 +60,9 @@ def test_the_columns_and_words_are_riverbeds_own():
     assert set(INVENTORY_ROLES.values()) <= schema and set(INVENTORY_COLUMNS.values()) <= schema
     filled = {c for _, items in INVENTORY_FILLED for _, c, _ in items}
     assert set(INVENTORY_ROLES.values()) <= filled  # every rule's column is among those the read asks for
-    assert set(inv.LINES) == {"agent", "bitlocker", "unused", "restart", "silent", "stopped", "stability", "free",
-                              "spinning"}
+    assert set(inv.LINES) == {"agent", "unused", "restart", "silent", "stopped", "stability", "free", "spinning"}
+    # BitLocker is not on the tab (the user, Nov 22 2026: "remove bitlocker"): no line, no rule, not asked for
+    assert not any("bitlocker" in str(x).lower() for x in (INVENTORY_ROLES, INVENTORY_FILLED, inv.LINES, inv.W))
 
 
 def test_a_band_of_free_space_is_little_only_when_it_ends_at_ten_gb_or_under():
@@ -76,7 +77,8 @@ def test_a_band_of_free_space_is_little_only_when_it_ends_at_ten_gb_or_under():
 def test_one_read_gives_the_tiles_the_lines_and_who_is_behind_each():
     rows = [pc(f"PC-{i:02d}") for i in range(1, 11)]
     rows += [pc("PC-11", AGENT_VERSION="12.2.4.79"), pc("PC-12", AGENT_VERSION="12.2.4.115"),  # older / newer than most
-             pc("PC-13", OS_BITLOCKER_PROTECTION_STATUS="Off"), pc("PC-14", BOOT_LAST_TIMESTAMP=at(20)),
+             pc("PC-13", OS_BITLOCKER_PROTECTION_STATUS="Off"),  # what the tab no longer reads: on no line
+             pc("PC-14", BOOT_LAST_TIMESTAMP=at(20)),
              pc("PC-15", BOOT_LAST_TIMESTAMP="N/A"), pc("PC-16", TIME_LAST_REPORTING=at(9)),
              pc("PC-17", TIME_LAST_REPORTING="N/A"), pc("PC-18", AGENT_CURRENT_STATUS="Stopped"),
              pc("PC-19", MS_STABILITY_INDEX="3.5"), pc("PC-20", OS_FREE_DISK_SPACE="5 GB to 10 GB"),
@@ -90,6 +92,7 @@ def test_one_read_gives_the_tiles_the_lines_and_who_is_behind_each():
     assert [a[0] for a in asked] == ["DEVICE_INVENTORY", "APPLICATIONS_DAILY"]
     assert asked[0][1].startswith("DEVICE_NAME,TIME_LAST_REPORTING,AGENT_CURRENT_STATUS,DEVICE_TYPE,")
     assert "ANTIVIRUS_VENDOR" in asked[0][1]  # in Riverbed's list: asked for where an Aternity publishes it
+    assert "BITLOCKER" not in asked[0][1]
     assert asked[1][1] == "DEVICE_NAME" and "TIMEFRAME ge 2026-11-13" in asked[1][2]
     v = tab.view(NOW, retired={"n": 4, "listed": 23, "names": 0, "as_of_local": "Nov 21, 13:33"})
     assert v["ready"] and v["pcs"] == 23 and v["virtual"] == 1 and v["every_min"] == 60
@@ -99,17 +102,17 @@ def test_one_read_gives_the_tiles_the_lines_and_who_is_behind_each():
     assert v["statuses"] == [{"status": "Reporting", "n": 22}, {"status": "Stopped", "n": 1}]
     assert v["retired"]["n"] == 4 and v["used"] == {"known": True, "of": 22, "used": 21, "unused": 1}
     lines = {x["key"]: (x["n"], x["of"]) for x in v["lines"]}
-    assert lines == {"agent": (1, 23), "bitlocker": (1, 22), "unused": (1, 22), "restart": (1, 22), "silent": (1, 22),
+    assert lines == {"agent": (1, 23), "unused": (1, 22), "restart": (1, 22), "silent": (1, 22),
                      "stopped": (1, 23), "stability": (1, 23), "free": (1, 23), "spinning": (1, 22)}
     assert v["quiet"] == [] and v["unknown"] == [] and v["notes"] == []
     text = {x["key"]: x["text"] for x in v["lines"]}
     assert text["agent"] == "An Aternity agent older than 12.2.4.113, the version most PCs have."
     assert text["free"] == "Aternity gives free space as bands; those that end at 10 GB or under: '5 GB to 10 GB'."
     assert text["restart"] == "The last start-up Aternity has for the PC. 1 PC has none and is not judged."
-    assert text["bitlocker"] == "As the PC reports it to Aternity. 21 PCs in all report it on."
     # who is behind each line, with the line's own value
     who = lambda key: [(r["name"], r["what"]) for r in tab.line_pcs(key, NOW)["rows"]]  # noqa: E731
-    assert who("agent") == [("PC-11", "12.2.4.79")] and who("bitlocker") == [("PC-13", "Off")]  # not the virtual desktop
+    assert who("agent") == [("PC-11", "12.2.4.79")] and tab.line_pcs("bitlocker", NOW) is None
+    assert tab.card("pc-13", NOW)["lines"] == []
     assert who("unused") == [("PC-22", "physical PC")]  # PC-16 is silent: on its own line, not here
     assert who("restart") == [("PC-14", "last start-up Nov 1, 20 days ago")]
     assert who("silent") == [("PC-16", "last heard Nov 12, 9 days ago")]
@@ -133,9 +136,9 @@ def test_find_a_pc_by_name_person_or_serial_and_its_card():
     assert len(many["rows"]) == 20 and many["more"] == 10  # 30 PCs have it: the first 20, and how many more
     card = tab.card("vd-2041", NOW)
     assert card["name"] == "VD-2041" and card["virtual"] and card["used"] is True and card["heard_days"] == 0
-    assert card["lines"] == ["On an older agent than most"]  # BitLocker off is not counted on a virtual desktop
+    assert card["lines"] == ["On an older agent than most"]
     fields = {f["label"]: f["value"] for f in card["fields"]}
-    assert fields["Serial number"] == "VMware-42" and fields["BitLocker"] == "Off" and fields["Last user"] == "jsmith"
+    assert fields["Serial number"] == "VMware-42" and "BitLocker" not in fields and fields["Last user"] == "jsmith"
     assert "Antivirus" not in fields and card["status"] == "Reporting" and card["boot_days"] == 1
     assert fields["Last start-up"] == "Nov 20, 2026, 15:00"  # a time in the page's time zone, not as sent
     assert [f["group"] for f in card["fields"]][0] == "What the PC is"

@@ -2170,6 +2170,16 @@ def _versions(settings: Settings, client: AternityClient, schema: dict[str, set[
                                      "time for it, on any version or update.")
                     lines += [f"Raised: {tab.flag_text(f['kind'], dict(f, application=name))}" for f in got["found"]] \
                         or ["Nothing is raised for it" + ("." if only else " by the tab's rules.")]
+                    for on, k in got["kinds"].items():  # worse than another version, but not on the PCs that ran both
+                        for v in k["versions"]:
+                            for kind, vd in (v.get("verdict") or {}).items():
+                                b = vd.get("same") if vd.get("state") == "same" else None
+                                if b:
+                                    lines.append(
+                                        f"Not raised on {tab.PLACES[on]}: {v['version']} looks worse than another "
+                                        f"version for {had.get(kind, kind)}, but of the {b['pcs']:,} PCs that ran "
+                                        f"both, {b['with']:,} had it with {v['version']} and {b['other']:,} with the "
+                                        "other.")
                     if i == len(asked) - 1 and len(asked) > 1:
                         lines.append(f"These {len(asked)} reads together: {all_rows:,} rows of app usage, "
                                      f"{all_secs:.1f} s.")
@@ -2679,6 +2689,8 @@ def _rule_reasons(tab) -> dict[str, tuple[str, str]]:
                  "actions rated Major)", "more on the other side would undo it"),
         "ratio": (f"{r} its other versions added together, but not {r} the one version it is compared with now",
                   f"not {r} the version it is compared with"),
+        "same": ("the PCs that ran both versions do not show it (the same PCs, the same number of days on each)",
+                 "the PCs that ran both versions do not show it"),
         "new": ("new this week: left to before and after its update", "new this week, left to before and after"),
         "few": (f"under {tab.MIN_PCS} PCs, or under {tab.MIN_PROBLEM} with the problem, once virtual desktops and "
                 "physical PCs are apart", "too few PCs there"),
@@ -2708,6 +2720,8 @@ def _why_not_now(app: dict, f: dict, tab) -> tuple[str, str]:
         return "alone", where
     if row.get("new") and k.get("ref") != row["version"]:
         return "new", where
+    if vd.get("state") == "same":
+        return "same", where
     if vd.get("state") == "unsure":
         return ("few" if vd.get("few") else "more"), where
     return "ratio", where

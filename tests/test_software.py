@@ -294,6 +294,11 @@ def test_before_and_after_an_update_on_the_same_pcs_with_as_many_days_on_each_si
     assert got["what"] == "Teams: physical PCs with a crash after their update to 24.3, last 14 days"
     assert sw.pcs_after_update(c, NOW, "Teams", "24.3", "crash", "virtual")["total"] == 0
     assert sw.pcs_after_update(c, NOW, "Teams", "24.2", "crash")["total"] == 0  # no PC changed to 24.2
+    # the count clicked is of one change of version: PCs that came to 24.3 from another version are not in its list
+    one = sw.pcs_after_update(c, NOW, "Teams", "24.3", "crash", "physical", was="24.2")
+    assert one["total"] == 12 and one["what"] == ("Teams: physical PCs with a crash after their update from 24.2 to "
+                                                  "24.3, last 14 days")
+    assert sw.pcs_after_update(c, NOW, "Teams", "24.3", "crash", "physical", was="24.1")["total"] == 0
 
 
 def test_a_pc_updated_during_a_day_of_use_stays_in_before_and_after():
@@ -321,6 +326,105 @@ def test_a_pc_updated_during_a_day_of_use_stays_in_before_and_after():
     assert sw._updates(days, lambda _: True) == [{
         "from": "1", "to": "2", "pcs": 25, "both": 10, "first": "2026-11-02", "last": "2026-11-03",
         "before": {"crash": 2, "hang": 0}, "after": {"crash": 12, "hang": 0}}]
+
+
+def test_the_pcs_that_ran_both_versions_decide_whether_a_version_is_raised():
+    """The user, Nov 22 2026, on a photo of stage: "Am I seeing discrepancies here? Look at the
+    headline panels and comparison below." A version was raised for stopping to respond on 1,291
+    of its 2,475 virtual desktops against 27 of 165 on another, while the 53 desktops that went
+    from the one to the other had it on 7 with the first and on 9 with the second. Two versions
+    side by side are different PCs; those that ran both are the same PCs with the same number of
+    days on each. So they decide: when 5 of them or more had the problem on one of the two and no
+    more of them had it on the version that looks worse, it is not raised."""
+    def up(f, t, pcs, crash, hang):
+        return {"from": f, "to": t, "pcs": pcs, "both": 0, "first": "2026-11-12", "last": "2026-11-20",
+                "before": {"crash": crash[0], "hang": hang[0]}, "after": {"crash": crash[1], "hang": hang[1]}}
+
+    def app(rows, ups, read=("usage",)):
+        vs = [{"version": v, "pcs": pcs, "crash": crash, "hang": hang, "action_pcs": 0, "actions": 0, "major": 0,
+               "major_pcs": 0, "new": False} for v, pcs, crash, hang in rows]
+        return {"application": "Mail", "read": list(read), "versions": [dict(v) for v in vs],
+                "kinds": {"virtual": {"pcs": sum(v["pcs"] for v in vs), "versions": vs, "updates": ups}}}
+    # the photo: X is the version most have, Y the next; 71 desktops came to X from Z, 53 went from X to Y
+    a = app([("X", 2475, 147, 1291), ("Y", 165, 1, 27)],
+            [up("Z", "X", 71, (1, 2), (36, 15)), up("W", "X", 60, (0, 0), (2, 2)), up("X", "Y", 53, (8, 0), (7, 9)),
+             up("V", "X", 30, (0, 0), (0, 0))])
+    for again in (False, True):  # judged again (a saved day when shown): the same
+        sw.judge(a)
+        k = a["kinds"]["virtual"]
+        x, y = k["versions"]
+        crash = {"pcs": 53, "with": 8, "other": 0, "decides": True}
+        hang = {"pcs": 53, "with": 7, "other": 9, "decides": True}
+        # the crash flag stands, and has the 53 PCs' counts; stopping to respond is not raised: they say otherwise
+        assert a["raised"] == [{"kind": "crash", "on": "virtual", "ref": "Y", "version": "X", "how": "most", "n": 147,
+                                "of": 2475, "ref_n": 1, "ref_of": 165, "pcs": 147, "same": crash}], again
+        assert x["verdict"] == {"crash": {"state": "raised", "few": False, "against": "Y", "same": crash},
+                                "hang": {"state": "same", "few": False, "against": "Y", "same": hang}}
+        assert y["verdict"]["hang"]["state"] == "no" and y["verdict"]["crash"]["state"] == "no"
+        # the page gets the 2 biggest changes of version and the one the verdicts rest on, whatever its size
+        assert [(u["from"], u["to"]) for u in k["updates"]] == [("Z", "X"), ("W", "X"), ("X", "Y")]
+        assert k["updates_more"] == 1
+    text = sw.flag_text("crash", dict(a["raised"][0], application="Mail"))
+    assert text == ("Mail X, virtual desktops, the version most have: it crashed on 5.9% of its virtual desktops (147 "
+                    "of 2,475). On Y: 0.6% (1 of 165). Of the 53 PCs that ran both versions, it crashed on 8 with X "
+                    "and on 0 with Y.")
+
+    def judged(rows, ups, kind="crash"):
+        b = app(rows, ups)
+        sw.judge(b)
+        got = {v["version"]: (v["verdict"].get(kind) or {}) for v in b["kinds"]["virtual"]["versions"]}
+        return [(r["version"], r["how"], (r.get("same") or {}).get("decides")) for r in b["raised"]], got
+    big = [("X", 2475, 147, 0), ("Y", 165, 1, 0)]
+    # too few of them had it to tell (2 and 1; 5 needed on one side): the flag stands on the two versions alone
+    raised, v = judged(big, [up("Y", "X", 71, (1, 2), (0, 0))])
+    assert raised == [("X", "most", False)]
+    assert v["X"]["same"] == {"pcs": 71, "with": 2, "other": 1, "decides": False}
+    # no PCs went from one to the other: nothing to check it with, raised as before
+    raised, v = judged(big, [up("Z", "X", 71, (3, 4), (0, 0))])
+    assert raised == [("X", "most", None)] and "same" not in v["X"]
+    # as many of them with it on each version: not more on this one, not raised
+    raised, v = judged(big, [up("X", "Y", 40, (6, 6), (0, 0))])
+    assert raised == [] and v["X"]["state"] == "same"
+    # PCs that went either way are added up: 4 + 3 with X against 1 + 0 with Y
+    raised, v = judged(big, [up("X", "Y", 40, (4, 1), (0, 0)), up("Y", "X", 30, (0, 3), (0, 0))])
+    assert raised == [("X", "most", True)] and v["X"]["same"] == {"pcs": 70, "with": 7, "other": 1, "decides": True}
+    # an older version raised against the version most have: the PCs that left it for that one decide the same way
+    old = [("New", 2787, 188, 0), ("Old", 105, 17, 0)]
+    raised, v = judged(old, [up("Old", "New", 2400, (300, 310), (0, 0))])
+    assert raised == [] and v["Old"] == {"state": "same", "few": False,
+                                         "same": {"pcs": 2400, "with": 300, "other": 310, "decides": True}}
+    raised, v = judged(old, [up("Old", "New", 2400, (400, 150), (0, 0))])
+    assert raised == [("Old", "version", True)] and v["Old"]["state"] == "raised"
+    # slow actions are not compared before and after: a change of version says nothing of them
+    slow = {"application": "Mail", "read": ["actions"], "versions": [], "kinds": {"virtual": {"pcs": 300, "updates": [
+        up("1", "2", 50, (9, 0), (9, 0))], "versions": [
+        {"version": "1", "pcs": 0, "crash": 0, "hang": 0, "action_pcs": 200, "actions": 9000, "major": 90,
+         "major_pcs": 40, "new": False},
+        {"version": "2", "pcs": 0, "crash": 0, "hang": 0, "action_pcs": 100, "actions": 4000, "major": 400,
+         "major_pcs": 60, "new": False}]}}}
+    sw.judge(slow)
+    assert [(r["kind"], r["version"], r.get("same")) for r in slow["raised"]] == [("slow", "2", None)]
+    assert sw.same_pcs([], "X", "Y", "crash") is None
+
+
+def test_the_yardstick_is_not_called_the_version_most_have_when_a_new_version_has_more_pcs():
+    """The others are compared with the version on the most PCs that is not new this week. In the
+    week of a roll-out the new version can be on more PCs: the page's chip and the flag's sentence
+    still said "the version most have" of the older one (review of Nov 22 2026)."""
+    row = lambda v, pcs, crash, new=False: {"version": v, "pcs": pcs, "crash": crash, "hang": 0, "action_pcs": 0,  # noqa: E731
+                                            "actions": 0, "major": 0, "major_pcs": 0, "new": new}
+    rows = [row("3", 300, 3, new=True), row("2", 200, 60), row("1", 40, 0)]
+    a = {"application": "Mail", "read": ["usage"], "versions": [dict(r) for r in rows],
+         "kinds": {"physical": {"pcs": 540, "versions": rows, "updates": []}}}
+    sw.judge(a)
+    k = a["kinds"]["physical"]
+    assert k["ref"] == "2" and k["ref_most"] is False
+    assert [(r["version"], r["how"], r["ref_most"]) for r in a["raised"]] == [("2", "most", False)]
+    assert sw.flag_text("crash", dict(a["raised"][0], application="Mail")) == (
+        "Mail 2, physical PCs: it crashed on 30% of its physical PCs (60 of 200). On 1: 0% (0 of 40).")
+    rows[0]["new"] = False  # not new: it is the yardstick, and the version most have
+    sw.judge(a)
+    assert k["ref"] == "3" and k["ref_most"] is True and all("ref_most" not in r for r in a["raised"])
 
 
 def test_every_update_is_judged_not_only_the_two_with_the_most_pcs():
@@ -550,19 +654,29 @@ def test_compare_lines_up_two_versions_on_every_kind_of_issue():
     assert lines["PCs with Application Crash"] == ([3, 40], [1, 20])  # by the version the PC ran
     assert lines["Actions rated Major"] == ([5, 4005], [400, 2400])
     assert lines["Send Mail"] == ([5, 2405], [400, 1600]) and lines["Open Calendar"] == ([0, 1600], [0, 800])
-    assert got["kind"] == {"a": [10, 40], "b": [0, 20]}  # virtual desktops on each
+    assert got["kind"] == {"a": [10, 40], "b": [0, 20]} and got["on"] == ""  # all PCs: virtual desktops on each
     one = sw.compare(c, s.aternity, NOW, "Word")
     assert one["lines"] == [] and "nothing to compare" in one["notes"][0]
+    # on the kind of PC the tab's tables are on (it counted all PCs together under tables that are per kind)
+    phys = sw.compare(c, s.aternity, NOW, "Outlook", kind="physical")
+    lines = {x["what"]: (x["a"], x["b"]) for x in phys["lines"]}
+    assert phys["on"] == "physical" and phys["kind"] is None and (phys["a"], phys["b"]) == ("16.1", "16.2")
+    assert lines["PCs with a crash"][0][1] == 30 and lines["PCs with a crash"][1] == [2, 20]  # 40 less the 10 virtual
+    virt = sw.compare(c, s.aternity, NOW, "Outlook", kind="virtual")
+    assert virt["a"] is None and virt["on"] == "virtual"
+    assert virt["notes"][-1] == "Outlook ran on 1 version(s) on virtual desktops in the last 7 days: nothing to compare."
 
 
 def test_before_and_after_an_update_on_the_same_pcs():
     c, _ = client()
     got = sw.before_after(c, NOW, "Outlook")
-    assert len(got["pairs"]) == 1
+    assert len(got["pairs"]) == 1 and got["more"] == 0 and got["on"] == "" and got["min_pcs"] == 20
     p = got["pairs"][0]
     assert (p["from"], p["to"], p["pcs"]) == ("16.1", "16.2", 10)
-    assert p["before"] == [20, 0, 0] and p["after"] == [20, 2, 0]  # PC-days, with a crash, with hang time
-    assert p["crash_pcs"] == [0, 2] and got["notes"] == []
+    # PCs, as the tab's own tables count them (it was PC-days: the same update had other numbers than the table)
+    assert p["before"] == {"crash": 0, "hang": 0} and p["after"] == {"crash": 2, "hang": 0} and got["notes"] == []
+    assert sw.before_after(c, NOW, "Outlook", kind="virtual")["pairs"] == []  # the 10 that changed are physical PCs
+    assert sw.before_after(c, NOW, "Outlook", kind="physical")["pairs"][0]["pcs"] == 10
     assert "before and after cannot be compared" in sw.before_after(c, NOW, "Trellix ENS")["notes"][0]
 
 

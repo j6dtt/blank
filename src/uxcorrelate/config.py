@@ -116,7 +116,9 @@ INVENTORY_COLUMNS = {"last": "TIME_LAST_REPORTING", "status": "AGENT_CURRENT_STA
 # with what? Per group: what it is in words, the column, how its values are said: "values" =
 # the most common as sent; "range" = lowest, middle, highest when they are numbers; "date" =
 # oldest and newest; "many" = how many different ones, never listed (they would name a PC, a
-# person or a site).
+# person or a site). BitLocker's status (OS_BITLOCKER_PROTECTION_STATUS) was among them and is
+# not asked for any more (the user, Nov 22 2026: "remove bitlocker"; on stage it is 'Off' on
+# 5,074 of 5,194 PCs, so it says nothing of how the disks are protected there).
 INVENTORY_FILLED = (
     ("What the PC is", (("Kind of device", "DEVICE_TYPE", "values"), ("Manufacturer", "DEVICE_MANUFACTURER", "values"),
                         ("Model", "DEVICE_MODEL", "values"), ("Serial number", "DEVICE_SERIAL_NUMBER", "many"),
@@ -126,8 +128,7 @@ INVENTORY_FILLED = (
                          ("Free space", "OS_FREE_DISK_SPACE", "range"))),
     ("Restarts", (("Last start-up", "BOOT_LAST_TIMESTAMP", "date"),
                   ("Days since the last start-up", "DEVICE_DAYS_FROM_LAST_BOOT", "range"))),
-    ("Protection and agents", (("BitLocker", "OS_BITLOCKER_PROTECTION_STATUS", "values"),
-                               ("Antivirus", "ANTIVIRUS_VENDOR", "values"),
+    ("Protection and agents", (("Antivirus", "ANTIVIRUS_VENDOR", "values"),
                                ("Real-time protection", "REAL_TIME_PROTECTION_STATUS", "values"),
                                ("Aternity agent version", "AGENT_VERSION", "values"),
                                ("SCCM client version", "SCCM_CLIENT_VERSION", "values"))),
@@ -140,15 +141,13 @@ INVENTORY_FILLED = (
 # The Inventory tab's rules: the column behind each (Riverbed's names, as INVENTORY_FILLED), and
 # Aternity's own words as the live Aternity sends them (verify --inventory, Nov 20 and 21 2026:
 # kinds of device 'Virtual Desktop' / 'Desktop' / 'Laptop'; agent statuses 'Reporting' /
-# 'Disconnected' / 'Stopped'; BitLocker 'On' / 'Off'; kinds of disk 'Virtual' / 'SSD' / 'NVMe' /
-# 'HDD-7200')
-INVENTORY_ROLES = {"kind": "DEVICE_TYPE", "agent": "AGENT_VERSION", "bitlocker": "OS_BITLOCKER_PROTECTION_STATUS",
+# 'Disconnected' / 'Stopped'; kinds of disk 'Virtual' / 'SSD' / 'NVMe' / 'HDD-7200')
+INVENTORY_ROLES = {"kind": "DEVICE_TYPE", "agent": "AGENT_VERSION",
                    "boot": "BOOT_LAST_TIMESTAMP", "stability": "MS_STABILITY_INDEX", "free": "OS_FREE_DISK_SPACE",
                    "disk": "OS_DISK_TYPE", "serial": "DEVICE_SERIAL_NUMBER", "user": "USERNAME",
                    "department": "USER_DEPARTMENT", "location": "BUSINESS_LOCATION"}
 INVENTORY_WORDS = {"virtual": "virtual",  # a kind of device with this word in it is a virtual desktop
                    "stopped": ("Stopped",),  # the agent does not run
-                   "bitlocker_off": ("Off",),
                    "spinning": "HDD"}  # a kind of disk that starts so is a spinning hard disk
 # `verify --actions` (which applications have measured actions): with VERSION_SOURCES' columns,
 # the application's type as Aternity sends it, and its usage time in app usage (no documented

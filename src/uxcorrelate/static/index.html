@@ -215,13 +215,8 @@
   .vseg { display: inline-flex; border: 1px solid var(--brass); border-radius: 6px; overflow: hidden; }
   .vseg button { background: none; border: 0; border-radius: 0; padding: 6px 14px; font-weight: 600; color: var(--muted); }
   .vseg button.on { background: var(--accent); color: var(--panel); }
-  .vfinds { display: flex; flex-direction: column; gap: 8px; margin: 2px 0 8px; max-width: 900px; }
-  .vfind, .vnone { background: color-mix(in srgb, var(--brass) 13%, var(--panel)); border-left: 4px solid var(--warn); border-radius: 4px; padding: 9px 12px; }
-  .vfind { display: flex; flex-direction: column; gap: 4px; }
-  .vnone { border-left-color: var(--accent); margin-top: 12px; max-width: 900px; }
-  .vfind .vwhy, .vfind .vnext { font-size: 12.5px; }
-  .vfind .vwhy span.t { display: inline-block; margin-right: 12px; }
-  .vfind .vwhy .ok { color: var(--accent); font-weight: 700; }
+  .vnone { background: color-mix(in srgb, var(--brass) 13%, var(--panel)); border-left: 4px solid var(--accent); border-radius: 4px; padding: 9px 12px;
+           margin-top: 12px; max-width: 900px; }
   .vsub { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; font-weight: 700; font-size: 13.5px; margin-top: 12px; }
   .vsub .link { font-size: 12.5px; }
   .vgrid { display: grid; min-width: 780px; font-size: 12.5px; margin-top: 6px; }
@@ -239,6 +234,9 @@
   .vpct { font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; font-size: 13.5px; white-space: nowrap; }
   .vnum, .vsay { grid-column: 1 / -1; color: var(--muted); font-variant-numeric: tabular-nums; }
   .vsay.up { color: var(--text); font-weight: 600; }
+  .vsay .go { display: block; color: var(--accent); font-weight: 600; }
+  .vcell:not(:disabled):hover .go { text-decoration: underline; }
+  .vdays { font-size: 12px; max-width: 86ch; }
   .vchip { font-size: 11px; border: 1px solid var(--border); border-radius: 999px; padding: 0 8px; color: var(--muted); white-space: nowrap; }
   .vchip.most { border-color: var(--brass); color: var(--text); }
   details.vfew { margin-top: 6px; font-size: 12.5px; } details.vfew summary { cursor: pointer; color: var(--accent); font-weight: 600; }
@@ -2147,9 +2145,12 @@ let softData = null, softTimer = null, swPcsData = null, swCompareData = null;
 const swShare = (a, b) => (b ? a / b : 0);
 const swOf = (a, b, unit = "PCs") => `${n(a)} of ${n(b)} ${unit}`;
 const swShade = (j, k) => `color-mix(in srgb, var(--accent) ${k > 1 ? Math.round(30 + 70 * j / (k - 1)) : 100}%, var(--panel))`;
-function swTable(head, rows) {
+// a count with its share of `b`, as a table writes it ("147 · 5.9%"); the count alone when there is nothing to share
+const swNP = (a, b) => (b ? `${n(a)} · ${swPct(a, b)}` : n(a));
+function swTable(head, rows, note = "") {  // `note`: what each percentage is a share of
   return `<details class="tbl"><summary>Table ▾</summary><div class="tableWrap scroll"><table><tr>${head.map((h) => `<th>${esc(h)}</th>`).join("")}</tr>`
-    + rows.map((r) => `<tr>${r.map((c, i) => `<td${i ? ' class="num"' : ""}>${esc(c)}</td>`).join("")}</tr>`).join("") + `</table></div></details>`;
+    + rows.map((r) => `<tr>${r.map((c, i) => `<td${i ? ' class="num"' : ""}>${esc(c)}</td>`).join("")}</tr>`).join("") + `</table></div>`
+    + (note ? `<div class="muted" style="font-size:12px;margin-top:4px">${esc(note)}</div>` : "") + `</details>`;
 }
 function swMore(items, first, draw, what, grid = "") {
   const head = items.slice(0, first).map(draw).join(""), rest = items.slice(first).map(draw).join("");
@@ -2249,12 +2250,16 @@ const swOlder = (a, b) => {
   return false;
 };
 const swPcWord = (k) => (k === 1 ? "PC" : "PCs");
+// A bar is full at its column's highest share, or at SW_BAR_FULL when every share in the column is lower: a
+// column whose highest share was 1.3% drew it as long as 52% in the column beside it (review of Nov 22 2026)
+const SW_BAR_FULL = 0.1;
 function swCell(o) {  // one count: its bar, its share, the count behind it, and words when there is something to say
-  const [a, b] = o.pair, w = o.max ? Math.max(swShare(a, b) / o.max * 100, a ? 1.5 : 0) : 0;
+  const [a, b] = o.pair, w = o.max ? Math.max(swShare(a, b) / Math.max(o.max, SW_BAR_FULL) * 100, a ? 1.5 : 0) : 0;
   const attrs = o.click && a ? Object.entries(o.click).map(([k, v]) => ` data-${k}="${esc(v)}"`).join("") : " disabled";
   return `<button type="button" class="vcell${o.ref ? " ref" : ""}"${attrs}><span class="vtrk"><i class="${o.up ? "up" : o.dim ? "dim" : ""}" `
     + `style="width:${w}%"></i></span><span class="vpct">${swPct(a, b)}</span><span class="vnum">${n(a)} of ${n(b)} ${o.unit}</span>`
-    + (o.say ? `<span class="vsay${o.up ? " up" : ""}">${o.up ? '<span class="warn">▲</span> ' : ""}${esc(o.say)}</span>` : "") + `</button>`;
+    + (o.say ? `<span class="vsay${o.up ? " up" : ""}">${o.up ? '<span class="warn">▲</span> ' : ""}${esc(o.say)}`
+      + (o.up && o.pcs && o.click ? `<span class="go">Show the ${n(o.pcs)} ${swPcWord(o.pcs)} ▸</span>` : "") + `</span>` : "") + `</button>`;
 }
 const swHeads = (first, cols, sub, last = "") => `<div class="hd">${first}</div>` + cols.map((m) =>
   `<div class="hd">${m.head}<small>${sub || m.sub}</small></div>`).join("") + last;
@@ -2265,102 +2270,79 @@ function swNot(v, m, with_, r, other) {
     : m.k === "slow" ? `not raised: ${r.still_actions} more actions rated Major ${other} would undo it`
       : `not raised: ${r.still} more PCs ${other} would undo it`;
 }
-// a raised version's own update, when the block shows one: the flag says a version is worse than another, the
-// table under it can say its PCs had the problem less after they got it (Outlook on stage, Nov 21 2026: raised
-// on 1,291 of 2,475 against 27 of 165, and 36 before, 15 after on the 69 desktops just updated to it)
-function swOwnUpdate(k, f, m, pw) {
-  if (f.kind === "slow") return "";  // slow actions are not compared before and after
-  const us = k.updates.filter((u) => u.to === f.version);
-  return us.map((u) => `On the ${n(u.pcs)} ${pw} just updated to ${esc(f.version)} from ${esc(u.from)}, it ${m.did} on ${n(u.before[f.kind])} before `
-    + `the update and on ${n(u.after[f.kind])} after.`).join(" ");
+// The PCs that ran both versions of a comparison (software.same_pcs): the same PCs and people on both, the same
+// number of days on each. They decide when enough of them had the problem: a version that looks worse than
+// another on different PCs is not raised when they say otherwise (the user, Nov 22 2026, on a photo of stage:
+// a headline said a version stops responding more, 1,291 of 2,475 against 27 of 165, and the table under it
+// had 7 with it and 9 with the other on the 53 PCs that ran both). The headline box that stood on top of an
+// application is gone with it (the user: "GET RID OF THE HEADLINE, I think it add more confusing"): its numbers
+// were the tables' own, said twice; the ▲ and its words are on the count they are about.
+function swBothSaid(vd, other) {
+  const b = vd && vd.same;
+  if (!b) return "";
+  return b.decides ? ` The ${n(b.pcs)} PCs that ran both: ${n(b.with)} with this version, ${n(b.other)} with ${other}.`
+    : ` The ${n(b.pcs)} PCs that ran both: too few with it to tell (${n(b.with)} and ${n(b.other)}).`;
 }
-// one raised finding, in words: what, against what, why it is raised, what to do next
+const swSameNot = (vd, other) => `not raised: the ${n(vd.same.pcs)} PCs that ran both had it on ${n(vd.same.with)} with this version and on ${n(vd.same.other)} with ${other}`;
 // PCs that ran both versions on the day of their update: that day is on neither side
 const swBoth = (u) => (u.both ? ` ${n(u.both)} of them ran both versions on the day of the update: that day is on neither side.` : "");
 // is this the version most PCs of the kind have? (its versions come most PCs first)
 const swMostHave = (k, version) => !!k.versions.length && k.versions[0].version === version;
-function swFound(a, K, f, r) {
-  const pw = SW_PLACES[K], m = SW_MEAS.find((x) => x.k === f.kind), k = a.kinds[K];
-  const click = { app: a.application, version: f.version, problem: f.kind, kind: K };
-  const said = (x, of) => (f.kind === "slow" ? `${swPct(x, of)} of its actions were rated Major (${n(x)} of ${n(of)})`
-    : `It ${m.did} on ${swPct(x, of)} of its ${pw} (${n(x)} of ${n(of)})`);
-  let lead, text, why, next, own = "";
-  if (f.how === "update") {
-    const u = k.updates.find((x) => x.from === f.from && x.to === f.version);
-    lead = f.kind === "crash" ? `More crashes after the update to ${esc(f.version)}.` : `It stops responding more after the update to ${esc(f.version)}.`;
-    text = `Of the ${n(f.of)} ${pw} that went from ${esc(f.from)} to ${esc(f.version)}${u ? ` (${swDays(u)})` : ""}, it ${m.did} on ${n(f.n)} `
-      + `after the update and on ${n(f.before)} before it.`;
-    why = [`${n(f.n)} PCs after is at least ${r.ratio} times ${n(f.before)} before`, `${n(f.n)} PCs ${m.having} after (${r.min_problem} needed)`,
-      `still so if ${r.still} more PCs had it before`];
-    // "before more PCs get it" was said of a version most PCs already had (OneNote on stage, Nov 21 2026)
-    next = swMostHave(k, f.version) ? `open the ${n(f.n)} PCs and investigate one. Most ${pw} already run this version.`
-      : `look at the ${n(f.n)} PCs before more PCs get ${esc(f.version)}.`;
-    click.after = "1";
-  } else {
-    const most = f.how === "most", still = f.kind === "slow" ? `still so if ${r.still_actions} more actions on ${esc(f.ref)} were rated Major`
-      : `still so if ${r.still} more PCs on ${esc(f.ref)} had it`;
-    const row = k.versions.find((x) => x.version === f.version);
-    lead = most ? `${esc(f.version)}, the version most ${pw} have, ${m.more}.` : `${esc(f.version)} ${m.more}.`;
-    text = `${said(f.n, f.of)}. On ${esc(f.ref)}${most ? "" : `, the version most ${pw} have`}: ${swPct(f.ref_n, f.ref_of)} (${n(f.ref_n)} of ${n(f.ref_of)}).`;
-    why = [`${swPct(f.n, f.of)} is at least ${r.ratio} times ${swPct(f.ref_n, f.ref_of)}`, `${n(f.pcs)} PCs ${m.having} (${r.min_problem} needed)`, still];
-    own = swOwnUpdate(k, f, m, pw);
-    next = most ? `open the ${n(f.pcs)} PCs and investigate one. Most ${pw} run this version.`
-      : swOlder(f.version, f.ref) ? `the ${n(row ? swOn(row) : f.pcs)} ${pw} still on ${esc(f.version)} are the ones to update.`
-        : `look at these PCs before more PCs get ${esc(f.version)}.`;
-  }
-  const attrs = Object.entries(click).map(([x, y]) => ` data-${x}="${esc(y)}"`).join("");
-  return `<div class="vfind"><div><span class="warn">▲</span> <b>${lead}</b> ${text} <button type="button" class="link"${attrs}>Show the ${n(f.pcs)} PCs ▸</button></div>`
-    + `<div class="vwhy"><b>Why ▲</b>&nbsp; ${why.map((t) => `<span class="t"><span class="ok">✓</span> ${t}</span>`).join("")}</div>`
-    + (own ? `<div class="vnext"><b>Its update:</b> ${own} See "Before and after the update" below.</div>` : "")
-    + `<div class="vnext"><b>Next:</b> ${next}</div></div>`;
-}
 // one application on the kind of PC on screen: open when something is raised there, else one folded line
 function swVersionBlock(a, i, v, K) {
   const k = a.kinds[K], r = v.rules, pw = SW_PLACES[K], cols = swCols(a), usage = cols.filter((m) => m.k !== "slow");
-  const finds = a.found.filter((f) => f.on === K).map((f) => swFound(a, K, f, r)).join("");
+  const raised = a.found.some((f) => f.on === K);
   const ex = (which) => `<button type="button" class="link" data-vex="${i}|${which}">Explain ▸</button>`;
   let body = a.only.map((x) => `<div class="muted" style="font-size:12px;max-width:86ch">Every PC listed had ${x === "crash" ? "a crash" : "hang time"} `
     + `(${n(a.versions.reduce((s, y) => s + y[x], 0))} PCs): Aternity lists ${esc(a.application)} only where it failed, so there is no PC without `
     + `one to compare with: its versions are not compared on crashes or hang time. ${a.versions.map((y) => `${esc(y.version)}: ${n(y[x])} PCs`).join("; ")}.</div>`).join("");
-  // 1. before and after an update: the same PCs, as many days on each side
+  // Before and after an update: the same PCs, as many days on each side. Drawn under "Version by version"
+  // (the user, Nov 22 2026: "Move version by version on top of before and after")
+  let upd = "";
   if (usage.length) k.updates.forEach((u, j) => {
     let before = `<div><b>Before</b> · on ${esc(u.from)}</div>`, after = `<div><b>After</b> · on ${esc(u.to)}</div>`;
     for (const m of usage) {
       const A = [u.after[m.k], u.pcs], B = [u.before[m.k], u.pcs], max = Math.max(swShare(...A), swShare(...B)), vd = (u.verdict || {})[m.k];
       const up = vd && vd.state === "raised";
       before += swCell({ pair: B, max, unit: "PCs" });
-      after += swCell({ pair: A, max, unit: "PCs", up, say: up ? "more after the update" : swNot(vd, { having: m.having + " after" }, A[0], r, "before"),
-        click: { app: a.application, version: u.to, problem: m.k, kind: K, after: "1" } });
+      after += swCell({ pair: A, max, unit: "PCs", up, pcs: A[0], say: up ? "more after the update." : swNot(vd, { having: m.having + " after" }, A[0], r, "before"),
+        click: { app: a.application, version: u.to, problem: m.k, kind: K, after: "1", was: u.from, expect: A[0] } });
     }
     const pad = cols.some((m) => m.k === "slow") ? [`<div class="hd muted">Slow actions<small>not compared before and after</small></div>`, "<div></div>"] : ["", ""];
-    body += `<div class="vsub">Before and after the update ${ex("update|" + j)}</div><div class="muted" style="font-size:12px;max-width:86ch">The same ${n(u.pcs)} ${pw}, `
-      + `before and after they went from ${esc(u.from)} to ${esc(u.to)} (${swDays(u)}). For each PC the same number of days is counted on each side.${swBoth(u)}</div>`
+    upd += `<div class="vsub">Before and after the update ${ex("update|" + j)}</div><div class="muted" style="font-size:12px;max-width:86ch">The same ${n(u.pcs)} ${pw}, `
+      + `before and after they went from ${esc(u.from)} to ${esc(u.to)} (${swDays(u)}). For each PC the same number of days is counted on each side.${swBoth(u)} `
+      + `Only those days are counted, so a version's percentage here is not the one it has in "Version by version".</div>`
       + `<div class="multWrap"><div class="vgrid" style="grid-template-columns:minmax(200px,24%) repeat(${cols.length},minmax(180px,1fr))">`
       + swHeads("The same PCs", usage, `of the same ${n(u.pcs)} PCs`, pad[0]) + before + pad[1] + after + pad[1] + `</div></div>`;
   });
-  if (usage.length && k.updates_more) body += `<div class="muted" style="font-size:12px;margin-top:6px">${n(k.updates_more)} more ${k.updates_more === 1 ? "update" : "updates"} `
+  if (usage.length && k.updates_more) upd += `<div class="muted" style="font-size:12px;margin-top:6px">${n(k.updates_more)} more ${k.updates_more === 1 ? "update" : "updates"} `
     + `that ${r.min_pcs} ${pw} or more made ${k.updates_more === 1 ? "was" : "were"} compared the same way: nothing raised, not shown.</div>`;
-  // 2. version by version, against the version most PCs have
+  // Version by version, against the version most PCs have: first
   const rows = k.versions.filter((x) => swOn(x) >= r.min_pcs), small = k.versions.filter((x) => swOn(x) < r.min_pcs);
   const ref = rows.find((x) => x.version === k.ref);
   if (rows.length && cols.length) {
     const max = {};
     for (const m of cols) max[m.k] = Math.max(0, ...rows.map((x) => swShare(x[m.n], x[m.of])));
+    // the yardstick is "the version most have" unless a version new this week is on more PCs (software.judge)
+    const yard = k.ref_most !== false, yardWord = yard || !ref ? "the version most have" : ref.version;
     const line = (x) => {
       const isRef = x === ref;
       let h = `<div class="${isRef ? "ref" : ""}"><b>${esc(x.version)}</b><div class="muted">${n(swOn(x))} ${pw}`
-        + (isRef ? ` <span class="vchip most">most PCs have this</span>` : x.new ? ` <span class="vchip">new this week</span>` : "") + `</div></div>`;
+        + (isRef ? ` <span class="vchip most">${yard ? "most PCs have this" : "the others are compared with this"}</span>` : x.new ? ` <span class="vchip">new this week</span>` : "") + `</div></div>`;
       for (const m of cols) {
         if (!x[m.of]) { h += `<div class="muted${isRef ? " ref" : ""}">${m.k === "slow" ? "no actions measured" : "—"}</div>`; continue; }
         const vd = (x.verdict || {})[m.k], up = !!vd && vd.state === "raised", other = isRef && up ? rows.find((y) => y.version === vd.against) : ref;
-        const say = up ? (isRef ? `against ${other ? swPct(other[m.n], other[m.of]) : ""} on ${vd.against}` : `against ${swPct(ref[m.n], ref[m.of])} on the version most have`)
-          : swNot(vd, m, m.k === "slow" ? x.major_pcs : x[m.n], r, isRef && vd && vd.against ? `on ${vd.against}` : "on the version most have");
-        h += swCell({ ref: isRef, pair: [x[m.n], x[m.of]], max: max[m.k], unit: m.unit, up, dim: x.new && !isRef, say,
-          click: { app: a.application, version: x.version, problem: m.k, kind: K } });
+        const them = isRef && vd && vd.against ? vd.against : yardWord;
+        const say = up ? (isRef ? `against ${other ? swPct(other[m.n], other[m.of]) : ""} on ${vd.against}.` : `against ${swPct(ref[m.n], ref[m.of])} on ${yardWord}.`) + swBothSaid(vd, them)
+          : vd && vd.state === "same" ? swSameNot(vd, them)
+            : swNot(vd, m, m.k === "slow" ? x.major_pcs : x[m.n], r, isRef && vd && vd.against ? `on ${vd.against}` : `on ${yardWord}`);
+        h += swCell({ ref: isRef, pair: [x[m.n], x[m.of]], max: max[m.k], unit: m.unit, up, pcs: m.k === "slow" ? x.major_pcs : x[m.n], dim: x.new && !isRef, say,
+          click: { app: a.application, version: x.version, problem: m.k, kind: K, expect: m.k === "slow" ? x.major_pcs : x[m.n] } });
       }
       return h;
     };
     body += `<div class="vsub">Version by version ${ex("versions")}</div>`
+      + `<div class="muted vdays">Every PC that ran the version in the last ${n(v.days)} days. A PC counts once if it happened on any of those days.</div>`
       + (rows.length === 1 ? `<div class="muted" style="font-size:12px">${esc(rows[0].version)} is the only version on ${r.min_pcs} ${pw} or more: there is nothing to compare it with.</div>` : "")
       + (rows.some((x) => x.new && x !== ref) ? `<div class="muted" style="font-size:12px;max-width:86ch">A version that is new this week has had less time to go wrong: it is not compared here, only before and after its update.</div>` : "")
       + `<div class="multWrap"><div class="vgrid" style="grid-template-columns:minmax(200px,24%) repeat(${cols.length},minmax(180px,1fr))">`
@@ -2368,14 +2350,17 @@ function swVersionBlock(a, i, v, K) {
   }
   if (small.length) body += `<details class="vfew"><summary>${n(small.length)} ${rows.length ? "smaller " : ""}${small.length === 1 ? "version" : "versions"}, ${n(small.reduce((s, x) => s + swOn(x), 0))} ${pw}${small.length > 1 ? " together" : ""}: too few to judge</summary>`
     + `<div class="muted" style="font-size:12px">${small.map((x) => `${esc(x.version)}: ${n(swOn(x))} ${swPcWord(swOn(x))}`).join(" · ")}. A version needs ${r.min_pcs} ${pw} to be compared.</div></details>`;
-  body += swTable(["Version", "PCs", "with a crash", "with hang time", "virtual", "actions", "Major", "PCs with Major"],
-    a.versions.map((x) => [x.version, n(x.pcs), n(x.crash), n(x.hang), n(x.virtual), n(x.actions), n(x.major), n(x.major_pcs)]));
+  // every version on the kind of PC on screen (it was all PCs mixed: its numbers were not the bars' own)
+  body += swTable(["Version", "PCs", "with a crash", "with hang time", "actions", "rated Major", "PCs with actions", "PCs with Major"],
+    k.versions.map((x) => [x.version, n(x.pcs), swNP(x.crash, x.pcs), swNP(x.hang, x.pcs), n(x.actions), swNP(x.major, x.actions), n(x.action_pcs), swNP(x.major_pcs, x.action_pcs)]),
+    `${pw[0].toUpperCase() + pw.slice(1)}, the last ${n(v.days)} days. Each percentage is of the same row: with a crash and with hang time of its PCs, rated Major of its actions, PCs with Major of its PCs with actions.`);
+  body += upd;
   const compared = rows.filter((x) => !x.new || x === ref).length;
   const calm = a.only.length && !cols.length ? "not compared" : !rows.length ? `under ${r.min_pcs} ${pw} on every version`
     : `nothing raised · ${compared < 2 ? "1 version, nothing to compare it with" : compared + " versions compared"}`;
   const cmp = `<button type="button" class="link" data-compare="${esc(a.application)}">Compare versions ▸</button>`;
-  return finds ? { open: true, html: `<div class="vblock" id="ver${i}"><div class="vhead"><b>${esc(a.application)}</b>`
-      + `<span class="muted">${K === "all" ? "" : "on " + pw}</span>${cmp}</div><div class="vfinds">${finds}</div>${body}</div>` }
+  return raised ? { open: true, html: `<div class="vblock" id="ver${i}"><div class="vhead"><b>${esc(a.application)}</b>`
+      + `<span class="muted">${K === "all" ? "" : "on " + pw}</span>${cmp}</div>${body}</div>` }
     : { open: false, html: `<details class="vcalm" id="ver${i}"><summary>${esc(a.application)} <span class="muted" style="font-weight:400">· ${calm}</span></summary>`
       + `<div style="margin-top:6px">${cmp}</div>${body}</details>` };
 }
@@ -2388,7 +2373,9 @@ function renderSwVersions(v) {
     $("sVersions").innerHTML = `<p class="muted">No application had a crash, hang time or Major actions on 2 versions or more in the last ${v.days} days.</p>`;
     return;
   }
-  const raisedOn = (k) => v.versions.reduce((s, a) => s + a.found.filter((f) => f.on === k).length, 0);
+  // a version once per problem, as the red flags list counts it (raised by its update and against another version
+  // was 2 here and 1 in the list: review of Nov 22 2026)
+  const raisedOn = (k) => v.versions.reduce((s, a) => s + new Set(a.found.filter((f) => f.on === k).map((f) => f.kind + "|" + f.version)).size, 0);
   if (!kinds.includes(swKind)) swKind = kinds.find(raisedOn) || kinds[0];
   $("sKindsSeg").innerHTML = kinds.map((k) => `<button type="button" data-swkind="${k}" class="${k === swKind ? "on" : ""}">`
     + `${SW_PLACES[k][0].toUpperCase() + SW_PLACES[k].slice(1)} · ${raisedOn(k) ? n(raisedOn(k)) + " ▲" : "no ▲"}</button>`).join("");
@@ -2412,7 +2399,12 @@ function swExplain(i, which, j) {
   const list = (items, ol) => { H.push(`<${ol ? "ol" : "ul"}>${items.map((x) => `<li>${x}</li>`).join("")}</${ol ? "ol" : "ul"}>`);
     items.forEach((x, q) => L.push(`${ol ? q + 1 + "." : "-"} ${plainOf(x)}`)); };
   const rule = `A version is raised only when all three are true: the share is at least ${r.ratio} times the other's, at least ${r.min_problem} PCs had the problem, `
-    + `and it would still hold with ${r.still} more PCs with it on the other side (for slow actions: with ${r.still_actions} more of the other side's actions rated Major).`;
+    + `and it would still hold with ${r.still} more PCs with it on the other side (for slow actions: with ${r.still_actions} more of the other side's actions rated Major). `
+    + `And a version that is worse than another version is still not raised when the PCs that ran both versions say otherwise.`;
+  // the PCs that ran both versions of a pair, in a sentence (a crash or hang time; slow actions have none)
+  const bothSaid = (b, m, hi, lo) => (m.k === "slow" ? "" : !b ? ` Fewer than ${r.min_pcs} ${pw} went from one of these versions to the other, so there are no PCs that ran both to check it with.`
+    : ` The ${n(b.pcs)} ${pw} that ran both versions: it ${m.did} on ${n(b.with)} of them with ${esc(hi)} and on ${n(b.other)} with ${esc(lo)}`
+      + (b.decides ? "." : `, too few to tell (${r.min_problem} needed on one of the two).`));
   let title, raised = 0;
   const nexts = [];
   if (which === "update") {
@@ -2448,10 +2440,11 @@ function swExplain(i, which, j) {
     title = `${a.application}, version by version`;
     sec("What is compared");
     par(`${esc(a.application)} on ${pw}, over the last ${n(softData.days)} days. ` + (rows.length < 2 || !ref ? `${esc(rows[0].version)} is the only version on ${r.min_pcs} ${pw} or more, so there is nothing to compare it with.`
-      : `Each version is put next to ${esc(ref.version)}, the version most ${pw} have (${n(swOn(ref))} of them).`)
+      : k.ref_most !== false ? `Each version is put next to ${esc(ref.version)}, the version most ${pw} have (${n(swOn(ref))} of them).`
+        : `Each version is put next to ${esc(ref.version)} (${n(swOn(ref))} ${pw}): the version on the most ${pw} that is not new this week.`)
       + (fresh.length ? ` ${fresh.map((x) => esc(x.version)).join(", ")} is new this week, so it has had less time to go wrong: it is judged before and after its update, not here.` : "")
       + (small ? ` ${n(small)} smaller ${small === 1 ? "version is" : "versions are"} listed but not compared: under ${r.min_pcs} PCs, one PC would move the share too far.` : ""));
-    const why = [], owns = [];
+    const why = [];
     let found = false;
     for (const x of rows) {
       if (x === ref || x.new || !ref) continue;
@@ -2464,13 +2457,16 @@ function swExplain(i, which, j) {
         const steps = (hi, lo, hiV, loV, w) => [`${swPct(...hi)} is at least ${r.ratio} times ${swPct(...lo)}.`, `${n(w)} PCs ${m.having}. ${r.min_problem} are needed, so it is not one or two unlucky PCs.`]
           .concat([m.k === "slow" ? `With ${r.still_actions} more actions rated Major on ${esc(loV)} (${n(lo[0] + r.still_actions)} of ${n(lo[1])}, ${swPct(lo[0] + r.still_actions, lo[1])}), ${swPct(...hi)} would still be at least ${r.ratio} times as high.`
             : `With ${r.still} more PCs on ${esc(loV)} (${n(lo[0] + r.still)} of ${n(lo[1])}, ${swPct(lo[0] + r.still, lo[1])}), ${swPct(...hi)} would still be at least ${r.ratio} times as high.`]);
-        if (vd.state === "raised" || refUp) owns.push(swOwnUpdate(k, { kind: m.k, version: refUp && vd.state !== "raised" ? ref.version : x.version }, m, pw));
-        if (vd.state === "raised") { raised++; why.push([`${esc(x.version)}, ${m.head.toLowerCase()}`, steps(A, B, x.version, ref.version, with_)]);
+        const sameRef = back && back.state === "same" && back.against === x.version;
+        const agree = (b, hi, lo) => (b && b.decides ? [`The ${n(b.pcs)} PCs that ran both versions agree: ${n(b.with)} of them had it with ${esc(hi)}, ${n(b.other)} with ${esc(lo)}.`] : []);
+        if (vd.state === "raised") { raised++; why.push([`${esc(x.version)}, ${m.head.toLowerCase()}`, steps(A, B, x.version, ref.version, with_).concat(agree(vd.same, x.version, ref.version))]);
           nexts.push(swOlder(x.version, ref.version) ? `The ${n(swOn(x))} ${pw} still on ${esc(x.version)} are the ones to update.` : `Look at these PCs before more PCs get ${esc(x.version)}.`); }
-        else if (refUp) { raised++; why.push([`${esc(ref.version)}, ${m.head.toLowerCase()}`, steps(B, A, ref.version, x.version, refWith)]);
+        else if (refUp) { raised++; why.push([`${esc(ref.version)}, ${m.head.toLowerCase()}`, steps(B, A, ref.version, x.version, refWith).concat(agree(back.same, ref.version, x.version))]);
           nexts.push(`Open the ${n(refWith)} PCs ${m.having} on ${esc(ref.version)} and investigate one. Most ${pw} run this version.`); }
-        lines.push(`<b>${m.head}:</b> ${mine} against ${most}. ` + (vd.state === "raised" ? `<span class="warn">▲</span> Raised: ${esc(x.version)} is the worse one.`
-          : refUp ? `<span class="warn">▲</span> Raised: ${esc(ref.version)} is the worse one.`
+        lines.push(`<b>${m.head}:</b> ${mine} against ${most}. ` + (vd.state === "raised" ? `<span class="warn">▲</span> Raised: ${esc(x.version)} is the worse one.${bothSaid(vd.same, m, x.version, ref.version)}`
+          : refUp ? `<span class="warn">▲</span> Raised: ${esc(ref.version)} is the worse one.${bothSaid(back.same, m, ref.version, x.version)}`
+            : vd.state === "same" ? `${esc(x.version)} is at least ${r.ratio} times as high and passes the other checks, but it is not raised.${bothSaid(vd.same, m, x.version, ref.version)} No more of them had it with ${esc(x.version)}, and they are the same PCs on both versions.`
+            : sameRef ? `${esc(ref.version)} is at least ${r.ratio} times as high and passes the other checks, but it is not raised.${bothSaid(back.same, m, ref.version, x.version)} No more of them had it with ${esc(ref.version)}, and they are the same PCs on both versions.`
             : vd.state === "unsure" ? `At least ${r.ratio} times as high, but ${esc(swNot(vd, m, with_, r, "on " + ref.version))}.`
               : vd.back && vd.back.state === "unsure" ? `${esc(ref.version)} is at least ${r.ratio} times as high, but ${esc(swNot(vd.back, m, refWith, r, "on " + x.version))}.`
               : vd.state === "more" ? `Higher, but not ${r.ratio} times as high: not raised.` : "Not higher."));
@@ -2481,9 +2477,10 @@ function swExplain(i, which, j) {
     else if (found) { sec("Why nothing is raised"); par(rule + " No version here passes all three."); }
     sec("How far to trust it");
     par(`It shows that PCs on one version have the problem more often than PCs on another. It does not prove the version is the cause: the two groups of PCs can differ `
-      + `in other ways, such as their age or what else is installed. Before and after an update is the stronger comparison, when there is one.`);
-    const own = [...new Set(owns.filter(Boolean))];
-    if (own.length) par(`<b>Its own update:</b> ${own.join(" ")} That is the same PCs on both sides, so weigh it with the comparison above.`);
+      + `in other ways, such as who uses them, how much, or what else is installed. That is why the PCs that ran both versions decide when there are enough of them: `
+      + `they are the same PCs and people on both sides, with the same number of days on each.`);
+    par(`A percentage here counts every PC that ran the version in the last ${n(softData.days)} days. "Before and after the update" counts only a PC's days just before and `
+      + `just after its own update, so the same version has another percentage there.`);
   }
   if (nexts.length) { sec("Next"); list([...new Set(nexts)]); }
   const terms = (softData.terms || []).length ? `<details class="exTerms"><summary>What the terms mean</summary><dl>`
@@ -2504,9 +2501,10 @@ function swHow() {  // the "i" beside the panel's title
     + `<div><span class="top"><span class="warn">▲</span></span><span class="cap">clearly worse than what it is compared with</span></div></div>`
     + `<div class="vex"><ul><li>The shaded row is the version most PCs have. Every other version is compared with it.</li>`
     + `<li>A green bar is not raised. An amber bar with <span class="warn">▲</span> is raised. A grey bar is a version new this week: it is judged before and after its update only.</li>`
-    + `<li>Bars are compared within one column of one application only.</li>`
+    + `<li>Bars are compared within one column of one table only. A bar is full at the column's highest share, or at ${SW_BAR_FULL * 100}% when every share in it is lower, so a small share stays a short bar.</li>`
+    + `<li>A version that looks worse than another is not raised when the PCs that ran both versions say otherwise: they are the same PCs on both sides. Its row says so, with their counts.</li>`
     + `<li>Virtual desktops and physical PCs are looked at apart: the same version can behave differently on each.</li>`
-    + `<li>Click a bar for its PCs. "Explain ▸" beside a comparison walks through it step by step.</li></ul></div>`, "");
+    + `<li>Click a bar or its count for the PCs behind it. "Explain ▸" beside a comparison walks through it step by step: why something is raised, and what to do next.</li></ul></div>`, "");
 }
 
 // Flag 2: version strips, oldest to newest, the version most PCs have outlined in brass
@@ -2523,7 +2521,7 @@ function renderSwBehind(v) {
     + `<span class="num">${swOf(p.behind, p.pcs)} behind</span>`;
   $("sBehind").innerHTML = `<div class="swRows" style="margin-top:8px">${swMore(v.behind, 10, row, "programs", "swRows")}</div>`
     + swTable(["Program", "PCs", "behind", "versions", "most", "newest", "oldest"],
-      v.behind.map((p) => [p.name, n(p.pcs), n(p.behind), n(p.versions.length), p.most, p.newest, p.oldest]));
+      v.behind.map((p) => [p.name, n(p.pcs), swNP(p.behind, p.pcs), n(p.versions.length), p.most, p.newest, p.oldest]), "Behind: its share of the program's PCs.");
 }
 // Flags 3 and 4: ranked bars, most PCs first
 function renderSwMulti(v) {
@@ -2531,14 +2529,14 @@ function renderSwMulti(v) {
   const row = swBars(v.multi, { name: (x) => x.name, value: (x) => x.pcs, text: (x) => swOf(x.pcs, x.of),
     sub: (x) => x.combos.map(([c, k]) => `${c}: ${n(k)}`).join("; ") });
   $("sMulti").innerHTML = `<div class="swRows">${swMore(v.multi, 10, row, "programs", "swRows")}</div>`
-    + swTable(["Program", "PCs with 2+", "of its PCs", "versions found together"], v.multi.map((x) => [x.name, n(x.pcs), n(x.of),
-      x.combos.map(([c, k]) => `${c}: ${n(k)}`).join("; ")]));
+    + swTable(["Program", "PCs with 2+", "of its PCs", "versions found together"], v.multi.map((x) => [x.name, swNP(x.pcs, x.of), n(x.of),
+      x.combos.map(([c, k]) => `${c}: ${n(k)}`).join("; ")]), "PCs with 2+: its share of the program's PCs.");
 }
 function renderSwUser(v) {
   if (!v.user.length) { $("sUser").innerHTML = `<p class="muted">No program is installed for one user only.</p>`; return; }
   const row = swBars(v.user, { name: (x) => x.name, value: (x) => x.pcs, text: (x) => pcs(x.pcs) });
   $("sUser").innerHTML = `<div class="swRows">${swMore(v.user, 10, row, "programs", "swRows")}</div>`
-    + swTable(["Program", "PCs, for one user", "PCs in all"], v.user.map((x) => [x.name, n(x.pcs), n(x.of)]));
+    + swTable(["Program", "PCs, for one user", "PCs in all"], v.user.map((x) => [x.name, swNP(x.pcs, x.of), n(x.of)]), "For one user: its share of the program's PCs.");
 }
 // Flag 5: Windows per PC, when it was last updated, and each update on its own Windows version's PCs
 function renderSwWindows(v) {
@@ -2571,7 +2569,7 @@ function renderSwWindows(v) {
     + (w.read_updates ? `<h3 style="font-size:14px;margin:16px 0 0">Updates most PCs of a Windows version have, not on every one</h3>`
       + (upd || `<p class="muted">Every update most PCs of a Windows version have is on all of them (or misses fewer than ${v.rules.min_problem}).</p>`) : "")
     + swTable(["Windows", "PCs", "update", "on", "not on", "instead"], gaps.flatMap((x) => x.missing.map((m) => [x.windows, n(x.pcs), m.update,
-      n(m.on), n(m.without), m.instead.map((y) => `${y.update} ${n(y.on)}`).join("; ")])));
+      swNP(m.on, x.pcs), swNP(m.without, x.pcs), m.instead.map((y) => `${y.update} ${n(y.on)}`).join("; ")])), "On and not on: their share of the PCs on that Windows version.");
 }
 // Flag 6: the long tail, programs by how many PCs have them; a column opens its programs
 function renderSwTail(v) {
@@ -2624,7 +2622,9 @@ $("sProg").addEventListener("click", (ev) => {
 });
 
 // The PCs behind a version, read from Aternity now; Investigate ▸ runs the Investigate tab for that PC
-async function openSwPcs(q, el) {
+// `expect`: the count the tab showed where the click was made. The list is read now, the count is the tab's daily
+// read, so the two can differ: it is said, not left as a mismatch (review of Nov 22 2026)
+async function openSwPcs(q, el, expect = null) {
   const box = $("sPcs");
   (el.closest(".panel") || $("sMain")).after(box);
   box.hidden = false;
@@ -2637,7 +2637,8 @@ async function openSwPcs(q, el) {
     if (!r.ok) throw new Error(detail(w));
     swPcsData = w;
     const more = w.total > w.rows.length ? ` (the first ${n(w.rows.length)} shown)` : "";
-    $("sPcsTitle").textContent = `${w.what}: ${pcs(w.total)}${more}`;
+    const moved = expect !== null && expect !== w.total && softData ? `. Read from Aternity now; the tab counted ${n(expect)} at its read of ${softData.as_of_local}` : "";
+    $("sPcsTitle").textContent = `${w.what}: ${pcs(w.total)}${more}${moved}`;
     const p = w.problem;
     if (p === "update") {  // without a Windows update: what they have in its place, those with none first
       const ins = w.instead.length ? ` ${n(w.with_instead)} of them have ${w.instead.join(" or ")} in its place; the others are listed first.` : "";
@@ -2980,7 +2981,7 @@ $("dvLines").addEventListener("keydown", (ev) => {
 // Compare versions: one line per kind of issue; ● the first version, ○ the second
 function swDumbbell(lines, la, lb) {
   if (!lines.length) return `<p class="muted">Nothing to line up.</p>`;
-  const W = 760, left = 210, right = 200, rowH = 26, top = 8;
+  const W = 880, left = 210, right = 320, rowH = 26, top = 8;  // room at the right for each share beside its counts
   const max = Math.max(1e-9, ...lines.flatMap((l) => [swShare(...l.a), swShare(...l.b)]));
   const x = (s) => left + s / max * (W - left - right);
   const H = top + lines.length * rowH + 22;
@@ -2990,13 +2991,13 @@ function swDumbbell(lines, la, lb) {
     + lines.map((l, i) => {
       const y = top + i * rowH + 10, xa = x(swShare(...l.a)), xb = x(swShare(...l.b));
       const what = l.group === "activity" ? `· ${l.what}` : l.what;
-      return `<g><title>${esc(`${l.what}: ${la} ${n(l.a[0])} of ${n(l.a[1])} ${l.unit}; ${lb} ${n(l.b[0])} of ${n(l.b[1])} ${l.unit}`)}</title>`
+      return `<g><title>${esc(`${l.what}: ${la} ${swPct(...l.a)} (${n(l.a[0])} of ${n(l.a[1])} ${l.unit}); ${lb} ${swPct(...l.b)} (${n(l.b[0])} of ${n(l.b[1])} ${l.unit})`)}</title>`
         + `<rect x="0" y="${y - 12}" width="${W}" height="${rowH}" fill="transparent"/>`
         + `<text x="${left - 8}" y="${y + 4}" text-anchor="end">${esc(what.length > 30 ? what.slice(0, 29) + "…" : what)}</text>`
         + `<line x1="${xa}" x2="${xb}" y1="${y}" y2="${y}" stroke="var(--muted)" stroke-width="2"/>`
         + `<circle cx="${xa}" cy="${y}" r="5.5" fill="var(--accent)"/>`
         + `<circle cx="${xb}" cy="${y}" r="5.5" fill="var(--panel)" stroke="var(--accent)" stroke-width="2"/>`
-        + `<text x="${W - right + 10}" y="${y + 4}">${n(l.a[0])} of ${n(l.a[1])} · ${n(l.b[0])} of ${n(l.b[1])}</text></g>`;
+        + `<text x="${W - right + 10}" y="${y + 4}">${swPct(...l.a)} (${n(l.a[0])} of ${n(l.a[1])}) · ${swPct(...l.b)} (${n(l.b[0])} of ${n(l.b[1])})</text></g>`;
     }).join("") + `</svg>`;
 }
 async function runSwCompare(application, a = "", b = "") {
@@ -3004,7 +3005,7 @@ async function runSwCompare(application, a = "", b = "") {
   f.application.value = application;
   $("sCompare").innerHTML = `<p class="muted">Reading ${esc(application)} from Aternity…</p>`;
   try {
-    const r = await fetch(`api/software/compare?${new URLSearchParams({ application, a, b })}`);
+    const r = await fetch(`api/software/compare?${new URLSearchParams({ application, a, b, ...(swKind && swKind !== "all" ? { kind: swKind } : {}) })}`);
     const c = await readJson(r);
     if (!r.ok) throw new Error(detail(c));
     swCompareData = c;
@@ -3016,10 +3017,11 @@ async function runSwCompare(application, a = "", b = "") {
     const kind = c.kind ? `<div class="muted" style="font-size:12px;margin-top:6px">On virtual desktops: ${esc(c.a)} ${swOf(c.kind.a[0], c.kind.a[1])}; `
       + `${esc(c.b)} ${swOf(c.kind.b[0], c.kind.b[1])}. A version used on another kind of PC is not on the same PCs.</div>` : "";
     $("sCompare").innerHTML = `<div class="legend"><span><b style="color:var(--accent)">●</b> ${esc(c.a)}</span><span><b style="color:var(--accent)">○</b> ${esc(c.b)}</span>`
-      + `<span>last ${c.days} days; each line: its share of the PCs (or actions) on each version, numbers on the right</span></div>`
-      + swDumbbell(c.lines, c.a, c.b) + kind + (notes ? `<ul class="notes muted">${notes}</ul>` : "")
-      + swTable(["Version", "PCs", "with a crash", "with hang time", "virtual", "actions", "Major"],
-        c.table.map((x) => [x.version, n(x.pcs), n(x.crash), n(x.hang), x.virtual === null ? "—" : n(x.virtual), n(x.actions), n(x.major)]));
+      + `<span>${c.on ? SW_PLACES[c.on][0].toUpperCase() + SW_PLACES[c.on].slice(1) + ", as the tables above; " : ""}last ${c.days} days; each line: its share of the PCs (or actions) on each version, numbers on the right</span></div>`
+      + swDumbbell(c.lines, c.a, c.b) + kind + swReadNow() + (notes ? `<ul class="notes muted">${notes}</ul>` : "")
+      + swTable(["Version", "PCs", "with a crash", "with hang time", "virtual", "actions", "rated Major"],
+        c.table.map((x) => [x.version, n(x.pcs), swNP(x.crash, x.pcs), swNP(x.hang, x.pcs), x.virtual === null ? "—" : swNP(x.virtual, x.pcs), n(x.actions), swNP(x.major, x.actions)]),
+        "Each percentage is of the same row: with a crash, with hang time and virtual of its PCs, rated Major of its actions.");
   } catch (e) { $("sCompare").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
 }
 $("sCompareForm").addEventListener("submit", (ev) => {
@@ -3033,21 +3035,26 @@ $("sUpdateBtn").addEventListener("click", async () => {
   if (!app) { $("sCompare").innerHTML = `<p class="muted">Type an application first.</p>`; return; }
   $("sCompare").innerHTML = `<p class="muted">Reading ${esc(app)}'s last 14 days from Aternity, day by day…</p>`;
   try {
-    const r = await fetch(`api/software/update?${new URLSearchParams({ application: app })}`);
+    const r = await fetch(`api/software/update?${new URLSearchParams({ application: app, ...(swKind && swKind !== "all" ? { kind: swKind } : {}) })}`);
     const u = await readJson(r);
     if (!r.ok) throw new Error(detail(u));
-    const day = (d) => new Date(d + "T12:00:00Z").toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
-    const pairs = u.pairs.map((p) => `<h3 style="font-size:14px;margin:12px 0 2px">${esc(p.from)} to ${esc(p.to)}: ${pcs(p.pcs)} updated, ${esc(day(p.first))}`
-      + `${p.first !== p.last ? ` to ${esc(day(p.last))}` : ""}</h3><div class="muted" style="font-size:12px">The same PCs on each side. Days they used it: `
-      + `${n(p.before[0])} before, ${n(p.after[0])} after. PCs with a crash: ${n(p.crash_pcs[0])} before, ${n(p.crash_pcs[1])} after.</div>`
-      + swDumbbell([{ what: "Days with a crash", unit: "days", a: [p.before[1], p.before[0]], b: [p.after[1], p.after[0]] },
-        { what: "Days with hang time", unit: "days", a: [p.before[2], p.before[0]], b: [p.after[2], p.after[0]] }], "before", "after")).join("");
-    $("sCompare").innerHTML = `<div class="legend"><span><b style="color:var(--accent)">●</b> before</span><span><b style="color:var(--accent)">○</b> after</span><span>each PC whose version changed once in the last ${u.days} days</span></div>`
+    // the same PCs and the same number of days on each side, counted as the tables above (it was PC-days)
+    const pw = SW_PLACES[u.on || "all"];
+    const pairs = u.pairs.map((p) => `<h3 style="font-size:14px;margin:12px 0 2px">${esc(p.from)} to ${esc(p.to)}: ${n(p.pcs)} ${p.pcs === 1 ? pw.replace(/s$/, "") : pw}, ${esc(swDays(p))}</h3>`
+      + (p.pcs < u.min_pcs ? `<div class="muted" style="font-size:12px">Under ${n(u.min_pcs)} PCs: listed, not judged.</div>` : "")
+      + (p.both ? `<div class="muted" style="font-size:12px">${swBoth(p).trim()}</div>` : "")
+      + swDumbbell([{ what: "PCs with a crash", unit: "PCs", a: [p.before.crash, p.pcs], b: [p.after.crash, p.pcs] },
+        { what: "PCs with hang time", unit: "PCs", a: [p.before.hang, p.pcs], b: [p.after.hang, p.pcs] }], "before", "after")).join("");
+    $("sCompare").innerHTML = `<div class="legend"><span><b style="color:var(--accent)">●</b> before</span><span><b style="color:var(--accent)">○</b> after</span>`
+      + `<span>${u.on ? pw[0].toUpperCase() + pw.slice(1) + ": each" : "Each"} PC whose version changed once in the last ${u.days} days; for each PC as many days after as before, as the tables above</span></div>`
       + (pairs || `<p class="muted">No PC's version of ${esc(app)} changed once in the last ${u.days} days.</p>`)
+      + (u.more ? `<p class="muted" style="font-size:12px">${n(u.more)} more ${u.more === 1 ? "change" : "changes"} of version, on fewer PCs, not shown.</p>` : "") + (pairs ? swReadNow() : "")
       + (u.notes.length ? `<ul class="notes muted">${u.notes.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : "");
   } catch (e) { $("sCompare").innerHTML = `<p class="err">${esc(e.message)}</p>`; }
 });
 
+// Compare and its before and after are read from Aternity at the click; the tables above are the tab's daily read
+const swReadNow = () => `<p class="muted" style="font-size:12px;margin:6px 0 0">Read from Aternity now. The tables above are the tab's read of ${esc(softData ? softData.as_of_local : "")}, so a count here can be a little higher.</p>`;
 // The summary for management, in an in-page dialog with Copy and Close
 function swDialog(title, html, copy) {
   $("dlgTitle").textContent = title; $("dlgBody").innerHTML = html;
@@ -3175,7 +3182,8 @@ $("sMain").addEventListener("click", (ev) => {
   if (p) return openSwProgram(p.dataset.prog);
   const c = ev.target.closest("button[data-problem]");
   if (c) return openSwPcs({ application: c.dataset.app, version: c.dataset.version, problem: c.dataset.problem,
-    ...(c.dataset.kind && c.dataset.kind !== "all" ? { kind: c.dataset.kind } : {}), ...(c.dataset.after ? { after: "1" } : {}) }, c);
+    ...(c.dataset.kind && c.dataset.kind !== "all" ? { kind: c.dataset.kind } : {}), ...(c.dataset.after ? { after: "1", was: c.dataset.was || "" } : {}) }, c,
+    c.dataset.expect === undefined ? null : Number(c.dataset.expect));
   const sk = ev.target.closest("[data-swkind]");
   if (sk) { swKind = sk.dataset.swkind; return renderSwVersions(softData); }
   const vx = ev.target.closest("[data-vex]");

@@ -539,19 +539,54 @@ demo mode: nothing in `src/` knows about it.
   read per version, so an update every PC had over a week ago is not
   compared by itself. An app whose every listed PC failed, as
   Trellix ENS on live, is held only where it failed: no crash or hang
-  share (`only`). The page ("Application health by version",
-  `renderSwVersions`, `swVersionBlock`, `swFound`, `swCell`): a switch
-  between the kinds of PC (`swKind`), applications with a ▲ open and
-  the rest folded, each ▲ with "Why ▲" and "Next:" ("before more PCs
-  get it" only when it is not the version most have, `swMostHave`;
-  a version raised against another says "Its update:" when the panel
-  shows its own before and after, `swOwnUpdate`: on stage Outlook's
-  flag and the table under it said two things), plain bars with
-  share and count, "Explain ▸" beside each comparison (`swExplain`:
-  our own walk-through from the numbers; its question box goes to
-  `/api/explain` with the walk-through as the lines; terms from
-  `explain.VERSION_TERMS`), "i" beside the title (`swHow`). The PCs
-  behind a click: `pcs_with_problem(kind=)`, `pcs_after_update`.
+  share (`only`). The same PCs decide (the user, Nov 22 2026, on
+  photos of stage: "Am I seeing discrepancies here? Look at the
+  headline panels and comparison below", then "Fix the discrepancies
+  ... GET RID OF THE HEADLINE", "Add percentage to tables", "Move
+  version by version on top of before and after", "DO FULL CODES
+  REVIEW FOR GAPS, DISCREPANCIES ON SOFTWARE and OTHER"; a version was
+  raised for stopping to respond on 1,291 of 2,475 desktops against 27
+  of 165 on another, while the 53 that went from one to the other had
+  it on 7 with the first and on 9 with the second): a version that
+  passes `_check` against another version is raised only when the PCs
+  that ran both do not say otherwise (`same_pcs`, `_both`: the PCs of
+  the changes of version between the two, either way, added up;
+  `decides` when `MIN_PROBLEM` of them had it on one of the two; then
+  no more of them with it on this version = verdict "same", not
+  raised; else raised with `same` kept on the verdict and the flag,
+  said by `flag_text`). The changes of version a verdict rests on are
+  always among the `updates` the page gets. `ref_most` False (on the
+  kind and the flag): a version new this week is on more PCs than the
+  yardstick, which is then not called "the version most have". The
+  page ("Application health by version", `renderSwVersions`,
+  `swVersionBlock`, `swCell`): a switch between the kinds of PC
+  (`swKind`; its "N ▲" counts a version once per problem, as the red
+  flags list), applications with a ▲ open and the rest folded. No
+  headline box over an application (it said the tables' numbers a
+  second time and could name a table that said the opposite; do not
+  add one back): "Version by version" first, then "Before and after
+  the update", each saying the days it counts; the ▲ is on its count
+  with what it is against, the PCs that ran both (`swBothSaid`; not
+  raised: `swSameNot`) and "Show the N PCs ▸"; plain bars with share
+  and count, full at the column's highest share or at `SW_BAR_FULL`
+  (10%) when every share is lower; "Table ▾" is the kind of PC on
+  screen with a percentage beside each count (`swNP`, every `swTable`
+  of the tab); "Explain ▸" beside each comparison (`swExplain`: our
+  own walk-through from the numbers, why it is raised or not and what
+  to do next; its question box goes to `/api/explain` with the
+  walk-through as the lines; terms from `explain.VERSION_TERMS`), "i"
+  beside the title (`swHow`). The PCs behind a click:
+  `pcs_with_problem(kind=)`, `pcs_after_update(was=)` (the change of
+  version clicked only); the list says when it counts other than the
+  tab's read did (`expect`). Compare versions and its "Before and
+  after an update" count as the tables do: `compare(kind=)` on the
+  kind of PC on screen, `before_after(kind=)` by `_updates` (PCs, as
+  many days after as before; it was PC-days, all PCs together), both
+  said to be read now (`swReadNow`); the chat's two look-ups say all
+  PCs are together. One word for one thing: `KIND["hang"]` is "Stops
+  responding more". A check for it: every count of every tab against
+  the list or panel that should match it, on dev (118 comparisons,
+  Nov 22 2026; the script is not in the repo).
   Then behind (older than the version most PCs have, decision
   2; PC by PC when read so), 2+ versions, one user, Windows updates on
   more than `WIN_MOST` of a version's PCs (and what the PCs without one
@@ -599,8 +634,9 @@ demo mode: nothing in `src/` knows about it.
   serial number on disk. "Needs a look" (`LINES`, `_judged`; each line
   n of the PCs it is counted among, a count with its share on the
   page: the user's "both"): an agent older than the version most PCs
-  have, BitLocker off on a physical PC (`is_virtual`: Aternity's kind
-  of device has `INVENTORY_WORDS["virtual"]`), not used, no restart in
+  have, not used (said virtual desktop or physical PC, `is_virtual`:
+  Aternity's kind of device has `INVENTORY_WORDS["virtual"]`), no
+  restart in
   over `RESTART_DAYS` (from `BOOT_LAST_TIMESTAMP`; a PC with none is
   not judged), not heard from in `SILENT_DAYS`, agent stopped
   (`INVENTORY_WORDS["stopped"]`), stability index under
@@ -611,14 +647,18 @@ demo mode: nothing in `src/` knows about it.
   failed, is `unknown` ("not judged"), never 0. `line_pcs`, `find`
   (name, last user, serial number), `card` answer from the read held;
   only `/api/inventory/software` reads Aternity at the click
-  (`software.pc_list`). Retired PCs are the Software tab's own count
-  and names (`retired_pcs` in web.py: `list.left_out`,
-  `Software.gone`). No AD on it: the main page has no login and AD
+  (`software.pc_list`). BitLocker is not on the tab (the user, Nov 22
+  2026: "remove bitlocker"; 'Off' on 5,074 of 5,194 PCs on stage, the
+  line held 755 of 886 physical PCs): no line, not on the card, the
+  column is out of `INVENTORY_FILLED`, so verify --inventory --columns
+  does not list it either; do not add it back. Retired PCs are the
+  Software tab's own count and names (`retired_pcs` in web.py:
+  `list.left_out`, `Software.gone`). No AD on it: the main page has no login and AD
   look-ups there stay with the Care list; the card shows Aternity's
   own last user and department. Page: `dv*` functions and `dvBox` in
   index.html (the tab's key is `dv`: `inv` is Investigate). Not built:
   step 2 (the hardware charts with a virtual / physical switch), Ask
-  anything's look-ups, a drawing for the tab.
+  anything's look-ups. Its drawing: docs/diagrams/07.
   Desktop usage, on the first panel under the tiles (the user, Nov 22
   2026: "Looking for daily/monthly usage, mockups with bar and line
   charts mixed", "Add percentage of usage", "Your recommendations",
@@ -1375,6 +1415,18 @@ demo mode: nothing in `src/` knows about it.
   before the copy (a scripted Chrome on dev: click, reload, PC set to
   dark, every tab, both dialogs, the admin page, four widths, the
   console).
+- The logic drawings (`docs/diagrams`, one per tab and one for what
+  every tab shares: 01 Today, 02 Care list, 03 Investigate, 04
+  Start-ups, 05 Software, 06 Admin page, 07 Inventory, 08 Ask anything,
+  Explain and the top bar; the user, Nov 22 2026: "Update logic
+  diagrams and add missing if needed") are written by
+  `docs/diagrams/make_diagrams.py` from the code's own constants, each
+  as `.drawio` + `.png` + `.pdf`. After a rule changes: change its
+  sentence there, run it, export every `.drawio` that `git status`
+  shows changed (the command is in the script's header: on the dev host
+  draw.io needs `--shm-size=1g --security-opt seccomp=unconfined -e
+  HOME=/tmp`, else "Illegal instruction"), and look at each PNG before
+  the user does. No host, PC or user names in them.
 - The web UI has no authentication. Don't add features that assume it does.
   Only `/admin` has a login (its own password; the main page stays open).
 - Keep secrets out of `config.yaml` (it is gitignored). Pass them as env vars.

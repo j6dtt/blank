@@ -943,7 +943,6 @@ class Sample:
                          "OS_FREE_DISK_SPACE": ("5 GB to 10 GB" if pc["n"] % 13 == 0 else "10 GB to 20 GB" if pc["virtual"]
                                                 else "200 GB to 500 GB"),
                          "BOOT_LAST_TIMESTAMP": _at(self.today - timedelta(days=pc["n"] % 12 + (9 if pc["n"] % 7 == 0 else 0)), 7),
-                         "OS_BITLOCKER_PROTECTION_STATUS": "On" if not pc["virtual"] and pc["n"] % 4 else "Off",
                          "AGENT_VERSION": "12.9.1.31" if pc["n"] % 6 == 0 else "12.9.1.40",
                          "AGENT_CURRENT_STATUS": ("Stopped" if pc["n"] % 23 == 0 else "Disconnected" if pc["n"] % 11 == 0
                                                   else "Reporting"),

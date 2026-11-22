@@ -768,6 +768,11 @@ def test_verify_says_which_red_flags_the_rule_before_raised_and_the_rule_now_doe
         # raised by both, and a version new this week raised by its update only
         app("Chat", [("1", 200, 2), ("2", 60, 12), ("3", 30, 2)],
             {"physical": ([("1", 200, 2), ("2", 60, 12), ("3", 30, 2, True)], [up])}),
+        # worse than its other version on different PCs, but not on the 53 PCs that ran both (7 with it, 9 with
+        # the other): raised before, not now (the user, Nov 22 2026: "Am I seeing discrepancies here?")
+        app("Sheets", [("1", 2475, 600), ("2", 165, 5)], {"virtual": ([("1", 2475, 600), ("2", 165, 5)], [
+            {"from": "1", "to": "2", "pcs": 53, "both": 0, "first": "2026-11-12", "last": "2026-11-20",
+             "before": {"crash": 7, "hang": 0}, "after": {"crash": 9, "hang": 0}}])}),
     ]
     assert flags_by_rule(str(tmp_path))[0].message.startswith("The tab's saved reads are not here")
     (tmp_path / "software").mkdir()
@@ -777,18 +782,21 @@ def test_verify_says_which_red_flags_the_rule_before_raised_and_the_rule_now_doe
     check = flags_by_rule(str(tmp_path))[0]
     assert check.system == "Software tab" and check.ok is None
     assert check.message == (
-        "The tab's saved read of 2026-11-21, 4 applications, judged twice (no Aternity read). The rule before (each "
-        "version against its other versions added together, all PCs mixed) raises 5 versions. The rule now raises "
-        "3, counted per kind of PC as on the tab. 2 of the 5 are raised by both.")
+        "The tab's saved read of 2026-11-21, 5 applications, judged twice (no Aternity read). The rule before (each "
+        "version against its other versions added together, all PCs mixed) raises 6 versions. The rule now raises "
+        "3, counted per kind of PC as on the tab. 2 of the 6 are raised by both.")
     assert check.rows == [
-        "3 raised before, not now:",
+        "4 raised before, not now:",
         "  1: more of it on the other side would undo it (2 more PCs, or 5 more actions rated Major)",
         "  1: 2 times its other versions added together, but not 2 times the one version it is compared with now",
+        "  1: the PCs that ran both versions do not show it (the same PCs, the same number of days on each)",
         "  1: under 20 PCs, or under 5 with the problem, once virtual desktops and physical PCs are apart",
         "  Word 1, crashes: 1.1% (19 of 1,738) against 0.4% (2 of 515) on its other versions together. Now on "
         "physical PCs: more on the other side would undo it.",
         "  Mail 2, crashes: 10% (10 of 100) against 3% (24 of 790) on its other versions together. Now on virtual "
         "desktops: not 2 times the version it is compared with.",
+        "  Sheets 1, crashes: 24% (600 of 2,475) against 3% (5 of 165) on its other versions together. Now on virtual "
+        "desktops: the PCs that ran both versions do not show it.",
         "  Notes 2, crashes: 20% (6 of 30) against 1% (3 of 300) on its other versions together. Now on virtual "
         "desktops: too few PCs there.",
         "1 raised now, not before: 1 after an update (the rule before had no before and after).",
@@ -904,7 +912,7 @@ def test_verify_inventory_says_which_device_columns_are_filled_and_with_what():
     text = render_checks(checks)
     flat = " ".join(text.split())
     assert not any(w in text for w in ("HOST-", "SN-", "user1", "Site 1"))  # no PC, serial, user or site
-    assert "Aternity's device list: 10 PCs (11 rows in 0.0 s). Of what an Inventory tab could show, 23 columns" in flat
+    assert "Aternity's device list: 10 PCs (11 rows in 0.0 s). Of what an Inventory tab could show, 22 columns" in flat
     for line in (
         "What the PC is: · Manufacturer: filled on 10 of 10 PCs; always 'Maker'.",
         "Model: filled on 10 of 10 PCs; 2 different; most common: 'Model A' on 6, 'Model B' on 4.",
@@ -914,12 +922,12 @@ def test_verify_inventory_says_which_device_columns_are_filled_and_with_what():
         "Size: filled on 10 of 10 PCs; numbers from 100 to 190, the middle one 145 (as sent, for example '100').",
         "Free space: filled on 9 of 10 PCs; numbers from 5.5 to 45.5, the middle one 25.5 (as sent, for example",
         f"Last start-up: filled on 10 of 10 PCs; from {day(now - timedelta(days=9))} to {day(now)}.",
-        "BitLocker: filled on 10 of 10 PCs; 2 different; most common: 'Off' on 5, 'On' on 5.",
         "Location: filled on 10 of 10 PCs; 3 different (not listed here).",
         "Last user: filled on 10 of 10 PCs; 10 different (not listed here).",
         "Empty on every PC: Health status, Health score, Microsoft stability index.",
     ):
         assert line in flat, line
+    assert "BitLocker" not in text  # sent by this Aternity, no longer asked for (the user, Nov 22 2026)
 
 
 def test_verify_actions_says_which_applications_have_measured_actions():
