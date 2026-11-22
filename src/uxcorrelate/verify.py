@@ -35,6 +35,7 @@ from .config import (ACTION_COLUMNS, DISK_CATEGORIES, DISK_FREE_COLUMNS, DISK_PA
 from .after_start import AFTER_START_MIN  # "right after a start-up", as investigations
 from .correlate import slow_rule
 from .http import ApiError, short_error
+from .inventory import daily_day, daily_span, local_midnight
 from .models import clock, day, failing_disk, local, local_date, parse_time, part_label, to_float
 from .netim import NetimClient, _items
 
@@ -2387,22 +2388,23 @@ USE_ITEMS = ("1. How far back daily app usage goes", "2. PCs in use, day by day"
              "4. PCs used at least once in a month")
 
 
+def _zone():
+    return local(datetime.now(timezone.utc)).tzinfo
+
+
 def _local_midnight(d) -> datetime:
     """The midnight that starts local day d (config.yaml's timezone), in UTC."""
-    return datetime(d.year, d.month, d.day, tzinfo=local(datetime.now(timezone.utc)).tzinfo).astimezone(timezone.utc)
+    return local_midnight(d, _zone())
 
 
 def _daily_span(first, after) -> tuple[datetime, datetime]:
-    """The span to ask Aternity's daily rows of local days `first` up to the day before `after`.
-    A daily row carries one time a day, at an hour that is Aternity's own, so a day is asked for
-    from 12 hours before its local midnight and a row is of the day its time + 12 hours falls
-    on (`_daily_day`; SecureView reads the same kind of rows so)."""
-    return _local_midnight(first) - timedelta(hours=12), _local_midnight(after) - timedelta(hours=12)
+    """The span to ask Aternity's daily rows of local days `first` up to the day before `after`
+    (`inventory.daily_span`: the Inventory tab's usage charts read by the same rule)."""
+    return daily_span(first, after, _zone())
 
 
 def _daily_day(value):
-    t = parse_time(value)
-    return local_date(t + timedelta(hours=12)) if t else None
+    return daily_day(value, _zone())
 
 
 def verify_usage(settings: Settings, client: AternityClient, now: datetime | None = None) -> list[Check]:
@@ -2520,13 +2522,23 @@ def _usage(settings: Settings, client: AternityClient, schema: dict[str, set[str
         named = [r for r in mine if U and not empty(r.get(U))]
         per[d] = {"by": by, "rows": len(mine), "named": len(named), "people": {name_of(r.get(U)) for r in named},
                   "secs": secs, "stamps": list(dict.fromkeys(str(r.get(T)) for r in mine))}
-    read = [d for d in days if "error" not in per[d]]
+    answered = [d for d in days if "error" not in per[d]]
+    read = [d for d in answered if per[d]["rows"]]  # a day Aternity has no rows for is not "0 in use"
     whole = [d for d in read if d != today]  # today is not over: left out of "typical" and "busiest"
+
+    def day_said(d) -> str:
+        if "error" in per[d]:
+            return f"could not be read ({per[d]['error']})"
+        if not per[d]["rows"]:
+            return "no rows from Aternity" + (" yet: today is not over" if d == today else "")
+        return cells({c: len(per[d]["by"][c]) for c in cols}) + ("  so far" if d == today else "")
+
     lines = ["Kinds, in this order: " + " | ".join(f"{c} ({of[c]:,}{' in the list' if i == 0 else ''})"
                                                     for i, c in enumerate(cols))]
-    for d in days:
-        lines.append(f"{d:%a %b %d}  could not be read ({per[d]['error']})" if "error" in per[d] else
-                     f"{d:%a %b %d}  " + cells({c: len(per[d]["by"][c]) for c in cols}) + ("  so far" if d == today else ""))
+    lines += [f"{d:%a %b %d}  {day_said(d)}" for d in days]
+    if today in answered and not per[today]["rows"]:
+        lines.append("Aternity has no row of daily app usage for today: it adds a day after the day is over, so a chart "
+                     "of it ends with yesterday.")
     for c in cols:
         if not of[c] or not read:
             continue
@@ -2548,12 +2560,12 @@ def _usage(settings: Settings, client: AternityClient, schema: dict[str, set[str
                       "most likely): they are left out.") if len(gone) != 1 else
                      "1 PC with app usage in these days is not in the device list (retired or renamed, most likely): "
                      "it is left out.")
-    rows_read, secs_read = sum(per[d]["rows"] for d in read), sum(per[d]["secs"] for d in read)
+    rows_read, secs_read = sum(per[d]["rows"] for d in answered), sum(per[d]["secs"] for d in answered)
     check2 = Check("Aternity", item2, None,
                    f"In use on a day: an application ran on the PC (daily app usage, {E}), each PC once. Only the "
                    f"{len(kinds):,} PCs in Aternity's device list are counted, by its kind of device; a share is of that "
                    f"kind's PCs in the list. The last {USE_DAYS} days were read a day at a time: {rows_read:,} rows in "
-                   f"{secs_read:.1f} s" + (f" (the slowest day {max(per[d]['secs'] for d in read):.1f} s)" if read else "")
+                   f"{secs_read:.1f} s" + (f" (the slowest day {max(per[d]['secs'] for d in answered):.1f} s)" if answered else "")
                    + ". Typical = the middle value; working days are Monday to Friday.", rows=lines + list_cut + cut)
 
     # 3. people
@@ -2605,8 +2617,10 @@ def _usage(settings: Settings, client: AternityClient, schema: dict[str, set[str
         names = {name_of(r.get(D)) for r in rows if not empty(r.get(D))}
         by, _ = by_kind(names)
         mrows, mread, per_pc = mrows + len(rows), mread + 1, per_pc and len(rows) == len(names)
-        mlines.append(f"{label}:  " + cells({c: len(by[c]) for c in cols}))
+        mlines.append((label, cells({c: len(by[c]) for c in cols})))
         mlines += [f"{label}: {c}" for c in cut4]
+    wide = max((len(x[0]) for x in mlines if isinstance(x, tuple)), default=0) + 1  # the counts under each other
+    mlines = [f"{x[0] + ':':<{wide}}  {x[1]}" if isinstance(x, tuple) else x for x in mlines]
     if first and first <= this:
         mlines.append("This month is kept whole: its count can come from Aternity itself, with no PC name kept by the tab.")
     elif first:

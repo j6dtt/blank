@@ -191,7 +191,8 @@ def create_app(config_path: str | None = None) -> FastAPI:
     care = app.state.care = Care(today, lambda: load_settings(config_path).care_list,
                                  os.environ.get("UXCORRELATE_DATA") or None, names)
     software = app.state.software = Software(zone, os.environ.get("UXCORRELATE_DATA") or None)
-    inventory = app.state.inventory = Inventory(zone)  # the Inventory tab: Aternity's device list, in memory only
+    # the Inventory tab: Aternity's device list, in memory only; the usage charts' counts per day and month on disk
+    inventory = app.state.inventory = Inventory(zone, os.environ.get("UXCORRELATE_DATA") or None)
     status = app.state.status = Status()  # the connection lights in the top bar
     # the admin page's counts: each use, and every call to Riverbed and the AI services (http.METER)
     usage = app.state.usage = Usage(today, os.environ.get("UXCORRELATE_DATA") or None)

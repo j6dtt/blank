@@ -270,7 +270,7 @@ GLOSSARY: dict[str, dict[str, str]] = {
     },
     "inventory": {
         "Inventory tab": f"Every PC in Aternity's device list, read every {inventory.READ_EVERY_MIN} minutes. The "
-                         "lists and the cards answer from that read; nothing is saved.",
+                         "lists and the cards answer from that read; only the usage charts' counts are saved.",
         "PCs in Aternity's device list": "A PC is in the list while Aternity's agent on it reports. Aternity seems "
                                          "to take a PC off the list about a month after it last heard from it.",
         "virtual desktop": "A PC whose kind of device, as Aternity gives it, says virtual. Every other kind (a "
@@ -281,6 +281,27 @@ GLOSSARY: dict[str, dict[str, str]] = {
                                  "the PC is gone.",
         "retired": "A PC with installed software in Aternity that is no longer in its device list. Nothing else is "
                    "known of it, and the Software tab leaves it out of every count.",
+        "Desktop usage": f"The PCs an application ran on, against the PCs in Aternity's device list: each of the "
+                         f"last {inventory.CHART_DAYS} finished days, and each month (up to "
+                         f"{inventory.CHART_MONTHS}). A switch shows all PCs or one kind of device, as Aternity "
+                         "names it. Counts per kind are kept by the tab; no PC or user name is.",
+        "in use": "An application ran on the PC that day, by Aternity's daily app usage. Each PC is counted once. "
+                  "Only PCs in Aternity's device list are counted; a PC with app usage that is not in the list is "
+                  "left out, and how many is said on each bar.",
+        "In Aternity's list = 100%": "The PCs of that kind in Aternity's device list on that day or month. Every "
+                                     "percentage is PCs in use out of these. Before the tab kept counts, the list "
+                                     "of its first day is used.",
+        "last bar is yesterday": "Aternity has no rows of daily app usage for today: it adds a day once the day "
+                                 f"is over. A day is read again until it is {inventory.SETTLE_DAYS} days old, in "
+                                 "case its rows come late, then kept as it is.",
+        "typical working day": "The middle value of the PCs in use on the Monday to Friday days shown: half of "
+                               "those days had this many or more. A public holiday is one of them.",
+        "typical weekend day": "The middle value of the PCs in use on the Saturdays and Sundays shown.",
+        "busiest day": "The day with the most PCs in use: of the days shown, or of a month on the monthly chart.",
+        "used at least once": "PCs an application ran on, on at least one day of the month, each PC once. Aternity "
+                              "adds the month up itself while it keeps all its days; once a month is over the "
+                              "tab keeps its count.",
+        "so far": "The month is not over: its count covers its finished days, up to yesterday.",
         "Needs a look": "One line per kind of thing to check, the most PCs first. A click lists the PCs. Each "
                         "count has its share of the PCs it is counted among, which the line names (\"of N\").",
         inventory.LINES["agent"]: "The PC's Aternity agent is an older version than the one most PCs have.",

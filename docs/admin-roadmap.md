@@ -373,3 +373,11 @@ by the hour. Stage copy: `config.py`, `secureview.py`,
     the app'. What's next?" Proposed: AD on the Care list.
 15. User: "Let's hold AD integration for now." On hold; the
     admin page's names stay.
+16. User (2026-11-22): "Build A and admin too" (the main page's
+    Parchment | Dark switch; docs/roadmap.md has the request and
+    the three looks mocked). Built on dev: the same switch at the
+    right of the admin page's bar, also on the log-in screen, kept
+    under the main page's name so both agree when opened under one
+    address. Its dark colours are the main page's; SecureView's
+    own four (weekend bars, the usual's band, open rows, groups
+    that are not a department) keep their dark values.

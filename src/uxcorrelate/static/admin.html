@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>Admin</title>
+<script>(() => { try { const t = localStorage.getItem("uxTheme"); if (t === "dark" || t === "light") document.documentElement.dataset.theme = t; } catch (e) { /* no storage: the PC's own setting decides */ } })();</script>
 <style>
   /* The admin page (docs/admin-roadmap.md): the main app's look (parchment, archive green, brass) */
   :root {
@@ -14,11 +15,25 @@
     --serif: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
     --accent2: #93b8a0; --band: #e6d9bb; --faint: #f6f0e2;  /* SecureView: weekend bars, the usual's band, open rows */
     --grey: #c9bfa8;  /* SecureView: the groups that are not a department */
+    --on: #fff;  /* text on a filled button */
+    color-scheme: light;
   }
+  /* Dark ("Night archive", the main page's: keep in step with index.html): when the switch in the top bar says
+     Dark (data-theme on <html>, kept in this browser under the main page's key), or the PC is set to dark and
+     nobody has picked here. The same values twice: CSS cannot share them between the two rules. */
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #15140f; --panel: #1e1c16; --text: #ece3cf; --muted: #a99f88; --border: #363228;
-            --accent: #4e8a69; --head: #10231a; --head-muted: #b3a682; --brass: #c9a55a; color-scheme: dark;
-            --accent2: #35604a; --band: #3a3529; --faint: #25221b; --grey: #4a4537; }
+    :root:not([data-theme="light"]) {
+      --bg: #15140f; --panel: #1e1c16; --text: #ece3cf; --muted: #a99f88; --border: #363228;
+      --accent: #63a67f; --bad: #e5746a; --warn: #e3a548; --ok: #7cc492;
+      --head: #10231a; --head-muted: #b3a682; --brass: #c9a55a; --on: #14110b; color-scheme: dark;
+      --accent2: #35604a; --band: #3a3529; --faint: #25221b; --grey: #4a4537;
+    }
+  }
+  :root[data-theme="dark"] {
+      --bg: #15140f; --panel: #1e1c16; --text: #ece3cf; --muted: #a99f88; --border: #363228;
+      --accent: #63a67f; --bad: #e5746a; --warn: #e3a548; --ok: #7cc492;
+      --head: #10231a; --head-muted: #b3a682; --brass: #c9a55a; --on: #14110b; color-scheme: dark;
+      --accent2: #35604a; --band: #3a3529; --faint: #25221b; --grey: #4a4537;
   }
   * { box-sizing: border-box; }
   html { scrollbar-gutter: stable; }  /* a short tab and a long one are as wide: the bar wraps the same on both */
@@ -47,6 +62,12 @@
   .tag { font: 600 12px/18px var(--serif); letter-spacing: .12em; text-transform: uppercase; color: var(--head); background: var(--brass);
          border-radius: 4px; padding: 1px 8px; }
   #bar { margin-left: auto; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  /* Parchment | Dark, as the main page's: at the right of the bar, also on the log-in screen */
+  .themeSeg { display: inline-flex; flex: none; margin-left: auto; border: 1px solid var(--brass); border-radius: 999px; overflow: hidden; }
+  #bar:not([hidden]) + .themeSeg { margin-left: 0; }
+  .themeSeg button { background: none; border: 0; border-radius: 0; padding: 4px 11px; font: 600 12px system-ui, sans-serif; color: var(--head-muted); }
+  .themeSeg button:hover, .themeSeg button:focus-visible { color: var(--head-text); }
+  .themeSeg button.on, .themeSeg button.on:hover { background: var(--brass); color: #1b1a14; }
   #bar[hidden], #page[hidden] { display: none; }  /* a CSS display wins over hidden without its own rule */
   #page { display: contents; }
   #bar select { padding: 5px 8px; border-radius: 6px; border: 1px solid var(--brass); background: var(--head); color: var(--head-text); font: inherit; }
@@ -60,7 +81,7 @@
   h2 { font: 600 17px var(--serif); margin: 0 0 10px; color: var(--accent); }
   h3 { font: 600 14px var(--serif); margin: 14px 0 6px; }
   h3:first-child { margin-top: 0; }
-  button { padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  button { padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent); color: var(--on); font: inherit; font-weight: 600; cursor: pointer; }
   button:disabled { opacity: .6; cursor: wait; }
   input { padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -192,7 +213,8 @@
     <span id="statsBar"><label class="small">Day <select id="day" aria-label="Day"></select></label>
     <span class="small" id="asOf" style="color: var(--head-muted)"></span></span>
     <button id="out">Log out</button>
-  </div></div>
+  </div>
+  <span class="themeSeg" id="themeSeg" role="group" aria-label="Look of the page"><button type="button" data-theme-pick="light">Parchment</button><button type="button" data-theme-pick="dark">Dark</button></span></div>
   <nav id="tabs" role="tablist" hidden><button id="tabStats" role="tab" data-t="stats">Statistics</button><button id="tabSv" role="tab" data-t="sv">SecureView</button><button id="tabAct" role="tab" data-t="act">Actions</button></nav>
 </header>
 <main id="main">
@@ -209,6 +231,30 @@
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
+// ---- The look: Parchment or Dark, as on the main page and under its key, so both pages agree. A click sets
+// data-theme on <html> and keeps it in this browser; until someone picks, the PC's own setting decides. ----
+const THEME_KEY = "uxTheme", themeDark = matchMedia("(prefers-color-scheme: dark)");
+const themeNow = () => document.documentElement.dataset.theme || (themeDark.matches ? "dark" : "light");
+function drawTheme() {
+  for (const b of $("themeSeg").children) {
+    const on = b.dataset.themePick === themeNow();
+    b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on));
+  }
+}
+$("themeSeg").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-theme-pick]");
+  if (!b) return;
+  document.documentElement.dataset.theme = b.dataset.themePick;
+  try { localStorage.setItem(THEME_KEY, b.dataset.themePick); } catch (e) { /* no storage: kept until the page is closed */ }
+  drawTheme();
+});
+themeDark.addEventListener("change", drawTheme);
+window.addEventListener("storage", (ev) => {  // picked on the main page, or in another window
+  if (ev.key !== THEME_KEY || (ev.newValue !== "dark" && ev.newValue !== "light")) return;
+  document.documentElement.dataset.theme = ev.newValue;
+  drawTheme();
+});
+drawTheme();
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmt = n => Number(n || 0).toLocaleString("en-US");
 const plural = (n, one, many) => `${fmt(n)} ${n === 1 ? one : (many || one + "s")}`;

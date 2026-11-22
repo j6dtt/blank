@@ -130,6 +130,16 @@ Other users of these apps:
 
 ## The web page
 
+The look: a switch at the right of the top bar, **Parchment | Dark**.
+Parchment is the page's own look; Dark is the same page on a warm
+near-black. A click changes every tab at once and the browser remembers
+it (the admin page has the same switch and follows the same choice when
+both are opened under one address). Until someone picks on a browser, the
+page follows the PC's own light or dark setting. The choice is the
+browser's, not the person's: the main page has no login. When the page is
+scrolled down, the slim bar keeps the tabs and the lights; the switch is
+at the top of the page.
+
 Today tab (opens first): what Aternity itself rated today, from midnight
 in `timezone` (config.yaml). Tiles for crashes and events Aternity rates
 Critical or Major and for its Major slow actions, each against the same
@@ -441,9 +451,31 @@ Each chart has "Table ▾" with its numbers. Counts and names are saved in
 Inventory tab (sixth; link `#inventory`): the PCs in Aternity's device
 list. It is read every hour (about 1.4 s for 5,211 PCs), with one more
 light read of which PCs ran an application in 8 days, and held in memory:
-nothing of it is saved, and every list and card answers from that read.
+every list and card answers from that read. Only the usage charts'
+counts are saved (`data/inventory/usage.json`: counts per kind of
+device, no PC or user name).
 - **Tiles**: PCs in the list by Aternity's kind of device, heard from in
   the last 7 days, retired (the Software tab's count), things to look at.
+- **Desktop usage**, on the same first panel: the PCs an application ran
+  on, as bars, against the PCs in Aternity's list, as a line (= 100%).
+  Left, each of the last 30 finished days, with percent marks at the
+  right; right, each month ("used at least once", its percentage over
+  the bar, the busiest day of the month as a second line), up to 12
+  months. A switch shows all PCs or one kind of device, as Aternity
+  names it; it opens on virtual desktops. Four figures under the
+  charts: a typical working day and a typical weekend day (the middle
+  value of the days shown), the busiest day, this month so far. Point
+  at a bar for its counts.
+  - Aternity has no rows for today until the day is over, so the last
+    bar is yesterday. A day is read again each hour until it is 2 days
+    old, then kept. A day with no rows is a gap, never 0.
+  - Aternity keeps about 92 days of daily app usage. At its first read
+    the tab reads every day it keeps (about 90 small reads, once) and
+    the whole months among them; from then on it keeps each day and
+    month itself, so the monthly chart grows to 12.
+  - Only PCs in the device list are counted; how many more had app
+    usage is on each bar. Days and months from before the tab's first
+    read are set against the list of that day.
 - **Needs a look**, most PCs first, each count with its share of the PCs
   it is counted among: an older Aternity agent than most, BitLocker off
   on a physical PC, not used in 8 days, not restarted in over 14 days,
@@ -466,7 +498,8 @@ anything's look-ups are not built yet.
 ## The admin page
 
 Who uses the app and how, at `/admin`. No link from the main page: you
-need the address and the password.
+need the address and the password. It has the main page's **Parchment |
+Dark** switch at the right of its top bar, also on the log-in screen.
 
 How it works: the main page tells the app each tab opened (at load and at
 each switch). The app keeps each use with the caller's address and time.
@@ -982,15 +1015,16 @@ back to dev.
   applications in use with no measured action. Two reads added up by
   Aternity. Application and activity names only.
 - **PCs in use, per day and per month** (`verify --usage`, only on its
-  own): what usage charts on the Inventory tab would show, before they
-  are built. 1. How far back Aternity keeps daily app usage. 2. For
+  own): what the Inventory tab's usage charts rest on, read the same
+  way. 1. How far back Aternity keeps daily app usage. 2. For
   each of the last 14 days, the PCs an application ran on, by
   Aternity's kind of device, each with its share of that kind's PCs in
   the device list; a typical working day, the busiest day, a typical
   weekend day. 3. Whether Aternity fills the username there, and people
   a day. 4. The PCs used at least once in this month and the three
   before, as far as Aternity keeps them. About 20 small reads. Counts
-  only: no PC or user names.
+  only: no PC or user names. A day Aternity has no rows for (today, on
+  the live one) says so; it is not "0 in use".
 - **PCs that are gone** (`verify --inventory`, only on its own): three
   answers in plain sentences, no PC names. 1. Aternity's device list:
   how many PCs it heard from today, 1 to 7, 8 to 30 and 31+ days ago,

@@ -407,6 +407,168 @@ data, then its daily data with the people and desktops. See
       the three before read one read each (the monthly chart's
       numbers), saying whether a month's count can come from
       Aternity itself.
+    - **Stage run of `verify --usage` (dfed07a, photos of
+      2026-11-21, a Saturday evening): the check works; what it
+      says.**
+      - Kept: back to Aug 21, 92 days, so 2 whole months before
+        this one (September, October). 12 months cannot be filled
+        from Aternity: the tab has to keep each month itself.
+      - A day's rows carry one time: local midnight, sent with its
+        UTC offset. The 12-hour rule puts them on the right day
+        (the weekend lows fall on Saturday and Sunday, and on
+        Wednesday Nov 11, a public holiday).
+      - **Today has no rows** (0 for every kind at the evening):
+        Aternity adds a day after it is over. A chart of it ends
+        with yesterday. Gap in the check: it printed
+        "0 0% so far", which reads as nobody in use.
+      - The list: 5,211 PCs (4,326 Virtual Desktop, 720 Desktop,
+        165 Laptop). 197 PCs with app usage in the 14 days are not
+        in it and are left out.
+      - Virtual desktops: a typical working day 2,270 of 4,326
+        (52%); the busiest day Thu Nov 19 with 2,370 (55%); a
+        typical weekend day 445 (10%); on at least one of the 14
+        days 2,992 (69%).
+      - Desktops: 503 of 720 (70%); busiest 527 (73%); weekend 248
+        (34%); 687 (95%) in the 14 days. Laptops: 72 of 165 (44%);
+        busiest 113 (68%); weekend 37 (22%); 155 (94%).
+      - People: the username is filled on all 33,788 rows; 2,969
+        people on a typical working day, 4,282 different people in
+        the 14 days. A people line (step 4) is possible.
+      - Months, used at least once (virtual desktops | desktops |
+        laptops): November so far 3,426 (79%) | 696 (97%) | 157
+        (95%); October 3,047 (70%) | 686 (95%) | 137 (83%);
+        September 2,560 (59%) | 661 (92%) | 139 (84%); August from
+        Aug 21 only. One read a month, a row per PC: a month's
+        count comes from Aternity itself, no PC name kept. Not
+        known from it: how many of an earlier month's PCs have left
+        the list since (only PCs in today's list are counted, so
+        September may read lower than it was).
+      - Load: 14 days 33,788 rows in 5.2 s (with the username;
+        the slowest day 0.5 s); 4 months 17,677 rows in 2.0 s.
+    - **Steps 2 and 3 built on dev (2026-11-22): the daily and the
+      monthly chart, design E, on the Inventory tab's first panel
+      under the tiles** ("Desktop usage"; 431 tests; looked at in
+      a browser with the dev sample and with stage-sized made-up
+      numbers, 3 and 12 months, light, dark and phone width).
+      - Bars = PCs in use, a line = the PCs in Aternity's list
+        (100%). Left: the last 30 finished days, percent marks at
+        the right. Right: each month, "used at least once", its
+        percentage over the bar, the busiest day of the month as a
+        second line, this month so far lighter. A switch: All and
+        each kind of device as Aternity names it, opening on the
+        virtual one. Four figures: typical working day, busiest
+        day, typical weekend day, this month so far (typical = the
+        middle value of the days shown). A bar's counts on hover.
+      - What the stage run changed against the plan: 1. no bar for
+        today (Aternity has no rows): the last bar is yesterday,
+        and a day is read again each hour until it is 2 days old,
+        in case rows come late (how late they come is not known);
+        a day with no rows is a gap, never 0. 2. The monthly chart
+        starts with the whole months Aternity keeps (September and
+        October on stage) and this month so far; August is not
+        shown (kept from Aug 21 only); it grows to 12 as the tab
+        keeps each month. 3. A month is counted through yesterday,
+        as the days are.
+      - Kept in `data/inventory/usage.json`: per day and per month,
+        the PCs in use and the PCs in the list per kind of device,
+        and how many PCs with usage were not in the list. No PC or
+        user name. Days 400, months 24.
+      - Load: the first read after the copy takes every day
+        Aternity keeps, about 90 small reads once (the PC and the
+        row's time, no username: fewer rows than the check's), and
+        3 month reads; then 3 day reads an hour and a month read
+        when a day moved or once a day.
+      - **"Moving files in and out of stage/prod is very very
+        difficult, make sure codes are correct before asking me to
+        move files to stage/prod. MAKE NOTE" (the user, 2026-11-22,
+        after the copy step; `verify.py` was in it a second time
+        because of the check's gap).** Noted for every copy step.
+        Checked again before the copy, two things changed: 1. a
+        day's read leaned on Aternity cutting a day exactly as
+        asked, which the stage run did not show: now each row is
+        counted by its own time, as the check did on stage (a month
+        is read as the check read it); 2. "this month so far,
+        through …" named yesterday even when its rows were not in
+        yet: now the month's last day with rows. Also done on dev:
+        a first read from an empty folder (the same counts), a real
+        click on the switch and on Explain in a browser, the
+        browser's console (no error), restarts (only the days not
+        settled are read again).
+      - Said on the page: days and months from before the tab's
+        first read are set against the list of that day (a PC that
+        has left the list since is not counted in them); how many
+        PCs with usage are not in the list, on each bar.
+      - The check, fixed with it: a day with no rows is "no rows
+        from Aternity" ("yet: today is not over" for today) and
+        counts for no typical day; the month lines are under each
+        other. Its day rule now lives in `inventory.py`
+        (`daily_span`, `daily_day`): one rule for the check and
+        the tab.
+      - Not built: step 4, the people line (possible: the username
+        is filled); a click on a bar that lists the day's PCs (no
+        PC name is kept: it would be a read of Aternity at the
+        click); the dev sample still gives rows for today, which
+        the charts do not use.
+- **A switch between the current look and a dark one (the user,
+  2026-11-22: "Add dark and current theme switch on page", then
+  "Mockups of dark themes", then "Build A and admin too"). Built on
+  dev, 432 tests.**
+  - Built: "Parchment | Dark" at the right of the lights on the
+    main page and at the right of the admin page's bar (also on its
+    log-in screen). A click changes every tab at once; the browser
+    keeps the choice (one name for both pages, so they agree when
+    opened under one address); until someone picks, the PC's own
+    setting decides, as before. Dark is A, "Night archive".
+  - What had to change for dark to read: text on a filled colour
+    (buttons, the Critical / Major tags, the tab badges, the
+    assessment's band, a light that is down) was white on every
+    look; it is near-black on dark, where those fills are lighter.
+    Three faint tints were black, invisible on dark: they are a mix
+    of the text colour now. The PC / network / server colours of an
+    investigation got lighter values for dark.
+  - Different from the plan: the switch is not in the slim bar that
+    stays when the page is scrolled (with four lights there is no
+    room); it is at the top of the page.
+  - Gap found on the way, fixed: between 641 and about 830 px wide
+    (a tablet, a narrow window) the six tabs were wider than the
+    page, so the whole page scrolled sideways. Now the tabs slide
+    sideways from 860 px down, as on a phone.
+  - Checked in a real browser on dev, scripted: first visit, a click
+    on Dark, a reload, the PC set to dark with nothing picked,
+    Parchment clicked on a dark PC, a pick in another window, the
+    admin page opening in the main page's look and the other way
+    round; every tab in dark (Today, Care list, an investigation,
+    a start-ups report, Software, Inventory), the Explain and
+    Connections dialogs, the admin page's log-in, Statistics,
+    SecureView and Actions; the top bar with four lights and a long
+    title at 1280, 1000, 760 and 420 px; no script error.
+  - Not done: the choice cannot follow a person to another PC (no
+    login on the main page).
+  - Plan given: a switch at the right of the top bar, beside the
+    lights, "Parchment | Dark"; a click changes every tab at once;
+    the browser remembers it (no login on the main page, so it
+    cannot follow a person); until someone clicks, the page follows
+    the PC's own setting as it does today. The page already has a
+    dark palette, shown only when the PC is set to dark. Only
+    `index.html` changes; the admin page is left out unless asked
+    ("admin too": one more file to move). Before any copy step,
+    every tab is looked at in dark in a browser.
+  - Three dark looks mocked on a design canvas (link in the
+    session), the same screen in each: the top bar with the switch,
+    the Inventory tab's first panel with the usage charts, "Needs a
+    look", a Care list tile in alert and one OK, a button, a link, a
+    box to type in. Looked at in a browser first.
+    - A. Night archive: today's dark palette (warm near-black, the
+      dark green top bar), with the green, the alert red and the
+      warning amber lightened so small text reads on it.
+    - B. Archive green: the top bar's green carried through the
+      whole page; the bar is the lighter band; mint bars and links.
+    - C. Ink: a cool blue-black, close to Windows' own dark look;
+      the least of the brand.
+    - My recommendation: A (the brand as it is, the least new to
+      check: its palette is already on the page).
+  - The stage copy of the usage charts can wait for it: the switch
+    lands in `index.html`, which is already in that copy.
   - Different from what was said before the build, each for a
     reason: the lists and the card answer from the hourly read held
     in memory, not from a read at the click (no load on Aternity;

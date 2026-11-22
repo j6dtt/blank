@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>J6 Preservation Society</title>
+<script>(() => { try { const t = localStorage.getItem("uxTheme"); if (t === "dark" || t === "light") document.documentElement.dataset.theme = t; } catch (e) { /* no storage: the PC's own setting decides */ } })();</script>
 <style>
   /* J6 Preservation Society: parchment, archive green, brass. Fonts already on
      Windows (the live host has no internet): serif titles, plain text for reading. */
@@ -12,11 +13,26 @@
     --accent: #2f5d46; --bad: #a8382d; --warn: #b26f12; --ok: #3d7a4f;
     --pc: #7b5ea7; --network: #2f8fa8; --server: #c9822b;
     --head: #1f3b2e; --head-text: #f4ead2; --head-muted: #c8bb98; --brass: #b08d45;
+    --on: #fff;  /* text on a filled button, tag or band */
     --serif: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    color-scheme: light;
   }
+  /* Dark ("Night archive", the user's pick of three mocked, Nov 22 2026): when the switch in the top bar says
+     Dark (data-theme on <html>, kept in this browser), or the PC is set to dark and nobody has picked here. The
+     same values twice: CSS cannot share them between the two rules. Keep both in step, and admin.html's. */
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #15140f; --panel: #1e1c16; --text: #ece3cf; --muted: #a99f88; --border: #363228;
-            --accent: #4e8a69; --head: #10231a; --head-muted: #b3a682; --brass: #c9a55a; }
+    :root:not([data-theme="light"]) {
+      --bg: #15140f; --panel: #1e1c16; --text: #ece3cf; --muted: #a99f88; --border: #363228;
+      --accent: #63a67f; --bad: #e5746a; --warn: #e3a548; --ok: #7cc492;
+      --pc: #a892d6; --network: #5fb6cf; --server: #e0a25c;
+      --head: #10231a; --head-muted: #b3a682; --brass: #c9a55a; --on: #14110b; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+      --bg: #15140f; --panel: #1e1c16; --text: #ece3cf; --muted: #a99f88; --border: #363228;
+      --accent: #63a67f; --bad: #e5746a; --warn: #e3a548; --ok: #7cc492;
+      --pc: #a892d6; --network: #5fb6cf; --server: #e0a25c;
+      --head: #10231a; --head-muted: #b3a682; --brass: #c9a55a; --on: #14110b; color-scheme: dark;
   }
   * { box-sizing: border-box; }
   body { margin: 0; font: 14px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; background: var(--bg); color: var(--text); }
@@ -34,10 +50,10 @@
   form { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; align-items: end; }
   label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
   input { padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
-  button { padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+  button { padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent); color: var(--on); font: inherit; font-weight: 600; cursor: pointer; }
   button:disabled { opacity: .6; cursor: wait; }
   h2 { font: 600 17px var(--serif); margin: 0 0 10px; color: var(--accent); }
-  .pill { padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: #fff; }
+  .pill { padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: var(--on); }
   .num { font-variant-numeric: tabular-nums; white-space: nowrap; }
   tr.click { cursor: pointer; }
   tr.click:hover td { background: var(--bg); }
@@ -86,6 +102,11 @@
   .badge[hidden] { display: none; }
   /* the connection lights, right of the title: one per API and AI model; down flashes red */
   #conn { display: flex; gap: 4px; flex-wrap: wrap; margin-left: auto; }
+  /* Parchment | Dark, at the right of the lights (the user, Nov 22 2026) */
+  .themeSeg { display: inline-flex; flex: none; border: 1px solid var(--brass); border-radius: 999px; overflow: hidden; }
+  .themeSeg button { background: none; border: 0; border-radius: 0; padding: 4px 11px; font: 600 12px system-ui, sans-serif; color: var(--head-muted); }
+  .themeSeg button:hover, .themeSeg button:focus-visible { color: var(--head-text); }
+  .themeSeg button.on, .themeSeg button.on:hover { background: var(--brass); color: #1b1a14; }
   /* scrolled down to the tabs: the bar stays at the top as one slim row (crest, tabs, lights); #headWrap keeps
      its place in the page, so nothing jumps */
   html { scroll-padding-top: 64px; }  /* what is scrolled to is not under the bar */
@@ -96,6 +117,7 @@
   header.pinned .crest { align-self: center; width: 22px; height: 25px; margin-bottom: 3px; }
   header.pinned nav { order: 1; }
   header.pinned #conn { order: 2; align-self: center; margin-bottom: 3px; min-width: 0; justify-content: flex-end; }
+  header.pinned .themeSeg { display: none; }  /* the slim row keeps the tabs and the lights: with four lights it has no room */
   #toTop { position: fixed; z-index: 9; right: max(16px, env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px));
            background: var(--head); color: var(--head-text); border: 1px solid var(--brass); border-radius: 999px; padding: 9px 15px;
            font: 600 12px/1 var(--serif); letter-spacing: .12em; text-transform: uppercase; box-shadow: 0 2px 8px rgba(20, 16, 8, .3); }
@@ -106,15 +128,15 @@
   #conn i { width: 9px; height: 9px; border-radius: 50%; background: #8a8672; flex: none; }
   #conn .ok i { background: #5fd08a; }
   #conn .warn i { background: #f0b445; }
-  #conn .down { background: var(--bad); color: #fff; font-weight: 700; animation: connFlash 1s steps(1, end) infinite; }
-  #conn .down i { background: #fff; }
+  #conn .down { background: var(--bad); color: var(--on); font-weight: 700; animation: connFlash 1s steps(1, end) infinite; }
+  #conn .down i { background: var(--on); }
   @keyframes connFlash { 50% { background: transparent; color: #ff9d92; box-shadow: inset 0 0 0 1px #ff9d92; } }
   .connList { display: grid; gap: 8px; }
   .connList div { border-left: 4px solid var(--border); padding: 2px 0 2px 10px; color: var(--text); font-weight: 400; }
   .connList .ok { border-color: var(--ok); } .connList .warn { border-color: var(--warn); }
   .connList .down { border-color: var(--bad); }
   .connList b { font-size: 14px; } .connList small { color: var(--muted); display: block; }
-  .badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 999px; background: var(--bad); color: #fff; font-size: 11px; line-height: 18px; text-align: center; }
+  .badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 999px; background: var(--bad); color: var(--on); font-size: 11px; line-height: 18px; text-align: center; }
   .comp td { color: var(--muted); border-bottom: 0; padding-top: 0; font-size: 12px; }
   .scroll { max-height: 320px; overflow-y: auto; }
   #progress { margin-top: 10px; font-size: 13px; }
@@ -129,7 +151,7 @@
   .tile .what { font-weight: 600; }
   .tile .u { font-size: 12px; color: var(--muted); }
   .tile .u b { color: var(--text); }
-  .sev { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; color: #fff; justify-self: start; }
+  .sev { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; color: var(--on); justify-self: start; }
   .hbar { height: 10px; border-radius: 0 3px 3px 0; min-width: 2px; }
   .notes { margin: 10px 0 0; padding-left: 18px; font-size: 12px; }
   .tile.click { cursor: pointer; }
@@ -251,6 +273,40 @@
   .dvCard dt { color: var(--muted); } .dvCard dd { margin: 0; overflow-wrap: anywhere; }
   .dvCard .grp { grid-column: 1 / -1; font-weight: 700; margin-top: 8px; color: var(--text); }
   .dvHits { display: grid; gap: 4px; margin-top: 8px; } .dvHits button.link { text-align: left; padding: 2px 0; }
+  /* Desktop usage, on the first panel: bars = PCs in use, a line = the PCs in Aternity's list (design E) */
+  .dvUse { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 12px; display: grid; gap: 10px; }
+  .dvUse[hidden], .dvUseBody[hidden], #dvUseSeg[hidden] { display: none; }
+  #dvUseSeg button { padding: 6px 11px; } #dvUseNote { max-width: none; margin: 0; }
+  .dvUse > *, .dvCharts > * { min-width: 0; } .dvUseBody { display: grid; gap: 10px; }
+  .dvUseHead { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px; }
+  .dvUseTitle { font-weight: 700; font-size: 15px; }
+  .dvLeg { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+  .dvLeg span { display: inline-flex; align-items: center; gap: 6px; }
+  .dvLeg i { display: inline-block; width: 20px; height: 3px; border-radius: 2px; background: var(--text); }
+  .dvLeg i.b { width: 12px; height: 12px; background: var(--accent); } .dvLeg i.m { background: var(--brass); }
+  .dvLeg i.so { background: color-mix(in srgb, var(--accent) 45%, var(--panel)); outline: 1px dashed var(--accent); }
+  .dvCharts { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 10px 22px; align-items: end; }
+  .dvCharts.many { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }  /* over 6 months: room for each bar's share */
+  @media (max-width: 900px) { .dvCharts, .dvCharts.many { grid-template-columns: minmax(0, 1fr); } }
+  .dvCap { font-weight: 600; font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 2px 12px; justify-content: space-between; }
+  .dvCap span { font-weight: 400; color: var(--muted); }
+  .dvChart svg { display: block; }
+  .dvChart text { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+  .dvChart .uGrid { stroke: var(--border); } .dvChart .uBase { stroke: var(--muted); stroke-opacity: .55; }
+  .dvChart .uBar { fill: var(--accent); }
+  .dvChart .uBar.uSo { fill-opacity: .45; stroke: var(--accent); stroke-dasharray: 3 2; }
+  .dvChart .uHalo { fill: none; stroke: var(--panel); stroke-width: 5; stroke-linejoin: round; }
+  .dvChart .uList { fill: none; stroke: var(--text); stroke-width: 2; stroke-linejoin: round; }
+  .dvChart .uTop { fill: none; stroke: var(--brass); stroke-width: 2; stroke-linejoin: round; }
+  .dvChart .uDot { fill: var(--brass); stroke: var(--panel); stroke-width: 1.5; }
+  .dvChart text.uPc { font-weight: 700; fill: var(--text); } .dvChart text.uSm { font-size: 10px; letter-spacing: -.2px; }
+  .dvChart text.uOn { paint-order: stroke; stroke: var(--panel); stroke-width: 3px; stroke-linejoin: round; }
+  .dvChart text.uLbl { fill: var(--text); font-weight: 600; paint-order: stroke; stroke: var(--panel); stroke-width: 3px; }
+  .dvChart .uHit { fill: transparent; } .dvChart .uHit:hover { fill: color-mix(in srgb, var(--brass) 16%, transparent); }
+  .dvFigs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(215px, 100%), 1fr)); gap: 10px; }
+  .tile.dvFig { display: flex; align-items: center; gap: 10px; padding: 7px 12px; background: color-mix(in srgb, var(--brass) 13%, var(--panel)); }
+  .tile.dvFig b { font: 700 26px/1 var(--serif); } .tile.dvFig div { display: grid; min-width: 0; }
+  .tile.dvFig span { font-weight: 600; font-size: 12.5px; } .tile.dvFig span.u { font-weight: 400; font-size: 11.5px; color: var(--muted); }
   .strip { display: flex; gap: 2px; height: 14px; }
   .strip i { display: block; min-width: 3px; border-radius: 2px; }
   .strip i.most { box-shadow: inset 0 0 0 2px var(--brass); }
@@ -273,11 +329,17 @@
   .swForm { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
   .swForm label { min-width: 150px; flex: 1; }
   .swForm select { padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+  @media (max-width: 860px) {  /* six tabs are wider than this: they slide sideways, and the slim row is the tabs alone
+                                  (between 641 and about 830 px the whole page scrolled sideways: found Nov 22 2026) */
+    nav { overflow-x: auto; scrollbar-width: none; }
+    nav button { flex: none; }
+    header.pinned .crest, header.pinned #conn { display: none; }
+  }
   @media (max-width: 640px) {  /* a phone: the brand over the title, the lights under them, the tabs slide sideways */
     header { padding: 10px 16px 0; }
     .brand { flex: 1 1 0; min-width: 0; gap: 2px; flex-direction: column; align-items: flex-start; }
     .brand i { display: none; } .brand h1 { font-size: 19px; }
-    #conn { margin-left: 0; width: 100%; }
+    #conn { margin-left: 0; width: 100%; order: 2; }  /* the switch stays on the brand's row, the lights under them */
     nav { overflow-x: auto; scrollbar-width: none; -webkit-mask-image: linear-gradient(to right, #000 80%, transparent);
           mask-image: linear-gradient(to right, #000 80%, transparent); }
     nav button { flex: none; padding-left: 12px; padding-right: 12px; font-size: 11px; letter-spacing: .08em; }
@@ -295,11 +357,11 @@
   .multWrap .mult { min-width: 520px; }
   /* the assessment (Proposal 1, the user's pick): a banner in the verdict's colour, the words with yesterday beside them */
   #asBox { border: 1px solid var(--as, var(--border)); border-top: 0; padding-top: 0; box-shadow: 0 2px 10px rgba(0, 0, 0, .10); }
-  .asBand { margin: 0 -16px 12px; padding: 10px 16px; background: var(--as, var(--muted)); color: #fff; display: flex; gap: 4px 14px;
+  .asBand { margin: 0 -16px 12px; padding: 10px 16px; background: var(--as, var(--muted)); color: var(--on); display: flex; gap: 4px 14px;
             align-items: baseline; flex-wrap: wrap; border-radius: 3px 3px 0 0; }
-  .asBand h2 { color: #fff; margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; font-family: inherit; opacity: .85; }
+  .asBand h2 { color: var(--on); margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; font-family: inherit; opacity: .85; }
   .asBand b { font: 600 20px var(--serif); } .asBand span { font-size: 13px; opacity: .92; }
-  .asBand button.link { color: #fff; margin-left: auto; padding: 0; text-decoration: underline; }
+  .asBand button.link { color: var(--on); margin-left: auto; padding: 0; text-decoration: underline; }
   .asCap { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 4px; }
   .asTwo { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
   .asTwo > * { min-width: 0; } #asBody { font-size: 15px; } #asBody .ans { max-width: 75ch; }
@@ -307,7 +369,7 @@
   #asMore { margin-top: 10px; } #asMore details { margin-top: 6px; font-size: 13px; }
   #asMore summary { cursor: pointer; font-weight: 600; color: var(--accent); }
   #asMore ul { margin: 4px 0; padding-left: 20px; } #asMore .old { margin: 8px 0; padding-left: 10px; border-left: 2px solid var(--border); }
-  .asY { padding: 10px 12px; border: 1px solid var(--border); border-radius: 4px; background: rgba(0, 0, 0, .025); font-size: 13px; }
+  .asY { padding: 10px 12px; border: 1px solid var(--border); border-radius: 4px; background: color-mix(in srgb, var(--text) 3%, transparent); font-size: 13px; }
   .asY h3 { margin: 0 0 4px; font: 600 14px var(--serif); color: var(--accent); }
   /* the week under Yesterday (the user's pick A): a row per count, each its own scale */
   .asWk { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
@@ -323,7 +385,7 @@
   .asWk .gh { fill: none; stroke: var(--muted); stroke-opacity: .8; stroke-width: 1.5; stroke-dasharray: 3 3; }
   .asWk .pt { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
   .asWk .pt.so { fill: var(--panel); stroke: var(--accent); }
-  .asWk .hit { fill: transparent; } .asWk .hit:hover { fill: rgba(0, 0, 0, .04); }
+  .asWk .hit { fill: transparent; } .asWk .hit:hover { fill: color-mix(in srgb, var(--text) 5%, transparent); }
   /* the three charts, a row of their own in Today's issues: today up to the hour against the days before */
   .minis { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin: 8px 0 2px; }
   .minis:empty { display: none; }
@@ -339,7 +401,7 @@
   #exAnswer { font-size: 15px; margin: 10px 0; }
   .ans .lead { font-weight: 600; }
   .ans ul { margin: 6px 0; padding-left: 20px; } .ans li { margin: 2px 0; }
-  .ans .next { margin-top: 6px; padding: 6px 10px; border-left: 3px solid var(--accent); background: rgba(0, 0, 0, .03); }
+  .ans .next { margin-top: 6px; padding: 6px 10px; border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--text) 4%, transparent); }
   .exTerms { margin: 10px 0 0; font-size: 13px; } .exTerms summary { cursor: pointer; font-weight: 600; color: var(--accent); }
   .exTerms dt { font-weight: 600; margin-top: 6px; } .exTerms dd { margin: 0; }
   .dlgWrap[hidden] { display: none; }
@@ -358,7 +420,8 @@
     <text x="15" y="21" text-anchor="middle" font-family="Georgia, serif" font-size="11" font-weight="700"
       fill="var(--brass)" style="fill:var(--brass)">J6</text></svg>
   <div class="brand"><small>J6 Preservation Society</small><!--title--></div>
-  <div id="conn" aria-label="Connections"></div></div>
+  <div id="conn" aria-label="Connections"></div>
+  <span class="themeSeg" id="themeSeg" role="group" aria-label="Look of the page"><button type="button" data-theme-pick="light">Parchment</button><button type="button" data-theme-pick="dark">Dark</button></span></div>
   <nav><button id="tabToday" class="on">Today</button><button id="tabCare">Care list<span class="badge" id="careCount" hidden></span></button><button id="tabInv">Investigate</button><button id="tabLog">Start-ups</button><button id="tabSoft">Software<span class="badge" id="softCount" hidden></span></button><button id="tabDv">Inventory</button></nav>
 </header></div>
 <main>
@@ -507,6 +570,23 @@
       <div id="dvStatus" class="muted" style="margin-top:6px"></div>
       <div class="tiles" id="dvTiles"></div>
       <ul class="notes muted" id="dvNotes"></ul>
+      <div class="dvUse" id="dvUse" hidden>
+        <div class="dvUseHead">
+          <div><div class="dvUseTitle">Desktop usage</div>
+            <div class="dvLeg"><span><i class="b"></i>In use (bars)</span><span><i></i>In Aternity's list = 100% (line)</span><span><i class="m"></i>Busiest day of the month (line)</span><span><i class="b so"></i>This month so far</span></div></div>
+          <span class="vseg" id="dvUseSeg"></span>
+        </div>
+        <p class="muted" id="dvUseState" style="margin:0"></p>
+        <div id="dvUseBody" class="dvUseBody">
+          <div class="dvCharts" id="dvCharts">
+            <div><div class="dvCap" id="dvDayCap"></div><div class="dvChart" id="dvDayChart"></div></div>
+            <div><div class="dvCap" id="dvMonCap"></div><div class="dvChart" id="dvMonChart"></div></div>
+          </div>
+          <div class="dvFigs" id="dvUseFigs"></div>
+          <p class="dvNote" id="dvUseNote"></p>
+        </div>
+        <ul class="notes muted" id="dvUseNotes"></ul>
+      </div>
     </section>
     <div id="dvMain" hidden>
       <section class="panel" style="margin-top:16px" id="dvLookBox">
@@ -696,6 +776,32 @@
 </div></div>
 <script>
 const $ = (id) => document.getElementById(id);
+// ---- The look: Parchment (the page's own) or Dark (the user's pick, Nov 22 2026). A click sets data-theme on
+// <html>, which the colours at the top of the styles follow, and keeps it in this browser (the same key as the
+// admin page, so both agree). Until someone picks here, the PC's own setting decides. Every chart is drawn with
+// those colours by name, so nothing is redrawn. ----
+const THEME_KEY = "uxTheme", themeDark = matchMedia("(prefers-color-scheme: dark)");
+const themeNow = () => document.documentElement.dataset.theme || (themeDark.matches ? "dark" : "light");
+function drawTheme() {
+  for (const b of $("themeSeg").children) {
+    const on = b.dataset.themePick === themeNow();
+    b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on));
+  }
+}
+$("themeSeg").addEventListener("click", (ev) => {
+  const b = ev.target.closest("[data-theme-pick]");
+  if (!b) return;
+  document.documentElement.dataset.theme = b.dataset.themePick;
+  try { localStorage.setItem(THEME_KEY, b.dataset.themePick); } catch (e) { /* no storage: kept until the page is closed */ }
+  drawTheme();
+});
+themeDark.addEventListener("change", drawTheme);  // the PC's setting changed: the switch shows what the page follows
+window.addEventListener("storage", (ev) => {  // picked in another window of this browser, or on the admin page
+  if (ev.key !== THEME_KEY || (ev.newValue !== "dark" && ev.newValue !== "light")) return;
+  document.documentElement.dataset.theme = ev.newValue;
+  drawTheme();
+});
+drawTheme();
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const toLocalInput = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 // A reply as JSON. One that is not (the proxy's HTML page for a 502 or 504 on Kubernetes, a plain 500)
@@ -2603,6 +2709,7 @@ function renderDv(v) {
       : "known after the Software tab's first read")
     + tile(n(v.lines.length), v.lines.length === 1 ? "thing to look at" : "things to look at", "the list below", v.lines.length);
   $("dvNotes").innerHTML = v.notes.map((x) => `<li>${esc(x)}</li>`).join("");
+  renderDvUse();
   // Needs a look: a count with its share of the PCs it is counted among (the user's choice: both)
   $("dvLines").innerHTML = v.lines.length ? v.lines.map((l) => `<div class="flag dvLine" role="button" tabindex="0" data-dvline="${esc(l.key)}">`
     + `<span class="kind">▲ ${esc(l.label)}</span><span class="ftext">${esc(l.text)}</span>`
@@ -2628,6 +2735,152 @@ function renderDv(v) {
     + `<p class="dvNote">Of the ${pcs(u.of)} not silent for ${R.silent_days} days or more. A PC that reports but runs nothing: spare stock, a kiosk, or a desktop nobody is assigned to.</p>`
     : `<p class="muted">Not known: Aternity's app usage could not be read (see the notes at the top).</p>`;
 }
+// ---- Desktop usage (dvUse*), on the first panel: the PCs an application ran on, each finished day and each month,
+// against the PCs of that kind in Aternity's list. The server counts (inventory._usage_view); the page draws, and
+// writes each percentage beside its counts (swPct, the same sum everywhere). ----
+let dvKind = null, dvUseW = 0;
+const dvDate = (iso) => new Date(iso + "T12:00:00Z");
+const dvDayWords = (iso) => dvDate(iso).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+const dvMonth = (ym, how) => dvDate(ym + "-01").toLocaleDateString(undefined, { month: how, timeZone: "UTC" });
+const dvShare = (c) => (c.of ? swPct(c.n, c.of) : "—");
+const dvOut = (o) => (o ? ` ${pcs(o)} more with app usage ${o === 1 ? "is" : "are"} not in the list.` : "");
+function dvScale(max) {  // the top of the count axis and its step: about five round marks
+  const raw = Math.max(1, max) / 5, p = Math.pow(10, Math.floor(Math.log10(raw))), m = raw / p;
+  const step = Math.max(1, (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p);
+  return { step, top: Math.ceil(Math.max(1, max) / step) * step };
+}
+function renderDvUse() {
+  const u = dvData && dvData.usage;
+  $("dvUse").hidden = !u;
+  if (!u) return;
+  const counted = u.days.some((d) => d.by) || u.months.length > 0;
+  const state = u.off || (u.state ? `${u.state}… The charts fill in by themselves.` : counted ? "" : "No finished day is counted yet.");
+  $("dvUseState").textContent = state; $("dvUseState").hidden = !state;
+  $("dvUseBody").hidden = !counted;
+  $("dvUseNotes").innerHTML = u.notes.map((x) => `<li>${esc(x)}</li>`).join("");
+  const keys = u.kinds.map((x) => x.key);
+  if (!keys.includes(dvKind)) dvKind = u.open;
+  $("dvUseSeg").hidden = keys.length < 2 || !counted;
+  $("dvUseSeg").innerHTML = u.kinds.map((x) => `<button type="button" data-dvkind="${esc(x.key)}" class="${x.key === dvKind ? "on" : ""}" `
+    + `title="${esc(`${pcs(x.n)} in Aternity's list`)}">${esc(x.key === "all" ? "All" : x.key)}</button>`).join("");
+  if (!counted) return;
+  const k = dvKind, who = k === "all" ? "All PCs" : k, f = u.figures[k] || {};
+  const last = [...u.days].reverse().find((d) => d.by), lc = last && last.by[k];
+  $("dvDayCap").innerHTML = `${esc(who)}: in use each day, last ${u.chart_days} days`
+    + `<span>${lc ? esc(`${dvDayWords(last.day)}: ${n(lc.n)} in use (${dvShare(lc)}), ${n(Math.max(lc.of - lc.n, 0))} not in use`) : ""}</span>`;
+  $("dvMonCap").innerHTML = `${esc(who)}: used at least once in each month`;
+  const fig = (c, label, sub) => `<div class="tile dvFig"><b>${c ? dvShare(c) : "—"}</b><div><span>${esc(label)}</span><span class="u">${esc(sub)}</span></div></div>`;
+  const use = (c) => `${n(c.n)} of ${n(c.of)} in use`;
+  $("dvUseFigs").innerHTML = fig(f.work, "typical working day", f.work ? use(f.work) : "no working day counted yet")
+    + fig(f.busiest, f.busiest ? `busiest day, ${dvDayWords(f.busiest.day)}` : "busiest day", f.busiest ? use(f.busiest) : "no day counted yet")
+    + fig(f.weekend, "typical weekend day", f.weekend ? use(f.weekend) : "no weekend day counted yet")
+    + fig(f.month, f.month ? `${dvMonth(f.month.month, "long")} so far` : "this month so far",
+      f.month ? `${n(f.month.n)} of ${n(f.month.of)} used` : "no finished day in it yet");
+  let note = `Percentages: the share of ${k === "all" ? "all PCs" : `the PCs Aternity lists as ${k}`} in its device list. In use: an application ran on the PC, `
+    + `each PC once. Aternity adds a day once it is over, so the last bar is yesterday. Typical: the middle value of the days shown.`;
+  if (u.filled && (u.days[0].day < u.filled || (u.months.length && u.months[0].month < u.filled.slice(0, 7)))) {
+    note += ` Before ${dvDayWords(u.filled)} the list is that day's: a PC that has left it since is not counted.`;
+  }
+  if (u.oldest && u.months.length < u.chart_months) {
+    note += ` Aternity keeps app usage back to ${dvDayWords(u.oldest)}: earlier months cannot be counted; the tab keeps each month from here on, up to ${u.chart_months}.`;
+  }
+  $("dvUseNote").textContent = note;
+  $("dvCharts").classList.toggle("many", u.months.length > 6);
+  drawDvUse();
+}
+function drawDvUse() {
+  const u = dvData && dvData.usage;
+  if (!u || $("dvUse").hidden || $("dvUseBody").hidden) return;
+  dvUseW = Math.floor($("dvDayChart").clientWidth);
+  if (!dvUseW) return;  // the tab is not open: drawn when it is (the observer below)
+  dvDayChart(u, dvKind); dvMonChart(u, dvKind);
+}
+// the frame both charts share: count marks at the left, the list as a line with its halo
+function dvFrame(W, H, L, R, T, B, sc) {
+  const y = (v) => T + (1 - v / sc.top) * (H - T - B);
+  let s = "";
+  for (let v = 0; v <= sc.top; v += sc.step) {
+    s += `<line class="${v ? "uGrid" : "uBase"}" x1="${L}" x2="${W - R}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/>`
+      + `<text x="${L - 6}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${n(v)}</text>`;
+  }
+  return { y, s };
+}
+// a line through the points; with `left` and `right` it runs level to both edges of the chart (the list: known all along)
+const dvPath = (pts, left = null, right = null) => (pts.length ? (left === null ? "" : `M${left},${pts[0][1].toFixed(1)}`)
+  + pts.map(([a, b], i) => `${i || left !== null ? "L" : "M"}${a.toFixed(1)},${b.toFixed(1)}`).join("")
+  + (right === null ? "" : `L${right},${pts[pts.length - 1][1].toFixed(1)}`) : "");
+function dvDayChart(u, k) {
+  const el = $("dvDayChart"), W = Math.floor(el.clientWidth), H = 236, L = 44, R = 42, T = 22, B = 34;
+  const days = u.days, cells = days.map((d) => (d.by ? d.by[k] : null)), have = cells.filter(Boolean);
+  const sc = dvScale(Math.max(0, ...have.map((c) => Math.max(c.n, c.of)))), { y, s: frame } = dvFrame(W, H, L, R, T, B, sc);
+  const step = (W - L - R) / days.length, bw = Math.max(2, Math.min(step - 2, 24)), x = (i) => L + (i + 0.5) * step;
+  const ref = have.length ? have[have.length - 1].of : 0;  // the list at the latest day: what the marks at the right are a share of
+  let s = `<svg width="${W}" height="${H}" role="img" aria-label="${esc(`${k === "all" ? "All PCs" : k}: PCs in use each day, with the PCs in Aternity's list`)}">` + frame;
+  if (ref) {
+    s += `<line class="uBase" x1="${W - R}" x2="${W - R}" y1="${y(ref).toFixed(1)}" y2="${y(0).toFixed(1)}"/>`;
+    for (const p of [0, 25, 50, 75, 100]) {
+      const py = y(ref * p / 100);
+      s += `<line class="uBase" x1="${W - R}" x2="${W - R + 5}" y1="${py.toFixed(1)}" y2="${py.toFixed(1)}"/>`
+        + `<text${p === 100 ? ' class="uPc"' : ""} x="${W - R + 8}" y="${(py + 4).toFixed(1)}">${p}%</text>`;
+    }
+  }
+  days.forEach((d, i) => {
+    const c = cells[i];
+    s += c ? `<rect class="uBar" x="${(x(i) - bw / 2).toFixed(1)}" y="${y(c.n).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(y(0) - y(c.n), c.n ? 1 : 0).toFixed(1)}" rx="${Math.min(2, bw / 2)}"/>`
+      : `<text x="${x(i).toFixed(1)}" y="${(y(0) - 5).toFixed(1)}" text-anchor="middle">–</text>`;
+  });
+  const line = dvPath(cells.map((c, i) => (c ? [x(i), y(c.of)] : null)).filter(Boolean), L, W - R);
+  if (line) {
+    s += `<path class="uHalo" d="${line}"/><path class="uList" d="${line}"/>`
+      + `<text class="uLbl" x="${W - R - 5}" y="${(y(ref) - 7).toFixed(1)}" text-anchor="end">${n(ref)} in the list</text>`;
+  }
+  let at = -999, month = null;  // a mark each Monday, with the month when it changes
+  days.forEach((d, i) => {
+    const t = dvDate(d.day);
+    if (t.getUTCDay() !== 1 || x(i) - at < 66) return;
+    const m = t.getUTCMonth(), words = `Mon ${m !== month ? dvMonth(d.day.slice(0, 7), "short") + " " : ""}${t.getUTCDate()}`;
+    month = m; at = x(i);
+    s += `<text x="${x(i).toFixed(1)}" y="${H - B + 16}" text-anchor="middle">${esc(words)}</text>`;
+  });
+  days.forEach((d, i) => {
+    const c = cells[i], tip = c ? `${dvDayWords(d.day)}: ${n(c.n)} of ${n(c.of)} in use (${dvShare(c)}).${dvOut(d.out)}` : `${dvDayWords(d.day)}: ${d.why}`;
+    s += `<rect class="uHit" x="${(L + i * step).toFixed(1)}" y="${T - 8}" width="${step.toFixed(1)}" height="${H - T - B + 8}"><title>${esc(tip)}</title></rect>`;
+  });
+  el.innerHTML = s + `</svg>`;
+}
+function dvMonChart(u, k) {
+  const el = $("dvMonChart"), W = Math.floor(el.clientWidth), ms = u.months;
+  if (!ms.length) { el.innerHTML = `<p class="muted" style="margin:8px 0">No month is counted yet.</p>`; return; }
+  const H = 236, L = 44, R = 10, T = 22, B = 34, cells = ms.map((m) => m.by[k]);
+  const sc = dvScale(Math.max(0, ...cells.map((c) => Math.max(c.n, c.of)))), { y, s: frame } = dvFrame(W, H, L, R, T, B, sc);
+  const step = (W - L - R) / ms.length, bw = Math.max(6, Math.min(step * 0.62, 46)), x = (i) => L + (i + 0.5) * step;
+  let s = `<svg width="${W}" height="${H}" role="img" aria-label="${esc(`${k === "all" ? "All PCs" : k}: PCs used at least once in each month, with the PCs in Aternity's list and the busiest day of the month`)}">` + frame;
+  ms.forEach((m, i) => {
+    const c = cells[i], h = y(0) - y(c.n);
+    s += `<rect class="uBar${m.so_far ? " uSo" : ""}" x="${(x(i) - bw / 2).toFixed(1)}" y="${y(c.n).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(h, c.n ? 1 : 0).toFixed(1)}" rx="2"/>`;
+  });
+  const top = dvPath(ms.map((m, i) => (m.busiest[k] ? [x(i), y(m.busiest[k].n)] : null)).filter(Boolean));
+  const list = dvPath(cells.map((c, i) => [x(i), y(c.of)]), L, W - R);
+  s += `<path class="uHalo" d="${list}"/><path class="uList" d="${list}"/>`;
+  if (top) s += `<path class="uHalo" d="${top}"/><path class="uTop" d="${top}"/>`;
+  ms.forEach((m, i) => { if (m.busiest[k]) s += `<circle class="uDot" cx="${x(i).toFixed(1)}" cy="${y(m.busiest[k].n).toFixed(1)}" r="3.5"/>`; });
+  ms.forEach((m, i) => {  // the month's share: over its bar, or over the list's line when the bar ends just under it
+    const c = cells[i], over = y(c.n) - 8, at = over - 12 < y(c.of) + 3 ? y(c.of) - 6 : over;
+    s += `<text class="uPc uOn${step < 34 ? " uSm" : ""}" x="${x(i).toFixed(1)}" y="${at.toFixed(1)}" text-anchor="middle">${dvShare(c)}</text>`;
+  });
+  ms.forEach((m, i) => {
+    const c = cells[i], b = m.busiest[k], year = m.month.slice(0, 4);
+    s += `<text${m.so_far ? ' class="uPc"' : ""} x="${x(i).toFixed(1)}" y="${H - B + 16}" text-anchor="middle">${esc(dvMonth(m.month, "short"))}</text>`;
+    if (m.month.endsWith("-01") || (i === 0 && !(ms[1] && ms[1].month.endsWith("-01")))) {  // the year: at each January, and at the first month
+      s += `<text x="${x(i).toFixed(1)}" y="${H - B + 30}" text-anchor="middle">${year}</text>`;
+    }
+    const tip = `${dvMonth(m.month, "long")} ${year}${m.so_far ? ` so far${m.through ? `, through ${dvDayWords(m.through)}` : ""}` : ""}: ${n(c.n)} of ${n(c.of)} used at least once (${dvShare(c)}).`
+      + (b ? ` Busiest day ${dvDayWords(b.day)}: ${n(b.n)} in use.` : "") + dvOut(m.out);
+    s += `<rect class="uHit" x="${(L + i * step).toFixed(1)}" y="${T - 8}" width="${step.toFixed(1)}" height="${H - T - B + 8}"><title>${esc(tip)}</title></rect>`;
+  });
+  el.innerHTML = s + `</svg>`;
+}
+new ResizeObserver(() => { if (Math.floor($("dvDayChart").clientWidth) !== dvUseW) drawDvUse(); }).observe($("dvUse"));
 // The PCs behind a line, from the server's read: Investigate ▸ and the PC's card
 async function openDvPcs(line, el) {
   const box = $("dvPcs");
@@ -2694,7 +2947,9 @@ $("dvFind").addEventListener("submit", async (ev) => {
 $("dvPcsClose").addEventListener("click", () => { $("dvPcs").hidden = true; });
 $("dvBox").addEventListener("click", async (ev) => {
   const line = ev.target.closest("[data-dvline]"), pc = ev.target.closest("[data-dvpc]"), inv = ev.target.closest("[data-dvinv]");
-  if (line) openDvPcs(line.dataset.dvline, line);
+  const kind = ev.target.closest("[data-dvkind]");
+  if (kind) { dvKind = kind.dataset.dvkind; renderDvUse(); }  // the usage charts' kind of PC
+  else if (line) openDvPcs(line.dataset.dvline, line);
   else if (pc) openDvPc(pc.dataset.dvpc);
   else if (inv && dvList) dvInvestigate(dvList.rows[Number(inv.dataset.dvinv)]);
   else if (ev.target.id === "dvPcInv" && dvCard) dvInvestigate(dvCard);

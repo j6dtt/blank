@@ -619,6 +619,44 @@ demo mode: nothing in `src/` knows about it.
   index.html (the tab's key is `dv`: `inv` is Investigate). Not built:
   step 2 (the hardware charts with a virtual / physical switch), Ask
   anything's look-ups, a drawing for the tab.
+  Desktop usage, on the first panel under the tiles (the user, Nov 22
+  2026: "Looking for daily/monthly usage, mockups with bar and line
+  charts mixed", "Add percentage of usage", "Your recommendations",
+  "Build it"; design E of six mocked; built on verify --usage's stage
+  run of Nov 21: a day's rows carry local midnight, no row for today,
+  92 days kept, a month read with the PC only is a row per PC, 14 days
+  33,788 rows in 5.2 s). `read_usage` (after each read of the list, in
+  `keep_reading`; it never raises): the PCs with daily app usage on
+  each finished day (`_names`, both reads made as verify --usage made
+  them on stage, nothing else assumed of Aternity: a day is asked for
+  with each row's time and a row counts only when its own time is of
+  that day; a month with the PC only, so Aternity adds its days up;
+  `daily_span` / `daily_day`, shared with verify), counted per kind of
+  device among the PCs in the list at that read (`_counted`: `used`,
+  `list`, `out` = with usage but not in the list; no row at all is
+  `none`, never 0). Yesterday is the last day: today is not over. A
+  day is read again until `SETTLE_DAYS` old, then `final`; the first
+  read takes every day Aternity keeps (`oldest`, asked once a day;
+  `FAILS_STOP` days in a row that fail end a pass). A month: one read
+  while Aternity keeps it whole (its first day not before `oldest`),
+  again when one of its days moved or once a day, `final` when it is
+  over and its last day has settled (`through`: its last day with
+  rows); a month Aternity no longer keeps whole is never counted. Saved in `<data>/inventory/usage.json`
+  (`_save_usage`, `KEEP_DAYS`, `KEEP_MONTHS`; counts per kind, no PC
+  name; `filled`: the day counts were first saved, earlier days and
+  months are against that day's list; a file that cannot be read is
+  set aside as `usage.unreadable`). `_usage_view` (in `view()["usage"]`):
+  `CHART_DAYS` days, the months counted, per kind and `all`, and the
+  four figures (`work` / `weekend`: `median_high` of the days with
+  rows, `busiest`, `month` so far). The page (`renderDvUse`,
+  `dvDayChart`, `dvMonChart`, `dvKind`): bars = in use, a line = the
+  list (percent marks at the right are of the latest list), the
+  month's share over its bar (over the list's line when the bar ends
+  just under it), the busiest day of each month as a second line; a
+  percentage is always beside its counts (`swPct`); each bar's
+  `<title>` is what Explain reads. Not built: the people line (step
+  4; the username is filled on every row on stage), a click that lists
+  a day's PCs (no PC name is kept).
 - `software_chat.py`: the Software tab's look-ups. Ask anything uses its
   blocks as they are (`agent.SOFTWARE_TOOLS`); its own chat "Ask about
   software" (`/api/software/chat`, the same loop as `chat.converse`) is
@@ -964,8 +1002,8 @@ demo mode: nothing in `src/` knows about it.
 - `verify --usage` (`verify.verify_usage`, `_usage`, only on its own;
   the user, Nov 22 2026, for usage charts on the Inventory tab's first
   panel: "Looking for daily/monthly usage", "Add percentage of usage",
-  "Your recommendations", "Build it"; step 1 of that build, the charts
-  are not built). Daily app usage (`VERSION_SOURCES["usage"]`) set
+  "Your recommendations", "Build it"; step 1 of that build; the charts
+  read by the same rule, `inventory.daily_span`). Daily app usage (`VERSION_SOURCES["usage"]`) set
   against the device list (each PC once, its latest row, with
   `INVENTORY_ROLES["kind"]` as sent; names compared without capitals;
   only PCs in the list are counted, those that are not are said).
@@ -977,7 +1015,9 @@ demo mode: nothing in `src/` knows about it.
   kind's PCs in the list; per kind a typical working day (the middle
   value, Monday to Friday), the busiest day, a typical weekend day,
   the PCs used on at least one day; today is "so far" and never
-  typical; a day that could not be read says so, never 0; 3. the
+  typical; a day that could not be read says so, never 0, and a day
+  with no row is "no rows from Aternity" and counts for nothing (the
+  live Aternity has none for today: it printed "0 0% so far"); 3. the
   username: filled on how many rows, people a day (a read Aternity
   refuses with the username is made without it, said); 4. this month
   and `USE_MONTHS` before it, one read each asking for the PC only (a
@@ -1305,8 +1345,36 @@ demo mode: nothing in `src/` knows about it.
   `<title>`; empty: the brand alone). The top bar (proposal B + folder
   tabs, the user's picks): crest, brand | title, lights at the right;
   then the tabs in capitals, the open one parchment, joined to the page.
-  On a phone the tabs slide sideways. The lights show `ai.services`'
+  On a phone the tabs slide sideways (from 860 px down: six tabs are
+  wider; between 641 and about 830 px the whole page scrolled sideways,
+  found Nov 22 2026). The lights show `ai.services`'
   `name` as written; `ai.chat` matches it whatever the capitals.
+- The look, Parchment | Dark (the user, Nov 22 2026: "Add dark and
+  current theme switch on page", three dark looks mocked, "Build A and
+  admin too"; A = "Night archive": the dark palette the page already
+  had for a PC set to dark, with the green, alert red, warning amber
+  and the PC / network / server colours lightened to read on it). A
+  switch at the right of the lights (`#themeSeg`, `.themeSeg`,
+  `drawTheme`, `themeNow`) sets `data-theme` on `<html>` and keeps it
+  in `localStorage` under `uxTheme` (`THEME_KEY`; a one-line script in
+  `<head>` puts it back before the first paint). Until someone picks,
+  the PC's own setting decides. So the dark colours are written twice
+  per page, `@media (prefers-color-scheme: dark)` on
+  `:root:not([data-theme="light"])` and `:root[data-theme="dark"]`, and
+  again in `admin.html`, which has the same switch and key (the two
+  pages agree when opened under one address: storage is per address):
+  keep all four in step (`tests/test_inventory.py` compares them).
+  Colours only by name: `--on` is the text on a filled colour (a
+  button, a tag, the assessment's band: white on parchment, near-black
+  on dark, where the fills are lighter), a faint tint is a mix of
+  `--text`, never black. A new colour needs both values. Charts are
+  drawn with the colours by name, so nothing is redrawn at a click. The
+  switch is not in the slim bar of a page scrolled down (with four
+  lights there is no room). A choice in another window, or on the
+  admin page, is followed (`storage` event). Checked in a real browser
+  before the copy (a scripted Chrome on dev: click, reload, PC set to
+  dark, every tab, both dialogs, the admin page, four widths, the
+  console).
 - The web UI has no authentication. Don't add features that assume it does.
   Only `/admin` has a login (its own password; the main page stays open).
 - Keep secrets out of `config.yaml` (it is gitignored). Pass them as env vars.

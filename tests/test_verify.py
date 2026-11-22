@@ -1094,16 +1094,17 @@ def test_verify_usage_says_the_pcs_in_use_per_day_and_month_with_their_share_of_
         "Only the 5 PCs in Aternity's device list are counted, by its kind of device",
         "The last 14 days were read a day at a time: 8 rows in 0.0 s",
         "Kinds, in this order: Virtual Desktop (3 in the list) | Desktop (1) | Laptop (1)",
+        "Fri Nov 13 no rows from Aternity",  # a day with no row is not "0 in use"
         "Sat Nov 14 0 0% | 0 0% | 1 100%",
         "Wed Nov 18 2 67% | 0 0% | 0 0%",  # vd-3 is VD-3 of the list
         "Thu Nov 19 2 67% | 1 100% | 0 0%",  # PC-1 by its latest row: a Desktop
         "Fri Nov 20 1 33% | 0 0% | 0 0% so far",
-        "Virtual Desktop: a typical working day 0 of 3 (0%); the busiest day Wed Nov 18 with 2 (67%); a typical weekend "
-        "day 0 (0%); on at least one of the 14 days 3 (100%).",
+        "Virtual Desktop: a typical working day 2 of 3 (67%); the busiest day Wed Nov 18 with 2 (67%); a typical weekend "
+        "day 0 (0%); on at least one of the 4 days 3 (100%).",  # the 4 days Aternity has rows for
         "1 PC with app usage in these days is not in the device list (retired or renamed, most likely): it is left out.",
         "Aternity fills the username on 7 of 8 rows of daily app usage (88%).",
         "Wed Nov 18 1; Thu Nov 19 4; Fri Nov 20 1.",
-        "A typical working day: 0 people. 5 different people in the 14 days.",
+        "A typical working day: 4 people. 5 different people in the 4 days.",
         "8 rows in 0.0 s for 2 months, a row per PC.",
         "November so far: 3 100% | 1 100% | 1 100%",
         "October, from Oct 05 only: 1 33% | 1 100% | 0 0%",
@@ -1158,7 +1159,11 @@ def test_verify_usage_says_what_it_could_not_read_and_a_month_aternity_does_not_
         "Kinds, in this order: Virtual Desktop (1 in the list)",
         "Tue Nov 17 could not be read (",
         "Thu Nov 19 1 100%",
-        "on at least one of the 13 days 1 (100%)",  # the day not read is not one of them
+        "on at least one of the 2 days 1 (100%)",  # the day not read, and the days with no row, are not among them
+        # what the live Aternity does (stage, Nov 21 2026): no row for today, which printed as "0 0% so far"
+        "Fri Nov 20 no rows from Aternity yet: today is not over",
+        "Aternity has no row of daily app usage for today: it adds a day after the day is over, so a chart of it ends "
+        "with yesterday.",
         "This Aternity does not publish the username on daily app usage (USERNAME of APPLICATIONS_DAILY): a line of "
         "people cannot come from it.",
         "November so far, from Nov 12 only: 1 100%",

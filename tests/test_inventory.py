@@ -1,6 +1,7 @@
 """The Inventory tab (inventory.py): Aternity's device list read every hour, held in memory; the
 rules of "Needs a look", the lists by a click, Find a PC. The user's "build it", Nov 21 2026."""
-from datetime import datetime, timedelta, timezone
+import json
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -231,3 +232,246 @@ def test_the_page_has_the_tab_its_link_and_its_explain():
     for label in inv.LINES.values():  # every line of "Needs a look" has our written meaning
         assert label in explain.GLOSSARY["inventory"], label
     assert "alert(" not in page.split('id="dvBox"')[1].split('id="invForm"')[0]
+
+
+# ---- Desktop usage: the PCs in use each finished day and month, against the list (the user, Nov 22 2026) ----
+LISTED = [("VD-1", "Virtual Desktop"), ("VD-2", "Virtual Desktop"), ("VD-3", "Virtual Desktop"),
+          ("VD-4", "Virtual Desktop"), ("DT-1", "Desktop"), ("DT-2", "Desktop"), ("LT-1", "Laptop")]
+
+
+def usage_tab(store, days, now=NOW, listed=LISTED, fail=(), meta=META, stray=()):
+    """An Inventory and its fake Aternity. `days`: local day -> the PCs with app usage on it, each
+    row stamped at that day's midnight as the live Aternity does; `fail`: days whose own read is
+    refused. Returns the tab, a function that makes one read (list, then usage) and what was asked."""
+    import re
+    from uxcorrelate.models import parse_time
+    asked = []
+
+    def handler(request):
+        path, p = request.url.path, request.url.params
+        if path.endswith("/$metadata"):
+            return httpx.Response(200, text=meta)
+        if path.endswith("/DEVICE_INVENTORY"):
+            cols = p["$select"].split(",")
+            return httpx.Response(200, json={"value": [{k: pc(n, DEVICE_TYPE=kind).get(k, "N/A") for k in cols}
+                                                       for n, kind in listed]})
+        assert path.endswith("/APPLICATIONS_DAILY")
+        lo = parse_time(re.search(r"TIMEFRAME ge (\S+)", p["$filter"]).group(1))
+        hi = re.search(r"TIMEFRAME lt (\S+)", p["$filter"])
+        hi = parse_time(hi.group(1)) if hi else None
+        rows = [{"TIMEFRAME": f"{d}T00:00:00Z", "DEVICE_NAME": n} for d, names in sorted(days.items()) for n in names
+                if lo <= parse_time(f"{d}T00:00:00Z") and (hi is None or parse_time(f"{d}T00:00:00Z") < hi)]
+        if p["$select"] == "TIMEFRAME":  # the oldest day kept
+            assert p["$orderby"] == "TIMEFRAME asc" and p["$top"] == "1"
+            asked.append("oldest")
+            return httpx.Response(200, json={"value": [{"TIMEFRAME": r["TIMEFRAME"]} for r in rows[:1]]})
+        if hi is None:
+            assert p["$select"] == "DEVICE_NAME"
+            asked.append("used")  # the tab's "not used in 8 days"
+        else:
+            first, last = (lo + timedelta(hours=12)).date(), (hi + timedelta(hours=12)).date() - timedelta(days=1)
+            asked.append(first.isoformat() if first == last else f"{first.isoformat()[:7]} to {last.isoformat()}")
+            # as verify --usage read them on stage: a day with each row's time, a month with the PC only
+            assert p["$select"] == ("DEVICE_NAME,TIMEFRAME" if first == last else "DEVICE_NAME")
+            if first == last and first.isoformat() in fail:
+                return httpx.Response(400, text="no")
+            if first == last:  # a row per PC and day; `stray`: a row of another day in the reply is not counted
+                got = {(r["DEVICE_NAME"], r["TIMEFRAME"]) for r in rows} | {(n, f"{d}T00:00:00Z") for d, n in stray}
+                return httpx.Response(200, json={"value": [{"DEVICE_NAME": n, "TIMEFRAME": t} for n, t in sorted(got)]})
+        return httpx.Response(200, json={"value": [{"DEVICE_NAME": n} for n in sorted({r["DEVICE_NAME"] for r in rows})]})
+
+    settings = Settings()
+    settings.aternity.base_url = "https://aternity.test/aternity.odata/v2.0"
+    client = AternityClient(settings.aternity, transport=httpx.MockTransport(handler))
+    tab = inv.Inventory("", str(store) if store else None, clock=lambda: now)
+
+    def read(at=now):
+        del asked[:]
+        tab.read(client, settings.aternity, at)
+        tab.read_usage(client, at)
+        return tab.view(at)["usage"]
+    return tab, read, asked
+
+
+USED = {"2026-09-10": ["VD-1"],  # the oldest day Aternity keeps: September is not whole
+        "2026-10-05": ["VD-1", "VD-2", "DT-1"], "2026-10-06": ["VD-1"],
+        "2026-11-02": ["vd-1", "VD-2", "VD-3", "DT-1", "OLD-9"],  # other capitals; a PC that is not in the list
+        "2026-11-03": ["VD-1", "VD-2"], "2026-11-04": ["VD-1"], "2026-11-14": ["VD-4"],
+        "2026-11-19": ["VD-1", "VD-2", "LT-1"],
+        "2026-11-21": ["VD-1"]}  # today (the live Aternity has no row for it): never counted, the day is not over
+
+
+def test_usage_counts_each_finished_day_and_month_against_the_list_and_keeps_counts_only(tmp_path):
+    """Design E (the user, Nov 22 2026). What verify --usage showed on stage, Nov 21: a day's rows
+    carry local midnight, today has none, Aternity keeps about 92 days and adds a month up itself."""
+    tab, read, asked = usage_tab(tmp_path, dict(USED))
+    u = read()
+    # the first read: how far back, every finished day Aternity keeps (yesterday first), then the whole months
+    assert asked[:4] == ["used", "oldest", "2026-11-20", "2026-11-19"] and asked[-3] == "2026-09-10"
+    assert asked[-2:] == ["2026-11 to 2026-11-20", "2026-10 to 2026-10-31"] and len(asked) == 2 + 72 + 2
+    assert u["kinds"] == [{"key": "all", "n": 7}, {"key": "Virtual Desktop", "n": 4}, {"key": "Desktop", "n": 2},
+                          {"key": "Laptop", "n": 1}]
+    assert u["open"] == "Virtual Desktop" and u["oldest"] == "2026-09-10" and u["filled"] == "2026-11-21"
+    assert not u["off"] and not u["state"] and u["notes"] == []
+    days = {d["day"]: d for d in u["days"]}
+    assert list(days) == [(date(2026, 11, 20) - timedelta(days=k)).isoformat() for k in range(29, -1, -1)]  # yesterday last
+    assert days["2026-11-19"]["by"] == {"all": {"n": 3, "of": 7}, "Virtual Desktop": {"n": 2, "of": 4},
+                                        "Desktop": {"n": 0, "of": 2}, "Laptop": {"n": 1, "of": 1}}
+    assert days["2026-11-02"]["by"]["Virtual Desktop"] == {"n": 3, "of": 4} and days["2026-11-02"]["out"] == 1
+    assert not days["2026-11-19"]["weekend"] and days["2026-11-14"]["weekend"]
+    # a day with no row is not "0 in use"
+    assert "by" not in days["2026-11-20"] and days["2026-11-20"]["why"] == "Aternity has no rows for this day yet."
+    assert days["2026-11-05"]["why"] == "Aternity has no rows for this day."
+    # months: only those Aternity keeps whole; each PC once in the month; today is not in "so far"
+    assert [m["month"] for m in u["months"]] == ["2026-10", "2026-11"]
+    octo, nov = u["months"]
+    assert octo["by"]["Virtual Desktop"] == {"n": 2, "of": 4} and octo["by"]["all"] == {"n": 3, "of": 7} and not octo["so_far"]
+    assert octo["busiest"]["Virtual Desktop"] == {"n": 2, "day": "2026-10-05"}
+    assert nov["by"]["Virtual Desktop"] == {"n": 4, "of": 4} and nov["by"]["all"] == {"n": 6, "of": 7}
+    assert nov["so_far"] and nov["through"] == "2026-11-19" and nov["out"] == 1  # its last day with rows
+    assert nov["busiest"]["Virtual Desktop"] == {"n": 3, "day": "2026-11-02"}
+    # the four figures: typical = the middle value (the higher of two), of days that were counted
+    f = u["figures"]["Virtual Desktop"]
+    assert f["work"] == {"n": 2, "of": 4, "days": 4} and f["weekend"] == {"n": 1, "of": 4, "days": 1}
+    assert f["busiest"] == {"n": 3, "of": 4, "day": "2026-11-02"}
+    assert f["month"] == {"n": 4, "of": 4, "month": "2026-11", "through": "2026-11-19"}
+    assert u["figures"]["all"]["busiest"] == {"n": 4, "of": 7, "day": "2026-11-02"}
+    # on disk: counts per kind of device, never a PC's name
+    saved = (tmp_path / "inventory" / "usage.json").read_text()
+    assert not any(name.lower() in saved.lower() for name in ("VD-1", "DT-1", "LT-1", "OLD-9"))
+    kept = json.loads(saved)
+    assert kept["days"]["2026-11-19"] == {"used": {"Virtual Desktop": 2, "Laptop": 1}, "out": 0, "final": False,
+                                          "list": {"Virtual Desktop": 4, "Desktop": 2, "Laptop": 1}}
+    assert kept["days"]["2026-11-18"] == {"none": True, "final": True} and kept["months"]["2026-10"]["final"]
+    assert not kept["months"]["2026-11"]["final"]
+
+
+def test_usage_reads_a_day_again_until_it_has_settled_and_then_never(tmp_path):
+    data = dict(USED)
+    tab, read, asked = usage_tab(tmp_path, data)
+    read()
+    # the next read, the same day: only the days that may still move; the month only when one of them did
+    read(NOW + timedelta(hours=1))
+    assert asked == ["used", "2026-11-20", "2026-11-19"]
+    data["2026-11-20"] = ["VD-1", "DT-2"]  # Aternity adds yesterday's rows
+    u = read(NOW + timedelta(hours=2))
+    assert asked == ["used", "2026-11-20", "2026-11-19", "2026-11 to 2026-11-20"]
+    assert u["days"][-1]["by"]["all"] == {"n": 2, "of": 7} and u["months"][-1]["by"]["Desktop"] == {"n": 2, "of": 2}
+    # the day after: how far back is asked again, the new yesterday is read, Nov 19 for the last time
+    u = read(NOW + timedelta(days=1))
+    assert asked == ["used", "oldest", "2026-11-21", "2026-11-20", "2026-11-19", "2026-11 to 2026-11-21"]
+    assert u["days"][-1]["day"] == "2026-11-21" and u["days"][-1]["by"]["Virtual Desktop"] == {"n": 1, "of": 4}
+    read(NOW + timedelta(days=1, hours=1))
+    assert asked == ["used", "2026-11-21", "2026-11-20"]
+    # after a restart the saved counts are used: nothing kept for good is read again
+    again, read2, asked2 = usage_tab(tmp_path, data, now=NOW + timedelta(days=1, hours=2))
+    u2 = read2()
+    assert asked2 == ["used", "oldest", "2026-11-21", "2026-11-20"]  # the month was counted today and no day moved
+    assert [m["month"] for m in u2["months"]] == ["2026-10", "2026-11"] and u2["filled"] == "2026-11-21"
+    assert again.view(NOW)["ready"] and usage_tab(tmp_path, data)[0].oldest == date(2026, 9, 10)  # known before the first read
+    # December 3: November is over and its last day has settled, so it is counted one last time
+    read(datetime(2026, 12, 3, 15, 0, tzinfo=timezone.utc))
+    assert "2026-11 to 2026-11-30" in asked and json.loads((tmp_path / "inventory" / "usage.json").read_text())["months"]["2026-11"]["final"]
+    read(datetime(2026, 12, 4, 15, 0, tzinfo=timezone.utc))
+    assert not any(a.startswith("2026-11 to") for a in asked) and "2026-12 to 2026-12-03" in asked
+
+
+def test_usage_says_what_it_could_not_read_and_never_counts_it_as_zero(tmp_path, monkeypatch):
+    fail = {"2026-11-19"}
+    tab, read, asked = usage_tab(tmp_path, dict(USED), fail=fail)
+    u = read()
+    day = {d["day"]: d for d in u["days"]}["2026-11-19"]
+    assert "by" not in day and day["why"] == "Could not be read; tried again at the next read."
+    assert u["notes"] == ["The app usage of Thu Nov 19 could not be read (HTTP 400): tried again at the next read."]
+    assert "2026-11-19" not in json.loads((tmp_path / "inventory" / "usage.json").read_text())["days"]
+    fail.clear()
+    u = read(NOW + timedelta(hours=1))  # the next read counts it
+    assert {d["day"]: d for d in u["days"]}["2026-11-19"]["by"]["Laptop"] == {"n": 1, "of": 1} and u["notes"] == []
+    # three days in a row that cannot be read end the pass: Aternity is not answering
+    tab2, read2, asked2 = usage_tab(None, dict(USED), fail={"2026-11-20", "2026-11-19", "2026-11-18"})
+    u2 = read2()
+    assert asked2[:5] == ["used", "oldest", "2026-11-20", "2026-11-19", "2026-11-18"] and "2026-11-17" not in asked2
+    assert u2["notes"][-1] == "69 more days were not tried at this read."
+    # a device list cut short: nothing is counted against it
+    monkeypatch.setattr(inv, "ROWS", len(LISTED))
+    tab3, read3, asked3 = usage_tab(None, dict(USED))
+    u3 = read3()
+    assert u3["notes"] == ["Aternity's device list was not read whole, so the PCs in use were not counted against it at "
+                           "this read."] and not any("by" in d for d in u3["days"]) and u3["months"] == []
+    monkeypatch.undo()
+    # an Aternity that does not publish daily app usage: said, nothing charted, the tab's other panels as before
+    bare = META.replace('<EntitySet Name="APPLICATIONS_DAILY"', '<EntitySet Name="APPLICATIONS_GONE"')
+    tab4, read4, asked4 = usage_tab(None, dict(USED), meta=bare)
+    u4 = read4()
+    assert u4["off"] == "This Aternity does not publish daily app usage (APPLICATIONS_DAILY): there is nothing to chart."
+    assert asked4 == [] and tab4.view(NOW)["pcs"] == 7
+
+
+def test_a_row_of_another_day_in_a_days_reply_is_not_counted_for_it():
+    """Nothing is assumed of how Aternity cuts a day: each row is counted by its own time."""
+    tab, read, asked = usage_tab(None, dict(USED), stray=[("2026-11-18", "DT-2"), ("2026-11-20", "LT-1")])
+    days = {d["day"]: d for d in read()["days"]}
+    assert days["2026-11-19"]["by"] == {"all": {"n": 3, "of": 7}, "Virtual Desktop": {"n": 2, "of": 4},
+                                        "Desktop": {"n": 0, "of": 2}, "Laptop": {"n": 1, "of": 1}}
+    assert days["2026-11-18"]["by"]["Desktop"] == {"n": 1, "of": 2} and days["2026-11-20"]["by"]["all"] == {"n": 1, "of": 7}
+
+
+def test_this_month_is_said_through_its_last_day_with_rows(tmp_path):
+    data = dict(USED)
+    tab, read, asked = usage_tab(tmp_path, data)
+    assert read()["months"][-1]["through"] == "2026-11-19"  # yesterday, Nov 20, has no rows yet
+    data["2026-11-20"] = ["VD-1"]
+    assert read(NOW + timedelta(hours=1))["months"][-1]["through"] == "2026-11-20"
+
+
+def test_usage_sets_a_saved_file_it_cannot_read_aside(tmp_path):
+    (tmp_path / "inventory").mkdir()
+    (tmp_path / "inventory" / "usage.json").write_text("{ not json")
+    tab, read, asked = usage_tab(tmp_path, dict(USED))
+    assert "could not be read" in tab.use_files[0] and "kept as usage.unreadable" in tab.use_files[0]
+    assert (tmp_path / "inventory" / "usage.unreadable").read_text() == "{ not json"
+    u = read()
+    assert u["notes"] == [] and json.loads((tmp_path / "inventory" / "usage.json").read_text())["filled"] == "2026-11-21"
+
+
+def test_one_kind_of_device_or_none_published_gives_all_pcs_only():
+    tab, read, asked = usage_tab(None, dict(USED), listed=[(n, "Desktop") for n, _ in LISTED])
+    u = read()
+    assert u["kinds"] == [{"key": "all", "n": 7}] and u["open"] == "all" and list(u["figures"]) == ["all"]
+    assert {d["day"]: d for d in u["days"]}["2026-11-19"]["by"] == {"all": {"n": 3, "of": 7}}
+
+
+def test_the_usage_charts_words_have_a_written_meaning():
+    """Explain reads the first panel as the page shows it: each term on it has our meaning."""
+    from uxcorrelate import explain
+    page = (Path(inv.__file__).parent / "static" / "index.html").read_text()
+    for term in ("Desktop usage", "in use", "In Aternity's list = 100%", "last bar is yesterday", "typical working day",
+                 "typical weekend day", "busiest day", "used at least once", "so far"):
+        assert term in explain.GLOSSARY["inventory"] and term.lower() in page.lower(), term
+    lines = ["Desktop usage", "Virtual Desktop: in use each day, last 30 days", "52% typical working day 2,270 of 4,326 in use"]
+    found = dict(explain.terms_on("inventory", "Inventory", lines, "What is a typical working day?"))
+    assert list(found)[0] == "typical working day" and "middle value" in found["typical working day"]
+    assert "Desktop usage" in found and "in use" in found
+
+
+def test_the_dark_look_is_written_the_same_wherever_it_is_written():
+    """The switch Parchment | Dark (the user, Nov 22 2026: "Build A and admin too"). CSS needs the
+    dark colours twice per page (the PC's own setting, and the switch); the admin page has them
+    too. They must not drift apart, and both pages keep the choice under one name."""
+    import re
+    static = Path(inv.__file__).parent / "static"
+    looks = {}
+    for name in ("index.html", "admin.html"):
+        page = (static / name).read_text()
+        by_pc = re.search(r'@media \(prefers-color-scheme: dark\) \{\s*:root:not\(\[data-theme="light"\]\) \{(.*?)\}', page, re.S)
+        by_switch = re.search(r'\n  :root\[data-theme="dark"\] \{(.*?)\}', page, re.S)
+        assert by_pc and by_switch, name
+        tokens = lambda text: dict(re.findall(r"(--[a-z0-9-]+|color-scheme):\s*([^;]+);", text))  # noqa: E731
+        assert tokens(by_pc.group(1)) == tokens(by_switch.group(1)) and tokens(by_switch.group(1))["color-scheme"] == "dark", name
+        looks[name] = tokens(by_switch.group(1))
+        assert page.count('localStorage.getItem("uxTheme")') == 1 and 'const THEME_KEY = "uxTheme"' in page, name
+        assert 'data-theme-pick="light">Parchment</button><button type="button" data-theme-pick="dark">Dark</button>' in page, name
+        assert "color: #fff" not in page, name  # text on a filled colour follows the look (--on)
+    shared = set(looks["index.html"]) & set(looks["admin.html"])
+    assert {"--bg", "--panel", "--text", "--muted", "--border", "--accent", "--bad", "--warn", "--ok", "--head", "--brass", "--on"} <= shared
+    assert all(looks["index.html"][k] == looks["admin.html"][k] for k in shared)
