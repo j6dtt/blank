@@ -16,6 +16,7 @@ docker compose up -d --build            # web UI on :8080 (needs config.yaml)
 scripts/make-bundle.sh                  # tests, then bundle for the live host
 scripts/snapshot.sh DIR                 # every test investigation's report + page data
 docker compose -f dev/compose.yaml up -d  # dev only: made-up Aternity + NetIM + AD (then restart the app)
+dev/page_check.sh                       # dev only: a real Chrome counts what each page draws; must end "0 do not"
 ```
 
 Before and after any change to what an investigation says: run
@@ -564,8 +565,18 @@ demo mode: nothing in `src/` knows about it.
   yardstick, which is then not called "the version most have". The
   page ("Application health by version", `renderSwVersions`,
   `swVersionBlock`, `swCell`): a switch between the kinds of PC
-  (`swKind`; its "N ▲" counts a version once per problem, as the red
-  flags list), applications with a ▲ open and the rest folded. No
+  (`swKind`), applications with a ▲ open and the rest folded. One
+  red flag is one line in the list, one ▲ in the tables and one on
+  its button (`swMarks`; the user, Nov 22 2026, on photos of stage:
+  "That number doesn't add up": the button said 7 ▲, the list had 7
+  lines for virtual desktops, the tables carried 8 ▲; then "WE
+  REVIEWED THE CODES TO ELIMINATE ALL GAPS AND BUGS. WHY HAPPENED
+  AGAIN?"): the ▲ is on the count the flag's line quotes (as
+  `_flags`: its update first, the biggest first, else its row in
+  "Version by version"); another raised count of the same version
+  and problem keeps its amber bar and says "Counted as one red flag
+  with its update, below" (`swCell`'s `mark`; Explain says the
+  same). The button's number comes from `swMarks` too. No
   headline box over an application (it said the tables' numbers a
   second time and could name a table that said the opposite; do not
   add one back): "Version by version" first, then "Before and after
@@ -588,9 +599,21 @@ demo mode: nothing in `src/` knows about it.
   many days after as before; it was PC-days, all PCs together), both
   said to be read now (`swReadNow`); the chat's two look-ups say all
   PCs are together. One word for one thing: `KIND["hang"]` is "Stops
-  responding more". A check for it: every count of every tab against
-  the list or panel that should match it, on dev (118 comparisons,
-  Nov 22 2026; the script is not in the repo).
+  responding more". The page check, `dev/page_check.sh`
+  (`dev/page_check.py`; dev only, never bundled): a real Chrome opens
+  a made-up Software tab with the shapes seen on stage (judged by
+  `software.judge`) and the dev app's every tab, and counts what is
+  DRAWN against every number that stands for it (a button's number,
+  the ▲ in the tables and the list's lines; a tab's number, its tile
+  and its lines; "Show the N PCs"; a count of 1 with a plural after
+  it; script errors), then every count the app gives against its list
+  (the 118 comparisons of the review of Nov 22 2026, whose script was
+  not kept: it compared the button with the list, 7 and 7, and never
+  counted the marks on the page). Run it before every copy to stage
+  that touches a page, right after a restart (a list read at a click
+  is compared only with a fresh read); it must end "0 do not". A new
+  count on a page gets its line there. A count of one is "1 program
+  has" in the red flags' sentences (`models.plural`).
   One version under several spellings is one version (the gap of Nov
   21, held as "not on its own"; fixed with the above, Nov 22 2026: on
   stage 4 of 9 version flags were "crashed on 100% (43 of 43)" on

@@ -31,7 +31,7 @@ from .aternity import _bare, is_virtual, odata_quote, odata_time
 from .config import (OS_COLUMNS, SOFTWARE_COLUMNS, SOFTWARE_OS_UPDATE, SOFTWARE_SOURCE, SOFTWARE_USER_SCOPE,
                      TOP_STATUS, VERSION_SOURCES)
 from .http import short_error
-from .models import parse_time, to_float
+from .models import parse_time, plural, to_float
 from .today import zone_of
 
 log = logging.getLogger("uxcorrelate")
@@ -1113,6 +1113,7 @@ def _flags(snap: dict) -> list[dict]:
     line per other kind naming the program with the most PCs."""
     flags = []
     seen = set()
+    # a count of one is "1 program has", not "1 programs have" (dev/page_check, Nov 22 2026: the sample's lines)
     for a in snap.get("versions", {}).values():
         # one flag per version, count and kind of PC: before and after its update first (the same
         # PCs on both sides is the stronger comparison)
@@ -1133,38 +1134,41 @@ def _flags(snap: dict) -> list[dict]:
         b = behind[0]
         flags.append({"key": "behind", "kind": "behind", "label": KIND["behind"], "pcs": b["behind"],
                       "program": b["name"],
-                      "text": f"{len(behind):,} programs have {MIN_PROBLEM} PCs or more on a version older than the "
-                              f"one most of their PCs have; most: {b['name']}, {b['behind']:,} of {b['pcs']:,} PCs "
-                              f"older than {b['most']}."})
+                      "text": f"{plural(len(behind), 'program has', 'programs have')} {MIN_PROBLEM} PCs or more on a "
+                              f"version older than the one most of {'its' if len(behind) == 1 else 'their'} PCs have; "
+                              f"most: {b['name']}, {b['behind']:,} of {plural(b['pcs'], 'PC')} older than {b['most']}."})
     multi = sorted((p for p in apps if p["multi"] and p["multi"]["pcs"]), key=lambda p: (-p["multi"]["pcs"], p["name"]))
     if multi:
         m = multi[0]
         combo = f" ({m['multi']['combos'][0][0]})" if m["multi"]["combos"] else ""
         flags.append({"key": "multi", "kind": "multi", "label": KIND["multi"], "pcs": m["multi"]["pcs"],
                       "program": m["name"],
-                      "text": f"{len(multi):,} programs have 2 or more versions on one PC, "
-                              f"{sum(p['multi']['pcs'] for p in multi):,} PCs in all; most: {m['name']} on "
-                              f"{m['multi']['pcs']:,} of its {m['pcs']:,} PCs{combo}."})
+                      "text": f"{plural(len(multi), 'program has', 'programs have')} 2 or more versions on one PC, "
+                              f"{plural(sum(p['multi']['pcs'] for p in multi), 'PC')} in all; most: {m['name']} on "
+                              f"{m['multi']['pcs']:,} of its {plural(m['pcs'], 'PC')}{combo}."})
     user = sorted((p for p in progs if p["user"]), key=lambda p: (-p["user"], p["name"]))
     if user:
         u = user[0]
         flags.append({"key": "user", "kind": "user", "label": KIND["user"], "pcs": u["user"], "program": u["name"],
-                      "text": f"{len(user):,} programs are installed for one user only, "
-                              f"{sum(p['user'] for p in user):,} installs; most: {u['name']} on {u['user']:,} PCs."})
+                      "text": f"{plural(len(user), 'program is', 'programs are')} installed for one user only, "
+                              f"{plural(sum(p['user'] for p in user), 'install')}; most: {u['name']} on "
+                              f"{plural(u['user'], 'PC')}."})
     win = snap.get("windows") or {}
     gaps = [(m, w) for w in win.get("versions", []) for m in w["missing"]]
     if gaps:
         m, w = max(gaps, key=lambda x: (x[0]["without"], x[1]["pcs"]))
         flags.append({"key": "windows", "kind": "windows", "label": KIND["windows"], "pcs": m["without"],
-                      "text": f"{len(gaps):,} Windows updates are on most PCs of their Windows version but not on "
-                              f"every one; most: {m['update']} not on {m['without']:,} of the {w['pcs']:,} PCs on "
+                      "text": f"{plural(len(gaps), 'Windows update is', 'Windows updates are')} on most PCs of "
+                              f"{'its' if len(gaps) == 1 else 'their'} Windows version but not on every one; most: "
+                              f"{m['update']} not on {m['without']:,} of the {plural(w['pcs'], 'PC')} on "
                               f"{w['windows']}" + (f"; {m['instead'][0]['on']:,} of those have "
                                                    f"{m['instead'][0]['update']}." if m["instead"] else ".")
                               + (f" {CUT}" if win.get("partial") else "")})
     few = [p for p in apps if p["pcs"] <= FEW_PCS]
     if few:
         flags.append({"key": "few", "kind": "few", "label": KIND["few"], "pcs": max(p["pcs"] for p in few),
-                      "text": f"{len(few):,} of the {len(apps):,} programs are on {FEW_PCS} PCs or fewer."})
+                      "text": f"{len(few):,} of the {plural(len(apps), 'program')} {'is' if len(few) == 1 else 'are'} "
+                              f"on {FEW_PCS} PCs or fewer."})
     flags.sort(key=lambda f: (-f["pcs"], list(KIND).index(f["kind"]), f["key"]))
     return flags
 

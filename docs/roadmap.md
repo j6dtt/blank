@@ -52,8 +52,11 @@ data, then its daily data with the people and desktops. See
   CODES REVIEW FOR GAPS, DISCREPANCIES ON SOFTWARE and OTHER").
   Pushed db7c701, 434 tests; on stage 2026-11-22 (two photos):
   the rule works, 5 of the 9 version flags still wrong; the user:
-  "fix it"; fixed on dev the same day (436 tests), stage copy
-  next, prod after it.**
+  "fix it"; fixed the same day (47d6300, 436 tests); on stage
+  2026-11-22 (third photo): works. Seven more photos the same
+  day: one count does not add up; fixed on dev with a page
+  check in the repo (below); stage copy of 2 files next,
+  then prod.**
   - On stage (photo, same application, virtual desktops, a read
     a day later so the counts moved a little): no headline box,
     "Version by version" on top. X crashed on 149 of 2,476 (6%),
@@ -142,8 +145,88 @@ data, then its daily data with the people and desktops. See
       two rows there, whatever their spelling); investigations'
       match of a change's version with a failing part's (text,
       its own tests; no miss seen on prod).
-  - Not seen on stage yet: the Compare dialog, the Inventory tab
-    without BitLocker.
+  - On stage with 47d6300 (third photo, 2026-11-22, the red flags
+    list after its read; a photo before it was of the read before,
+    taken too early): 13 lines, 8 about a version. Gone, as
+    expected: the 4 twins (Desktop Window Manager, VLC, OneDrive
+    24.221.1103.3, Task Manager "24 of 24") and Teams (101 against
+    89). Stay: Edge (269 of 2,066 against 1 of 62), Outlook (149
+    of 2,476 against 2 of 163; the 51 PCs: 10 and 0), Remote
+    Desktop Connection stops responding (17 of 103 against 3 of
+    110), Windows Explorer on virtual desktops after its update
+    (now 203 PCs: 22 after, 7 before; it was 190: PCs with a day
+    under the other spelling are in it now). New, each by the
+    rule with its real counts now that a crash is on its own
+    version: OneDrive 26.153.0809.0004 after its update (1,376
+    PCs: 50 after, 22 before; narrow, 48 needed); Task Manager
+    10.0.22621.6133 (24 of 300 against 0 of 55; it was "24 of 24"
+    beside "0 of 292"; narrow); Remote Desktop Connection
+    10.0.22621.7649 crashes (10 of 110 against 2 of 103: the same
+    two versions as its other flag, the other way round, another
+    problem); Windows Explorer 10.0.22621.7711 on physical PCs
+    after its update (29 PCs: 8 after, 1 before).
+  - Gap found while reading the code for that photo, not fixed
+    (proposed for the next copy): when a read of the Software tab
+    fails and an earlier read is on the page, the tab says
+    nothing (`sStatus` is filled only while reading; the Inventory
+    tab says it) and the next try is 24 hours later.
+  - On stage, seven photos (2026-11-22, the six applications
+    open on virtual desktops and the red flags list; the user:
+    "That number doesn't add up in stage"). Gap, mine: the
+    switch says "Virtual desktops · 7 ▲" and the tables under
+    it carry 8 ▲. One version of one application is marked
+    twice for one problem (stops responding: 147 of 410 against
+    12% in "Version by version", and 22 of 203 after against 7
+    before in "Before and after the update"); the red flags
+    list has one line for it and the switch counts as the list
+    (the review of db7c701 changed the switch from 2 to 1 and
+    checked it against the list by script, not against the
+    marks drawn under it). The rest adds up: 13 lines in the
+    list = the tab's 13 = 8 about a version (7 virtual, 1
+    physical) + 5 of other kinds; every ▲ and every "not
+    raised" matches its own table's counts.
+    - The user: "WE REVIEWED THE CODES TO ELIMINATE ALL GAPS AND
+      BUGS. WHY HAPPENED AGAIN? GETTING VERY FRUSTRATED". Why: the
+      review compared numbers with numbers by a script that was
+      not kept, and never counted what the page draws. So the
+      method changed, not only this count.
+    - Fixed on dev the same day (436 tests; not committed):
+      one red flag = one line in the list = one ▲ in the tables
+      = one on its button (`swMarks` in `index.html`). The ▲ is
+      on the count the list's line quotes (its update first, the
+      biggest first, else its row in "Version by version"); a
+      second raised count of the same version and problem keeps
+      its amber bar and says "Counted as one red flag with its
+      update, below" (Explain and the "i" legend say the same).
+      On stage the button should stay "7 ▲" with 7 ▲ under it.
+    - The page check, in the repo: `dev/page_check.sh`
+      (`dev/page_check.py`). A real Chrome opens a made-up
+      Software tab with stage's shapes and the dev app's every
+      tab and counts what is drawn against every number that
+      stands for it, then every count the app gives against its
+      list. On the page as it is on stage it said "button 8 / ▲
+      drawn 11 / list 8"; on the fixed page 178 agree, 0 do not.
+      To run before every copy to stage that touches a page.
+    - Two more gaps it found, fixed with it: "1 smaller version,
+      1 virtual desktops" (`index.html`); "1 programs have ...",
+      "1 PCs in all", "1 Windows updates are ..." in the red
+      flags' sentences when a count is one (`software.py`; the
+      test had the wrong words as its expectation).
+    - The failed read is said on the tab now (`index.html`: the
+      reader's own sentence, "The page shows the last read until
+      then", as the Inventory tab). Not changed: the next try
+      after an error the code did not expect is 24 hours later.
+    - Not fixed, not on a page (for the next copy of those
+      files): "N programs" with a count of one in a chat note
+      (`software_chat.py`) and in a line of verify --software
+      (`verify.py`).
+    - Stage copy: `src/uxcorrelate/static/index.html` and
+      `src/uxcorrelate/software.py`. Prod after it: the eight
+      files in one go.
+  - Seen on stage now: the "also written" line, "Before and
+    after the change of version" (51 PCs that went to a lower
+    version). Not seen yet: the Compare dialog, the Inventory
+    tab without BitLocker.
   - What the photos showed (an application on virtual desktops; X =
     the version most have, 2,475 PCs; Y = the next, 165 PCs; Z =
     the version before X):

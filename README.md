@@ -419,7 +419,12 @@ flags. Top to bottom:
   a line to go to its chart. **Summary for management ▸** opens a short
   summary (GPT, every number checked; else our own sentences) with Copy.
 - **Application health by version**: virtual desktops and physical PCs
-  apart (a switch; each button says how many ▲ it has). An application
+  apart (a switch; each button says its red flags). One red flag is one
+  line in the Red flags list, one ▲ in the tables and one on its button:
+  when a version is raised for one problem both after its update and
+  against another version, the ▲ is on the count the list's line quotes
+  (its update) and the other count says "Counted as one red flag with its
+  update, below". An application
   with a ▲ is open, the others are one folded line. Two comparisons, each
   shown whole: first **version by version** (each version next to the
   version most PCs have, shaded; every PC that ran it in the last 7
@@ -889,7 +894,17 @@ of the product (there is no demo mode) and the bundle leaves `dev/` out.
 ```
 docker compose -f dev/compose.yaml up -d    # the made-up Riverbed
 docker compose restart                      # the app reads it from now on
+dev/page_check.sh                           # the page check, before a copy to stage
 ```
+
+The page check opens the pages in a real Chrome (the `uitest-chrome` image
+on the dev host) and counts what is drawn against every number that stands
+for it: a button's number against the ▲ under it and the lines of the list,
+a tab's number against its tile and its lines, "Show the N PCs" against its
+count, a count of 1 with a plural after it, script errors; then every count
+the app gives against the list behind it. It looks at a made-up Software tab
+with the shapes seen on stage and at the dev app's every tab. Run it right
+after a restart of the app; it must end with "0 do not".
 
 How it fits together:
 

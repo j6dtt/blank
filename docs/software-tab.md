@@ -192,6 +192,14 @@ Found in the review asked for with it, each closed:
    the version, from any version: now those of the change clicked.
 3. The switch's "N ▲" counted a version twice when both its update and
    another version raised it; the red flags list counted it once.
+   That fix made the button agree with the list and left both ▲ on
+   the page: on stage the button said 7 and the tables under it
+   carried 8 (the user: "That number doesn't add up"). Fixed the same
+   day: one red flag is one line in the list, one ▲ in the tables and
+   one on its button. The ▲ is on the count the list's line quotes
+   (its update first); the other raised count keeps its amber bar and
+   says "Counted as one red flag with its update, below". The page
+   check (`dev/page_check.sh`) counts the marks in a real browser.
 4. In the week of a roll-out the new version can be on more PCs than
    the yardstick: the chip and the flag's sentence still said "the
    version most have" of the older one.

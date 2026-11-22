@@ -143,15 +143,15 @@ def test_every_red_flag_with_its_counts_ranked_by_pcs(tmp_path):
     assert got == [
         ("slow", 20, "Outlook 16.2, physical PCs: 17% of its actions were rated Major (400 of 2,400, on 20 PCs). On the "
                      "version most have, 16.1: 0.2% (5 of 3,005)."),
-        ("behind", 20, "1 programs have 5 PCs or more on a version older than the one most of their PCs have; most: "
+        ("behind", 20, "1 program has 5 PCs or more on a version older than the one most of its PCs have; most: "
                        "Microsoft Edge, 20 of 60 PCs older than 121.0."),
         ("crash", 12, "Outlook 16.1, physical PCs, the version most have: it crashed on 40% of its physical PCs "
                       "(12 of 30). On 16.2: 10% (2 of 20)."),
-        ("windows", 8, "1 Windows updates are on most PCs of their Windows version but not on every one; most: KB1 "
+        ("windows", 8, "1 Windows update is on most PCs of its Windows version but not on every one; most: KB1 "
                        "not on 8 of the 58 PCs on Microsoft Windows 11 Enterprise 23H2; 8 of those have KB2."),
-        ("multi", 6, "1 programs have 2 or more versions on one PC, 6 PCs in all; most: Java on 6 of its 10 PCs "
+        ("multi", 6, "1 program has 2 or more versions on one PC, 6 PCs in all; most: Java on 6 of its 10 PCs "
                      "(8.1 + 11.0)."),
-        ("user", 3, "1 programs are installed for one user only, 3 installs; most: Zoom on 3 PCs."),
+        ("user", 3, "1 program is installed for one user only, 3 installs; most: Zoom on 3 PCs."),
         ("few", 3, "2 of the 4 programs are on 5 PCs or fewer."),  # its biggest: 3 PCs; kind order breaks the tie
     ]
     assert snap["notes"] == []
