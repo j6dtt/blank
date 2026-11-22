@@ -981,6 +981,16 @@ back to dev.
   activities; the activities of the first ones by name; the
   applications in use with no measured action. Two reads added up by
   Aternity. Application and activity names only.
+- **PCs in use, per day and per month** (`verify --usage`, only on its
+  own): what usage charts on the Inventory tab would show, before they
+  are built. 1. How far back Aternity keeps daily app usage. 2. For
+  each of the last 14 days, the PCs an application ran on, by
+  Aternity's kind of device, each with its share of that kind's PCs in
+  the device list; a typical working day, the busiest day, a typical
+  weekend day. 3. Whether Aternity fills the username there, and people
+  a day. 4. The PCs used at least once in this month and the three
+  before, as far as Aternity keeps them. About 20 small reads. Counts
+  only: no PC or user names.
 - **PCs that are gone** (`verify --inventory`, only on its own): three
   answers in plain sentences, no PC names. 1. Aternity's device list:
   how many PCs it heard from today, 1 to 7, 8 to 30 and 31+ days ago,

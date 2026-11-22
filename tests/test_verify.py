@@ -1032,3 +1032,167 @@ def test_verify_inventory_says_in_plain_sentences_which_pcs_are_gone():
     state["used"] = state["listed"]
     flat = " ".join(render_checks(verify_inventory(settings, client)).split())
     assert "many of them are in use: they are live PCs the device list does not have" in flat and "retired PCs whose" not in flat
+
+
+def test_verify_usage_says_the_pcs_in_use_per_day_and_month_with_their_share_of_the_list():
+    """The user, Nov 22 2026, before usage charts on the Inventory tab ("Looking for daily/monthly
+    usage", "Add percentage of usage", "Build it"): verify --usage. Counts only, no PC or user name."""
+    import re
+    from datetime import datetime, timezone
+    from pathlib import Path
+    from uxcorrelate.config import INVENTORY_COLUMNS, INVENTORY_ROLES, VERSION_SOURCES
+    from uxcorrelate.models import parse_time, set_zone
+    from uxcorrelate.verify import verify_usage
+    set_zone(None)
+    meta = (Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text()
+    schema = parse_odata_metadata(meta)
+    u = VERSION_SOURCES["usage"]
+    assert {u["device"], u["time"], u["username"]} <= schema[u["entity"]]  # Riverbed's own names
+    assert {INVENTORY_ROLES["kind"], INVENTORY_COLUMNS["last"]} <= schema["DEVICE_INVENTORY"]
+    pcs = [("PC-1", "Laptop", "2026-11-01T08:00:00Z"),  # an older row of PC-1: its latest one says Desktop
+           ("VD-1", "Virtual Desktop", "2026-11-20T08:00:00Z"), ("VD-2", "Virtual Desktop", "2026-11-20T08:00:00Z"),
+           ("VD-3", "Virtual Desktop", "N/A"), ("PC-1", "Desktop", "2026-11-20T08:00:00Z"),
+           ("LT-1", "Laptop", "2026-11-19T08:00:00Z")]
+    listed = [{"DEVICE_NAME": n, "DEVICE_TYPE": k, "TIME_LAST_REPORTING": t} for n, k, t in pcs]
+    used = [{"TIMEFRAME": f"2026-{d}T00:00:00Z", "DEVICE_NAME": pc, "USERNAME": who} for d, pc, who in (
+        ("10-05", "VD-2", "bob"), ("10-20", "PC-1", "cy"), ("11-14", "LT-1", "eve"),
+        ("11-18", "VD-1", "ann"), ("11-18", "vd-3", "N/A"),  # the name in other capitals; no username
+        ("11-19", "VD-1", "ann"), ("11-19", "VD-2", "bob"), ("11-19", "PC-1", "cy"),
+        ("11-19", "OLD-9", "dee"),  # not in the device list
+        ("11-20", "VD-1", "ann"))]
+    asked = []
+
+    def handler(request):
+        path, p = request.url.path, request.url.params
+        if path.endswith("/$metadata"):
+            return httpx.Response(200, text=meta)
+        if path.endswith("/DEVICE_INVENTORY"):
+            assert p["$select"] == "DEVICE_NAME,DEVICE_TYPE,TIME_LAST_REPORTING"
+            return httpx.Response(200, json={"value": listed})
+        assert path.endswith("/APPLICATIONS_DAILY")
+        asked.append(p["$select"])
+        lo = parse_time(re.search(r"TIMEFRAME ge (\S+)", p["$filter"]).group(1))
+        hi = re.search(r"TIMEFRAME lt (\S+)", p["$filter"])
+        rows = [r for r in used if lo <= parse_time(r["TIMEFRAME"]) and (hi is None or parse_time(r["TIMEFRAME"]) < parse_time(hi.group(1)))]
+        if p["$select"] == "DEVICE_NAME":  # added up by Aternity: a row per PC
+            rows = [{"DEVICE_NAME": n} for n in dict.fromkeys(r["DEVICE_NAME"] for r in rows)]
+        if "$orderby" in p:
+            rows = sorted(rows, key=lambda r: r["TIMEFRAME"])[:int(p["$top"])]
+        return httpx.Response(200, json={"value": rows})
+
+    settings = Settings()
+    settings.aternity.base_url = "https://aternity.test/aternity.odata/v2.0"
+    client = AternityClient(settings.aternity, transport=httpx.MockTransport(handler))
+    text = render_checks(verify_usage(settings, client, now=datetime(2026, 11, 20, 15, 0, tzinfo=timezone.utc)))
+    flat = " ".join(text.split())
+    # the oldest day, 14 days one by one (with the username), then this month and the one before it kept in part
+    assert asked == ["TIMEFRAME"] + ["DEVICE_NAME,TIMEFRAME,USERNAME"] * 14 + ["DEVICE_NAME"] * 2
+    for line in (
+        "Aternity keeps daily app usage (APPLICATIONS_DAILY) back to Mon Oct 05, 2026: 46 days before today. That is 0 "
+        "whole months before this one.",
+        "A day's rows carry one time, as sent: '2026-11-19T00:00:00Z'.",
+        "Only the 5 PCs in Aternity's device list are counted, by its kind of device",
+        "The last 14 days were read a day at a time: 8 rows in 0.0 s",
+        "Kinds, in this order: Virtual Desktop (3 in the list) | Desktop (1) | Laptop (1)",
+        "Sat Nov 14 0 0% | 0 0% | 1 100%",
+        "Wed Nov 18 2 67% | 0 0% | 0 0%",  # vd-3 is VD-3 of the list
+        "Thu Nov 19 2 67% | 1 100% | 0 0%",  # PC-1 by its latest row: a Desktop
+        "Fri Nov 20 1 33% | 0 0% | 0 0% so far",
+        "Virtual Desktop: a typical working day 0 of 3 (0%); the busiest day Wed Nov 18 with 2 (67%); a typical weekend "
+        "day 0 (0%); on at least one of the 14 days 3 (100%).",
+        "1 PC with app usage in these days is not in the device list (retired or renamed, most likely): it is left out.",
+        "Aternity fills the username on 7 of 8 rows of daily app usage (88%).",
+        "Wed Nov 18 1; Thu Nov 19 4; Fri Nov 20 1.",
+        "A typical working day: 0 people. 5 different people in the 14 days.",
+        "8 rows in 0.0 s for 2 months, a row per PC.",
+        "November so far: 3 100% | 1 100% | 1 100%",
+        "October, from Oct 05 only: 1 33% | 1 100% | 0 0%",
+        "September: not kept (daily app usage starts Oct 05)",
+        "This month is kept whole: its count can come from Aternity itself, with no PC name kept by the tab.",
+    ):
+        assert line in flat, line
+    for name in ("VD-1", "vd-3", "OLD-9", "ann", "dee"):  # counts only
+        assert name not in text
+    assert "All checks passed." in flat
+
+
+def test_verify_usage_says_what_it_could_not_read_and_a_month_aternity_does_not_keep_whole():
+    """A day Aternity refuses is said on its line, never 0; with no username column there is no
+    people line; daily app usage that starts after the month began cannot give the month's count."""
+    import re
+    from datetime import datetime, timezone
+    from pathlib import Path
+    from uxcorrelate.models import parse_time, set_zone
+    from uxcorrelate.verify import verify_usage
+    set_zone(None)
+    meta = (Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text()
+    # this Aternity publishes daily app usage without the username
+    start = meta.index('<EntityType Name="APPLICATIONS_DAILY_Type"')
+    end = meta.index("</EntityType>", start)
+    meta = meta[:start] + re.sub(r'<Property Name="USERNAME"[^>]*/>', "", meta[start:end]) + meta[end:]
+    used = [{"TIMEFRAME": f"2026-11-{d}T00:00:00Z", "DEVICE_NAME": pc} for d, pc in (("12", "VD-1"), ("19", "VD-1"))]
+
+    def handler(request):
+        path, p = request.url.path, request.url.params
+        if path.endswith("/$metadata"):
+            return httpx.Response(200, text=meta)
+        if path.endswith("/DEVICE_INVENTORY"):
+            return httpx.Response(200, json={"value": [{"DEVICE_NAME": "VD-1", "DEVICE_TYPE": "Virtual Desktop",
+                                                        "TIME_LAST_REPORTING": "2026-11-20T08:00:00Z"}]})
+        assert "USERNAME" not in p["$select"]
+        lo = parse_time(re.search(r"TIMEFRAME ge (\S+)", p["$filter"]).group(1))
+        hi = re.search(r"TIMEFRAME lt (\S+)", p["$filter"])
+        if hi and parse_time(hi.group(1)).day == 17 and "TIMEFRAME" in p["$select"]:  # the read of Nov 17 (to its noon)
+            return httpx.Response(400, json={"error": {"message": "Bad request."}})
+        rows = [r for r in used if lo <= parse_time(r["TIMEFRAME"]) and (hi is None or parse_time(r["TIMEFRAME"]) < parse_time(hi.group(1)))]
+        if p["$select"] == "DEVICE_NAME":
+            rows = [{"DEVICE_NAME": n} for n in dict.fromkeys(r["DEVICE_NAME"] for r in rows)]
+        return httpx.Response(200, json={"value": rows[:int(p["$top"])] if "$orderby" in p else rows})
+
+    settings = Settings()
+    settings.aternity.base_url = "https://aternity.test/aternity.odata/v2.0"
+    client = AternityClient(settings.aternity, transport=httpx.MockTransport(handler))
+    flat = " ".join(render_checks(verify_usage(settings, client, now=datetime(2026, 11, 20, 15, 0, tzinfo=timezone.utc))).split())
+    for line in (
+        "back to Thu Nov 12, 2026: 8 days before today. That is 0 whole months before this one.",
+        "Kinds, in this order: Virtual Desktop (1 in the list)",
+        "Tue Nov 17 could not be read (",
+        "Thu Nov 19 1 100%",
+        "on at least one of the 13 days 1 (100%)",  # the day not read is not one of them
+        "This Aternity does not publish the username on daily app usage (USERNAME of APPLICATIONS_DAILY): a line of "
+        "people cannot come from it.",
+        "November so far, from Nov 12 only: 1 100%",
+        "October: not kept (daily app usage starts Nov 12)",
+        "Daily app usage starts Nov 12, after this month began: a month's count from Aternity would miss its first days, "
+        "so the tab would have to keep the month's PC names itself.",
+    ):
+        assert line in flat, line
+
+
+def test_verify_usage_reads_the_days_without_the_username_when_aternity_refuses_it():
+    """A username column Aternity lists and then refuses must not cost the days' counts."""
+    from datetime import datetime, timezone
+    from pathlib import Path
+    from uxcorrelate.models import set_zone
+    from uxcorrelate.verify import verify_usage
+    set_zone(None)
+    meta = (Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text()
+
+    def handler(request):
+        path, p = request.url.path, request.url.params
+        if path.endswith("/$metadata"):
+            return httpx.Response(200, text=meta)
+        if path.endswith("/DEVICE_INVENTORY"):
+            return httpx.Response(200, json={"value": [{"DEVICE_NAME": "VD-1", "DEVICE_TYPE": "Virtual Desktop"}]})
+        if "USERNAME" in p["$select"]:
+            return httpx.Response(400, json={"error": {"message": "Bad column."}})
+        return httpx.Response(200, json={"value": [{"DEVICE_NAME": "VD-1", "TIMEFRAME": "2026-11-19T00:00:00Z"}]
+                                         if "2026-11-19T12" in p["$filter"] or "$orderby" in p else []})
+
+    settings = Settings()
+    settings.aternity.base_url = "https://aternity.test/aternity.odata/v2.0"
+    client = AternityClient(settings.aternity, transport=httpx.MockTransport(handler))
+    flat = " ".join(render_checks(verify_usage(settings, client, now=datetime(2026, 11, 20, 15, 0, tzinfo=timezone.utc))).split())
+    assert "Thu Nov 19 1 100%" in flat and "could not be read" not in flat
+    assert "Aternity refused daily app usage asked for with the username (" in flat
+    assert "and gave it without: a line of people cannot come from it." in flat

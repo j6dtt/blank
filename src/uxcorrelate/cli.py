@@ -177,9 +177,9 @@ def cmd_verify(args) -> int:
                            for n in config_notes(args.config)]
     # each part guarded (verify.part): every result is printed at the end, and one error had printed none
     if (args.overview or args.versions or args.software or args.clients or args.inventory
-            or args.actions):  # one Aternity part only
+            or args.actions or args.usage):  # one Aternity part only
         from .verify import (verify_actions, verify_clients, verify_inventory, verify_overview, verify_software,
-                             verify_versions)
+                             verify_usage, verify_versions)
         client = AternityClient(settings.aternity)
         item, run = (("overview", lambda: verify_overview(settings, client)) if args.overview else
                      ("versions", lambda: verify_versions(settings, client)) if args.versions else
@@ -187,6 +187,7 @@ def cmd_verify(args) -> int:
                                                         args.hours)) if args.clients else
                      ("inventory", lambda: verify_inventory(settings, client, args.columns)) if args.inventory else
                      ("actions", lambda: verify_actions(settings, client)) if args.actions else
+                     ("usage", lambda: verify_usage(settings, client)) if args.usage else
                      ("software", lambda: verify_software(settings, client, pc=args.pc)))
         checks += part(item, run, client=client)
         print(render_checks(checks))
@@ -294,6 +295,9 @@ def main(argv: list[str] | None = None) -> int:
     ver.add_argument("--actions", action="store_true",
                      help="only which applications have measured actions, their activities, and the applications "
                           "in use with none (no PC or user names shown)")
+    ver.add_argument("--usage", action="store_true",
+                     help="only the PCs in use: per day and per month by kind of PC with their share of Aternity's "
+                          "device list, how far back daily app usage goes, people a day (no PC or user names shown)")
     ver.add_argument("--except", dest="except_", metavar="BEGINNING",
                      help="with --clients: set apart the devices whose names start with this (several: WT,TC)")
     ver.add_argument("--hours", type=int, default=1, help="with --clients: the last N hours (1 to 24; default 1)")

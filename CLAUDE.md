@@ -961,6 +961,29 @@ demo mode: nothing in `src/` knows about it.
   documented unit: for the order only, never printed) and those
   measured that app usage does not list. A name is counted as sent;
   measured or not is asked without capitals. No PC or user names.
+- `verify --usage` (`verify.verify_usage`, `_usage`, only on its own;
+  the user, Nov 22 2026, for usage charts on the Inventory tab's first
+  panel: "Looking for daily/monthly usage", "Add percentage of usage",
+  "Your recommendations", "Build it"; step 1 of that build, the charts
+  are not built). Daily app usage (`VERSION_SOURCES["usage"]`) set
+  against the device list (each PC once, its latest row, with
+  `INVENTORY_ROLES["kind"]` as sent; names compared without capitals;
+  only PCs in the list are counted, those that are not are said).
+  1. the oldest day kept, and the time a day's rows carry as sent;
+  2. `USE_DAYS` days read a day at a time (`_daily_span`, `_daily_day`:
+  a daily row belongs to the local day its time + 12 hours falls on,
+  as SecureView's), one line a day: per kind of PC (`USE_KINDS` side by
+  side, the rest added up) the PCs in use and their share of that
+  kind's PCs in the list; per kind a typical working day (the middle
+  value, Monday to Friday), the busiest day, a typical weekend day,
+  the PCs used on at least one day; today is "so far" and never
+  typical; a day that could not be read says so, never 0; 3. the
+  username: filled on how many rows, people a day (a read Aternity
+  refuses with the username is made without it, said); 4. this month
+  and `USE_MONTHS` before it, one read each asking for the PC only (a
+  row per PC, added up by Aternity), as far as the oldest day lets
+  them; whether a month's count can come from Aternity itself. Counts
+  only.
 - `verify --inventory` (`verify.verify_inventory`, only on its own; the
   user, Nov 20 2026: how does Aternity handle PCs that no longer exist,
   is there a "last heard"? Riverbed's pages give no rule). Plain

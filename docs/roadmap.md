@@ -287,13 +287,126 @@ data, then its daily data with the people and desktops. See
 
 ## Ideas
 
-- **Device inventory: first cut built on dev, stage copy next**
+- **Device inventory: first cut works on stage (6cc9fac, photo of
+  2026-11-21); next the user's pick of the usage charts**
   (the user, 2026-11-21: "build it"; 420 tests; clicked through in
   a browser on dev). The tab INVENTORY, sixth: tiles, Needs a look
   (nine lines), Last heard from with the agent's status, Retired
   PCs and not used, Find a PC with a card. Files for the copy:
   `inventory.py` (new), `web.py`, `software.py`, `explain.py`,
   `usage.py`, `config.py`, `static/index.html`; restart.
+  - Stage, Nov 21, 18:32: 5,212 PCs (4,326 Virtual Desktop, 721
+    Desktop, 165 Laptop), 4,456 heard from in 7 days, 670 with no
+    date, 1,269 retired. Needs a look, all nine judged: low
+    stability index 1,578 of 5,194; not used in 8 days 1,420 of
+    5,126 (1,342 of them virtual desktops); an older agent 885 of
+    5,212; BitLocker off on a physical PC 755 of 886; not
+    restarted in over 14 days 303 of 4,354; not heard from in 8
+    days 86 of 4,542; a spinning disk 32 of 875; little free
+    space 24 of 5,194; agent stopped 7. The three open points are
+    settled: the low free-space bands are 'Up to 0.5 GB', '3 GB
+    to 4 GB', '5 GB to 10 GB' (the rule takes them); BitLocker is
+    off on most physical PCs; the kinds are the three above.
+  - **Asked next (the user, 2026-11-21, on that photo): "We need
+    analytics of desktops usage charts on first panel, provide
+    proposals with mockups".** Three proposals mocked, nothing
+    built (a design canvas, link in the session; numbers marked
+    "example" are made up):
+    - A. Used each day: PCs an application ran on, per day, 14
+      days, each column against the PCs of its kind in the list;
+      a switch All / Virtual desktops / Desktops / Laptops; a
+      click lists the day's PCs. No new read: the tab's hourly
+      read of daily app usage (`APPLICATIONS_DAILY`, now PC only
+      over 8 days) keeps the day too; 14 days read day by day as
+      the Software tab does.
+    - B. In use at once: PCs an application ran on in each hour
+      of a day against the same hours on the working days before,
+      and the busiest hour of each day against the list. Needs
+      hourly app usage (`APPLICATIONS_HOURLY`: in Riverbed's
+      column list, never read on the live Aternity): a verify
+      line first (published? rows and seconds for a day?).
+    - C. How often: each PC by the number of the last 8 days it
+      was used on (none, 1, 2 to 3, 4 to 5, 6 to 8), virtual
+      desktops and physical PCs side by side; a click lists the
+      PCs. Same read as A.
+    - Not offered: hours of use. Aternity's usage time has no
+      documented unit (never printed).
+    - My recommendation: A and C first (one read, already made),
+      B after its verify line.
+  - **Second round (the user, 2026-11-22, on A-C: "Looking for
+    daily/monthly usage, mockups with bar and line charts
+    mixed").** Three more mocked on the same canvas (its first
+    page; A-C are its second), nothing built, every chart number
+    made up:
+    - D. Desktops as bars, people as a line: each day for 30 days
+      and each month for 12 months, side by side.
+    - E. Desktops in use as bars, the PCs in Aternity's list as a
+      line (what is used against what there is); the monthly
+      chart also has the busiest day of the month as a line.
+    - F. One chart of 90 days: each day a bar, the desktops used
+      at least once in each month as a stepped line; a typical
+      working day (the middle value) written per month.
+    - All three: the switch All / Virtual desktops / Desktops /
+      Laptops, one axis per chart (no second scale), "in use" =
+      an application ran (app usage), each PC once.
+    - What they need, not known yet: 1. how far back Aternity
+      keeps daily app usage (a verify line; the Software tab
+      reads 14 days of it): months before the build exist only
+      that far, later months are counted by the tab as they pass;
+      2. "used at least once in the month" counts each PC once a
+      month: from Aternity when it keeps the month, else the tab
+      keeps the month's PC names on disk (as SecureView does; the
+      Inventory tab keeps none today: the user's decision);
+      3. people (D): `USERNAME` in daily app usage is in
+      Riverbed's column list, never read on the live Aternity (a
+      verify line); 4. E's line: the count in the list is saved
+      per day from the build on.
+    - My recommendation: E (it answers "how much of what we have
+      is used", needs no usernames), with D's people line added
+      once its verify line passes.
+    - **"Add percentage of usage" (the user, 2026-11-22), added
+      to D, E and F on the canvas.** Percentage = desktops in use
+      (a day) or used at least once (a month) out of the desktops
+      of that kind in Aternity's list; a month against that
+      month's list. Shown three ways: marks at the right of each
+      daily chart on the same scale as the counts (in E the list
+      line is 100%; no second scale), a percentage above every
+      monthly bar, and four headline figures under the charts in
+      place of the sentences (typical working day, busiest day,
+      typical weekend day, the month so far; "typical" = the
+      middle value). Needs the count in the list kept per day
+      (from the build on); the kind switch gives each kind its
+      own list.
+    - **Chosen (the user, 2026-11-22): "Your recommendations".**
+      So: E with the percentages on the first panel, D's people
+      line after its verify line. My recommendations on the open
+      points, taken with it: only PCs in Aternity's device list
+      are counted (a percentage never passes 100%; how many were
+      left out is said); 30 days by day, 12 months by month,
+      filled as far back as Aternity keeps daily app usage and
+      growing from there; counts saved per day, no PC names; a
+      month's "used at least once" from Aternity when it keeps
+      the whole month, else the current month's PC names in one
+      file (PCs only, no users), removed when the month is
+      counted; the chart opens on Virtual desktops. Build order:
+      1. `verify --usage` (how far back daily app usage goes,
+      rows and seconds, PCs in use per day by kind with the
+      percentage for the last 14 days, whether the username is
+      filled, PCs in app usage that are not in the list); 2. the
+      daily chart with percentages; 3. the monthly chart; 4. the
+      people line.
+    - **"Build it" (the user, 2026-11-22): step 1 built on dev,
+      `verify --usage`** (423 tests; run against the dev sample).
+      Next: its run on stage (copy `verify.py`, `cli.py`; no
+      restart needed for a verify), then step 2 from what it
+      prints. It answers the four unknowns above in one run: the
+      oldest day of daily app usage and how a day's rows are
+      timed, the PCs in use per day and kind with their share of
+      the list for 14 days (the daily chart's own numbers), the
+      username filled or not with people a day, and this month and
+      the three before read one read each (the monthly chart's
+      numbers), saying whether a month's count can come from
+      Aternity itself.
   - Different from what was said before the build, each for a
     reason: the lists and the card answer from the hourly read held
     in memory, not from a read at the click (no load on Aternity;

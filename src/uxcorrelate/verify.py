@@ -22,11 +22,12 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from statistics import median
+from statistics import median, median_high
 from typing import Any
 
 from .aternity import AternityClient, is_virtual, odata_quote, odata_time
 from .config import (ACTION_COLUMNS, DISK_CATEGORIES, DISK_FREE_COLUMNS, DISK_PARTS, INVENTORY_COLUMNS, INVENTORY_FILLED,
+                     INVENTORY_ROLES,
                      OS_COLUMNS, OVERVIEW_SOURCES, PROCESS_COLUMN, SOFTWARE_COLUMNS,
                      SOFTWARE_OS_UPDATE,
                      SOFTWARE_REMOVED, SOFTWARE_SOURCE, SOFTWARE_USER_SCOPE, SOFTWARE_UPDATE_GAP_MIN, TIME_COLUMNS,
@@ -2374,6 +2375,265 @@ def verify_actions(settings: Settings, client: AternityClient) -> list[Check]:
                      f"{secs:.1f} s): {len(used) - len(none):,} of them have measured actions, {len(none):,} have none.",
                      rows=lines + cut))
     return out
+
+
+USE_DAYS = 14  # verify --usage: the days said one by one, today last
+USE_ROWS = 50_000  # rows of one of its reads (the check's limit)
+USE_MONTHS = 3  # months before this one read for "used at least once", as far as Aternity keeps them
+USE_KINDS = 3  # kinds of PC said side by side on a line, the most PCs first; the others are added up
+USE_OTHER = "other kinds"
+USE_NO_KIND = "no kind given"
+USE_ITEMS = ("1. How far back daily app usage goes", "2. PCs in use, day by day", "3. People, day by day",
+             "4. PCs used at least once in a month")
+
+
+def _local_midnight(d) -> datetime:
+    """The midnight that starts local day d (config.yaml's timezone), in UTC."""
+    return datetime(d.year, d.month, d.day, tzinfo=local(datetime.now(timezone.utc)).tzinfo).astimezone(timezone.utc)
+
+
+def _daily_span(first, after) -> tuple[datetime, datetime]:
+    """The span to ask Aternity's daily rows of local days `first` up to the day before `after`.
+    A daily row carries one time a day, at an hour that is Aternity's own, so a day is asked for
+    from 12 hours before its local midnight and a row is of the day its time + 12 hours falls
+    on (`_daily_day`; SecureView reads the same kind of rows so)."""
+    return _local_midnight(first) - timedelta(hours=12), _local_midnight(after) - timedelta(hours=12)
+
+
+def _daily_day(value):
+    t = parse_time(value)
+    return local_date(t + timedelta(hours=12)) if t else None
+
+
+def verify_usage(settings: Settings, client: AternityClient, now: datetime | None = None) -> list[Check]:
+    """`verify --usage` (the user, Nov 22 2026, before usage charts on the Inventory tab's first
+    panel: "Looking for daily/monthly usage", "Add percentage of usage", "Build it"): what those
+    charts would show, from Aternity's daily app usage set against its device list. 1. how far
+    back daily app usage goes; 2. the PCs in use on each of the last USE_DAYS days, by Aternity's
+    kind of device, each with its share of that kind's PCs in the list; 3. whether the username
+    is filled, and people a day; 4. the PCs used at least once in this month and the months
+    before it. Counts only: no PC or user name."""
+    try:
+        schema = parse_odata_metadata(client.http.request("GET", "/$metadata", headers={"Accept": "application/xml"}).text)
+    except (ApiError, ET.ParseError) as exc:
+        return [Check("Aternity", "connection", False, f"Could not read $metadata: {exc.short() if isinstance(exc, ApiError) else exc}",
+                      "Check aternity.base_url, aternity.username and ATERNITY_PASSWORD.")]
+    return part("PCs in use, for the usage charts", _usage, settings, client, schema, now or datetime.now(timezone.utc),
+                client=client)
+
+
+def _usage(settings: Settings, client: AternityClient, schema: dict[str, set[str]], now: datetime) -> list[Check]:
+    u = VERSION_SOURCES["usage"]
+    E, D, T = u["entity"], u["device"], u["time"]
+    item1, item2, item3, item4 = USE_ITEMS
+    if not {D, T} <= schema.get(E, set()):
+        return [Check("Aternity", item1, None, f"This Aternity does not publish daily app usage ({E} with {D} and {T}): "
+                      "nothing to show.")]
+    inv, dev = settings.aternity.entities.get("inventory"), settings.aternity.fields.get("inventory", {}).get("device")
+    if inv not in schema or dev not in schema[inv]:
+        return [Check("Aternity", item1, None, f"This Aternity does not publish its device list ({inv or 'no source set'} "
+                      f"with {dev or 'a device column'}): the PCs in use cannot be set against it.")]
+    U = u["username"] if u["username"] in schema[E] else None
+    kind_col = INVENTORY_ROLES["kind"] if INVENTORY_ROLES["kind"] in schema[inv] else None
+    last = INVENTORY_COLUMNS["last"] if INVENTORY_COLUMNS["last"] in schema[inv] else None
+    empty = lambda v: v in (None, "", *NO_VALUE)  # noqa: E731
+    share = lambda n, m: f"{n / m:.0%}" if m else "-"  # noqa: E731
+    name_of = lambda v: str(v).strip().lower()  # noqa: E731  (names are compared without capitals)
+
+    # the device list: each PC once (its latest row), with Aternity's kind of device
+    mark = len(client.warnings)
+    listed = client.query(inv, select=[c for c in (dev, kind_col, last) if c], top=INV_ROWS, raw=True)
+    list_cut = _cut_short(client, mark) + _limit(listed, INV_ROWS)
+    kinds: dict = {}  # PC -> its kind of device, as sent
+    heard: dict = {}
+    for r in listed:
+        if empty(r.get(dev)):
+            continue
+        pc, t = name_of(r.get(dev)), parse_time(r.get(last)) if last else None
+        if pc in kinds and not (t and (heard.get(pc) is None or t > heard[pc])):
+            continue
+        heard[pc] = t
+        kinds[pc] = (USE_NO_KIND if empty(r.get(kind_col)) else str(r.get(kind_col))) if kind_col else "PCs"
+    if not kinds:
+        return [Check("Aternity", item1, None, f"Aternity's device list ({inv}) gave no PC: the PCs in use cannot be set "
+                      "against it.", rows=list_cut)]
+    sizes = Counter(kinds.values())
+    order = [k for k, _ in sizes.most_common()]
+    cols = order[:USE_KINDS] + ([USE_OTHER] if len(order) > USE_KINDS else [])
+    of = {k: sizes[k] for k in order[:USE_KINDS]}
+    if len(order) > USE_KINDS:
+        of[USE_OTHER] = sum(sizes[k] for k in order[USE_KINDS:])
+    col_of = lambda pc: kinds[pc] if kinds[pc] in of else USE_OTHER  # noqa: E731
+    cells = lambda n: " | ".join(f"{n[c]:>5,} {share(n[c], of[c]):>4}" for c in cols)  # noqa: E731
+
+    def by_kind(names) -> tuple[dict, set]:
+        """PCs in the list per column, and those that are not in the list."""
+        by, out = {c: set() for c in cols}, set()
+        for pc in names:
+            (by[col_of(pc)] if pc in kinds else out).add(pc)
+        return by, out
+
+    today = local_date(now)
+    days = [today - timedelta(days=k) for k in range(USE_DAYS - 1, -1, -1)]
+
+    # 1. the oldest day kept
+    first, first_said = None, ""
+    try:
+        got = client.query(E, filter=f"{T} ge {odata_time(now - timedelta(days=VER_BACK))}", select=[T],
+                           orderby=f"{T} asc", top=1, raw=True)
+        first = _daily_day(got[0].get(T)) if got else None
+        first_said = "" if first else "Aternity gave no row of daily app usage: how far back it goes is not known."
+    except ApiError as exc:
+        first_said = f"How far back daily app usage goes could not be read ({exc.short()})."
+
+    # 2. and 3. a day at a time
+    per: dict = {}  # day -> what its read gave, or {"error": why}
+    gone: set = set()  # PCs with app usage that are not in the device list
+    cut: list[str] = []
+    no_user = ""  # said when Aternity refused the read with the username: the days are read without it
+
+    def read_day(d) -> list[dict]:
+        nonlocal U, no_user
+        span = _between(T, *_daily_span(d, d + timedelta(days=1)))
+        try:
+            return client.query(E, span, select=[D, T] + ([U] if U else []), top=USE_ROWS, raw=True)
+        except ApiError as exc:
+            if not U:
+                raise
+            rows = client.query(E, span, select=[D, T], top=USE_ROWS, raw=True)  # still refused: the day's own error
+            no_user, U = (f"Aternity refused daily app usage asked for with the username ({exc.short()}) and gave it "
+                          "without: a line of people cannot come from it."), None
+            return rows
+
+    for d in days:
+        mark, t0 = len(client.warnings), time.monotonic()
+        try:
+            rows = read_day(d)
+        except ApiError as exc:
+            per[d] = {"error": exc.short()}
+            continue
+        secs = time.monotonic() - t0
+        cut += [f"{d:%a %b %d}: {c}" for c in _cut_short(client, mark) + _limit(rows, USE_ROWS)]
+        mine = [r for r in rows if _daily_day(r.get(T)) == d and not empty(r.get(D))]
+        by, out = by_kind({name_of(r.get(D)) for r in mine})
+        gone |= out
+        named = [r for r in mine if U and not empty(r.get(U))]
+        per[d] = {"by": by, "rows": len(mine), "named": len(named), "people": {name_of(r.get(U)) for r in named},
+                  "secs": secs, "stamps": list(dict.fromkeys(str(r.get(T)) for r in mine))}
+    read = [d for d in days if "error" not in per[d]]
+    whole = [d for d in read if d != today]  # today is not over: left out of "typical" and "busiest"
+    lines = ["Kinds, in this order: " + " | ".join(f"{c} ({of[c]:,}{' in the list' if i == 0 else ''})"
+                                                    for i, c in enumerate(cols))]
+    for d in days:
+        lines.append(f"{d:%a %b %d}  could not be read ({per[d]['error']})" if "error" in per[d] else
+                     f"{d:%a %b %d}  " + cells({c: len(per[d]["by"][c]) for c in cols}) + ("  so far" if d == today else ""))
+    for c in cols:
+        if not of[c] or not read:
+            continue
+        n = {d: len(per[d]["by"][c]) for d in read}
+        work, wend = sorted(n[d] for d in whole if d.weekday() < 5), sorted(n[d] for d in whole if d.weekday() >= 5)
+        said = []
+        if work:
+            said.append(f"a typical working day {median_high(work):,} of {of[c]:,} ({share(median_high(work), of[c])})")
+        if whole:
+            best = max(whole, key=lambda d: n[d])
+            said.append(f"the busiest day {best:%a %b %d} with {n[best]:,} ({share(n[best], of[c])})")
+        if wend:
+            said.append(f"a typical weekend day {median_high(wend):,} ({share(median_high(wend), of[c])})")
+        ever = len(set().union(*(per[d]["by"][c] for d in read)))
+        said.append(f"on at least one of the {len(read)} days {ever:,} ({share(ever, of[c])})")
+        lines.append(f"{c}: " + "; ".join(said) + ".")
+    if gone:
+        lines.append((f"{len(gone):,} PCs with app usage in these days are not in the device list (retired or renamed, "
+                      "most likely): they are left out.") if len(gone) != 1 else
+                     "1 PC with app usage in these days is not in the device list (retired or renamed, most likely): "
+                     "it is left out.")
+    rows_read, secs_read = sum(per[d]["rows"] for d in read), sum(per[d]["secs"] for d in read)
+    check2 = Check("Aternity", item2, None,
+                   f"In use on a day: an application ran on the PC (daily app usage, {E}), each PC once. Only the "
+                   f"{len(kinds):,} PCs in Aternity's device list are counted, by its kind of device; a share is of that "
+                   f"kind's PCs in the list. The last {USE_DAYS} days were read a day at a time: {rows_read:,} rows in "
+                   f"{secs_read:.1f} s" + (f" (the slowest day {max(per[d]['secs'] for d in read):.1f} s)" if read else "")
+                   + ". Typical = the middle value; working days are Monday to Friday.", rows=lines + list_cut + cut)
+
+    # 3. people
+    if no_user:
+        check3 = Check("Aternity", item3, None, no_user)
+    elif U is None:
+        check3 = Check("Aternity", item3, None, f"This Aternity does not publish the username on daily app usage "
+                       f"({u['username']} of {E}): a line of people cannot come from it.")
+    else:
+        named = sum(per[d]["named"] for d in read)
+        if not named:
+            check3 = Check("Aternity", item3, None, f"Aternity fills the username on none of the {rows_read:,} rows of "
+                           "daily app usage read: a line of people cannot come from it.")
+        else:
+            people = {d: len(per[d]["people"]) for d in read}
+            work = sorted(people[d] for d in whole if d.weekday() < 5)
+            everyone = len(set().union(*(per[d]["people"] for d in read)))
+            check3 = Check("Aternity", item3, None,
+                           f"Aternity fills the username on {named:,} of {rows_read:,} rows of daily app usage "
+                           f"({share(named, rows_read)}). People with an application running, each once a day, on any kind "
+                           "of PC:",
+                           rows=["; ".join(f"{d:%a %b %d} {people[d]:,}" for d in read) + ".",
+                                 (f"A typical working day: {median_high(work):,} people. " if work else "")
+                                 + f"{everyone:,} different people in the {len(read)} days."])
+
+    # 4. a month: one read, the PC only, so Aternity adds its days up
+    this = today.replace(day=1)
+    months = [(this, today + timedelta(days=1), f"{this:%B} so far")]
+    for _ in range(USE_MONTHS):
+        before = (months[-1][0] - timedelta(days=1)).replace(day=1)
+        months.append((before, months[-1][0], f"{before:%B}"))
+    mlines, mrows, msecs, mread, per_pc = [], 0, 0.0, 0, True
+    for a, b, label in months:
+        if first and b <= first:
+            mlines.append(f"{label}: not kept (daily app usage starts {first:%b %d})")
+            continue
+        if first and a < first:
+            label += f", from {first:%b %d} only"
+        start = max(a, first) if first else a
+        lo, hi = _daily_span(start, b)
+        mark, t0 = len(client.warnings), time.monotonic()
+        try:
+            rows = client.query(E, _between(T, lo, hi), select=[D], top=USE_ROWS, raw=True)
+        except ApiError as exc:
+            mlines.append(f"{label}: could not be read ({exc.short()})")
+            continue
+        msecs += time.monotonic() - t0
+        cut4 = _cut_short(client, mark) + _limit(rows, USE_ROWS)
+        names = {name_of(r.get(D)) for r in rows if not empty(r.get(D))}
+        by, _ = by_kind(names)
+        mrows, mread, per_pc = mrows + len(rows), mread + 1, per_pc and len(rows) == len(names)
+        mlines.append(f"{label}:  " + cells({c: len(by[c]) for c in cols}))
+        mlines += [f"{label}: {c}" for c in cut4]
+    if first and first <= this:
+        mlines.append("This month is kept whole: its count can come from Aternity itself, with no PC name kept by the tab.")
+    elif first:
+        mlines.append(f"Daily app usage starts {first:%b %d}, after this month began: a month's count from Aternity would "
+                      "miss its first days, so the tab would have to keep the month's PC names itself.")
+    check4 = Check("Aternity", item4, None,
+                   f"One read per month, asking for the PC only, so that Aternity adds the month's days up: {mrows:,} rows "
+                   f"in {msecs:.1f} s for {mread} month{'s' if mread != 1 else ''}"
+                   + ("" if not mread else ", a row per PC" if per_pc else
+                      ", NOT a row per PC (Aternity did not add the days up: each PC is still counted once)")
+                   + ". Kinds in the order above; a share is of that kind's PCs in today's list (what the list held in "
+                   "an earlier month is not known).", rows=mlines)
+
+    # 1. said last: it also says how a day's rows are timed
+    if first:
+        back = (today - first).days
+        n_whole = (this.year - first.year) * 12 + this.month - first.month - (0 if first.day == 1 else 1)
+        said1 = (f"Aternity keeps daily app usage ({E}) back to {first:%a %b %d, %Y}: {back:,} days before today"
+                 + (f" (the check looks {VER_BACK} days back: it may keep more)" if back >= VER_BACK - 1 else "")
+                 + f". That is {max(n_whole, 0):,} whole month{'s' if n_whole != 1 else ''} before this one.")
+    else:
+        said1 = first_said
+    stamps = next((per[d]["stamps"] for d in reversed(whole) if per[d]["stamps"]), [])
+    check1 = Check("Aternity", item1, None, said1 + " " + _days_note(settings),
+                   rows=[f"A day's rows carry {'one time' if len(stamps) == 1 else f'{len(stamps):,} different times'}, "
+                         "as sent: " + ", ".join(repr(s) for s in stamps[:3]) + "."] if stamps else [])
+    return [check1, check2, check3, check4]
 
 
 def _rule_before(app: dict, tab) -> list[dict]:
