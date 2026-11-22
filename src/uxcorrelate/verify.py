@@ -2141,6 +2141,9 @@ def _versions(settings: Settings, client: AternityClient, schema: dict[str, set[
                     all_rows, all_secs = all_rows + (got.get("day_rows") or 0), all_secs + took
                     only = [had[k] for k in got.get("only") or []]
                     lines = []
+                    for keep, others in sorted((got.get("spellings") or {}).items()):
+                        lines.append(f"Aternity writes {keep} also as {', '.join(others)}: counted as one version "
+                                     "(they have the same number).")
                     for on, k in got["kinds"].items():
                         big = [v for v in k["versions"] if max(v["pcs"], v["action_pcs"]) >= tab.MIN_PCS]
                         fresh = [v["version"] for v in k["versions"] if v["new"]]
@@ -2154,7 +2157,8 @@ def _versions(settings: Settings, client: AternityClient, schema: dict[str, set[
                                      + (f"; new this week: {', '.join(fresh)}" if fresh else "") + ".")
                         for u_ in k["updates"]:
                             went = (f"{u_['pcs']:,} of them went from {u_['from']} to {u_['to']}"
-                                    + (f" ({u_['both']:,} ran both versions on the day of the update: that day is on "
+                                    + (", a lower version" if u_.get("down") else "")
+                                    + (f" ({u_['both']:,} ran both versions on the day of the change: that day is on "
                                        "neither side)" if u_.get("both") else ""))
                             lines.append(f"{went}." if only else
                                          f"{went}: a crash on {u_['before']['crash']:,} before and on "
@@ -2162,8 +2166,8 @@ def _versions(settings: Settings, client: AternityClient, schema: dict[str, set[
                                          f"and on {u_['after']['hang']:,} after (for each PC as many days after as "
                                          "before).")
                         if k.get("updates_more"):
-                            lines.append(f"{k['updates_more']:,} more updates that {tab.MIN_PCS} of them or more made "
-                                         "were compared the same way: nothing raised.")
+                            lines.append(f"{k['updates_more']:,} more changes of version that {tab.MIN_PCS} of them "
+                                         "or more made were compared the same way: nothing raised.")
                     if only:
                         lines.append(f"Every PC Aternity lists for it had {' and '.join(only)}, so there is no PC "
                                      "without one to compare with: the tab compares no share of crashes or hang "
@@ -2179,7 +2183,9 @@ def _versions(settings: Settings, client: AternityClient, schema: dict[str, set[
                                         f"Not raised on {tab.PLACES[on]}: {v['version']} looks worse than another "
                                         f"version for {had.get(kind, kind)}, but of the {b['pcs']:,} PCs that ran "
                                         f"both, {b['with']:,} had it with {v['version']} and {b['other']:,} with the "
-                                        "other.")
+                                        "other" + {"ratio": f": not {tab.RATIO:g} times as many",
+                                                   "still": f": {tab.STILL} more with the other would undo it"}
+                                        .get(b.get("why"), "") + ".")
                     if i == len(asked) - 1 and len(asked) > 1:
                         lines.append(f"These {len(asked)} reads together: {all_rows:,} rows of app usage, "
                                      f"{all_secs:.1f} s.")

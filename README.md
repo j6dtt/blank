@@ -411,8 +411,8 @@ flags. Top to bottom:
   after its update than before (at least 2 times, 20 PCs on each side, 5
   with the problem, and still so with 2 more PCs with it on the other
   side, or 5 more actions rated Major for slow actions; a version that
-  is worse than another is not raised when the PCs that ran both
-  versions say otherwise), programs behind
+  is worse than another is raised only when the PCs that ran both
+  versions show it too), programs behind
   most PCs, 2+ versions on one
   PC, a Windows update most PCs of a Windows version have but not every
   one, programs installed for one user, programs on 5 PCs or fewer. Click
@@ -433,10 +433,22 @@ flags. Top to bottom:
   - **The same PCs decide.** Two versions side by side are different
     PCs. When 20 PCs or more went from one of the two versions to the
     other, they ran both: if 5 of them or more had the problem on one of
-    the two and no more of them had it on the version that looks worse,
-    that version is not raised and its count says so ("not raised: the
-    53 PCs that ran both had it on 7 with this version and on 9 with
-    ..."). When they agree, the ▲ gives their counts.
+    the two, the version that looks worse is raised only when they show
+    it themselves by the same checks (2 times as many of them with it on
+    that version, and still so with 2 more on the other). Else it is not
+    raised and its count says so ("not raised: the 53 PCs that ran both
+    had it on 7 with this version and on 9 with ...", or "... on 101
+    with this version and on 89 with ...: not 2 times as many"). When
+    they show it, the ▲ gives their counts.
+  - **One version, one row.** Aternity writes some versions in more
+    than one way (3.0.20 and 3.0.20.0, 24.221.1103.0003 and
+    24.221.1103.3, with and without "(WinBuild...)") and puts a PC's
+    crash under the second spelling. Spellings with the same number are
+    counted as one version, in every table, flag, list and comparison;
+    the row says "also written ...". They were two versions, the second
+    with a crash on every one of its PCs.
+  - PCs that went to a lower version did not get an update: their table
+    is titled **Before and after the change of version**.
   - **Table ▾** under the versions: every version on the kind of PC on
     screen, each count with its percentage.
   - **Explain ▸** beside a comparison walks through it with its own

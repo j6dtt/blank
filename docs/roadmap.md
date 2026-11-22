@@ -50,7 +50,100 @@ data, then its daily data with the people and desktops. See
   it add more confusing. Thooughts?"; "Add percentage to tables";
   "Move version by version on top of before and after"; "DO FULL
   CODES REVIEW FOR GAPS, DISCREPANCIES ON SOFTWARE and OTHER").
-  Built on dev, 434 tests; stage copy next.**
+  Pushed db7c701, 434 tests; on stage 2026-11-22 (two photos):
+  the rule works, 5 of the 9 version flags still wrong; the user:
+  "fix it"; fixed on dev the same day (436 tests), stage copy
+  next, prod after it.**
+  - On stage (photo, same application, virtual desktops, a read
+    a day later so the counts moved a little): no headline box,
+    "Version by version" on top. X crashed on 149 of 2,476 (6%),
+    ▲ against 1.2% on Y (2 of 163), "the 51 PCs that ran both:
+    10 with this version, 0 with Y": the table under it says 10
+    of 51 before and 0 of 51 after. X stopped responding on
+    1,294 of 2,476 (52%) against 29 of 163 (18%): "not raised:
+    the 51 PCs that ran both had it on 6 with this version and
+    on 8 with Y", and the table says 6 of 51 and 8 of 51. The
+    71 PCs that came to X: a crash on 1 before and 2 after, "not
+    raised: only 2 PCs with a crash after, 5 needed". Every ▲
+    and every "not raised" matches its table.
+  - Gap seen on that photo (fixed with the three below): the 51
+    PCs went from X to Y, and Y has the lower version number: a
+    move to an older build, which the page titled "Before and
+    after the update".
+  - On stage, second photo (2026-11-22, the red flags list): 14
+    lines, 9 of them about a version (6 "Crashes more", 3 "Stops
+    responding more"). 4 hold: Edge (269 of 2,066 against 1 of
+    62), Outlook (149 of 2,476 against 2 of 163, the 51 PCs: 10
+    and 0), Windows Explorer after its update (190 PCs: 19 after,
+    6 before), Remote Desktop Connection (17 of 103 against 3 of
+    110). 5 should not be there as they are:
+    - 4 are one version under two spellings (the gap of Nov 21,
+      held then as "not on its own"; see Agreed): Desktop Window
+      Manager 10.0.22621.7219 (46 of 46 against 0 of 38 on the
+      same number with "(WinBuild...)"), VLC media player
+      3.0.20.0 (43 of 43 against 0 of 798 on 3.0.20), OneDrive
+      24.221.1103.3 (27 of 27 against 0 of 416 on
+      24.221.1103.0003, physical PCs), Task Manager
+      10.0.22621.6133 (24 of 24 against 0 of 292). On Nov 21 the
+      rule passed such twins over for other reasons (new that
+      week, too few PCs); it no longer does for these four.
+    - 1 is a gap in the rule of this entry: Teams, 16 of 102
+      (16%) against 191 of 2,801 (6.8%), with "of the 2,403 PCs
+      that ran both, 101 with this version and 89 with the
+      other". The rule drops a flag only when no more of the
+      same PCs had it on this version; 101 is more than 89, so
+      it stayed, though the same PCs do not show "more" by the
+      tab's own measure.
+  - **Fixed on dev (the user, 2026-11-22: "fix it"), 436 tests,
+    not committed; one stage copy of 6 files, prod after:**
+    1. One version, one row. Spellings with the same number are
+       one version (the dotted number at the start, each part as a
+       number, no zeros at its end; a label in brackets left out,
+       other text has to be the same), put together before
+       anything is counted, in the rows and in each PC's days.
+       The row says "also written ..."; Explain, Compare, the
+       chat and `verify --versions` say what was put together.
+       Different from the plan of Nov 21 in one point: the name
+       kept is not simply "the spelling on the most PCs" but, in
+       this order, the one the tab already shows, not the plain
+       a.b.c.d of the rows with a crash (all three cases seen on
+       stage), then the most PCs. Why: a check of every count on
+       dev showed Compare keeping the other spelling than the
+       tab; and Desktop Window Manager on stage has more PCs
+       under the crash rows' spelling (46) than under the other
+       (38), so "most PCs" could flip from day to day.
+    2. The same PCs must show it. When 5 or more of the PCs that
+       ran both had the problem on one of the two versions, the
+       version is raised only when they pass the tab's own checks
+       themselves (2 times as many of them with it, still so with
+       2 more on the other); else "not raised" with their counts
+       and why ("not 2 times as many", "2 more with ... would undo
+       it"). Teams on the photo: 101 against 89, not raised.
+       Outlook's crash flag: 10 against 0, stays.
+    3. A move to a lower version is a "change of version": the
+       table's title, the count's words, the flag's sentence, the
+       list behind it, Explain, Compare, verify.
+    - Expected on stage (not certain: the merged versions are
+      judged again with their real counts): the 4 twin flags go,
+      Teams goes, Edge, Outlook, Windows Explorer and Remote
+      Desktop Connection stay.
+    - Checked on dev before the copy: the sample now writes a row
+      with a crash under a second spelling, as stage does; every
+      count against its list again by script (129 agree, the one
+      that does not is Compare read a minute after the tab, said
+      on the page); a scripted Chrome over the dev page and over
+      a made-up page with the stage's numbers (101 against 89, a
+      move to a lower version, two spellings): the words, the
+      list behind a count, Compare, Explain, dark, a phone's
+      width, no script error; `verify --versions` on dev.
+    - Not changed, said plainly: crash events by the failing
+      part's version (another source; no twin seen there); the
+      installed list's "2+ versions on one PC" (two installs are
+      two rows there, whatever their spelling); investigations'
+      match of a change's version with a failing part's (text,
+      its own tests; no miss seen on prod).
+  - Not seen on stage yet: the Compare dialog, the Inventory tab
+    without BitLocker.
   - What the photos showed (an application on virtual desktops; X =
     the version most have, 2,475 PCs; Y = the next, 165 PCs; Z =
     the version before X):
@@ -334,9 +427,10 @@ data, then its daily data with the people and desktops. See
       SearchHost 2609.12000.100.0 (crashes, 7 of 461), Windows
       Explorer "10.0.26100.9974 (WinBuild...)" (stops responding,
       200 of 581 against 510 of 3,482).
-  - Gap found there, in the rule before and the rule now, not
-    built: **one version under two spellings is counted as two
-    versions.** Aternity writes a version one way on app usage rows
+  - Gap found there, in the rule before and the rule now (built
+    2026-11-22, see "Software tab: the headline box is gone" under
+    Waiting on you): **one version under two spellings is counted
+    as two versions.** Aternity writes a version one way on app usage rows
     and another on rows with a crash (my reading of the photo:
     "(WinBuild...)" left off, "0003" as "3"). So the crashes of such
     a version are not on its own row: its crash share is too low
@@ -373,10 +467,10 @@ data, then its daily data with the people and desktops. See
   Waiting on its photo from prod (see Waiting on you). After it:
   where on the page, if anywhere. Not decided.
 - **One version under two spellings: not on its own** (the user,
-  2026-11-21: "I don't want to fix the spellings alone"). The gap
-  and its plan are under "Waiting on you" (Application health by
-  version); it waits to go with other Software work. My reading:
-  not now as a single fix.
+  2026-11-21: "I don't want to fix the spellings alone"). Built
+  2026-11-22 with two other Software fixes, on the user's "fix
+  it" (4 of the 9 version flags on stage were it); see "Waiting
+  on you".
 
 ## Ideas
 

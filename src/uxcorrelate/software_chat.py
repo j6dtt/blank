@@ -115,8 +115,8 @@ RULES = (f"Raised (a red flag): a version whose share is at least {RATIO:g} time
          f"as before, virtual desktops and physical PCs apart; with {MIN_PCS} PCs or more on each side, {MIN_PROBLEM} "
          f"or more with the problem, and still so with {STILL} more PCs with it on the other side (for actions rated "
          f"Major: with {STILL_ACTIONS} more of the other side's actions rated Major); a version worse than another "
-         "is not raised when the PCs that ran both versions do not show it; not raised: no difference by these "
-         "rules.")
+         "is not raised when the PCs that ran both versions do not show it themselves by the same checks; not "
+         "raised: no difference by these rules.")
 
 
 def pick(asked, names) -> tuple[str | None, list[str]]:
@@ -459,6 +459,9 @@ def _by_version(args: dict, a: dict, period: str, first: list[str]) -> dict:
     if a["only"]:
         notes.append(f"Every PC listed for {name} had a crash or hang time: app usage holds it only where it failed, "
                      "so no share is compared and no version is raised for either.")
+    if a.get("spellings"):  # one version Aternity writes in more than one way: one row
+        notes.append("Counted as one version, as Aternity writes it in more than one way: " + "; ".join(
+            f"{keep} (also {', '.join(others)})" for keep, others in sorted(a["spellings"].items())) + ".")
     raised = [f"{r[0]} ({r[6]})" for r in rows if r[6]]
     most = max(rows, key=lambda r: r[2] or 0) if usage else None
     say = (f"{name}, last {DAYS} days: " + "; ".join(
@@ -496,11 +499,17 @@ def _like(name: str, names: list[str]) -> list[str]:
             f"{', '.join(names[:5])}{' …' if len(names) > 5 else ''}. Ask again with one of them."] if names else []
 
 
+def _shown(view: dict, name: str) -> set[str]:
+    """The application's versions as the tab's latest read shows them: a version Aternity writes
+    in more than one way keeps that name in a read made now (`software._kept`)."""
+    return {v["version"] for a in view.get("versions", []) if a["application"] == name for v in a["versions"]}
+
+
 def compare_block(client, cfg, now: datetime, view: dict, known, args: dict, application=None, a=None, b=None):
     name, names = _app(view, known, application)
     if name is None:
         return _not_one("compare", args, "application", application, names, _live())
-    c = compare(client, cfg, now, name, a, b)
+    c = compare(client, cfg, now, name, a, b, prefer=_shown(view, name))
     if c["a"] is None:
         notes = c["notes"] + (_like(name, names) if not c["versions"] else [])
         return _result("compare", args, f"{name}: nothing to compare", _live(), ["What"], [], notes,
@@ -530,7 +539,7 @@ def before_after_block(client, now: datetime, view: dict, known, args: dict, app
     name, names = _app(view, known, application)
     if name is None:
         return _not_one("before_after", args, "application", application, names, _live(UPDATE_DAYS))
-    ba = before_after(client, now, name)
+    ba = before_after(client, now, name, prefer=_shown(view, name))
     rows = [[p["from"], p["to"], p["pcs"], p["before"]["crash"], p["after"]["crash"], p["before"]["hang"],
              p["after"]["hang"]] for p in ba["pairs"]]
     notes = list(ba["notes"]) + ["The same PCs on each side, counted as the Software tab counts them: for each PC as "
@@ -601,7 +610,8 @@ def pcs(client, now: datetime, sw: Software, view: dict, known, args: dict, prog
                            ["Name the version: the list holds one version's PCs."] + _like(name, names),
                            say=f"Which version of {name}? " + (f"Its versions: {', '.join(r[0] for r in rows[:5])}."
                                                                if rows else "Name it in full."))
-        got = pcs_with_problem(client, now, name, ver, problem)
+        got = pcs_with_problem(client, now, name, ver, problem,
+                               also=((mine or {}).get("spellings") or {}).get(ver, ()))
         rows, runs = [], []
         for x in got["rows"][:PCS_ROWS]:
             last = datetime.fromisoformat(x["last"])

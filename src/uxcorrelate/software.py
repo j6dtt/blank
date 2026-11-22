@@ -90,14 +90,133 @@ def shown(v) -> str:
     return "(no version)" if v in (None, NO_VERSION) else str(v)
 
 
+_NUMBER = re.compile(r"(\d+(?:\.\d+)*)(.*)$", re.S)
+_LABEL = re.compile(r"\([^()]*\)$")  # a label in brackets after the number: "(WinBuild.160101.0800)"
+
+
+def same_version(v) -> tuple | str:
+    """What two spellings of one version share. Aternity writes a version one way on most app
+    usage rows and another on rows with a crash (stage, Nov 21-22 2026: "10.0.22621.7219
+    (WinBuild.160101.0800)" and "10.0.22621.7219", "24.221.1103.0003" and "24.221.1103.3",
+    "3.0.20" and "3.0.20.0"); taken as two versions, the second held only PCs that crashed, so
+    it "crashed on 100%" (46 of 46) against 0% (0 of 38) on the first: 4 of the 9 version flags
+    on stage were that. One version = the same dotted number at the start, each part as a
+    number ("0003" is 3) and without zeros at its end ("3.0.20.0" is 3.0.20); a label in
+    brackets after the number is left out, any other text after it has to be the same. A
+    version that starts with no number is only itself."""
+    text = str(v if v is not None else "").strip()
+    m = _NUMBER.match(text)
+    if not m:
+        return text
+    nums = [int(x) for x in m.group(1).split(".")]
+    while len(nums) > 1 and nums[-1] == 0:
+        nums.pop()
+    rest = m.group(2).strip()
+    return tuple(nums), "" if _LABEL.match(rest) else rest.lower()
+
+
+def lower_version(to, was) -> bool:
+    """`to` has the lower number: PCs that went from `was` to it moved to an older version,
+    which is no update (the page and the flag say "change of version": stage, Nov 22 2026, 51
+    virtual desktops went from 16.0.20430 to 16.0.17932 under "Before and after the update")."""
+    a, b = same_version(to), same_version(was)
+    return isinstance(a, tuple) and isinstance(b, tuple) and a[0] < b[0]
+
+
+_FILE_VERSION = re.compile(r"(0|[1-9]\d*)(\.(0|[1-9]\d*)){3}$")  # a.b.c.d in plain numbers
+
+
+def _kept(seen: dict, prefer=()) -> dict:
+    """Spellings of one version (`same_version`) -> the one they are counted and shown under
+    (`seen`: spelling -> how many PCs). One version has to carry one name on the tab, in Compare,
+    in a list and from one day to the next, whatever the counts of a read are (a check of every
+    count on dev, Nov 22 2026: Compare kept "16.2.1100.0" where the tab had "16.2.1100"). So, in
+    this order: a spelling in `prefer` (the versions the tab's latest read shows); not the plain
+    four numbers a.b.c.d, which is how the rows with a crash write it in all three cases seen on
+    stage ("10.0.22621.7219", "24.221.1103.3", "3.0.20.0"); the most PCs; the longer one."""
+    groups: dict = {}
+    for v in seen:
+        groups.setdefault(same_version(v), []).append(v)
+    out = {}
+    for g in groups.values():
+        if len(g) > 1:
+            keep = max(g, key=lambda v: (v in prefer, not _FILE_VERSION.match(v.strip()), seen[v], len(v), v))
+            out.update({v: keep for v in g if v != keep})
+    return out
+
+
+def _respell_days(days: dict, m: dict) -> None:
+    """A PC's days (PC -> day -> [its versions, ...]) with each spelling in `m` as its kept one."""
+    for by in days.values():
+        for x in by.values():
+            if not x[0].isdisjoint(m):
+                x[0] = {m.get(v, v) for v in x[0]}
+
+
+def _one_spelling_rows(vs: dict, m: dict) -> None:
+    """The rows per version (`_blank` shapes) with each spelling in `m` added to its kept one."""
+    for v, keep in m.items():
+        x = vs.pop(v, None)
+        if x is None:
+            continue
+        y = vs.setdefault(keep, _blank())
+        for k in ("pcs", "crash", "hang", "virtual", "apcs", "avirtual", "major_pcs"):
+            y[k] |= x[k]
+        y["actions"] += x["actions"]
+        y["major"] += x["major"]
+        for d, n in x["dev"].items():
+            t = y["dev"].setdefault(d, [0.0, 0.0])
+            t[0], t[1] = t[0] + n[0], t[1] + n[1]
+
+
+def _one_spelling(vs: dict, days: dict, prefer=()) -> dict:
+    """The spellings of one version put together, in the rows per version (`vs`: `_blank`
+    shapes, each PC once) and in the PCs' days: {the spelling kept: [the others]}. Before
+    anything is counted or judged, so a PC with a crash is a PC of its version, a day with two
+    spellings is a day on one version, and no PC "changed version" between spellings."""
+    seen: dict[str, set] = {}
+    for v, x in vs.items():
+        seen.setdefault(v, set()).update(x["pcs"], x["apcs"])
+    for d, by in days.items():
+        for x in by.values():
+            for v in x[0]:
+                seen.setdefault(v, set()).add(d)
+    m = _kept({v: len(pcs) for v, pcs in seen.items()}, prefer)
+    if m:
+        _one_spelling_rows(vs, m)
+        _respell_days(days, m)
+    out: dict = {}
+    for v, keep in m.items():
+        out.setdefault(keep, []).append(v)
+    return {keep: sorted(others) for keep, others in out.items()}
+
+
+def tab_versions(snap: dict | None, application: str) -> set[str]:
+    """The application's versions as the tab's latest read shows them: a read made at a click
+    (Compare, before and after) keeps these spellings, so one version has one name."""
+    a = ((snap or {}).get("versions") or {}).get(application) or {}
+    return {v["version"] for v in a.get("versions") or []}
+
+
+def other_spellings(snap: dict | None, application: str, version: str) -> list[str]:
+    """The other spellings the latest read put together under this version of the application:
+    a list opened by a click asks Aternity for each of them."""
+    a = ((snap or {}).get("versions") or {}).get(application) or {}
+    return list((a.get("spellings") or {}).get(version, ()))
+
+
 def version_of(asked, versions) -> str | None:
-    """The version meant: exactly, else the one that starts with it ("16.0.20430" for
-    16.0.20430.20180); None when none or several do."""
+    """The version meant: exactly, else another spelling of it (`same_version`), else the one
+    that starts with it ("16.0.20430" for 16.0.20430.20180); None when none or several do."""
     asked = str(asked or "").strip()
     if not asked:
         return None
     if asked in versions:
         return asked
+    key = same_version(asked)
+    same = [v for v in versions if same_version(v) == key]
+    if len(same) == 1:
+        return same[0]
     starts = [v for v in versions if str(v).startswith(asked + ".")]
     return starts[0] if len(starts) == 1 else None
 
@@ -465,8 +584,10 @@ def _versions(q: _Reads, now: datetime, say) -> dict:
                 x[1] += to_float(r.get(s["volume"])) or 1
         if key == "usage":  # every name, also those not read per version below
             q.usage = {a: int(x[1]) for a, x in per.items()}
-        cands = sorted((a for a, x in per.items() if len(x[0]) > 1 and (x[1] >= MIN_PROBLEM or x[2] > 0)),
-                       key=lambda a: (-per[a][1], -per[a][2], a))
+        # 2 versions or more: spellings of one version (`same_version`) are one, so an application with a single
+        # version that Aternity writes in two ways is not read as if it had two
+        cands = sorted((a for a, x in per.items() if len({same_version(v) for v in x[0]}) > 1
+                        and (x[1] >= MIN_PROBLEM or x[2] > 0)), key=lambda a: (-per[a][1], -per[a][2], a))
         if len(cands) > APPS_MAX:
             q.notes.append(f"{len(cands)} applications have {problem} on 2 versions or more; the {APPS_MAX} with "
                            "the most were compared.")
@@ -598,7 +719,9 @@ def _updates(days: dict, inn, least: int = MIN_PCS) -> list[dict]:
             p[side]["crash"] += any(x[1] for _, x in part)
             p[side]["hang"] += any(x[2] for _, x in part)
     out = sorted((p for p in pairs.values() if p["pcs"] >= least), key=lambda p: (-p["pcs"], order(p["to"])))
-    return [dict(p, first=p["first"].isoformat(), last=p["last"].isoformat()) for p in out]
+    # "down": the PCs went to a lower version number, which is no update (`lower_version`)
+    return [dict(p, first=p["first"].isoformat(), last=p["last"].isoformat())
+            | ({"down": True} if lower_version(p["to"], p["from"]) else {}) for p in out]
 
 
 def _new(v: str, pcs: set, days: dict) -> bool:
@@ -652,6 +775,7 @@ def _kinds(vs: dict, extra: dict) -> dict:
 
 def _judged(a: str, vs: dict, read, partial: bool = False, extra: dict | None = None,
             now: datetime | None = None) -> dict:
+    spell = _one_spelling(vs, (extra or {}).get("days") or {})  # one version under several spellings: one row
     rows = [{"version": v, "pcs": len(x["pcs"]), "crash": len(x["crash"]), "hang": len(x["hang"]),
              "virtual": len(x["virtual"]), "action_pcs": len(x["apcs"]), "action_virtual": len(x["avirtual"]),
              "actions": int(round(x["actions"])), "major": int(round(x["major"])),
@@ -662,7 +786,7 @@ def _judged(a: str, vs: dict, read, partial: bool = False, extra: dict | None = 
     app = {"application": a, "read": sorted(read), "versions": rows, "partial": partial,
            "totals": {"pcs": union("pcs"), "crash": union("crash"), "hang": union("hang"),
                       "action_pcs": union("apcs"), "slow": union("major_pcs")},
-           "kinds": _kinds(vs, extra or {})}
+           "kinds": _kinds(vs, extra or {})} | ({"spellings": spell} if spell else {})
     judge(app)
     return app
 
@@ -787,15 +911,22 @@ def same_pcs(updates: list[dict], x: str, y: str, kind: str) -> dict | None:
     """The PCs that ran both versions `x` and `y`: those that went from one to the other
     (`_updates`: MIN_PCS PCs or more, each PC with the same number of days on each side).
     {"pcs", "with": those with the problem on their days on x, "other": on their days on y,
-    "decides": MIN_PROBLEM of them or more had it on one of the two, so they can tell}.
-    None when no PCs made that change."""
+    "decides": MIN_PROBLEM of them or more had it on one of the two, so they can tell,
+    "shows": they show it themselves by the tab's own checks (`_check`: RATIO times as many with
+    x, MIN_PROBLEM of them, still so with STILL more with y), "why" when they do not: "no" (no
+    more of them with x), "ratio" (more, under RATIO times), "still" (STILL more with y would
+    undo it)}. None when no PCs made that change."""
     pcs = a = b = 0
     for u in updates:
         if (u["from"], u["to"]) == (y, x):
             pcs, a, b = pcs + u["pcs"], a + u["after"][kind], b + u["before"][kind]
         elif (u["from"], u["to"]) == (x, y):
             pcs, a, b = pcs + u["pcs"], a + u["before"][kind], b + u["after"][kind]
-    return {"pcs": pcs, "with": a, "other": b, "decides": max(a, b) >= MIN_PROBLEM} if pcs else None
+    if not pcs:
+        return None
+    state, _ = _check(a, pcs, b, pcs, a, STILL)
+    return {"pcs": pcs, "with": a, "other": b, "decides": max(a, b) >= MIN_PROBLEM, "shows": state == "raised",
+            "why": {"raised": "", "no": "no", "more": "ratio"}.get(state, "still")}
 
 
 def _both(ups: list[dict], spoke: set, x: str, y: str, kind: str) -> dict | None:
@@ -825,10 +956,14 @@ def judge(app: dict) -> None:
     on 9 with the second). A version against another version is two different groups of PCs;
     the PCs that ran both (`same_pcs`) are the same PCs and people with the same number of days
     on each. So a version that passes the checks against another is raised only when the PCs
-    that ran both do not say otherwise: when MIN_PROBLEM of them or more had the problem on one
-    of the two and no more of them had it on this version than on the other, it is not raised
-    (`verdict` "same", with their counts). When they agree, or are too few to tell, it is raised
-    and keeps their counts (`same`; no such PCs: no `same`). Slow actions have no before and after: unchanged. When every PC listed had a crash (or
+    that ran both show it too: when MIN_PROBLEM of them or more had the problem on one of the
+    two (`decides`), they have to pass the same checks themselves (`shows`), else it is not
+    raised (`verdict` "same", with their counts and `why`). It was "no more of them had it on
+    this version": on stage a version stayed raised for stopping to respond on 16 of 102 PCs
+    against 191 of 2,801, with 101 against 89 on the 2,403 PCs that ran both, which is no "more"
+    by any check of the tab (the user's "fix it", Nov 22 2026). When they show it, or are too
+    few to tell, it is raised and keeps their counts (`same`; no such PCs: no `same`). Slow
+    actions have no before and after: unchanged. When every PC listed had a crash (or
     hang time), app usage holds the application only where it failed: nothing of app usage is
     compared (`only`)."""
     vs, read = app["versions"], app["read"]
@@ -853,7 +988,8 @@ def judge(app: dict) -> None:
                 u["verdict"][kind] = {"state": state, "few": few}
                 if state == "raised":
                     app["raised"].append({"kind": kind, "version": u["to"], "on": on, "how": "update",
-                                          "from": u["from"], "n": n, "of": u["pcs"], "before": before, "pcs": n})
+                                          "from": u["from"], "n": n, "of": u["pcs"], "before": before, "pcs": n}
+                                         | ({"down": True} if u.get("down") else {}))
         ups, spoke = k["updates"], set()  # spoke: the changes of version a version's verdict rests on
         for v in k["versions"]:
             v["verdict"] = {}
@@ -876,10 +1012,10 @@ def judge(app: dict) -> None:
                 found = {"kind": kind, "on": on, "ref": ref["version"]} | less
                 if state == "raised":
                     both = _both(ups, spoke, v["version"], ref["version"], kind)
-                    if both and both["decides"] and both["with"] <= both["other"]:
-                        v["verdict"][kind] = {"state": "same", "few": False, "same": both}  # they say otherwise
+                    if both and both["decides"] and not both["shows"]:
+                        v["verdict"][kind] = {"state": "same", "few": False, "same": both}  # they do not show it
                     else:
-                        v["verdict"][kind] |= {"same": both} if both else {}  # they agree, or are too few to tell
+                        v["verdict"][kind] |= {"same": both} if both else {}  # they show it, or are too few to tell
                         app["raised"].append(found | {"version": v["version"], "how": "version", "n": mine[0],
                                                       "of": mine[1], "ref_n": most[0], "ref_of": most[1],
                                                       "pcs": v[prob_key]} | ({"same": both} if both else {}))
@@ -894,8 +1030,8 @@ def judge(app: dict) -> None:
                         ref["verdict"][kind] = {"state": back, "few": False, "against": v["version"]}
                 if back == "raised" and seen != "raised":
                     both = _both(ups, spoke, ref["version"], v["version"], kind)
-                    if both and both["decides"] and both["with"] <= both["other"]:
-                        if seen != "same":  # they say otherwise: the first such version is the one named
+                    if both and both["decides"] and not both["shows"]:
+                        if seen != "same":  # they do not show it: the first such version is the one named
                             ref["verdict"][kind] = {"state": "same", "few": False, "against": v["version"],
                                                     "same": both}
                         continue
@@ -934,6 +1070,10 @@ def flag_text(kind: str, f: dict) -> str:
     where = f", {on}" if f.get("on") in ("virtual", "physical") else ""
     if f.get("how") == "update":
         more = "more crashes" if kind == "crash" else "it stops responding more"
+        if f.get("down"):  # the PCs went to a lower version number: no update
+            return (f"{a} {v}{where}: {more} after the change from {f['from']}, a higher version. Of the "
+                    f"{f['of']:,} PCs that went to it, it {DID[kind]} on {f['n']:,} after the change and on "
+                    f"{f['before']:,} before it.")
         return (f"{a} {v}{where}: {more} after the update from {f['from']}. Of the {f['of']:,} PCs that got it, it "
                 f"{DID[kind]} on {f['n']:,} after the update and on {f['before']:,} before it.")
     mine, other = share_text(f["n"], f["of"]), share_text(f["ref_n"], f["ref_of"])
@@ -1189,6 +1329,7 @@ def _versions_view(apps: dict) -> list[dict]:
         raised = {(r["version"], r["kind"]) for r in a["raised"]}
         vs = [dict(v, raised=sorted(k for (ver, k) in raised if ver == v["version"])) for v in a["versions"]]
         out.append({"application": a["application"], "read": a["read"], "only": a["only"], "versions": vs,
+                    "spellings": a.get("spellings") or {},
                     "totals": a.get("totals"), "kinds": a["kinds"], "found": a["raised"],
                     "raised": len(a["raised"]), "problem": sum(v["crash"] + v["hang"] + v["major_pcs"] for v in vs)})
     out.sort(key=lambda a: (-a["raised"], -a["problem"], a["application"].lower()))
@@ -1361,31 +1502,37 @@ def pcs_with_program(client, name: str, version: str | None, prefix: bool = Fals
             "rows": [{"device": d, "version": ", ".join(sorted(per[d], key=order))} for d in devs[:PCS_SHOWN]]}
 
 
-def pcs_with_problem(client, now: datetime, application: str, version: str, problem: str, kind: str = "") -> dict:
+def pcs_with_problem(client, now: datetime, application: str, version: str, problem: str, kind: str = "",
+                     also=()) -> dict:
     """The PCs with a crash, hang time or a Major action on one application version over the
     last DAYS days, read now: user, days with it, the last of them (for Investigate). `kind`
-    (virtual / physical): only the PCs Aternity marks so, as the count that was clicked."""
+    (virtual / physical): only the PCs Aternity marks so, as the count that was clicked. `also`:
+    the other spellings of the version (`other_spellings`), each asked for as the version is,
+    one read a spelling: the PCs with a crash are mostly under the second one."""
     start = now - timedelta(days=DAYS)
     key = "actions" if problem == "slow" else "usage"
     s = VERSION_SOURCES[key]
-    flt = f"{_span(s, start, now)} and {s['application']} eq {odata_quote(application)} and " \
-          f"{s['version']} eq {odata_quote(version)}"
     if problem == "slow":
-        flt += f" and {s['status']} eq {odata_quote(TOP_STATUS)}"
+        tail = f" and {s['status']} eq {odata_quote(TOP_STATUS)}"
         count = s["volume"]
     else:
         count = s["crashes"] if problem == "crash" else s["hang_time"]
-        flt += f" and {count} gt 0"
+        tail = f" and {count} gt 0"
     sel = [s["device"], s["time"], count]
     kind = kind if kind in ("virtual", "physical") else ""
     tries = ([[s["username"], s["virtual"]], [s["virtual"]]] if kind else []) + [[s["username"]], []]
-    for more in tries:  # the user and the virtual mark, when Aternity publishes them on this source
-        try:
-            rows = client.query(s["entity"], filter=flt, select=sel + more, top=LIST_ROWS)
-            break
-        except Exception:
-            if not more:
-                raise
+    rows, more = [], []
+    for spelling in dict.fromkeys([version, *also]):
+        flt = f"{_span(s, start, now)} and {s['application']} eq {odata_quote(application)} and " \
+              f"{s['version']} eq {odata_quote(spelling)}" + tail
+        for more in tries:  # the user and the virtual mark, when Aternity publishes them on this source
+            try:
+                rows += client.query(s["entity"], filter=flt, select=sel + more, top=LIST_ROWS)
+                break
+            except Exception:
+                if not more:
+                    raise
+        tries = [more]  # the columns this source gave: the same for every spelling
     marked = s["virtual"] in more
     per: dict = {}
     for r in rows:
@@ -1447,13 +1594,16 @@ def pcs_after_update(client, now: datetime, application: str, version: str, prob
         day[4] += crashes
         if marked and is_virtual(r.get(u["virtual"])):
             virtual.add(str(d))
+    _one_spelling({}, days)  # one version under several spellings is one version, as in the daily read
     hit_at = 1 if problem == "crash" else 2
+    is_ = lambda v, asked: same_version(v) == same_version(asked)  # noqa: E731  (whatever spelling was kept)
     out = []
     for d, by in days.items():
         if kind and marked and (d in virtual) != (kind == "virtual"):
             continue
         got = _changed_once(by)
-        hit = [x for _, x in got[4] if x[hit_at]] if got and got[1] == version and (not was or got[0] == was) else []
+        hit = [x for _, x in got[4] if x[hit_at]] if got and is_(got[1], version) and (not was or is_(got[0], was)) \
+            else []
         if hit:
             out.append({"device": d, "username": None, "days": len(hit),
                         "count": int(round(sum(x[4] for x in hit))) if problem == "crash" else None,
@@ -1461,8 +1611,9 @@ def pcs_after_update(client, now: datetime, application: str, version: str, prob
     out.sort(key=lambda x: (-x["days"], -x["last"].timestamp(), x["device"].lower()))
     words = "a crash" if problem == "crash" else "hang time"
     who = PLACES[kind] if kind and marked else "PCs"
-    return {"what": f"{application}: {who} with {words} after their update {f'from {was} ' if was else ''}to {version}, "
-                    f"last {UPDATE_DAYS} days",
+    change = "change" if was and lower_version(version, was) else "update"  # to a lower version: no update
+    return {"what": f"{application}: {who} with {words} after their {change} {f'from {was} ' if was else ''}to "
+                    f"{version}, last {UPDATE_DAYS} days",
             "total": len(out), "problem": problem,
             "rows": [dict(x, last=x["last"].isoformat()) for x in out[:PCS_SHOWN]]}
 
@@ -1509,14 +1660,16 @@ def pcs_without_update(client, cfg, update: str, windows: list[str], instead=())
 
 
 def compare(client, cfg, now: datetime, application: str, a: str | None = None, b: str | None = None,
-            kind: str = "") -> dict:
+            kind: str = "", prefer=()) -> dict:
     """Two versions of an application side by side on every kind of issue Aternity records,
     over the last DAYS days, as shares of the PCs (or actions) on each: PCs with a crash, with
     hang time, with each kind of health event of the application (matched by the version the
     PC ran), actions rated Major (overall and on the busiest activities), and how many of
     each version's PCs are virtual desktops. `kind` (virtual / physical): only the PCs Aternity
     marks so, as the tab's own tables count them (`on` in the reply: the kind that was applied;
-    it counted all PCs together under tables that are per kind of PC: review of Nov 22 2026)."""
+    it counted all PCs together under tables that are per kind of PC: review of Nov 22 2026).
+    `prefer`: the versions as the tab shows them (`tab_versions`), kept when one is written in
+    more than one way."""
     start = now - timedelta(days=DAYS)
     notes: list[str] = []
     q = _Reads(client, notes)
@@ -1570,6 +1723,20 @@ def compare(client, cfg, now: datetime, application: str, a: str | None = None, 
         if r.get(ac["status"]) == TOP_STATUS:
             x["major"] += n
             y[1] += n
+    # one version under several spellings is one version, as in the daily read (the rows with a crash carry
+    # another spelling: side by side, one "version" had every crash and the other none)
+    spell = _kept({v: (len(x["pcs"]), x["actions"]) for v, x in per.items()}, prefer)
+    if spell:
+        for d in pc_versions:
+            pc_versions[d] = {spell.get(v, v) for v in pc_versions[d]}
+        for by in act.values():
+            for v in [v for v in by if v in spell]:
+                y, z = by.pop(v), by.setdefault(spell[v], [0.0, 0.0])
+                z[0], z[1] = z[0] + y[0], z[1] + y[1]
+        _one_spelling_rows(per, spell)
+        both = sorted({f"{keep} (also written {', '.join(sorted(v for v in spell if spell[v] == keep))})"
+                       for keep in spell.values()})
+        notes.append("One version, written in more than one way by Aternity, is counted once: " + "; ".join(both) + ".")
     versions = sorted(per, key=lambda v: (-max(len(per[v]["pcs"]), per[v]["actions"]), order(v)))
     if len(versions) < 2:
         where = f" on {PLACES[kind]}" if kind else ""
@@ -1615,14 +1782,14 @@ def compare(client, cfg, now: datetime, application: str, a: str | None = None, 
             "kind": mixed, "on": kind, "notes": notes, "days": DAYS}
 
 
-def before_after(client, now: datetime, application: str, kind: str = "") -> dict:
+def before_after(client, now: datetime, application: str, kind: str = "", prefer=()) -> dict:
     """Before and after an update, on the same PCs, read now and counted as the tab's own
     tables count it (`_updates`: each PC whose version of the application changed once in the
     last UPDATE_DAYS days, as many days after as before, the PCs with a crash and with hang
     time on each side; a day with both versions is on neither). It counted PC-days, with every
     day a PC had on each side, all PCs together: the same update had other numbers here than in
     the table above it (review of Nov 22 2026). Every change of version, most PCs first, also
-    those under MIN_PCS PCs, which the tab does not judge. `kind` as in `compare`."""
+    those under MIN_PCS PCs, which the tab does not judge. `kind` and `prefer` as in `compare`."""
     u = VERSION_SOURCES["usage"]
     start = now - timedelta(days=UPDATE_DAYS)
     kind = kind if kind in ("virtual", "physical") else ""
@@ -1650,6 +1817,7 @@ def before_after(client, now: datetime, application: str, kind: str = "") -> dic
         x[2] = x[2] or (to_float(r.get(u["hang_time"])) or 0) > 0
         if marked and is_virtual(r.get(u["virtual"])):
             virtual.add(d)
+    _one_spelling({}, days, prefer)  # one version under several spellings is one version: no change between them
     apart = bool(kind and marked)
     pairs = _updates(days, (lambda d: (d in virtual) == (kind == "virtual")) if apart else (lambda d: True), least=1)
     every = rows and all((to_float(r.get(u["crashes"])) or 0) > 0 for r in rows)

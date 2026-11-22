@@ -989,8 +989,13 @@ class Sample:
         for key, x in sorted(per.items()):
             dev, app = key[0], key[1]
             pc = PCS[dev]
+            version = x["version"] or self.version(dev, app, start + 12 * HOUR)
+            if which == "usage" and x["crash"]:
+                # as the live Aternity (stage, Nov 22 2026): a row with a crash carries the version in another
+                # spelling ("3.0.20.0" beside "3.0.20"); the Software tab has to count the two as one version
+                version += ".0"
             row = {"TIMEFRAME": start, "DEVICE_NAME": dev, "USERNAME": x["user"], "APPLICATION_NAME": app,
-                   "APPLICATION_VERSION": x["version"] or self.version(dev, app, start + 12 * HOUR),
+                   "APPLICATION_VERSION": version,
                    "VIRTUALIZATION": "true" if pc["virtual"] else "false", "BUSINESS_LOCATION": pc["site"]}
             if which == "usage":
                 row.update({"APPLICATION_CRASHES_TOTAL": x["crash"], "APPLICATION_HANG_TIME_TOTAL": x["hang"],

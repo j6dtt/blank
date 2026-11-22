@@ -334,8 +334,10 @@ def test_the_pcs_that_ran_both_versions_decide_whether_a_version_is_raised():
     of its 2,475 virtual desktops against 27 of 165 on another, while the 53 desktops that went
     from the one to the other had it on 7 with the first and on 9 with the second. Two versions
     side by side are different PCs; those that ran both are the same PCs with the same number of
-    days on each. So they decide: when 5 of them or more had the problem on one of the two and no
-    more of them had it on the version that looks worse, it is not raised."""
+    days on each. So they decide: when 5 of them or more had the problem on one of the two, the
+    version that looks worse is raised only when they show it themselves by the tab's own checks
+    (it was "no more of them had it on that version": on a second photo a version stayed raised
+    with 101 against 89 on the 2,403 PCs that ran both; the user's "fix it")."""
     def up(f, t, pcs, crash, hang):
         return {"from": f, "to": t, "pcs": pcs, "both": 0, "first": "2026-11-12", "last": "2026-11-20",
                 "before": {"crash": crash[0], "hang": hang[0]}, "after": {"crash": crash[1], "hang": hang[1]}}
@@ -353,9 +355,9 @@ def test_the_pcs_that_ran_both_versions_decide_whether_a_version_is_raised():
         sw.judge(a)
         k = a["kinds"]["virtual"]
         x, y = k["versions"]
-        crash = {"pcs": 53, "with": 8, "other": 0, "decides": True}
-        hang = {"pcs": 53, "with": 7, "other": 9, "decides": True}
-        # the crash flag stands, and has the 53 PCs' counts; stopping to respond is not raised: they say otherwise
+        crash = {"pcs": 53, "with": 8, "other": 0, "decides": True, "shows": True, "why": ""}
+        hang = {"pcs": 53, "with": 7, "other": 9, "decides": True, "shows": False, "why": "no"}
+        # the crash flag stands, and has the 53 PCs' counts; stopping to respond is not raised: they do not show it
         assert a["raised"] == [{"kind": "crash", "on": "virtual", "ref": "Y", "version": "X", "how": "most", "n": 147,
                                 "of": 2475, "ref_n": 1, "ref_of": 165, "pcs": 147, "same": crash}], again
         assert x["verdict"] == {"crash": {"state": "raised", "few": False, "against": "Y", "same": crash},
@@ -378,7 +380,7 @@ def test_the_pcs_that_ran_both_versions_decide_whether_a_version_is_raised():
     # too few of them had it to tell (2 and 1; 5 needed on one side): the flag stands on the two versions alone
     raised, v = judged(big, [up("Y", "X", 71, (1, 2), (0, 0))])
     assert raised == [("X", "most", False)]
-    assert v["X"]["same"] == {"pcs": 71, "with": 2, "other": 1, "decides": False}
+    assert v["X"]["same"] == {"pcs": 71, "with": 2, "other": 1, "decides": False, "shows": False, "why": "still"}
     # no PCs went from one to the other: nothing to check it with, raised as before
     raised, v = judged(big, [up("Z", "X", 71, (3, 4), (0, 0))])
     assert raised == [("X", "most", None)] and "same" not in v["X"]
@@ -387,14 +389,27 @@ def test_the_pcs_that_ran_both_versions_decide_whether_a_version_is_raised():
     assert raised == [] and v["X"]["state"] == "same"
     # PCs that went either way are added up: 4 + 3 with X against 1 + 0 with Y
     raised, v = judged(big, [up("X", "Y", 40, (4, 1), (0, 0)), up("Y", "X", 30, (0, 3), (0, 0))])
-    assert raised == [("X", "most", True)] and v["X"]["same"] == {"pcs": 70, "with": 7, "other": 1, "decides": True}
+    assert raised == [("X", "most", True)] and v["X"]["same"] == {"pcs": 70, "with": 7, "other": 1, "decides": True,
+                                                                  "shows": True, "why": ""}
     # an older version raised against the version most have: the PCs that left it for that one decide the same way
     old = [("New", 2787, 188, 0), ("Old", 105, 17, 0)]
     raised, v = judged(old, [up("Old", "New", 2400, (300, 310), (0, 0))])
-    assert raised == [] and v["Old"] == {"state": "same", "few": False,
-                                         "same": {"pcs": 2400, "with": 300, "other": 310, "decides": True}}
+    assert raised == [] and v["Old"] == {"state": "same", "few": False, "same": {
+        "pcs": 2400, "with": 300, "other": 310, "decides": True, "shows": False, "why": "no"}}
     raised, v = judged(old, [up("Old", "New", 2400, (400, 150), (0, 0))])
     assert raised == [("Old", "version", True)] and v["Old"]["state"] == "raised"
+    # the second photo of stage: 16 of 102 against 191 of 2,801, and on the 2,403 PCs that ran both 101 with the
+    # old version and 89 with the new. More of them, but not 2 times as many: they do not show it, not raised
+    stage = [("New", 2801, 0, 191), ("Old", 102, 0, 16)]
+    raised, v = judged(stage, [up("Old", "New", 2403, (0, 0), (101, 89))], "hang")
+    assert raised == [] and v["Old"] == {"state": "same", "few": False, "same": {
+        "pcs": 2403, "with": 101, "other": 89, "decides": True, "shows": False, "why": "ratio"}}
+    # 2 times as many of them, but 2 more with the other version would undo it: not raised either
+    raised, v = judged(stage, [up("Old", "New", 30, (0, 0), (7, 3))], "hang")
+    assert raised == [] and v["Old"]["same"]["why"] == "still"
+    # and with enough of them, it is raised with their counts
+    raised, v = judged(stage, [up("Old", "New", 30, (0, 0), (12, 3))], "hang")
+    assert raised == [("Old", "version", True)] and v["Old"]["same"]["shows"] is True
     # slow actions are not compared before and after: a change of version says nothing of them
     slow = {"application": "Mail", "read": ["actions"], "versions": [], "kinds": {"virtual": {"pcs": 300, "updates": [
         up("1", "2", 50, (9, 0), (9, 0))], "versions": [
@@ -678,6 +693,138 @@ def test_before_and_after_an_update_on_the_same_pcs():
     assert sw.before_after(c, NOW, "Outlook", kind="virtual")["pairs"] == []  # the 10 that changed are physical PCs
     assert sw.before_after(c, NOW, "Outlook", kind="physical")["pairs"][0]["pcs"] == 10
     assert "before and after cannot be compared" in sw.before_after(c, NOW, "Trellix ENS")["notes"][0]
+
+
+def viewer() -> list[dict]:
+    """Viewer, as Aternity writes versions on stage: "3.0.20" on most rows and "3.0.20.0" on rows
+    with a crash. PCs 1-40 run 3.0.20 all week: PCs 1-6 crashed yesterday (that day they have
+    only the row with the second spelling), PCs 7-12 two days ago (both rows that day). PCs
+    41-70 run 3.0.18, one crash. PCs 71-95 went from 3.0.18 to 3.0.20 three days ago; PCs 71-76
+    crashed after it (again under the second spelling)."""
+    def row(i, v, d, crash=0):
+        return {"DEVICE_NAME": pc(i), "APPLICATION_NAME": "Viewer", "APPLICATION_VERSION": v, "TIMEFRAME": day(d),
+                "APPLICATION_CRASHES_TOTAL": crash, "APPLICATION_HANG_TIME_TOTAL": 0}
+    rows = []
+    for i in range(1, 41):
+        rows += [row(i, "3.0.20", d) for d in (6, 5, 4, 3, 2, 1) if not (i <= 6 and d == 1)]
+        if i <= 12:
+            rows.append(row(i, "3.0.20.0", 1 if i <= 6 else 2, crash=1))
+    for i in range(41, 71):
+        rows += [row(i, "3.0.18", d, crash=int(i == 41 and d == 2)) for d in (6, 5, 4, 3, 2, 1)]
+    for i in range(71, 96):
+        rows += [row(i, "3.0.18", d) for d in (6, 5, 4)]
+        rows += [row(i, "3.0.20", d) for d in (3, 2, 1) if not (i <= 76 and d == 2)]
+        if i <= 76:
+            rows.append(row(i, "3.0.20.0", 2, crash=1))
+    return rows
+
+
+def test_one_version_written_in_two_ways_is_counted_as_one_version(tmp_path):
+    """The user's second photo of stage, Nov 22 2026: 4 of the 9 version flags were one version
+    under two spellings ("VLC media player 3.0.20.0 ... crashed on 100% (43 of 43). On the
+    version most have, 3.0.20: 0% (0 of 798)"; "10.0.22621.7219" beside "10.0.22621.7219
+    (WinBuild.160101.0800)"; "24.221.1103.3" beside "24.221.1103.0003"). Aternity puts a PC's
+    crash under the second spelling, so that one held only PCs that crashed."""
+    same = sw.same_version
+    assert same("10.0.22621.7219 (WinBuild.160101.0800)") == same("10.0.22621.7219")
+    assert same("24.221.1103.0003") == same("24.221.1103.3") and same("3.0.20.0") == same("3.0.20")
+    assert same("16.0.20430.20180") != same("16.0.17932.21056") and same("3.0.2") != same("3.0.20")
+    # other text after the number has to be the same; a version with no number is only itself
+    assert same("2024.1 Update 3") != same("2024.1 Update 4") and same("2024.1 Update 3") != same("2024.1")
+    assert same("beta") == "beta" and same("") == "" and same(None) == ""
+    assert sw._kept({"3.0.20": 65, "3.0.20.0": 18, "3.0.18": 55}) == {"3.0.20.0": "3.0.20"}
+    # one version, one name, whatever a read counts: not the plain a.b.c.d of the rows with a crash, even when
+    # more PCs are under it (Desktop Window Manager on stage: 46 PCs under it, 38 under the other)
+    assert sw._kept({"10.0.22621.7219": 46, "10.0.22621.7219 (WinBuild.160101.0800)": 38}) == {
+        "10.0.22621.7219": "10.0.22621.7219 (WinBuild.160101.0800)"}
+    assert sw._kept({"24.221.1103.3": 27, "24.221.1103.0003": 416}) == {"24.221.1103.3": "24.221.1103.0003"}
+    assert sw._kept({"3.0.20.0": 9, "3.0.20": 2}) == {"3.0.20.0": "3.0.20"}
+    assert sw._kept({"1.0": 3, "1.0.0": 9}) == {"1.0": "1.0.0"}  # neither is a.b.c.d: the one on the most PCs
+    assert sw._kept({"1.0": 3, "1.0.0": 9}, prefer={"1.0"}) == {"1.0.0": "1.0"}  # ... unless the tab shows the other
+    assert sw.version_of("3.0.20.0", ["3.0.20", "3.0.18"]) == "3.0.20"
+
+    data = tables()
+    data["APPLICATIONS_DAILY"] += viewer()
+    seen: list = []
+    c, s = client(seen, data)
+    a = sw.app_now(c, NOW, "Viewer")
+    assert a["spellings"] == {"3.0.20": ["3.0.20.0"]}
+    k = a["kinds"]["physical"]
+    # one row a version: a PC with a crash is a PC of its version (it was "3.0.20.0: 18 of 18" beside "3.0.20: 0 of 65")
+    assert [(v["version"], v["pcs"], v["crash"]) for v in k["versions"]] == [("3.0.20", 65, 18), ("3.0.18", 55, 1)]
+    # no PC "changed version" between the two spellings: the one change is the real one, with its crashes after
+    assert [(u["from"], u["to"], u["pcs"], u["before"]["crash"], u["after"]["crash"]) for u in k["updates"]] == [
+        ("3.0.18", "3.0.20", 25, 0, 6)]
+    both = {"pcs": 25, "with": 6, "other": 0, "decides": True, "shows": True, "why": ""}
+    assert a["found"] == [
+        {"kind": "crash", "version": "3.0.20", "on": "physical", "how": "update", "from": "3.0.18", "n": 6, "of": 25,
+         "before": 0, "pcs": 6},
+        {"kind": "crash", "on": "physical", "ref": "3.0.18", "version": "3.0.20", "how": "most", "n": 18, "of": 65,
+         "ref_n": 1, "ref_of": 55, "pcs": 18, "same": both}]
+    # the PCs behind the count: Aternity is asked for each spelling (the crashes are under the second one)
+    assert sw.pcs_with_problem(c, NOW, "Viewer", "3.0.20", "crash")["total"] == 0
+    seen.clear()
+    got = sw.pcs_with_problem(c, NOW, "Viewer", "3.0.20", "crash", also=["3.0.20.0"])
+    assert got["total"] == 18 and got["what"].startswith("Viewer 3.0.20: ")
+    assert [f.count("APPLICATION_VERSION eq") for _, f, _ in seen] == [1, 1]  # one read a spelling, as before
+    assert sw.other_spellings({"versions": {"Viewer": a}}, "Viewer", "3.0.20") == ["3.0.20.0"]
+    assert sw.other_spellings({"versions": {"Viewer": a}}, "Viewer", "3.0.18") == []
+    assert sw.other_spellings(None, "Viewer", "3.0.20") == []
+    # the PCs behind "more after the update", whichever spelling is asked for
+    for asked in ("3.0.20", "3.0.20.0"):
+        assert sw.pcs_after_update(c, NOW, "Viewer", asked, "crash", "physical", was="3.0.18")["total"] == 6
+    # Compare and its before and after count the same way, and say what was put together
+    cmp = sw.compare(c, s.aternity, NOW, "Viewer", a="3.0.20.0")
+    assert (cmp["a"], cmp["b"], cmp["versions"]) == ("3.0.20", "3.0.18", ["3.0.20", "3.0.18"])
+    assert cmp["lines"][0] == {"what": "PCs with a crash", "group": "usage", "unit": "PCs", "a": [18, 65], "b": [1, 55]}
+    assert cmp["notes"] == ["One version, written in more than one way by Aternity, is counted once: 3.0.20 (also "
+                            "written 3.0.20.0)."]
+    assert [(p["from"], p["to"], p["pcs"]) for p in sw.before_after(c, NOW, "Viewer")["pairs"]] == [
+        ("3.0.18", "3.0.20", 25)]
+    # a read made at a click keeps the name the tab shows, whatever it would pick from its own rows
+    named = sw.compare(c, s.aternity, NOW, "Viewer", prefer={"3.0.20.0", "3.0.18"})
+    assert named["versions"] == ["3.0.20.0", "3.0.18"] and named["lines"][0]["a"] == [18, 65]
+    assert [(p["from"], p["to"]) for p in sw.before_after(c, NOW, "Viewer", prefer={"3.0.20.0"})["pairs"]] == [
+        ("3.0.18", "3.0.20.0")]
+    assert sw.tab_versions({"versions": {"Viewer": a}}, "Viewer") == {"3.0.20", "3.0.18"}
+    assert sw.tab_versions(None, "Viewer") == set()
+    # the daily read: an application whose only "two versions" are one version written in two ways has nothing to
+    # compare, so it is not read per version (its crashes still count for "which crashed the most")
+    data["APPLICATIONS_DAILY"] += [
+        {"DEVICE_NAME": pc(i), "APPLICATION_NAME": "Solo", "APPLICATION_VERSION": "1.0.0" if crash else "1.0",
+         "TIMEFRAME": day(2), "APPLICATION_CRASHES_TOTAL": crash, "APPLICATION_HANG_TIME_TOTAL": 0}
+        for i in range(1, 11) for crash in ((0, 1) if i <= 6 else (0,))]
+    c, s = client(data=data)
+    snap = sw.read_snapshot(c, s.aternity, NOW, sw.Software("", tmp_path, clock=lambda: NOW))
+    assert "Solo" not in snap["versions"] and snap["usage"]["Solo"] == 6
+    assert snap["versions"]["Viewer"]["spellings"] == {"3.0.20": ["3.0.20.0"]}
+    flags = [f["text"] for f in sw._flags(snap) if f["kind"] == "crash" and "Viewer" in f["text"]]
+    # one line for the version (raised by its update and against 3.0.18): no "3.0.20.0 crashed on 100%" line
+    assert flags == ["Viewer 3.0.20, physical PCs: more crashes after the update from 3.0.18. Of the 25 PCs that got "
+                     "it, it crashed on 6 after the update and on 0 before it."]
+
+
+def test_pcs_that_went_to_a_lower_version_did_not_get_an_update():
+    """The first photo of stage after the copy, Nov 22 2026: 51 virtual desktops went from
+    16.0.20430.20180 to 16.0.17932.21056 under the title "Before and after the update". A move
+    to a lower version number is a change of version, not an update."""
+    assert sw.lower_version("16.0.17932.21056", "16.0.20430.20180") is True
+    assert sw.lower_version("16.0.20430.20180", "16.0.17932.21056") is False
+    assert sw.lower_version("3.0.20.0", "3.0.20") is False and sw.lower_version("beta", "3.0") is False
+    d = [date(2026, 11, n) for n in (1, 2, 3, 4)]
+    days = {pc(i): {d[0]: [{"2.0"}, False, False, True], d[1]: [{"2.0"}, False, False, True],
+                    d[2]: [{"1.9"}, i <= 6, False, True], d[3]: [{"1.9"}, False, False, True]} for i in range(1, 21)}
+    days |= {pc(i): {d[0]: [{"1.9"}, False, False, True], d[1]: [{"2.0"}, False, False, True]} for i in range(21, 41)}
+    down, up = sw._updates(days, lambda d: True)
+    assert (down["from"], down["to"], down["down"]) == ("2.0", "1.9", True) and "down" not in up
+    app = {"application": "Mail", "read": ["usage"], "versions": [], "kinds": {"all": {
+        "pcs": 40, "versions": [], "updates": [down, up]}}}
+    sw.judge(app)
+    assert app["raised"] == [{"kind": "crash", "version": "1.9", "on": "all", "how": "update", "from": "2.0", "n": 6,
+                              "of": 20, "before": 0, "pcs": 6, "down": True}]
+    assert sw.flag_text("crash", dict(app["raised"][0], application="Mail")) == (
+        "Mail 1.9: more crashes after the change from 2.0, a higher version. Of the 20 PCs that went to it, it "
+        "crashed on 6 after the change and on 0 before it.")
 
 
 class FakeAI:

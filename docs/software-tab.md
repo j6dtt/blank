@@ -134,13 +134,43 @@ which differ in who uses them and how much; the PCs that ran both are
 the same PCs and people with the same number of days on each. So:
 
 - A version that passes the checks against another version is raised
-  only when the PCs that ran both do not say otherwise. They speak
-  when 5 of them or more had the problem on one of the two versions;
-  if then no more of them had it on the version that looks worse, it
-  is not raised, and its count says why with their numbers. When they
-  agree the ▲ gives their numbers; when they are too few to tell it
-  says so; when no 20 PCs went from one to the other the flag stands
-  as before. Slow actions have no before and after: unchanged.
+  only when the PCs that ran both show it too. They speak when 5 of
+  them or more had the problem on one of the two versions; then they
+  have to pass the same checks themselves (2 times as many of them
+  with it on the version that looks worse, 5 of them, still so with 2
+  more on the other), else it is not raised, and its count says why
+  with their numbers. When they show it the ▲ gives their numbers;
+  when they are too few to tell it says so; when no 20 PCs went from
+  one to the other the flag stands as before. Slow actions have no
+  before and after: unchanged.
+  - As first built that morning it was "no more of them had it on the
+    version that looks worse". The user's second photo of stage, the
+    same day: a version stayed raised for stopping to respond on 16 of
+    102 virtual desktops against 191 of 2,801, with 101 against 89 on
+    the 2,403 that ran both. More, but by no check of the tab ("fix
+    it").
+- One version under two spellings is one version (the gap of Nov 21,
+  held then as "not on its own"; on the second photo 4 of the 9
+  version flags were it: "crashed on 100% (43 of 43)" on 3.0.20.0
+  against "0% (0 of 798)" on 3.0.20). `same_version`: the same dotted
+  number at the start, each part as a number ("0003" is 3), no zeros
+  at its end ("3.0.20.0" is 3.0.20); a label in brackets after it is
+  left out, other text after it has to be the same. Put together
+  before anything is counted (`_one_spelling`): the rows per version,
+  each PC once, and each PC's days, so no PC "changed version"
+  between spellings. One name everywhere (`_kept`): the spelling the
+  tab shows; not the plain a.b.c.d of the rows with a crash (all
+  three cases seen); the most PCs. A list asks Aternity for each
+  spelling (`other_spellings`, one read each, the query as before);
+  Compare and its before and after keep the tab's names
+  (`tab_versions`). An application whose only two "versions" are one
+  version is not read per version. The row says "also written ...";
+  Explain, Compare, the chat and verify --versions say what was put
+  together.
+- PCs that went to a lower version did not get an update
+  (`lower_version`, `down`): "Before and after the change of
+  version", "more after the change of version", and the flag's
+  sentence says "after the change from X, a higher version".
 - The headline box over an application is gone: its numbers were the
   tables' own, said twice, and its "Its update" line could name a
   table that said the opposite. The ▲ is on the count it is about,

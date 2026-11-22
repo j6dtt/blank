@@ -493,9 +493,11 @@ def software():
                  f"Raised: {S.RATIO:g} times the other side's share, {S.MIN_PROBLEM}+ PCs with the problem, and still so "
                  f"with {S.STILL} more PCs with it on the other side ({S.STILL_ACTIONS} more actions rated Major for "
                  "slow actions).",
-                 "The same PCs decide: a version that is worse than another in 2 is not raised when the PCs that ran "
-                 f"both versions say otherwise ({S.MIN_PROBLEM}+ of them had the problem on one of the two, and no more "
-                 "of them on this version). Two versions side by side are different PCs."),
+                 "The same PCs decide: a version that is worse than another in 2 is raised only when the PCs that ran "
+                 f"both versions show it too (when {S.MIN_PROBLEM}+ of them had the problem on one of the two, they must "
+                 "pass the same checks). Two versions side by side are different PCs.",
+                 "One version that Aternity writes in two ways (3.0.20 and 3.0.20.0) is counted as one version. A move "
+                 "to a lower version is a \"change of version\", not an update."),
         ], [
             item("F. Installed for one user only", "Uses: installed list.",
                  "Aternity marks every install with who it is for: the whole PC (\"ALL\") or one person "

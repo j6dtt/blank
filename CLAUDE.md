@@ -549,11 +549,15 @@ demo mode: nothing in `src/` knows about it.
   of 165 on another, while the 53 that went from one to the other had
   it on 7 with the first and on 9 with the second): a version that
   passes `_check` against another version is raised only when the PCs
-  that ran both do not say otherwise (`same_pcs`, `_both`: the PCs of
+  that ran both show it too (`same_pcs`, `_both`: the PCs of
   the changes of version between the two, either way, added up;
   `decides` when `MIN_PROBLEM` of them had it on one of the two; then
-  no more of them with it on this version = verdict "same", not
-  raised; else raised with `same` kept on the verdict and the flag,
+  they have to pass `_check` themselves, `shows`, else verdict "same",
+  not raised, with `why`: "no" more of them, under `RATIO` times,
+  `STILL` more would undo it; it was "no more of them with it on this
+  version", and on the second photo of stage a version stayed raised
+  with 101 against 89 on the 2,403 PCs that ran both: the user's "fix
+  it"; raised: `same` kept on the verdict and the flag,
   said by `flag_text`). The changes of version a verdict rests on are
   always among the `updates` the page gets. `ref_most` False (on the
   kind and the flag): a version new this week is on more PCs than the
@@ -587,6 +591,27 @@ demo mode: nothing in `src/` knows about it.
   responding more". A check for it: every count of every tab against
   the list or panel that should match it, on dev (118 comparisons,
   Nov 22 2026; the script is not in the repo).
+  One version under several spellings is one version (the gap of Nov
+  21, held as "not on its own"; fixed with the above, Nov 22 2026: on
+  stage 4 of 9 version flags were "crashed on 100% (43 of 43)" on
+  3.0.20.0 against "0% (0 of 798)" on 3.0.20; Aternity puts a PC's
+  crash under a second spelling). `same_version`: the same dotted
+  number at the start, parts as numbers, no zeros at the end, a label
+  in brackets left out, other text the same. `_one_spelling` (in
+  `_judged`, before anything is counted: rows per version and each
+  PC's days), `spellings` on the application ({kept: [others]}; the
+  page's "also written", `swAlso`). One name everywhere (`_kept`): a
+  spelling the tab shows (`prefer`, `tab_versions`: Compare and before
+  and after, also the chat's), not the plain a.b.c.d of the crash
+  rows, the most PCs. A list asks for each spelling
+  (`other_spellings`, `pcs_with_problem(also=)`: one read a spelling,
+  the query's shape unchanged); `pcs_after_update` matches by number;
+  `version_of` takes any spelling. An application whose only two
+  "versions" are one is not read per version. Do not compare app
+  versions as text. A move to a lower version is no update
+  (`lower_version`, `down` on the change and its flag): "Before and
+  after the change of version" (`swUp`). The dev sample writes a row
+  with a crash under a second spelling (".0" added), as stage does.
   Then behind (older than the version most PCs have, decision
   2; PC by PC when read so), 2+ versions, one user, Windows updates on
   more than `WIN_MOST` of a version's PCs (and what the PCs without one

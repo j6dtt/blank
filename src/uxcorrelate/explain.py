@@ -223,14 +223,16 @@ GLOSSARY: dict[str, dict[str, str]] = {
                                               f"actions rated {TOP_STATUS}), so one or two never decide it. Two "
                                               "comparisons: before and after an update, and each version against "
                                               "the version most PCs have. A version that is worse than another is "
-                                              "not raised when the PCs that ran both versions say otherwise.",
+                                              "raised only when the PCs that ran both versions show it too.",
         "the PCs that ran both": f"PCs that went from one of the two versions to the other in the last "
                                  f"{software.UPDATE_DAYS} days, each with the same number of days on both. They are "
                                  "the same PCs and people on both versions, so they are the stronger comparison: "
                                  f"when {software.MIN_PROBLEM} of them or more had the problem on one of the two "
-                                 "versions and no more of them had it on the version that looks worse, that version "
-                                 "is not raised. Two versions set side by side are different PCs, which can differ "
-                                 "in who uses them and how much.",
+                                 "versions, the version that looks worse is raised only when they show it "
+                                 f"themselves by the same checks ({software.RATIO:g} times as many of them with it "
+                                 f"on that version, and still so with {software.STILL} more on the other). Two "
+                                 "versions set side by side are different PCs, which can differ in who uses them "
+                                 "and how much.",
         "Crashed": f"The application closed by itself. A PC counts once, however many times it happened in the "
                    f"{software.DAYS} days. From Aternity's daily app usage. Under \"Before and after the update\" "
                    "only a PC's days just before and just after its own update are counted, so a version's "
@@ -249,7 +251,13 @@ GLOSSARY: dict[str, dict[str, str]] = {
         "Before and after the update": f"PCs whose version of the application changed once in the last "
                                        f"{software.UPDATE_DAYS} days. For each PC the same number of days is counted "
                                        "before and after, so neither side had more time to go wrong. The same PCs "
-                                       "and people are on both sides, so the version is what changed.",
+                                       "and people are on both sides, so the version is what changed. When the PCs "
+                                       "went to a lower version number it is titled \"Before and after the change of "
+                                       "version\": that is no update.",
+        "also written": "Aternity writes some versions in more than one way, for example with and without "
+                        "\"(WinBuild...)\", or 24.221.1103.0003 and 24.221.1103.3, and puts a PC's crash under the "
+                        "second spelling. Spellings with the same number are counted as one version, under the "
+                        "spelling most PCs have.",
         "too few to judge": f"A version on under {software.MIN_PCS} PCs of that kind. One PC with a problem would "
                             "move its share too far to mean anything, so it is listed but not compared.",
         "virtual desktops and physical PCs": "Aternity marks each PC as one or the other. They are compared apart, "
@@ -387,7 +395,7 @@ set_refresh(today.REFRESH_MIN)  # the default; web.py sets config.yaml's
 # the terms of the Software tab's "Application health by version", for its own Explain dialogs
 VERSION_TERMS = ("the version most PCs have", "Crashed", "Stopped responding", "Slow actions",
                  "Crashes more / Stops responding more / Slower", "the PCs that ran both", "new this week",
-                 "Before and after the update",
+                 "Before and after the update", "also written",
                  "too few to judge", "virtual desktops and physical PCs")
 
 

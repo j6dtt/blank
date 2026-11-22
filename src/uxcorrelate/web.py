@@ -30,8 +30,8 @@ from .http import ApiError, short_error
 from .logons import logon_report
 from .models import utc
 from .names import KINDS, NameList
-from .software import (Software, before_after, compare, missing_on, pcs_after_update, pcs_with_problem, pcs_with_program,
-                       pcs_without_update)
+from .software import (Software, before_after, compare, missing_on, other_spellings, pcs_after_update, pcs_with_problem,
+                       pcs_with_program, pcs_without_update, tab_versions)
 from .software import keep_reading as keep_reading_software
 from .inventory import Inventory
 from .inventory import keep_reading as keep_reading_inventory
@@ -527,8 +527,9 @@ def create_app(config_path: str | None = None) -> FastAPI:
                     raise HTTPException(400, "before and after an update compares crashes and hang time only")
                 return software_read(f"the PCs with {problem} after their update to {application} {version}",
                                      lambda c: pcs_after_update(c, now, application, version, problem, kind, was))
+            also = other_spellings(software.snap, application, version)  # one version, written in two ways
             return software_read(f"the PCs with {problem} on {application} {version}",
-                                 lambda c: pcs_with_problem(c, now, application, version, problem, kind))
+                                 lambda c: pcs_with_problem(c, now, application, version, problem, kind, also))
         if not name:
             raise HTTPException(400, "name (a program) or application is needed")
         return software_read(f"the PCs with {name} {version or ''}".strip(),
@@ -539,16 +540,18 @@ def create_app(config_path: str | None = None) -> FastAPI:
         """Two versions of an application side by side on every kind of issue; `kind`: the kind
         of PC the tab's tables are on (virtual / physical)."""
         now = datetime.now(timezone.utc)
+        shown = tab_versions(software.snap, application)  # a version written in two ways keeps the tab's name
         return software_read(f"{application} versions compared",
                              lambda c: compare(c, load_settings(config_path).aternity, now, application,
-                                               a or None, b or None, kind))
+                                               a or None, b or None, kind, shown))
 
     @app.get("/api/software/update")
     def software_update(application: str, kind: str = ""):
         """Before and after an update of the application, on the same PCs (`kind` as above)."""
         now = datetime.now(timezone.utc)
+        shown = tab_versions(software.snap, application)
         return software_read(f"{application} before and after its updates",
-                             lambda c: before_after(c, now, application, kind))
+                             lambda c: before_after(c, now, application, kind, shown))
 
     @app.post("/api/software/summary")
     def software_summary_for_management():
