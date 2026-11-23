@@ -17,6 +17,13 @@ services:
   sample-riverbed:
     image: *image
     container_name: sample-riverbed
+    # Its own check: the image's asks the app's port 8080, which nothing here listens on, and this
+    # server has no page at "/" (404). Aternity's list of sources is small, answers 200 and is not logged.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/aternity.odata/v2.0', timeout=4)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     user: "1000:1000"
     entrypoint: ["python", "/repo/dev/sample_riverbed.py", "serve", "--port", "8000", "--data", "/data"]
     environment:
