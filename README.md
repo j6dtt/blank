@@ -561,12 +561,14 @@ ends with **Log out** or a restart. 5 wrong passwords from one address
 lock it for 15 minutes. Each login, wrong password and lock is a log
 line with the caller's address.
 
-**Three tabs** under the top bar: **STATISTICS** (opens first),
+**Four tabs** under the top bar: **STATISTICS** (opens first),
 **SECUREVIEW** (the devices people sit at to work outside the office;
-see "SecureView" below) and **ACTIONS** (every action of one user
-today; see "Actions" below). Each has its link, `/admin#statistics`,
-`/admin#secureview`, `/admin#actions`; a reload or a login stays on the
-tab in the link. Statistics and SecureView are read every minute while
+see "SecureView" below), **ACTIONS** (every action of one user
+today; see "Actions" below) and **CODE** (the app's own source,
+listed and asked about; see "Code" below). Each has its link,
+`/admin#statistics`, `/admin#secureview`, `/admin#actions`,
+`/admin#code`; a reload or a login stays on the
+tab in the link. On a phone the tabs slide sideways. Statistics and SecureView are read every minute while
 open; the other tabs are read again the moment they are opened and keep
 where they were (SecureView's sub-tab, search, department box and open
 device; Actions' user and list). Actions reads Aternity only when you
@@ -800,6 +802,87 @@ sample49 ─► Show ─► Aternity: sample49, 00:00 to now
   the list; a cut-short reply with nothing in it is "not known", never
   "no action".
 
+### Code
+
+The app's own source, to read and to ask about: what each file does,
+where a setting is, which part does something, what a line means.
+
+How it works: the app lists the files of its own code folder on that
+host (`*.py` and the two pages) and reads each with Python's own
+parser, so every setting, function and class has its lines. The chat's
+AI cannot read 28,000 lines at once, so it looks things up in those
+files, as Ask anything does with Aternity, and answers from what it
+found:
+
+```
+"Which part checks the admin password?"
+  ├─► search "admin password"   4 lines in 3 files
+  ├─► read admin_login          web.py, lines 952-989
+  └─► answer: "in admin_login, web.py:952-989 ..."
+        under it: those lines, read from the disk by the app
+        marked: anything it names that it did not look at
+```
+
+Its four look-ups: **search** (where a word or a name is: file, line,
+the function it is in), **a file's parts** (settings with their
+values, functions and classes with their lines; for `web.py` the
+address each one serves), **read** (lines of a file, or a function by
+its name, 160 lines at once) and **setting** (a `config.yaml` key, an
+`.env` name or a constant: where it is defined, its default, where it
+is read). Up to 8 look-ups a question. It is a chat: a follow-up
+question carries the last 6 questions and answers.
+
+**Where and how:** `/admin`, log in, the **CODE** tab (`/admin#code`).
+Two sub-tabs.
+
+- **ASK** (opens first). Type a question, Enter or **Ask**; or click
+  one of the examples under the box. While it works, a line says the
+  seconds and the look-up it is on. The answer:
+  - a place written as `web.py:952-989` is a link: it opens those
+    lines in FILES;
+  - "The lines it names, read from the files on this host": up to 5
+    pieces of code the answer points at, each with **Open in Files ▸**;
+  - **What it looked at (N)**: each look-up with its rows (the first
+    15) and a link to the lines;
+  - "Not found in what it looked at": a file that is not a source
+    file here, a line it never read, a name that is in none of its
+    look-ups (said apart when the code has no such name at all), a
+    number found nowhere in them. Marked, not hidden: check them;
+  - a code block the AI typed itself is labelled "Written by the AI:
+    not lines read from the files".
+
+  **Clear the answers** under the answers starts a new chat.
+- **FILES** (no AI: it works when the AI service is down). Every file
+  with its lines and what it does, the file's own first sentence.
+  - **Search the code** box: a word or a name; each line that has it,
+    the lines that define it first. A line number opens the file
+    there. **All files** returns to the list.
+  - Click a file: what it does (**Show all of it ▾** for its whole
+    description), its parts at the left, its code at the right.
+    **Find a part of this file** narrows the parts; the chips
+    **All / Settings / Functions / Classes** pick a kind. A part
+    clicked scrolls the code to it and picks its lines.
+  - Pick lines to ask about: click a line number (Shift+click another
+    for a range), drag over the code, or click a part. Then
+    **Explain these lines ▸** asks at once ("What do these lines
+    do?"), **Ask about them…** opens ASK with those lines attached,
+    for your own question, and **Clear** drops them.
+    **Explain this file ▸** asks what the file does.
+  - **◂ All files** (or **◂ Back to the search**) leaves the file.
+
+What it can and cannot see: only the files of the app's code folder,
+by the list; a file is never opened from a name that was typed or that
+the AI sent. So `config.yaml`, `.env`, the certificates and the data
+folder cannot be read: it says where a setting is and its default,
+never its value on that host. It cannot change or run code. Why
+something was decided is known only as far as the code's own comments
+say (CLAUDE.md and `docs/` are not on the live host). Nothing is kept:
+a reload or a log-out starts a new chat. One question at a time. Its
+calls to the AI service are on the Load panel as "code chat".
+`uxcorrelate verify --ai` measures it per AI service: "answers
+questions about the code (admin page)", 8 questions with a known file
+and function, and that the admin password is in nothing it was given.
+
 ## Quick start
 
 The tool needs a live Aternity and NetIM; see "Connect to Riverbed" below.
@@ -905,8 +988,13 @@ for it: a button's number against everything that looks raised under it
 a tab's number against its tile and its lines, "Show the N PCs" against its
 count, a count of 1 with a plural after it, script errors; then every count
 the app gives against the list behind it. It looks at a made-up Software tab
-with the shapes seen on stage and at the dev app's every tab. Run it right
-after a restart of the app; it must end with "0 do not".
+with the shapes seen on stage, at the admin page's CODE tab (with no login
+and no AI: the real source through the real code, and answers made with a
+scripted stand-in for the AI; the files and lines said against the rows
+drawn, each chip's number against the parts under it, the lines said to be
+picked against the lines lit, the look-ups said against those drawn) and at
+the dev app's every tab. Run it right after a restart of the app; it must
+end with "0 do not".
 
 How it fits together:
 
@@ -949,6 +1037,14 @@ and 036 not in AD), and the service account named by `AD_USERNAME` /
 `AD_PASSWORD` in the repo's `.env`. Dev's `config.yaml` has
 `ad: {domain: ad.sample.test, dns: [sample-ad]}`. Samba has no
 Microsoft NTLM bind for LDAP, so the NTLM tries are not run on dev.
+
+The dev app's AI service (since Nov 22 2026) is Nemotron on NVIDIA's
+hosted API, set in dev's `config.yaml` (`ai:`) with its key in dev's
+`.env`; neither file is in git. What the chats send leaves the dev
+host: the data is made up, and the code chat sends the source lines it
+looks up. A new AI feature is measured there first
+(`docker compose exec uxcorrelate uxcorrelate verify --ai`), then on
+stage with the live services.
 
 ## Connect to Riverbed
 
@@ -1193,6 +1289,7 @@ src/uxcorrelate/
   usage.py       the admin page's counts and who used the app
   secureview.py  the admin page's SecureView (devices people sit at)
   actions.py     the admin page's Actions (one user's actions today)
+  code_chat.py   the admin page's Code (the source listed and asked about)
   web.py         FastAPI app;  static/index.html  UI, static/admin.html  /admin
 tests/           pytest suite (HTTP mocked with httpx.MockTransport;
                  synthetic.py is a fake Aternity/NetIM for engine tests)

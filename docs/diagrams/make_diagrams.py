@@ -23,8 +23,8 @@ from pathlib import Path
 
 OUT = Path(__file__).parent
 sys.path.insert(0, str(OUT.parent.parent / "src"))
-from uxcorrelate import (actions, after_start, agent, assess, care, cause, chat, correlate, impact, logons,  # noqa: E402
-                         names, normal, secureview, status, usage, web)
+from uxcorrelate import (actions, after_start, agent, assess, care, cause, chat, code_chat, correlate, impact,  # noqa: E402
+                         logons, names, normal, secureview, status, usage, web)
 from uxcorrelate import inventory as I  # noqa: E402, E741
 from uxcorrelate import software as S  # noqa: E402
 from uxcorrelate import today as T  # noqa: E402
@@ -575,13 +575,15 @@ def software():
 # ------------------------------------------------------------------------------------ 06 Admin page
 def admin():
     drawing("06-admin-page-logic", "Admin page: every rule behind it",
-            "Three tabs behind a login: Statistics (how the app is used and what it costs Aternity), SecureView, Actions.", [
+            "Four tabs behind a login: Statistics (how the app is used and what it costs Aternity), SecureView, Actions, "
+            "Code (the app's own source, listed and asked about).", [
         ("1. When and who", "/admin, no link from the main page", "when", [[
             item("Login", f"Its own password, over HTTPS only. A login lasts {web.ADMIN_HOURS} hours; a restart logs "
                  f"out. {web.ADMIN_TRIES} wrong passwords from one address lock it for {web.ADMIN_LOCK_MIN} minutes."),
-            item("Refresh", "Only the open tab is read, every minute. Actions is read only when asked."),
+            item("Refresh", "Only the open tab is read, every minute. Actions is read only when asked; Code "
+                 "reads its list of files once."),
             item("What is kept", f"Usage: one file a day, {usage.KEEP_DAYS} days. SecureView: {secureview.KEEP_DAYS} "
-                 "days. Actions: nothing."),
+                 "days. Actions and Code: nothing."),
             item("Counting", "Every call the app makes to Aternity, NetIM, the AI services and AD is counted as "
                  "it happens, under what the app was doing."),
         ]]),
@@ -595,8 +597,10 @@ def admin():
                  "data."),
             item("Active Directory", "Read only: a user's name and department, a desktop's unit; a person "
                  "found by name."),
+            item("The app's own source", "For Code: the .py files and the two pages of the app's code folder on "
+                 "that host, by the list of them. Nothing else: not config.yaml, .env, certificates or data."),
         ]]),
-        ("3. Worked out", "A to F", "step", [[
+        ("3. Worked out", "A to I", "step", [[
             item("A. Who visited", "The user nearest the visit from that address, within "
                  f"{mins(usage.MATCH)} minutes. Several at once: \"one of N\". None yet: \"waiting for Aternity\", "
                  f"then \"not known\" after {mins(usage.GIVE_UP) // 60} hours."),
@@ -613,6 +617,16 @@ def admin():
                  "found: one search in AD by a person's real name."),
             item("F. Actions", "Any user's actions of today, one read from local midnight to now, at most "
                  f"{actions.ROWS_MAX:,} rows, latest first."),
+        ], [
+            item("G. Code, the files", "Each file's lines, what it does (its own first sentence) and its parts: "
+                 "settings with their values, functions and classes with their lines, the address a web function "
+                 "serves. No AI."),
+            item("H. Code, the chat", f"The AI looks in the files, up to {code_chat.MAX_STEPS} look-ups a question: "
+                 f"search, a file's parts, read ({code_chat.READ_LINES} lines at once), a setting. A follow-up "
+                 f"carries the last {code_chat.HISTORY} answers. \"Explain these lines\" gives it the lines picked "
+                 "with the function around them."),
+            item("I. Code, the answer", "The places it names are read from the disk and shown under it (up to "
+                 f"{code_chat.SHOWN_MAX}, {code_chat.SHOWN_LINES} lines each). What it looked at is listed."),
         ]]),
         ("Safety rules", "", "safe", [[
             item("Never a guessed name", f"When {usage.ONE_ADDRESS} or more visits all come from one address (a "
@@ -623,19 +637,35 @@ def admin():
                  "said, never \"no action\"."),
             item("AD", "A refused login is never tried again in that run (each try counts towards a "
                  "lockout). Not answering: a pause before the next try."),
+        ], [
+            item("Code: only the source", "A file is opened by the list only, never from a name that was typed "
+                 "or that the AI sent. A setting is told by its place and default, never its value on that host."),
+            item("Code: marked, not hidden", "A file that is not a source file, a line it did not read, a name in "
+                 "none of its look-ups, a number found nowhere in them: each is marked under the answer."),
+            item("Code: the AI's own typing is said", "A code block it writes is labelled as its own unless "
+                 "every line is a line of the files. It cannot change or run code."),
+            item("Code: one question at a time", "Read only by a logged-in admin. Its calls to the AI service "
+                 "are on the Load panel as \"code chat\"."),
         ]]),
-        ("4. On the page", "Three folder tabs", "page", [[
+        ("4. On the page", "Four folder tabs", "page", [[
             item("STATISTICS", "People using the app now and per day, what they open, investigations, "
                  "questions, and the Load panel per system with its hours."),
             item("SECUREVIEW", "Today (devices heard, by hour, by department), History (every device, silent "
                  "ones), Search."),
             item("ACTIONS", "One user's actions today: time to the second, application, activity, response "
                  "time, rating, desktop, device sat at."),
+            item("CODE", "Ask (the chat, with the code under each answer) and Files (every file, its parts and "
+                 "its code, a search of every line)."),
         ]]),
         ("5. By a click", "", "click", [[
             item("A department", "Lists its devices; again for every department."),
             item("A username", "Opens Search with it; \"All actions today\" opens Actions for that person."),
             item("CSV", "Search results and Actions can be saved as a file."),
+        ], [
+            item("A place in an answer", "\"web.py:952-989\" opens those lines in Files."),
+            item("A part, a line number, a drag", "Picks lines in a file; \"Explain these lines\" asks at once, "
+                 "\"Ask about them\" takes them to the chat for your own question."),
+            item("A file", "Opens its parts and its code; \"Explain this file\" asks what it does."),
         ]]),
     ])
 

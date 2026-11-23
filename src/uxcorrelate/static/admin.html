@@ -52,8 +52,11 @@
   nav button.on { background: var(--bg); color: var(--accent); border: 1px solid var(--brass); border-top: 3px solid var(--brass);
                   border-bottom: 0; padding: 9px 18px 12px; margin-bottom: 0; }
   #statsBar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  @media (max-width: 640px) {  /* a phone: the main page's smaller tabs */
-    nav button { padding-left: 12px; padding-right: 12px; font-size: 11px; letter-spacing: .08em; }
+  @media (max-width: 640px) {  /* a phone: the main page's smaller tabs; four are wider than 400 px, so they slide
+                                  sideways as the main page's do (the whole page scrolled sideways by 27 px) */
+    nav { overflow-x: auto; scrollbar-width: none; }
+    nav::-webkit-scrollbar { display: none; }
+    nav button { flex: none; padding-left: 12px; padding-right: 12px; font-size: 11px; letter-spacing: .08em; }
   }
   .brand { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .brand small { color: var(--head-muted); font: 600 16px/1.1 var(--serif); font-variant: small-caps; letter-spacing: .03em; }
@@ -197,6 +200,68 @@
   table.act { min-width: 860px; }
   td.t { font-variant-numeric: tabular-nums; white-space: nowrap; }
   td.Major { color: var(--bad); font-weight: 600; } td.Minor { color: var(--warn); }
+  /* Code: this app's own source, listed, shown and asked about (code_chat.py) */
+  #code[hidden] { display: none; }
+  #code code, .cbox, .cparts .nm { font-family: ui-monospace, Consolas, "Cascadia Mono", Menlo, monospace; }
+  #code code { font-size: 12.5px; background: var(--faint); border-radius: 3px; padding: 0 3px; overflow-wrap: anywhere; }
+  .cform { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 0; }
+  .cform input { flex: 1 1 220px; min-width: 0; }
+  .cchips, .ckinds { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .cchips button, .ckinds button { background: var(--bg); color: var(--accent); border: 1px solid var(--border); padding: 4px 10px; font-size: 12px; font-weight: 400; }
+  .ckinds button.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); background: var(--panel); font-weight: 600; }
+  .cabout { border-left: 4px solid var(--brass); background: var(--faint); padding: 6px 10px; margin: 0 0 8px; }
+  .cans { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 14px; }
+  .cans .q { color: var(--muted); font-size: 12px; }
+  .cans .a { font-size: 15px; margin: 4px 0 8px; max-width: 88ch; }
+  .cans .a p { margin: 6px 0; }
+  .cans .a ul, .cans .a ol { margin: 6px 0; padding-left: 22px; }
+  .cans .a li { margin: 3px 0; }
+  .cans .mark { font-size: 12px; color: var(--warn); margin: 6px 0; }
+  .cans .cshown { margin: 10px 0 0; }
+  .link.cite { font-weight: 400; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 2px; }
+  .chead { display: flex; gap: 4px 12px; flex-wrap: wrap; align-items: baseline; font-size: 12px; color: var(--muted); margin: 8px 0 3px; }
+  .chead b { color: var(--text); }
+  /* lines of code with their numbers: the box scrolls, never the page */
+  .cbox { border: 1px solid var(--border); border-radius: 4px; background: var(--bg); overflow: auto; font-size: 12.5px; line-height: 1.5; max-width: 100%; }
+  .cbox.view { max-height: 72vh; position: relative; }
+  .cbox .rows { display: inline-block; min-width: 100%; vertical-align: top; }
+  .cbox .ln { display: flex; }
+  .cbox .no { flex: none; width: 6ch; padding: 0 8px 0 4px; text-align: right; color: var(--muted); user-select: none; border-right: 1px solid var(--border);
+              position: sticky; left: 0; background: var(--bg); font-variant-numeric: tabular-nums; }
+  .cbox .tx { white-space: pre; padding: 0 10px; flex: 1 0 auto; }
+  .cbox.view .no { cursor: pointer; }
+  .cbox.view .no:hover { color: var(--accent); font-weight: 700; }
+  .cbox .ln.sel .tx, .cbox .ln.hit .tx { background: color-mix(in srgb, var(--brass) 24%, transparent); }
+  .cbox .ln.sel .no, .cbox .ln.hit .no { background: color-mix(in srgb, var(--brass) 38%, var(--bg)); color: var(--text); font-weight: 700; }
+  details.csteps { font-size: 12px; margin-top: 8px; }
+  details.csteps > summary { cursor: pointer; color: var(--accent); }
+  .cstep { margin: 10px 0 0; }
+  .cstep .t { font-weight: 600; font-size: 13px; }
+  table.clook { font-size: 12px; min-width: 560px; }
+  table.clook td { overflow-wrap: anywhere; }
+  table.clook td:first-child { white-space: nowrap; }
+  table.cfiles td:first-child { white-space: nowrap; }
+  table.cfiles { min-width: 520px; }
+  .cdoes { max-width: 100ch; margin: 0 0 10px; }
+  .cdoes.all { white-space: pre-wrap; }
+  .cfile { display: grid; grid-template-columns: minmax(230px, 1fr) minmax(0, 2.6fr); gap: 12px 16px; align-items: start; }
+  .cfile > * { min-width: 0; }
+  .cfile .tools { margin-top: 0; }
+  .cparts { max-height: 72vh; overflow-y: auto; border: 1px solid var(--border); border-radius: 4px; margin-top: 8px; }
+  .cparts .part { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 8px; width: 100%; text-align: left; background: transparent; color: var(--text);
+                  font-weight: 400; padding: 5px 8px; border-radius: 0; border-bottom: 1px solid var(--border); }
+  .cparts .part:hover { background: var(--faint); }
+  .cparts .k { grid-column: 1 / -1; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .cparts .nm { font-size: 12.5px; font-weight: 600; color: var(--accent); overflow-wrap: anywhere; }
+  .cparts .n { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .cparts .d { grid-column: 1 / -1; font-size: 12px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .cparts .d:empty { display: none; }
+  .cselbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; min-height: 34px; margin-bottom: 6px; }
+  .cselbar button { padding: 5px 12px; font-size: 13px; }
+  @media (max-width: 860px) {  /* a narrow window: the parts over the code */
+    .cfile { grid-template-columns: minmax(0, 1fr); }
+    .cparts { max-height: 34vh; }
+  }
   #login { max-width: 460px; justify-self: center; width: 100%; }
   #login form { display: grid; gap: 10px; }
 </style>
@@ -215,7 +280,7 @@
     <button id="out">Log out</button>
   </div>
   <span class="themeSeg" id="themeSeg" role="group" aria-label="Look of the page"><button type="button" data-theme-pick="light">Parchment</button><button type="button" data-theme-pick="dark">Dark</button></span></div>
-  <nav id="tabs" role="tablist" hidden><button id="tabStats" role="tab" data-t="stats">Statistics</button><button id="tabSv" role="tab" data-t="sv">SecureView</button><button id="tabAct" role="tab" data-t="act">Actions</button></nav>
+  <nav id="tabs" role="tablist" hidden><button id="tabStats" role="tab" data-t="stats">Statistics</button><button id="tabSv" role="tab" data-t="sv">SecureView</button><button id="tabAct" role="tab" data-t="act">Actions</button><button id="tabCode" role="tab" data-t="code">Code</button></nav>
 </header>
 <main id="main">
   <section class="panel" id="login" hidden>
@@ -226,6 +291,7 @@
   <p class="err" id="err"></p>
   <section class="panel" id="sv" hidden></section>
   <section class="panel" id="act" hidden></section>
+  <section class="panel" id="code" hidden></section>
   <div id="page" hidden></div>
 </main>
 <script>
@@ -288,7 +354,7 @@ function showLogin(m) {
   TAB.now = "";  // no tab loads or keeps its minute until the next login; reads under way are dropped
   TAB.seq.stats++; TAB.seq.sv++;
   clearTimeout(state.timer); clearTimeout(SV.timer); SV.timer = null;
-  $("bar").hidden = true; $("tabs").hidden = true; $("page").hidden = true; $("sv").hidden = true; $("act").hidden = true;
+  $("bar").hidden = true; $("tabs").hidden = true; $("page").hidden = true; $("sv").hidden = true; $("act").hidden = true; $("code").hidden = true;
   $("login").hidden = false;
   $("err").textContent = "";
   const box = $("loginBody");
@@ -347,10 +413,10 @@ async function load(day = state.day) {
   if (j.today) state.timer = setTimeout(() => { if (!document.hidden) load(); else state.timer = setTimeout(load, 60000); }, 60000);
 }
 
-// ---------- the two tabs: Statistics (the panels above) and SecureView; the open one is in the link ----------
+// ---------- the tabs: Statistics (the panels above), SecureView, Actions and Code; the open one is in the link ----------
 // Only the open tab is read and kept up to date; the other keeps what it showed (and its sub-tab, box and open
 // row) and is read again the moment it is opened.
-const TABS = { stats: "statistics", sv: "secureview", act: "actions" };
+const TABS = { stats: "statistics", sv: "secureview", act: "actions", code: "code" };
 const TAB = { now: "", scroll: {}, seq: { stats: 0, sv: 0 } };
 const tabOfLink = () => Object.keys(TABS).find(k => location.hash === "#" + TABS[k]) || "stats";
 function openTab(t) {
@@ -364,7 +430,7 @@ function openTab(t) {
   }
   $("login").hidden = true; $("tabs").hidden = false; $("bar").hidden = false;
   $("statsBar").classList.toggle("off", t !== "stats");  // the Day box and "as of" are the Statistics panels'
-  $("page").hidden = t !== "stats"; $("sv").hidden = t !== "sv"; $("act").hidden = t !== "act";
+  $("page").hidden = t !== "stats"; $("sv").hidden = t !== "sv"; $("act").hidden = t !== "act"; $("code").hidden = t !== "code";
   $("err").textContent = "";
   if (location.hash !== "#" + TABS[t]) history.replaceState(null, "", "#" + TABS[t]);
   if (t === "stats") {
@@ -373,6 +439,8 @@ function openTab(t) {
   } else if (t === "sv") {
     if (!SV.j) $("sv").innerHTML = `<h2>SecureView</h2><p class="muted">Loading…</p>`;
     svLoad();
+  } else if (t === "code") {  // Code: its list is read once (the source changes only with a restart): no minute
+    if (!CODE.j) { codeDraw(); codeLoad(); } else if (!$("codeBody")) codeDraw();
   } else if (!$("actUser")) actDraw();  // Actions reads Aternity only when Show is pressed: no minute
 
   if (was !== t) scrollTo(0, TAB.scroll[t] || 0);
@@ -1273,6 +1341,395 @@ function actCsv() {
   download(`actions-${j.user.replace(/[^a-z0-9]+/gi, "_").slice(0, 40)}-${j.date}${ACT.app ? "-" + ACT.app.replace(/[^a-z0-9]+/gi, "_").slice(0, 30) : ""}.csv`, lines);
 }
 
+// ---------- Code: this app's own source, listed, shown and asked about (code_chat.py) ----------
+// Two sub-tabs. Ask: the AI looks things up in the source files on this host and answers; under each answer the
+// lines it names, read from the disk by the app, and what it looked at; what it names that is in none of it is
+// marked. Files (no AI): every file with what it does, its parts and its code; lines picked there can be asked
+// about. Nothing is kept: a reload, or a log-out, starts a new chat.
+const CODE = { view: "ask", j: null, err: "", seq: 0, aseq: 0, file: null, ferr: "", cache: {}, kind: "", pq: "", sel: null, wide: false, top: 0,
+  sq: "", sres: null, sbusy: false, serr: "", about: null, answers: [], history: [], busy: false, doing: "", started: 0, aerr: "",
+  draft: "", fresh: false, timer: null };
+const CODE_ROWS = 15;  // rows of a look-up drawn under an answer
+const CODE_ANSWERS = 10;  // answers kept on the page
+const CODE_KINDS = [["", "All"], ["s", "Settings"], ["f", "Functions"], ["c", "Classes"]];
+const CODE_KIND = { setting: "s", field: "s", function: "f", method: "f", class: "c" };  // a part's kind -> its chip
+// a place as an answer writes it, "web.py:655-700": a link to those lines in Files
+const CODE_CITE = /((?:static\/)?[A-Za-z_][\w-]*\.(?:py|html)):(\d{1,5})(?:\s*[-‐-―]\s*(\d{1,5}))?/g;
+function codePick(name) {  // the listed file a written name means ("admin.html" is static/admin.html)
+  const fs = CODE.j ? CODE.j.files.map(f => f.file) : [], t = String(name).toLowerCase();
+  return fs.find(f => f.toLowerCase() === t) || fs.find(f => f.toLowerCase().split("/").pop() === t.split("/").pop()) || null;
+}
+const codeSpan = (a, b) => b > a ? `lines ${fmt(a)}-${fmt(b)}` : `line ${fmt(a)}`;
+async function codeLoad() {
+  if (TAB.now !== "code") return;
+  const seq = ++CODE.seq;  // one sent before a log-out is dropped
+  try {
+    const r = await fetch("admin/api/code", { cache: "no-store" });
+    const j = await readJson(r);
+    if (seq !== CODE.seq) return;
+    if (r.status === 401) { showLogin(await me()); return; }
+    if (r.ok) { CODE.j = j; CODE.err = ""; } else CODE.err = j.detail || `HTTP ${r.status}`;
+  } catch (e) {
+    if (seq !== CODE.seq) return;
+    CODE.err = "UX Correlator did not answer: " + e.message;
+  }
+  if (TAB.now === "code") codeDraw();
+}
+function codeDraw() {
+  const j = CODE.j;
+  if ($("codeView")) CODE.top = $("codeView").scrollTop;  // where the code was read to: kept across Ask and back
+  if (!j) { $("code").innerHTML = `<h2>Code</h2><p class="${CODE.err ? "bad" : "muted"}">${esc(CODE.err || "Loading…")}</p>`; return; }
+  if (CODE.view === "ask") CODE.fresh = false;
+  $("code").innerHTML = `<div class="ph"><h2>Code</h2><div class="subtabs" role="tablist">`
+    + [["ask", "Ask"], ["files", "Files"]].map(([v, w]) => `<button class="${CODE.view === v ? "on" : ""}" data-cv="${v}" role="tab" aria-selected="${CODE.view === v}">${w}${v === "ask" && CODE.fresh ? " · new answer" : ""}</button>`).join("")
+    + `</div><span class="asof" id="codeCount">${plural(j.files.length, "file")}, ${fmt(j.total_lines)} lines · the app's own source on this host</span></div>`
+    + `<div id="codeBody"></div>`;
+  codeBody();
+}
+function codeBody() {
+  const box = $("codeBody");
+  if (!box) return;
+  const typing = document.activeElement && document.activeElement.id;  // a box being typed in keeps its place
+  if ($("codeView")) CODE.top = $("codeView").scrollTop;
+  box.innerHTML = CODE.view === "ask" ? codeAskHtml() : CODE.file || CODE.ferr ? codeFileHtml() : codeListHtml();
+  if (CODE.view === "files" && CODE.file) { codeSelPaint(); $("codeView").scrollTop = CODE.top; }
+  if (typing && $(typing) && ["codeQ", "codeSq", "codePq"].includes(typing)) { const el = $(typing); el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+}
+
+// -- Ask --
+function codeBusyText() {
+  return CODE.busy ? `Looking in the code… ${Math.round((Date.now() - CODE.started) / 1000)} s${CODE.doing ? " — " + CODE.doing : ""}` : "";
+}
+function codeAskHtml() {
+  const j = CODE.j, ab = CODE.about;
+  let h = `<p class="muted small">Ask about this app's code in plain words: what a file does, where a setting is, which part does something. `
+    + `The AI looks in the source files on this host and says where it found it. A follow-up question remembers the answers before.</p>`;
+  if (!j.service) return h + `<p class="note">The chat needs an AI service: <code>ai.services</code> in config.yaml (<code>uxcorrelate verify --ai</code> checks it). The Files part works without one.</p>`;
+  if (ab) h += `<p class="cabout" id="codeAbout">About <b>${esc(ab.file)}</b>, ${codeSpan(ab.start, ab.end)}${ab.part ? ` (${esc(ab.part)})` : ""}: the next question is about them. `
+    + `<button type="button" class="link" data-cact="clear-about">Not about these lines ✕</button></p>`;
+  h += `<form id="codeForm" class="cform" autocomplete="off"><input id="codeQ" maxlength="${j.limits.question}" value="${esc(CODE.draft)}" aria-label="Question about the code" `
+    + `placeholder="${ab ? "What do you want to know about these lines?" : "e.g. Where is the time between two reads of Aternity set?"}"><button id="codeGo"${CODE.busy ? " disabled" : ""}>Ask</button></form>`
+    + `<div class="cchips" id="codeChips">${j.examples.map(q => `<button type="button" data-ex="${esc(q)}">${esc(q)}</button>`).join("")}</div>`
+    + `<div id="codeBusy" class="${CODE.aerr ? "bad" : "muted"}" style="margin-top:8px">${esc(CODE.aerr || codeBusyText())}</div>`
+    + `<div id="codeAnswers">${CODE.answers.map(codeAnswer).join("")}</div>`
+    + `<p class="fine">Answered with ${esc(j.service)}. The AI reads only this app's source files, through look-ups (search, a file's parts, lines, a setting), up to ${j.limits.steps} a question; `
+    + `a follow-up remembers the last ${j.limits.history} answers. It cannot change or run code, and never sees config.yaml, .env, certificates or data: `
+    + `it can say where a setting is and its default, not its value on this host. A file, a line, a name or a number it gives that is in none of what it looked at is marked. `
+    + `The code under an answer is read from the files by the app, not written by the AI. Nothing is kept: a reload starts a new chat. `
+    + (CODE.answers.length ? `<button type="button" class="link" data-cact="clear-answers">Clear the answers</button>` : "") + `</p>`;
+  return h;
+}
+function codeRows(lines, first, mark, view) {  // lines of code with their numbers
+  return `<div class="cbox${view ? " view" : ""}"${view ? ' id="codeView"' : ""}><div class="rows">`
+    + lines.map((t, k) => `<div class="ln${first + k === mark ? " hit" : ""}" data-n="${first + k}"><span class="no">${first + k}</span><span class="tx">${esc(t)}</span></div>`).join("")
+    + `</div></div>`;
+}
+function codeSnip(s, label) {  // lines read from the disk, with where they are and a way to them in Files
+  const a = s.mark || s.start, b = s.mark || s.to || s.end;
+  return `<div class="csnip"><div class="chead"><span>${label ? esc(label) + ": " : ""}<b>${esc(s.file)}</b> · ${codeSpan(a, b)}${s.part ? ` · ${esc(s.part)}` : ""}</span>`
+    + `<button type="button" class="link" data-cf="${esc(s.file)}" data-ca="${a}" data-cb="${b}">Open in Files ▸</button></div>`
+    + codeRows(s.lines, s.start, s.mark) + (s.more ? `<div class="muted small">… and ${plural(s.more, "more line")}: open them in Files.</div>` : "") + `</div>`;
+}
+function codeInline(s) {  // one line of an answer: names as code, bold, and each place a link to Files
+  const cite = (text, mono) => {
+    let out = "", at = 0;
+    for (const m of text.matchAll(CODE_CITE)) {
+      const f = codePick(m[1]);
+      out += esc(text.slice(at, m.index));
+      const shownAs = mono ? `<code>${esc(m[0])}</code>` : esc(m[0]);
+      out += f ? `<button type="button" class="link cite" data-cf="${esc(f)}" data-ca="${m[2]}" data-cb="${m[3] || m[2]}">${shownAs}</button>` : shownAs;
+      at = m.index + m[0].length;
+    }
+    return [out, at];
+  };
+  return String(s).split("`").map((part, k) => {
+    if (k % 2) {  // in backticks: a name from the code, or a place
+      const [out, at] = cite(part, true);
+      return at === part.length && out ? out : `<code>${esc(part)}</code>`;
+    }
+    const [out, at] = cite(part, false);
+    return (out + esc(part.slice(at))).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/(^|[^\w*])\*([^*\s][^*]*?)\*(?![\w*])/g, "$1<i>$2</i>");
+  }).join("");
+}
+function codeMd(text, blocks) {  // the AI's text: paragraphs, lists, bold, names; a code block it wrote is said to be its own
+  const out = []; let list = null, fence = null, nth = 0;
+  const close = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  for (const raw of String(text || "").split("\n")) {
+    const line = raw.trimEnd(); let m;
+    if (/^\s*```/.test(line)) {
+      if (fence === null) { close(); fence = []; continue; }
+      const real = (blocks || [])[nth++];
+      out.push(`<div class="cown"><div class="chead"><span>${real ? "As it stands in the files" : "Written by the AI: not lines read from the files"}</span></div>`
+        + `<div class="cbox"><div class="rows">${fence.map(t => `<div class="ln"><span class="tx">${esc(t)}</span></div>`).join("")}</div></div></div>`);
+      fence = null; continue;
+    }
+    if (fence !== null) { fence.push(raw); continue; }
+    if ((m = line.match(/^\s*[-*•]\s+(.*)$/))) { if (list !== "ul") { close(); out.push("<ul>"); list = "ul"; } out.push(`<li>${codeInline(m[1])}</li>`); }
+    else if ((m = line.match(/^\s*\d{1,2}[.)]\s+(.*)$/))) { if (list !== "ol") { close(); out.push("<ol>"); list = "ol"; } out.push(`<li>${codeInline(m[1])}</li>`); }
+    else if (/^\s*\|?\s*:?-{3,}/.test(line)) { /* a table's rule line */ }
+    else if (!line.trim()) close();
+    else { close(); out.push(`<p>${codeInline(line.replace(/^#+\s*/, "").replace(/^\|\s*|\s*\|$/g, "").replace(/\s*\|\s*/g, " · "))}</p>`); }
+  }
+  if (fence !== null) out.push(`<div class="cbox"><div class="rows">${fence.map(t => `<div class="ln"><span class="tx">${esc(t)}</span></div>`).join("")}</div></div>`);
+  close(); return out.join("");
+}
+function codeStep(s, k) {  // one look-up under an answer
+  let h = `<div class="cstep"><div class="t">${k + 1}. ${esc(s.title)}</div>`;
+  if (s.notes.length) h += `<div class="muted">${s.notes.map(esc).join("<br>")}</div>`;
+  if (s.code) h += `<div class="muted">${plural(s.code.end - s.code.start + 1, "line")} given to the AI. `
+    + `<button type="button" class="link" data-cf="${esc(s.code.file)}" data-ca="${s.code.start}" data-cb="${s.code.end}">Open in Files ▸</button></div>`;
+  if (s.rows.length) {
+    const fi = s.columns.indexOf("File"), li = s.columns.indexOf("Line"), ri = s.columns.indexOf("Lines"), file = (s.summary || {}).file;
+    const cell = (row, c) => {
+      const v = row[c];
+      if (c === li && fi >= 0) return `<button type="button" class="link" data-cf="${esc(row[fi])}" data-ca="${v}" data-cb="${v}">${esc(v)}</button>`;
+      if (c === ri && file) { const [a, b] = String(v).split("-"); return `<button type="button" class="link" data-cf="${esc(file)}" data-ca="${a}" data-cb="${b || a}">${esc(v)}</button>`; }
+      return s.columns[c] === "Code" || s.columns[c] === "Name" ? `<code>${esc(v)}</code>` : esc(v);
+    };
+    h += `<div class="tableWrap"><table class="clook"><thead><tr>${s.columns.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead><tbody>`
+      + s.rows.slice(0, CODE_ROWS).map(row => `<tr>${row.map((_, c) => `<td>${cell(row, c)}</td>`).join("")}</tr>`).join("") + `</tbody></table></div>`;
+    if (s.rows.length > CODE_ROWS) h += `<div class="muted">… and ${plural(s.rows.length - CODE_ROWS, "more row")} the AI was given.</div>`;
+  }
+  return h + `</div>`;
+}
+function codeAnswer(a) {
+  let h = `<div class="cans"><div class="q">${esc(a.question)} · ${a.seconds} s · ${plural(a.steps.length, "look-up")}</div>`;
+  if (a.about) {
+    const n = a.about.end - a.about.start + 1, cut = Math.min(n, 30);
+    h += codeSnip({ file: a.about.file, start: a.about.start, end: a.about.start + cut - 1, to: a.about.end, more: n - cut, lines: a.about.lines.slice(0, cut) }, "Asked about");
+  }
+  h += `<div class="a">${codeMd(a.answer, a.blocks)}</div>`;
+  if (a.flagged.length) h += `<div class="mark">Not found in what it looked at: ${a.flagged.map(x => `<b>${esc(x.text)}</b> (${esc(x.why)})`).join("; ")}. Check ${a.flagged.length === 1 ? "it" : "them"} before using the answer.</div>`;
+  if (a.note) h += `<div class="mark">${esc(a.note)}</div>`;
+  if (a.shown.length) h += `<p class="muted small cshown">The lines it names, read from the files on this host:</p>` + a.shown.map(s => codeSnip(s)).join("");
+  if (a.steps.length) h += `<details class="csteps"><summary>What it looked at (${a.steps.length})</summary>${a.steps.map(codeStep).join("")}</details>`;
+  return h + `</div>`;
+}
+async function codeAsk(q, about) {
+  const j = CODE.j;
+  q = String(q ?? CODE.draft).trim();
+  if (!q || CODE.busy || !j || !j.service) return;
+  if (about === undefined) about = CODE.about;
+  const aseq = CODE.aseq, sent = about ? { file: about.file, start: about.start, end: about.end } : null;
+  Object.assign(CODE, { busy: true, aerr: "", doing: "", started: Date.now(), view: "ask" });
+  codeDraw();
+  CODE.timer = setInterval(() => { const b = $("codeBusy"); if (b && CODE.busy) b.textContent = codeBusyText(); }, 1000);
+  try {
+    const r = await fetch("admin/api/code/ask", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: q, history: CODE.history.slice(-j.limits.history), about: sent }) });
+    const job = await readJson(r);
+    if (aseq !== CODE.aseq) return;
+    if (r.status === 401) { showLogin(await me()); return; }
+    if (!r.ok) throw new Error(job.detail || `HTTP ${r.status}`);
+    let a = null, fails = 0;
+    while (!a) {
+      await new Promise(ok => setTimeout(ok, 1000));
+      if (aseq !== CODE.aseq) return;
+      let st, x;
+      try {  // a dropped connection or a 502 while it is being answered: asked again, the question runs on
+        const rr = await fetch("admin/api/code/job/" + job.id, { cache: "no-store" });
+        st = rr.status; x = await readJson(rr);
+        if (!rr.ok && st !== 401 && st !== 404) throw new Error(x.detail || `HTTP ${st}`);
+        fails = 0;
+      } catch (e) { if (++fails >= 5) throw e; continue; }
+      if (aseq !== CODE.aseq) return;
+      if (st === 401) { showLogin(await me()); return; }
+      if (st === 404) throw new Error(x.detail || "the question was lost");
+      const last = x.lines[x.lines.length - 1];
+      CODE.doing = last ? last.slice(9).replace(/^Code chat: /, "") : "";
+      if (x.done) {
+        if (x.error) throw new Error(typeof x.error === "string" ? x.error : JSON.stringify(x.error));
+        a = x.result;
+      }
+    }
+    CODE.history.push({ q: a.question, a: a.answer, looked: a.looked });
+    CODE.answers.unshift(a); CODE.answers = CODE.answers.slice(0, CODE_ANSWERS);
+    if (CODE.draft.trim() === q) CODE.draft = "";  // a next question typed meanwhile stays
+    if (CODE.about === about) CODE.about = null;
+    if (CODE.view !== "ask") CODE.fresh = true;
+  } catch (e) {
+    if (aseq === CODE.aseq) CODE.aerr = "No answer: " + e.message;
+  } finally {
+    clearInterval(CODE.timer);
+    if (aseq === CODE.aseq) {
+      CODE.busy = false; CODE.doing = "";
+      if (TAB.now === "code") {
+        if (CODE.view === "ask") codeBody();
+        else { const b = document.querySelector('#code [data-cv="ask"]'); if (b && CODE.fresh) b.textContent = "Ask · new answer"; }
+      }
+    }
+  }
+}
+
+// -- Files --
+function codeListHtml() {
+  const j = CODE.j, r = CODE.sres;
+  let h = `<p class="muted small">Every source file of the app as it runs on this host, with what it does (the file's own first sentence). `
+    + `Click a file for its parts and its code. No AI is used here.</p>`
+    + `<form id="codeSForm" class="cform" autocomplete="off"><input id="codeSq" maxlength="200" value="${esc(CODE.sq)}" aria-label="Search the code" `
+    + `placeholder="Search the code: a word or a name, e.g. refresh_minutes"><button>Search</button>`
+    + (r || CODE.serr ? `<button type="button" class="btn2" data-cact="search-clear">All files</button>` : "") + `</form>`;
+  if (CODE.sbusy) return h + `<p class="muted">Searching…</p>`;
+  if (CODE.serr) return h + `<p class="bad">${esc(CODE.serr)}</p>`;
+  if (r) {
+    h += `<p id="codeSTitle"><b>${esc(r.title)}</b></p>` + r.notes.map(n => `<p class="muted small">${esc(n)}</p>`).join("");
+    if (r.rows.length) h += `<div class="tableWrap"><table class="clook" id="codeSRows"><thead><tr><th>File</th><th class="n">Line</th><th>In</th><th>Code</th></tr></thead><tbody>`
+      + r.rows.map(x => `<tr><td>${esc(x[0])}</td><td class="n"><button type="button" class="link" data-cf="${esc(x[0])}" data-ca="${x[1]}" data-cb="${x[1]}">${fmt(x[1])}</button></td>`
+        + `<td>${esc(x[2])}</td><td><code>${esc(x[3])}</code></td></tr>`).join("") + `</tbody></table></div>`;
+    return h;
+  }
+  return h + `<div class="tableWrap"><table class="cfiles" id="codeFiles"><thead><tr><th>File</th><th class="n">Lines</th><th>What it does</th></tr></thead><tbody>`
+    + j.files.map(f => `<tr><td><button type="button" class="link" data-cfile="${esc(f.file)}">${esc(f.file)}</button></td><td class="n">${fmt(f.lines)}</td><td>${esc(f.does)}</td></tr>`).join("")
+    + `</tbody></table></div>`;
+}
+function codeParts() {  // the open file's parts that the chip and the box leave
+  const f = CODE.file, q = CODE.pq.trim().toLowerCase();
+  return f.items.map((it, k) => [it, k]).filter(([it]) => (!CODE.kind || CODE_KIND[it.kind] === CODE.kind)
+    && (!q || `${it.full} ${it.route} ${it.doc} ${it.says}`.toLowerCase().includes(q)));
+}
+function codePartsHtml() {
+  const rows = codeParts();
+  return rows.length ? rows.map(([it, k]) => `<button type="button" class="part" data-part="${k}"><span class="k">${esc(it.kind)}</span><span class="nm">${esc(it.full)}</span>`
+    + `<span class="n">${fmt(it.line)}</span><span class="d">${esc([it.route, it.doc || it.says].filter(Boolean).join(" · "))}</span></button>`).join("")
+    : `<p class="muted small" style="margin:8px">${CODE.file.items.length ? "No part has that in its name or sentence." : "No part is listed for this file."}</p>`;
+}
+function codeSelHtml() {
+  const s = CODE.sel, lim = CODE.j.limits.about;
+  if (!s) return `<span class="muted small">To ask about lines: click a line number (Shift+click another for a range), drag over the code, or click a part.</span>`;
+  const n = s.b - s.a + 1;
+  return `<span id="codeSelSaid"><b>${n === 1 ? `Line ${fmt(s.a)}` : `Lines ${fmt(s.a)}-${fmt(s.b)}`}</b> picked${s.part ? ` (${esc(s.part)})` : ""}${n > lim ? `; the first ${lim} are given to the AI, it reads on by itself` : ""}</span>`
+    + (CODE.j.service ? `<button type="button" data-cact="explain-sel"${CODE.busy ? " disabled" : ""}>Explain ${n === 1 ? "this line" : "these lines"} ▸</button>`
+      + `<button type="button" class="btn2" data-cact="ask-sel">Ask about ${n === 1 ? "it" : "them"}…</button>` : "")
+    + `<button type="button" class="btn2" data-cact="clear-sel">Clear</button>`;
+}
+function codeFileHtml() {
+  const f = CODE.file, back = `<button type="button" class="link" data-cact="back">◂ ${CODE.sres ? "Back to the search" : "All files"}</button>`;
+  if (!f) return `<p>${back}</p><p class="bad">${esc(CODE.ferr)}</p>`;
+  const count = k => f.items.filter(it => !k || CODE_KIND[it.kind] === k).length;
+  const more = f.about && f.about.replace(/\s+/g, " ").trim() !== f.does.replace(/ …$/, "").trim() && f.about.length > f.does.length;
+  return `<p>${back}</p><div class="ph"><h3 id="codeFName">${esc(f.file)}</h3><span class="muted small">${plural(f.lines.length, "line")}</span>`
+    + (CODE.j.service ? `<button type="button" class="btn2" data-cact="explain-file"${CODE.busy ? " disabled" : ""}>Explain this file ▸</button>` : "") + `</div>`
+    + (f.error ? `<p class="note">${esc(f.error)}</p>` : "")
+    + `<p class="cdoes${CODE.wide ? " all" : ""}">${esc(CODE.wide ? f.about : f.does)}${more ? ` <button type="button" class="link" data-cact="about-toggle">${CODE.wide ? "Show less ▴" : "Show all of it ▾"}</button>` : ""}</p>`
+    + `<div class="cfile"><div><div class="tools"><input id="codePq" value="${esc(CODE.pq)}" placeholder="Find a part of this file" aria-label="Find a part of this file" autocomplete="off"></div>`
+    + `<div class="ckinds" id="codeKinds">${CODE_KINDS.map(([k, w]) => `<button type="button" class="${CODE.kind === k ? "on" : ""}" data-ck="${k}">${w} (${fmt(count(k))})</button>`).join("")}</div>`
+    + `<div class="cparts" id="codeParts">${codePartsHtml()}</div></div>`
+    + `<div class="ccode"><div class="cselbar" id="codeSel">${codeSelHtml()}</div>${codeRows(f.lines, 1, 0, true)}</div></div>`;
+}
+function codeSelPaint() {  // the picked lines, lit in the code
+  const box = $("codeView");
+  if (!box) return;
+  box.querySelectorAll(".ln.sel").forEach(el => el.classList.remove("sel"));
+  const rows = box.firstElementChild.children, s = CODE.sel;
+  if (s) for (let n = s.a; n <= s.b && n <= rows.length; n++) rows[n - 1].classList.add("sel");
+  if ($("codeSel")) $("codeSel").innerHTML = codeSelHtml();
+}
+function codeScrollTo(n) {
+  const box = $("codeView");
+  if (!box || !n) return;
+  const el = box.firstElementChild.children[n - 1];
+  if (el) box.scrollTop = Math.max(0, el.offsetTop - box.clientHeight / 4);
+  if (box.getBoundingClientRect().top < 0 || box.getBoundingClientRect().top > innerHeight * 0.6) box.scrollIntoView({ block: "start" });
+}
+async function codeOpen(name, a, b) {  // a file in Files, at these lines when given
+  const pick = codePick(name) || name, seq = ++CODE.seq;
+  Object.assign(CODE, { view: "files", ferr: "" });
+  if (!CODE.cache[pick]) {
+    try {
+      const r = await fetch("admin/api/code/file?name=" + encodeURIComponent(pick), { cache: "no-store" });
+      const x = await readJson(r);
+      if (seq !== CODE.seq) return;
+      if (r.status === 401) { showLogin(await me()); return; }
+      if (!r.ok) throw new Error(x.detail || `HTTP ${r.status}`);
+      CODE.cache[pick] = x;
+    } catch (e) {
+      if (seq !== CODE.seq) return;
+      Object.assign(CODE, { file: null, ferr: e.message.startsWith("There is") ? e.message : "The file could not be read: " + e.message });
+      codeDraw(); return;
+    }
+  }
+  const f = CODE.cache[pick];
+  a = Math.min(Math.max(0, Number(a) || 0), f.lines.length); b = Math.min(Math.max(a, Number(b) || a), f.lines.length);
+  if (CODE.file !== f) Object.assign(CODE, { file: f, kind: "", pq: "", wide: false, top: 0 });
+  CODE.sel = a ? { a, b } : null;
+  codeDraw();
+  if (a) codeScrollTo(a); else scrollTo(0, 0);
+}
+async function codeSearch() {
+  const q = CODE.sq.trim();
+  if (q.length < 2) { Object.assign(CODE, { serr: "Type at least 2 characters.", sres: null }); codeBody(); return; }
+  const seq = ++CODE.seq;
+  Object.assign(CODE, { sbusy: true, serr: "", sres: null });
+  codeBody();
+  try {
+    const r = await fetch("admin/api/code/search?q=" + encodeURIComponent(q), { cache: "no-store" });
+    const x = await readJson(r);
+    if (seq !== CODE.seq) return;
+    if (r.status === 401) { showLogin(await me()); return; }
+    if (r.ok) CODE.sres = x; else CODE.serr = x.detail || `HTTP ${r.status}`;
+  } catch (e) {
+    if (seq !== CODE.seq) return;
+    CODE.serr = "UX Correlator did not answer: " + e.message;
+  }
+  CODE.sbusy = false;
+  if (TAB.now === "code" && CODE.view === "files" && !CODE.file) codeBody();
+}
+function codeAboutSel() {  // the picked lines, as a question's subject
+  const s = CODE.sel, f = CODE.file;
+  return s && f ? { file: f.file, start: s.a, end: s.b, part: s.part || "" } : null;
+}
+$("code").addEventListener("submit", ev => {
+  ev.preventDefault();
+  if (ev.target.id === "codeForm") codeAsk();
+  else if (ev.target.id === "codeSForm") codeSearch();
+});
+$("code").addEventListener("input", ev => {
+  if (ev.target.id === "codeQ") CODE.draft = ev.target.value;
+  else if (ev.target.id === "codeSq") CODE.sq = ev.target.value;
+  else if (ev.target.id === "codePq") { CODE.pq = ev.target.value; $("codeParts").innerHTML = codePartsHtml(); }
+});
+$("code").addEventListener("click", ev => {
+  const t = ev.target, hit = sel => t.closest(sel);
+  let b;
+  if ((b = hit("[data-cv]"))) { if (CODE.view !== b.dataset.cv) { CODE.view = b.dataset.cv; codeDraw(); } }
+  else if ((b = hit("[data-ex]"))) { CODE.draft = b.dataset.ex; codeAsk(b.dataset.ex); }
+  else if ((b = hit("[data-cfile]"))) codeOpen(b.dataset.cfile);
+  else if ((b = hit("[data-cf]"))) codeOpen(b.dataset.cf, b.dataset.ca, b.dataset.cb);
+  else if ((b = hit("[data-ck]"))) { CODE.kind = b.dataset.ck; $("codeKinds").querySelectorAll("button").forEach(x => x.classList.toggle("on", x === b)); $("codeParts").innerHTML = codePartsHtml(); }
+  else if ((b = hit("[data-part]"))) {
+    const it = CODE.file.items[Number(b.dataset.part)];
+    CODE.sel = { a: it.top, b: Math.max(it.top, it.end), part: it.full };
+    codeSelPaint(); codeScrollTo(it.top);
+  } else if ((b = hit("#codeView .no"))) {
+    const n = Number(b.parentElement.dataset.n), s = CODE.sel;
+    CODE.sel = ev.shiftKey && s ? { a: Math.min(s.anchor || s.a, n), b: Math.max(s.anchor || s.a, n), anchor: s.anchor || s.a } : { a: n, b: n, anchor: n };
+    codeSelPaint();
+  } else if ((b = hit("[data-cact]"))) {
+    const act = b.dataset.cact, f = CODE.file;
+    if (act === "back") { Object.assign(CODE, { file: null, ferr: "", sel: null, top: 0 }); codeDraw(); scrollTo(0, 0); }
+    else if (act === "about-toggle") { CODE.wide = !CODE.wide; codeBody(); }
+    else if (act === "clear-sel") { CODE.sel = null; codeSelPaint(); }
+    else if (act === "explain-sel") {
+      const ab = codeAboutSel(), n = ab.end - ab.start + 1;
+      codeAsk(n === 1 ? "What does this line do?" : ab.part ? `What does ${ab.part} do, and how does it work?` : "What do these lines do?", ab);
+    } else if (act === "ask-sel") { CODE.about = codeAboutSel(); CODE.view = "ask"; codeDraw(); $("codeQ").focus(); }
+    else if (act === "explain-file") codeAsk(`What does ${f.file} do, and what are its main parts?`, { file: f.file, start: 0, end: 0 });
+    else if (act === "clear-about") { CODE.about = null; codeBody(); }
+    else if (act === "clear-answers") { CODE.answers = []; CODE.history = []; codeBody(); }
+    else if (act === "search-clear") { Object.assign(CODE, { sres: null, serr: "", sq: "" }); codeBody(); }
+  }
+});
+$("code").addEventListener("mouseup", () => {  // lines dragged over in the code are the lines picked
+  const box = $("codeView"), s = getSelection();
+  if (!box || !s || s.isCollapsed || !box.contains(s.anchorNode) || !box.contains(s.focusNode)) return;
+  const line = node => { const el = (node.nodeType === 1 ? node : node.parentElement).closest(".ln"); return el ? Number(el.dataset.n) : 0; };
+  let a = line(s.anchorNode), b = line(s.focusNode);
+  if (!a || !b) return;
+  if (a > b) [a, b] = [b, a];
+  CODE.sel = { a, b, anchor: a };
+  codeSelPaint();
+});
+
 
 function draw(j) {
   const sel = $("day");
@@ -1295,6 +1752,10 @@ $("out").addEventListener("click", async () => {
   Object.assign(SV, { j: null, text: "", timer: null, dev: {}, open: null, sq: "", sres: null, serr: "", sbusy: false, sseq: SV.sseq + 1, sall: {} });
   Object.assign(ACT, { user: "", j: null, err: "", busy: false, app: "", seq: ACT.seq + 1 });
   $("act").innerHTML = "";  // drawn again, empty, at the next login
+  clearInterval(CODE.timer);  // the code chat goes with the session: its answers, the files read, a question under way
+  Object.assign(CODE, { view: "ask", j: null, err: "", seq: CODE.seq + 1, aseq: CODE.aseq + 1, file: null, ferr: "", cache: {}, kind: "", pq: "", sel: null,
+    wide: false, top: 0, sq: "", sres: null, sbusy: false, serr: "", about: null, answers: [], history: [], busy: false, doing: "", aerr: "", draft: "", fresh: false });
+  $("code").innerHTML = "";
   showLogin(await me());
 });
 

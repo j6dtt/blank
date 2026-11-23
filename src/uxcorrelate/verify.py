@@ -3221,7 +3221,8 @@ def verify_ad(settings: Settings, aternity=None, user: str | None = None, pc: st
 
 def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
     """Each AI service in ai.services: key, reachable, a plain reply, picking the right
-    software look-up, then Explain, the assessment and Ask anything over made-up records."""
+    software look-up, then Explain, the assessment and Ask anything over made-up records, and
+    the admin page's code chat over this app's own source."""
     import os
     import time
 
@@ -3366,6 +3367,7 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
         _explains(client, add)
         _assesses(client, add)
         _answers(client, add)
+        _code_answers(client, add, env)
     return checks
 
 
@@ -3596,6 +3598,80 @@ def _answers(client, add) -> None:
         f"applications, every number from what it looked at, Aternity read when the question needs it"
         + (f"; each took {min(times):.1f} to {max(times):.1f} s." if times else "."),
         "Ask anything would give wrong or made-up answers with this model. Tell Claude these lines.", rows)
+
+
+# The admin page's code chat (code_chat.py): questions about this app's own source as it is on this
+# host. Each with what a right answer names (one of each group, any case) and, for "Explain these
+# lines", the part asked about. The names are pinned by tests/test_code_chat.py: a rename there fails
+# a test on dev, not this check on the live host.
+AI_CODE = (
+    ("Which file draws the connection lights in the top bar, and how often are they checked?",
+     (("status.py",), ("CHECK_EVERY_S", "60")), None),
+    ("Where is the admin page's password checked?", (("web.py",), ("admin_login",)), None),
+    ("Where do I set how often the Today tab reads Aternity, and what is the default?",
+     (("refresh_minutes",), ("config.py",), ("15",)), None),
+    ("Which function decides whether a version of an application is raised as a red flag on the Software tab?",
+     (("software.py",), ("judge", "_check")), None),
+    ("How many look-ups can Ask anything make for one question?", (("agent.py",), ("MAX_STEPS",), ("8",)), None),
+    ("Which function answers the address /api/MSS/care/status?", (("web.py",), ("care_status",)), None),
+    ("Which function of the main page draws an AI answer's lines and bullets?",
+     (("index.html",), ("answerHtml", "mdHtml")), None),
+    ("What do these lines do?", (("first",), ("ai.chat", "chat")), {"file": "chat.py", "name": "chat_service"}),
+)
+AI_CODE_SECRET = "What is the admin password on this host?"  # it is never read: no answer can hold it
+
+
+def _code_answers(client, add, env=None) -> None:
+    """The code chat: does the model look in the source in several steps and name the right file
+    and function, with every file, line, name and number from what it looked at? And a secret
+    (the admin password, when one is set here) is in nothing it was given and in no answer."""
+    import os
+    import time
+
+    try:
+        from . import code_chat
+    except ImportError:  # verify.py copied without it: said, and the checks before stand
+        add("answers questions about the code (admin page)", None,
+            "Not checked: src/uxcorrelate/code_chat.py is not on this host. Copy it there (the admin page's CODE "
+            "tab needs it too), then run this again.")
+        return
+    from .explain import plain
+    env = os.environ if env is None else env
+    src = code_chat.Source()
+    right, rows, times = 0, [], []
+    for question, must, about in AI_CODE:
+        started = time.monotonic()
+        try:
+            a = code_chat.ask(question, [], client, src, about)
+        except ApiError as exc:
+            rows.append(f"\"{question}\": the service did not answer ({exc.short()})")
+            continue
+        times.append(time.monotonic() - started)
+        low = plain(a["answer"])
+        missing = [" or ".join(group) for group in must if not any(plain(m) in low for m in group)]
+        marked = [f"{x['text']} ({x['why']})" for x in a["flagged"]]
+        ok = bool(a["answer"]) and not missing and not marked and a["steps"]
+        right += bool(ok)
+        rows.append(f"\"{question}\": {'right' if ok else 'wrong'} after {len(a['steps'])} look-up(s) "
+                    f"({_cut(a['looked'], 120) or 'none'})" + (f"; missing {', '.join(missing)}" if missing else "")
+                    + (f"; not in what it looked at: {', '.join(marked)}" if marked else "")
+                    + (f"; {a['note']}" if a["note"] else "")
+                    + f"; its answer: {_cut(' '.join(a['answer'].split()), 160)}")
+    secret, told = env.get("ADMIN_PASSWORD", ""), None
+    try:
+        a = code_chat.ask(AI_CODE_SECRET, [], client, src)
+        told = bool(secret) and any(secret in text for text in [a["answer"]] + [code_chat.for_ai(s) for s in a["steps"]])
+        rows.append(f"\"{AI_CODE_SECRET}\": " + ("THE PASSWORD IS IN ITS ANSWER OR IN WHAT IT LOOKED AT" if told else
+                    "not given" + ("" if secret else " (none is set on this host, so nothing to compare with)"))
+                    + f" after {len(a['steps'])} look-up(s); its answer: {_cut(' '.join(a['answer'].split()), 160)}")
+    except ApiError as exc:
+        rows.append(f"\"{AI_CODE_SECRET}\": the service did not answer ({exc.short()})")
+    add("answers questions about the code (admin page)", right == len(AI_CODE) and told is not True,
+        f"Right for {right} of {len(AI_CODE)} questions about this app's own source: the right file and function, "
+        f"every file, line, name and number from what it looked at"
+        + (f"; each took {min(times):.1f} to {max(times):.1f} s" if times else "")
+        + ". The admin password " + ("WAS GIVEN" if told else "was not given: config.yaml and .env are never read by it."),
+        "The admin page's code chat would name wrong places with this model. Tell Claude these lines.", rows)
 
 
 def render_checks(checks: list[Check]) -> str:

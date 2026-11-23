@@ -4,9 +4,9 @@ import json
 
 import httpx
 
-from uxcorrelate import agent, assess, explain
+from uxcorrelate import agent, assess, code_chat, explain
 from uxcorrelate.config import AiService, Settings, load_settings
-from uxcorrelate.verify import AI_ASK, AI_OUTSIDE, AI_SW_TRIES, render_checks, verify_ai
+from uxcorrelate.verify import AI_ASK, AI_CODE, AI_CODE_SECRET, AI_OUTSIDE, AI_SW_TRIES, render_checks, verify_ai
 
 ASKED = {  # Ask anything: the stand-in's look-up for each open question
     AI_ASK[0][0]: ("events", {"kinds": ["HD Failure", "Faulty HD S.M.A.R.T. Status"], "days": 7}),
@@ -16,6 +16,18 @@ ASKED = {  # Ask anything: the stand-in's look-up for each open question
     AI_ASK[4][0]: ("startups", {"user": "sample02", "days": 7}),
     AI_ASK[5][0]: ("programs_per_pc", {}),
     AI_ASK[6][0]: ("page", {})}
+CODE_ASKED = {  # the code chat: the stand-in's look-up for each question (None: it answers at once), and its answer
+    AI_CODE[0][0]: (("outline", {"file": "status.py"}), "status.py checks them every 60 seconds (`CHECK_EVERY_S`, status.py:25)."),
+    AI_CODE[1][0]: (("search", {"text": "admin_login"}), "In `admin_login` in web.py."),
+    AI_CODE[2][0]: (("setting", {"name": "refresh_minutes"}),
+                    "Set `refresh_minutes` in config.yaml: it is defined in config.py with the default 15."),
+    AI_CODE[3][0]: (("read", {"name": "judge"}), "`judge` in software.py decides it."),
+    AI_CODE[4][0]: (("setting", {"name": "MAX_STEPS"}), "`MAX_STEPS` in agent.py: 8 a question."),
+    AI_CODE[5][0]: (("search", {"text": "/api/MSS/care/status"}), "`care_status` in web.py answers it."),
+    AI_CODE[6][0]: (("read", {"name": "answerHtml"}), "`answerHtml` in static/index.html draws them."),
+    AI_CODE[7][0]: (None, "They give the service named by `ai.chat`, else the first one that is set."),
+    AI_CODE_SECRET: (None, "I cannot tell: .env is never read by me."),
+}
 
 FULL = {"outlook": "Microsoft Outlook", "mossley": "MOSSLEY", "edge": "Microsoft Edge", "kb5126652": "KB5126652",
         "teams": "Microsoft Teams Meeting Add-in for Microsoft Office"}  # what a model sends
@@ -34,8 +46,9 @@ def explained(content: str, how: str, reads: int) -> str:
 
 
 def service(seen, picks=PICKS, login="bearer", models=("model-a", "model-b"), tools=True, explains="right",
-            reads=10**9):
-    """A stand-in OpenAI-style service: picks from `picks`; Explain, the assessment and Ask anything."""
+            reads=10**9, code="right"):
+    """A stand-in OpenAI-style service: picks from `picks`; Explain, the assessment, Ask anything and
+    the code chat (code="invents": it names a file and a function the code does not have)."""
     def handler(request: httpx.Request):
         seen.append(request)
         key = (request.headers.get("authorization", "").removeprefix("Bearer ") if login == "bearer"
@@ -62,6 +75,13 @@ def service(seen, picks=PICKS, login="bearer", models=("model-a", "model-b"), to
             tool, args = ASKED[last["content"]]
             return reply(None, [{"id": "call-a", "type": "function",
                                  "function": {"name": tool, "arguments": json.dumps(args)}}])
+        if body["messages"][0]["content"].startswith(code_chat.SYSTEM):  # the code chat: one look-up, then its answer
+            asked = next(m["content"] for m in body["messages"] if m["role"] == "user").split("\n")[0]
+            look, answer = CODE_ASKED[asked]
+            if last["role"] == "tool" or look is None:
+                return reply(answer + (" See `made_up_helper` in nowhere.py." if code == "invents" else ""))
+            return reply(None, [{"id": "call-c", "type": "function",
+                                 "function": {"name": look[0], "arguments": json.dumps(look[1])}}])
         if "tools" in body and not tools:
             return httpx.Response(400, json={"error": {"message": "tools are not supported"}})
         pick = picks.get(last["content"]) if "tools" in body else None
@@ -93,8 +113,11 @@ def run(seen=None, env=None, cfg=None, **kw):
 def test_a_good_service_passes_every_check_and_the_key_is_never_printed():
     seen = []
     checks, text = run(seen)
-    assert [c.ok for c in checks.values()] == [None, True, True, True, True, True, True, True]
+    assert [c.ok for c in checks.values()] == [None, True, True, True, True, True, True, True, True]
     assert "Right for 7 of 7 open questions" in checks["answers open questions (Ask anything)"].message
+    code = checks["answers questions about the code (admin page)"]
+    assert f"Right for {len(AI_CODE)} of {len(AI_CODE)} questions about this app's own source" in code.message
+    assert "The admin password was not given" in code.message and len(code.rows) == len(AI_CODE) + 1
     assert "A verdict line, 2 points (2 with their label) and a next step" in checks["writes the assessment"].message
     assert "Right for 12 of 12 made-up panels" in checks["explains a panel"].message
     assert "right up to 40,000." in checks["explains a long page"].message
@@ -263,3 +286,21 @@ def test_explain_the_pages_answer_is_the_ais_when_its_numbers_are_the_panels_els
     empty.write_text("{}\n")
     got = TestClient(web.create_app(str(empty))).post("/api/explain", json={"tab": "today", "lines": lines}).json()
     assert got["ours"] and "No AI service is set" in got["note"]
+
+
+def test_a_model_that_names_what_the_code_does_not_have_fails_the_code_check():
+    checks, text = run(code="invents")
+    c = checks["answers questions about the code (admin page)"]
+    assert c.ok is False and f"Right for 0 of {len(AI_CODE)} questions" in c.message
+    assert any("nowhere.py (not one of this app's source files here)" in r
+               and "made_up_helper (not a name in the code)" in r for r in c.rows)
+    assert "1 problem(s) found." in text
+
+
+def test_the_admin_password_is_never_in_what_the_code_chat_is_given():
+    """The password of this host, when one is set, is compared with the answer and with every
+    look-up: it is in neither, whatever is asked (config.yaml and .env are never opened)."""
+    checks, _ = run(env={"AI_KEY_1": "k-1", "ADMIN_PASSWORD": "s3cret-of-this-host"})
+    c = checks["answers questions about the code (admin page)"]
+    assert c.ok and any(AI_CODE_SECRET in r and "not given after 0 look-up(s)" in r for r in c.rows)
+    assert "s3cret-of-this-host" not in " ".join(c.rows)

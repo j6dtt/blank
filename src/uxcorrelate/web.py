@@ -88,6 +88,13 @@ class ChatBody(BaseModel):
     page: dict | None = None  # Ask anything: the tab the page has open, as shown ({"tab", "lines"})
 
 
+class CodeBody(BaseModel):
+    """A question on the admin page's CODE tab (code_chat.ask)."""
+    question: str
+    history: list[dict] = []
+    about: dict | None = None  # "Explain these lines": {"file", "start", "end"}, or a part: {"file", "name"}
+
+
 class ExplainBody(BaseModel):
     tab: str
     panel: str = ""
@@ -828,6 +835,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
     log.setLevel(logging.INFO)
     jobs: dict[str, dict] = {}
     done_at: dict[str, float] = {}  # job id -> when it finished
+    admin_jobs: set[str] = set()  # jobs only the admin page may read (a question about the code)
     jobs_lock = threading.Lock()
 
     def run_logons(body: LogonBody) -> dict:
@@ -857,17 +865,22 @@ def create_app(config_path: str | None = None) -> FastAPI:
                 done_at[job_id] = _clock()
             job["done"] = True
 
-    def start(work, body, what: str = "An investigation", purpose: str = "investigations") -> dict:
+    def start(work, body, what: str = "An investigation", purpose: str = "investigations",
+              admin: bool = False) -> dict:
         """A job in its own thread. Jobs finished over KEEP_DONE_MIN ago are dropped; a running
         one never is (with 20 kept by count, a 21st start dropped one still running). purpose:
-        what its calls to Riverbed are for (the admin page)."""
+        what its calls to Riverbed are for (the admin page). admin: a job of the admin page, which
+        /api/jobs does not give (the main page has no login): only /admin/api/code/job does."""
         job_id = uuid.uuid4().hex
         with jobs_lock:
             gone = [i for i, t in done_at.items() if _clock() - t > KEEP_DONE_MIN * 60]
             for old in gone:
                 jobs.pop(old, None)
                 done_at.pop(old, None)
+                admin_jobs.discard(old)
             jobs[job_id] = job = {"lines": [], "done": False, "result": None, "error": None}
+            if admin:
+                admin_jobs.add(job_id)
         threading.Thread(target=_http.as_doing(purpose, run_job), args=(job_id, job, work, body, what),
                          daemon=True).start()
         return {"id": job_id}
@@ -894,7 +907,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
 
     @app.get("/api/jobs/{job_id}")
     def job_status(job_id: str):
-        if job_id not in jobs:
+        if job_id not in jobs or job_id in admin_jobs:
             raise HTTPException(404, "Unknown job (the app may have restarted); run it again.")
         return jobs[job_id]
 
@@ -1072,5 +1085,97 @@ def create_app(config_path: str | None = None) -> FastAPI:
         log.info("Admin: all actions today read for one user (%d actions%s) in %.1f s", got["count"],
                  ", cut short" if got["cut"] or got["partial"] else "", time.monotonic() - started)
         return got
+
+    # -- CODE: this app's own source, listed, shown and asked about (code_chat.py) ----------------
+    try:
+        from . import code_chat
+        source = app.state.source = code_chat.Source()
+    except ImportError:  # web.py copied to a host without code_chat.py: the app still starts, the tab says what is missing
+        code_chat = source = None
+        log.warning("The CODE tab is off: src/uxcorrelate/code_chat.py is not on this host (copy it, then restart).")
+    code_lock = threading.Lock()  # one question about the code at a time
+
+    def code_in(request: Request) -> None:
+        if not admin_in(request):
+            raise HTTPException(401, "Log in first.")
+        if code_chat is None:
+            raise HTTPException(503, "The CODE tab's own file is not on this host: copy src/uxcorrelate/code_chat.py "
+                                     "there, then restart the app.")
+
+    @app.get("/admin/api/code")
+    def admin_code(request: Request):
+        """Every source file with its lines and what it does, and whether the chat has an AI service."""
+        code_in(request)
+        got = code_chat.listing(source)
+        try:
+            service = chat_service(load_settings(config_path))
+        except Exception:  # a config.yaml that cannot be read: the files are still listed
+            service = None
+        got["service"] = service.name or service.model if service else None
+        return got
+
+    @app.get("/admin/api/code/file")
+    def admin_code_file(request: Request, name: str = ""):
+        """One source file: what it does, its parts with their lines, and its code."""
+        code_in(request)
+        got = code_chat.file_view(source, name[:200])
+        if got is None:
+            raise HTTPException(404, f"There is no source file named {name[:200]}.")
+        return got
+
+    @app.get("/admin/api/code/search")
+    def admin_code_search(request: Request, q: str = "", file: str = ""):
+        """Where a word or a name is in the code (no AI): the chat's own search look-up."""
+        code_in(request)
+        q = " ".join(q.split())[:200]
+        if len(q) < 2:
+            raise HTTPException(400, "Type at least 2 characters.")
+        return code_chat.search(source, q, file[:200] or None)
+
+    @app.post("/admin/api/code/ask")
+    def admin_code_ask(body: CodeBody, request: Request):
+        """A question about the code (code_chat.ask): the AI looks things up in the source files,
+        as many steps as it needs, and answers. A job, as Ask anything: the page asks
+        /admin/api/code/job/{id} every second and shows each look-up as it starts."""
+        from .ai import AiClient
+        code_in(request)
+        service = chat_service(load_settings(config_path))
+        if service is None:
+            raise HTTPException(503, "The chat needs an AI service: ai.services in config.yaml "
+                                     "(uxcorrelate verify --ai checks it). The Files part works without one.")
+        if not body.question.strip():
+            raise HTTPException(400, "Type a question.")
+        if not code_lock.acquire(blocking=False):
+            raise HTTPException(409, "A question about the code is being answered: ask again when it is done.")
+        client = AiClient(service, os.environ.get(service.key_env, "") if service.key_env else "")
+
+        def work(body: CodeBody) -> dict:
+            try:
+                log.info("Code chat: \"%s\", asked of %s", " ".join(body.question.split())[:80], service.name)
+                try:
+                    answer = code_chat.ask(body.question, body.history, client, source, body.about)
+                except ApiError as exc:
+                    log.warning("Code chat: the AI service %s did not answer (%s)", service.name, exc.short())
+                    raise HTTPException(502, f"The AI service {service.name} did not answer ({exc.short()}). Try "
+                                             "again; `uxcorrelate verify --ai` checks it.")
+                log.info("Code chat: \"%s\" answered in %.1f s by %s after %d look-up(s)%s%s",
+                         answer["question"][:80], answer["seconds"], service.name, len(answer["steps"]),
+                         f"; marked: {', '.join(x['text'] for x in answer['flagged'])[:200]}" if answer["flagged"] else "",
+                         f"; {answer['note']}" if answer["note"] else "")
+                return answer
+            finally:
+                code_lock.release()
+        try:
+            return start(work, body, "A question about the code", "code chat", admin=True)
+        except Exception:
+            code_lock.release()
+            raise
+
+    @app.get("/admin/api/code/job/{job_id}")
+    def admin_code_job(job_id: str, request: Request):
+        code_in(request)
+        if job_id not in jobs or job_id not in admin_jobs:
+            raise HTTPException(404, "Unknown question (the app may have restarted); ask it again.")
+        return jobs[job_id]
 
     return app

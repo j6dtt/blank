@@ -17,10 +17,15 @@ pages:
      and against another version, by two updates, by its update only, the version most have raised
      against another, a change to a lower version, one version under two spellings, one PC on a
      version), judged by the real rule (software.judge);
-  2. the dev app as it is, every tab.
+  2. the admin page's CODE tab, with no login and no AI (the admin page needs HTTPS and its password, which
+     this check is not given): the page as it is, fed from the real source by the real code (code_chat's
+     list, files and search) and with answers the real chat made from a scripted stand-in for the AI, with
+     the shapes that matter (what is marked, lines shown from the disk, lines asked about, a code block of
+     the AI's own, a look-up with more rows than are drawn);
+  3. the dev app as it is, every tab.
 
 Modes (page_check.sh runs both):
-  data DIR   in the runtime image: writes DIR/software.html, the made-up page
+  data DIR   in the runtime image: writes DIR/software.html and DIR/code.html, the made-up pages
   look DIR   in the uitest-chrome image: the checks; exit 1 when something does not add up
 """
 import json
@@ -139,9 +144,83 @@ def made_up(out: str) -> None:
           f"{len(twice)} raised two ways, {len(two_updates)} by two updates.")
 
 
+# ---------------------------------------------------------------- the made-up CODE tab (admin page)
+def made_up_code(out: str) -> None:
+    from types import SimpleNamespace
+
+    from uxcorrelate import code_chat as cc
+
+    def call(tool, **args):
+        return {"content": "", "tool_calls": [{"id": f"c-{tool}", "type": "function",
+                                               "function": {"name": tool, "arguments": json.dumps(args)}}]}
+
+    class Script:  # a stand-in for the AI: its replies in order
+        def __init__(self, *replies):
+            self.replies, self.cfg = list(replies), SimpleNamespace(name="Stand-in")
+
+        def chat(self, messages, tools=None):
+            return self.replies.pop(0) if len(self.replies) > 1 else self.replies[0]
+
+    src = cc.Source()
+    web = src.file("web.py")
+    login = web.named("admin_login")[0]
+    compared = next(n for n in range(login.top, login.end + 1) if "compare_digest" in web.lines[n - 1])
+    lights = src.file("status.py").named("check_ai")[0]
+    every = src.file("status.py").named("CHECK_EVERY_S")[0]
+    answers = [
+        cc.ask("Which part of the code checks the admin password?", [], Script(
+            call("search", text="self"), call("read", name="admin_login"), call("setting", name="ADMIN_PASSWORD"),
+            {"content": f"The password is checked in `admin_login` in web.py (web.py:{login.top}-{login.end}); the comparison "
+                        f"itself is at web.py:{compared}.\n\n- The name of its line in .env is held by `ADMIN_ENV`.\n"
+                        "- Marked on purpose: `not_in_the_code_x` in nowhere.py, web.py:5, web.py:99999 and 4242 tries.\n\n"
+                        "In .env you would write:\n```\nADMIN_PASSWORD=<your password>\n```"}), src),
+        cc.ask("What do these lines do?", [], Script(
+            {"content": f"They are the start of `check_ai` (status.py:{lights.top}-{lights.top + 4}): one AI service is checked."}),
+            src, {"file": "status.py", "start": lights.top, "end": lights.top + 4}),
+        cc.ask("How often are the lights checked?", [{"q": "What do these lines do?", "a": "They start check_ai."}], Script(
+            call("outline", file="status.py"),
+            {"content": f"Every 60 seconds: `CHECK_EVERY_S` at status.py:{every.line}."}), src),
+    ]
+    # the shapes the check is for must be in the data, or it would pass by looking at nothing
+    kinds = sorted(x["kind"] for x in answers[0]["flagged"])
+    shapes = {"marked": kinds == ["file", "line", "name", "number", "unseen"], "own block": answers[0]["blocks"] == [False],
+              "shown": len(answers[0]["shown"]) == 2 and answers[0]["shown"][1]["mark"] == 5,
+              "rows over the limit": len(answers[0]["steps"][0]["rows"]) == cc.SEARCH_ROWS,
+              "asked about": answers[1]["about"] is not None and len(answers[1]["steps"]) == 1,
+              "one look-up": len(answers[2]["steps"]) == 1 and answers[2]["shown"][0]["mark"] == every.line,
+              "nothing marked": answers[1]["flagged"] == [] and answers[2]["flagged"] == []}
+    if not all(shapes.values()):
+        sys.exit(f"The made-up CODE tab lost its shapes: {[k for k, v in shapes.items() if not v]}; marked {kinds}.")
+    fake = {"listing": cc.listing(src) | {"service": "Stand-in"},
+            "files": {n: cc.file_view(src, n) for n in ("status.py", "web.py", "static/admin.html")},
+            "searches": {q: cc.search(src, q) for q in ("refresh_minutes", "self")},  # under the rows given, and over
+            "answers": answers}
+    page = open("/app/src/uxcorrelate/static/admin.html", encoding="utf-8").read()
+    script = ("<script>const FAKE = " + json.dumps(fake).replace("</", "<\\/") + """;
+let fakeAsked = 0;
+window.fetch = async (url) => {
+  url = String(url);
+  const ok = (x, status = 200) => new Response(JSON.stringify(x), { status, headers: { "Content-Type": "application/json" } });
+  const arg = () => decodeURIComponent(url.slice(url.indexOf("=") + 1));
+  if (url === "admin/api/me") return ok({ in: true, https: true, set: true });
+  if (url === "admin/api/code") return ok(FAKE.listing);
+  if (url.startsWith("admin/api/code/file?name=")) return FAKE.files[arg()] ? ok(FAKE.files[arg()]) : ok({ detail: "There is no source file named " + arg() + "." }, 404);
+  if (url.startsWith("admin/api/code/search?q=")) return FAKE.searches[arg()] ? ok(FAKE.searches[arg()]) : ok({ detail: "Not in the made-up page." }, 400);
+  if (url === "admin/api/code/ask") return ok({ id: "made-up" });
+  if (url.startsWith("admin/api/code/job/")) return ok({ lines: ["00:00:00 Code chat: look-up 1, search(text=self)"], done: true, error: null,
+    result: FAKE.answers[fakeAsked++ % FAKE.answers.length] });
+  return ok({ detail: "Not in the made-up page." }, 404);
+};</script>
+""")
+    open(out + "/code.html", "w", encoding="utf-8").write(script + page)
+    print(f"Made-up CODE tab: {len(fake['listing']['files'])} files of the real source, {len(fake['files'])} of them to open, "
+          f"{len(fake['searches'])} searches, {len(answers)} answers ({len(kinds)} things marked in the first).")
+
+
 # ---------------------------------------------------------------- the browser
 class Browser:
-    def __init__(self):
+    def __init__(self, more=()):
+        """more: further Chrome options (a look at the admin page over the dev host's own certificate)."""
         import subprocess
         import time
         import websocket
@@ -149,7 +228,7 @@ class Browser:
         self.proc = subprocess.Popen(
             ["chromium", "--headless", "--no-sandbox", "--disable-gpu", "--hide-scrollbars", "--remote-debugging-port=9223",
              "--remote-allow-origins=*", "--user-data-dir=/tmp/prof", "--window-size=1280,1000",
-             "--allow-file-access-from-files", "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+             "--allow-file-access-from-files", *more, "about:blank"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         page = None
         for _ in range(80):
             try:
@@ -224,7 +303,8 @@ class Tally:
 
 # "1 virtual desktops", "1 PCs": a count of one with a plural after it
 ONE_OF_MANY = (r"(?:^|[^\d,.\w])1 (?:PCs|users|programs|versions|virtual desktops|physical PCs|installs|days|actions|"
-               r"events|people|desktops|devices|applications|updates|changes|lines|hours|minutes|reads|times|months)\b")
+               r"events|people|desktops|devices|applications|updates|changes|lines|hours|minutes|reads|times|months|"
+               r"look-ups|files|rows|parts|places|more lines|more rows)\b")
 JS_TEXT = "(sel) => [...document.querySelectorAll(sel)].filter((e) => !e.hidden && e.offsetParent !== null).map((e) => e.innerText).join('\\n')"
 
 
@@ -310,6 +390,145 @@ def software(b: Browser, t: Tally, where: str) -> dict:
     return seen
 
 
+# The CODE tab's answers as drawn, each beside the answer it was drawn from (CODE.answers, the page's own data)
+JS_ANSWERS = r"""
+(() => { const num = (s) => Number(String(s).replace(/,/g, ""));
+  return [...document.querySelectorAll("#codeAnswers .cans")].map((el, i) => { const a = CODE.answers[i];
+    const head = el.querySelector(".q").innerText;
+    el.querySelectorAll("details").forEach((d) => { d.open = true; });  // what is folded has no text to read
+    const snips = [...el.querySelectorAll(".csnip")].map((sn) => { const h = sn.querySelector(".chead").innerText, rows = [...sn.querySelectorAll(".ln")];
+      const m = /lines? ([\d,]+)(?:-([\d,]+))?/.exec(h);
+      return { head: h.replace(/\s+/g, " "), a: num(m[1]), b: num(m[2] || m[1]), rows: rows.length, first: num(rows[0].dataset.n), last: num(rows[rows.length - 1].dataset.n),
+        hit: [...sn.querySelectorAll(".ln.hit")].map((x) => num(x.dataset.n)), more: num((/and ([\d,]+) more lines?/.exec(sn.innerText) || [0, 0])[1]) }; });
+    const steps = [...el.querySelectorAll(".cstep")].map((st, k) => ({ title: st.querySelector(".t").innerText, rows: st.querySelectorAll("tbody tr").length,
+      more: num((/and ([\d,]+) more rows?/.exec(st.innerText) || [0, 0])[1]), data: a.steps[k].rows.length }));
+    return { q: a.question, said: num((/· ([\d,]+) look-ups?/.exec(head) || [0, -1])[1]),
+      summary: num((/\(([\d,]+)\)/.exec(el.querySelector("details summary").innerText) || [0, -1])[1]), steps, data_steps: a.steps.length,
+      snips, data_snips: a.shown.length + (a.about ? 1 : 0), marked: el.querySelectorAll(".mark b").length, data_marked: a.flagged.length,
+      cites: el.querySelectorAll(".a .cite").length, lost: [...el.querySelectorAll("[data-cf]")].filter((x) => !CODE.j.files.some((f) => f.file === x.dataset.cf)).map((x) => x.dataset.cf),
+      own: el.querySelectorAll(".cown").length, data_own: a.blocks.length }; });
+})()
+"""
+
+
+def code_tab(b: Browser, t: Tally, out: str) -> None:
+    """The admin page's CODE tab, made-up (no login, no AI): every number it says against what it draws."""
+    def num(text) -> int:
+        return int(str(text).replace(",", ""))
+
+    def typed(box: str, form: str, text: str) -> None:
+        b.ev(f"""(() => {{ const q = document.getElementById({json.dumps(box)}); q.value = {json.dumps(text)};
+            q.dispatchEvent(new Event("input", {{ bubbles: true }})); document.getElementById({json.dumps(form)}).requestSubmit(); }})()""")
+
+    b.where = "Code, made-up"
+    b.go(f"file://{out}/code.html#code", 2)
+    if not b.wait("typeof CODE === 'object' && !!CODE.j && !!document.getElementById('codeBody')", 30):
+        t.bad.append("Code, made-up: the tab was not drawn")
+        return
+    # the list of files
+    b.ev("document.querySelector('#code [data-cv=files]').click()")
+    v = b.ev("""(() => ({ said: document.getElementById("codeCount").innerText, rows: document.querySelectorAll("#codeFiles tbody tr").length,
+        sum: [...document.querySelectorAll("#codeFiles tbody td.n")].reduce((s, e) => s + Number(e.innerText.replace(/,/g, "")), 0),
+        files: FAKE.listing.files.length, lines: FAKE.listing.total_lines,
+        empty: [...document.querySelectorAll("#codeFiles tbody tr")].filter((r) => !r.children[2].innerText.trim()).map((r) => r.children[0].innerText) }))()""")
+    m = re.match(r"([\d,]+) files?, ([\d,]+) lines", v["said"])
+    t.same("Code: the files said at the top, the rows of the list and the files there are", num(m.group(1)), v["rows"], v["files"])
+    t.same("Code: the lines said at the top, the Lines column added up and the lines there are", num(m.group(2)), v["sum"], v["lines"])
+    t.none("Code: a file with nothing under \"What it does\"", v["empty"])
+    print(f"    Code: {v['said'].split(' ·')[0]}; {v['rows']} rows in the list, their lines add up to {v['sum']:,}")
+    # each file that can be opened: its lines, its parts per chip, lines picked
+    for name in b.ev("Object.keys(FAKE.files)"):
+        b.where = f"Code, made-up, {name}"
+        b.ev(f"[...document.querySelectorAll('#codeFiles [data-cfile]')].find((e) => e.dataset.cfile === {json.dumps(name)}).click()")
+        if not b.wait(f"!!CODE.file && CODE.file.file === {json.dumps(name)} && !!document.getElementById('codeView')", 20):
+            t.bad.append(f"{b.where}: the file did not open")
+            continue
+        f = b.ev("""(() => { const rows = [...document.querySelectorAll("#codeView .ln")];
+            return { said: document.querySelector("#codeBody .ph .muted").innerText, rows: rows.length, first: Number(rows[0].dataset.n), last: Number(rows[rows.length - 1].dataset.n),
+                     no: rows[rows.length - 1].querySelector(".no").innerText, data: CODE.file.lines.length, parts: CODE.file.items.length,
+                     chips: [...document.querySelectorAll("#codeKinds button")].map((x) => x.innerText) }; })()""")
+        t.same(f"{b.where}: the lines said, the rows of code drawn, the last line's number and the file's lines",
+               num(f["said"].split()[0]), f["rows"], f["last"], num(f["no"]), f["data"])
+        t.same(f"{b.where}: the code starts at line 1", f["first"], 1)
+        said = {}
+        for k, chip in enumerate(f["chips"]):
+            said[k] = num(re.search(r"\(([\d,]+)\)", chip).group(1))
+            b.ev(f"document.querySelectorAll('#codeKinds button')[{k}].click()")
+            t.same(f"{b.where}: the number on \"{chip}\" and the parts drawn under it", said[k], b.ev("document.querySelectorAll('#codeParts .part').length"))
+        t.same(f"{b.where}: \"All\" and the other chips added up, and the file's parts", said[0], sum(said[k] for k in said if k), f["parts"])
+        b.ev("document.querySelectorAll('#codeKinds button')[0].click()")
+        # a part clicked: the lines said to be picked are the lines lit, from its first line
+        p = b.ev("""(() => { const part = [...document.querySelectorAll("#codeParts .part")].find((x) => x.querySelector(".k").innerText.toLowerCase() === "function");
+            part.click(); const lit = [...document.querySelectorAll("#codeView .ln.sel")].map((x) => Number(x.dataset.n));
+            return { said: document.getElementById("codeSelSaid").innerText, lit: lit.length, first: lit[0], last: lit[lit.length - 1], line: Number(part.querySelector(".n").innerText.replace(/,/g, "")),
+                     item: CODE.file.items[Number(part.dataset.part)] }; })()""")
+        m = re.match(r"Lines? ([\d,]+)(?:-([\d,]+))? picked", p["said"])
+        a, z = num(m.group(1)), num(m.group(2) or m.group(1))
+        t.same(f"{b.where}: a part clicked: the lines said to be picked, the lines lit and the part's own", (a, z, z - a + 1),
+               (p["first"], p["last"], p["lit"]), (p["item"]["top"], p["item"]["end"], p["item"]["end"] - p["item"]["top"] + 1))
+        t.same(f"{b.where}: the line beside a part's name is where it starts", p["line"], p["item"]["line"])
+        # a line number clicked, then another with Shift
+        one = b.ev("""(() => { const no = (n) => document.querySelector(`#codeView .ln[data-n="${n}"] .no`); no(3).click();
+            const first = [document.getElementById("codeSelSaid").innerText, document.querySelectorAll("#codeView .ln.sel").length];
+            no(7).dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
+            return [first, [document.getElementById("codeSelSaid").innerText, document.querySelectorAll("#codeView .ln.sel").length]]; })()""")
+        t.same(f"{b.where}: one line picked, then five with Shift", one, [["Line 3 picked", 1], ["Lines 3-7 picked", 5]])
+        b.ev("document.querySelector('#code [data-cact=back]').click()")
+    # a search under the rows given, and one over
+    b.where = "Code, made-up, search"
+    for q in b.ev("Object.keys(FAKE.searches)"):
+        typed("codeSq", "codeSForm", q)
+        if not b.wait("!!CODE.sres || !!CODE.serr", 20):
+            t.bad.append(f"{b.where}: \"{q}\" gave nothing")
+            continue
+        r = b.ev("""(() => ({ title: document.getElementById("codeSTitle").innerText, rows: document.querySelectorAll("#codeSRows tbody tr").length,
+            files: new Set([...document.querySelectorAll("#codeSRows tbody tr")].map((x) => x.children[0].innerText)).size, text: document.getElementById("codeBody").innerText,
+            data: CODE.sres.summary.lines_with_it, given: CODE.sres.rows.length }))()""")
+        m = re.search(r": ([\d,]+) in ([\d,]+) files?$", r["title"])
+        lines, files = num(m.group(1)), num(m.group(2))
+        cut = re.search(r"The first ([\d,]+) of ([\d,]+) lines", r["text"])
+        t.same(f"{b.where} \"{q}\": the lines said and the lines found", lines, r["data"])
+        t.same(f"{b.where} \"{q}\": the rows drawn and the rows given", r["rows"], r["given"], num(cut.group(1)) if cut else lines)
+        if cut:
+            t.same(f"{b.where} \"{q}\": \"the first N of M\" and the lines said", num(cut.group(2)), lines)
+        else:
+            t.same(f"{b.where} \"{q}\": the files said and the files in the rows", files, r["files"])
+        b.ev("document.querySelector('#code [data-cact=search-clear]').click()")
+    # the answers: asked one after the other (the made-up page gives its answers in order)
+    b.where = "Code, made-up, Ask"
+    b.ev("document.querySelector('#code [data-cv=ask]').click()")
+    asked = b.ev("FAKE.answers.length")
+    for k in range(asked):
+        typed("codeQ", "codeForm", f"question {k + 1}")
+        if not b.wait(f"CODE.answers.length === {k + 1} && !CODE.busy", 20):
+            t.bad.append(f"{b.where}: answer {k + 1} was not drawn ({b.ev('CODE.aerr')})")
+            return
+    for a in b.ev(JS_ANSWERS):
+        w = f"{b.where}, \"{a['q'][:40]}\""
+        t.same(f"{w}: the look-ups said, \"What it looked at (N)\", the look-ups drawn and those made", a["said"], a["summary"], len(a["steps"]), a["data_steps"])
+        t.same(f"{w}: the pieces of code drawn and the places to show", len(a["snips"]), a["data_snips"])
+        t.same(f"{w}: the things marked and the things to mark", a["marked"], a["data_marked"])
+        t.same(f"{w}: the AI's own code blocks drawn and those it wrote", a["own"], a["data_own"])
+        t.none(f"{w}: a link to a file that is not in the list", a["lost"])
+        for sn in a["snips"]:
+            if sn["hit"]:  # one line, lit, with the lines around it
+                t.same(f"{w}: {sn['head']}: the line said and the line lit, among the rows", (sn["hit"], sn["first"] <= sn["a"] <= sn["last"]), ([sn["a"]], True))
+            else:
+                t.same(f"{w}: {sn['head']}: the lines said and the rows drawn (with those left out)", (sn["a"], sn["b"] - sn["a"] + 1), (sn["first"], sn["rows"] + sn["more"]))
+        for st in a["steps"]:
+            t.same(f"{w}: {st['title']}: the rows drawn with \"N more\" and the rows the AI was given", st["rows"] + st["more"], st["data"])
+        print(f"    Code: \"{a['q'][:44]}\": look-ups {a['said']}, pieces of code {len(a['snips'])}, marked {a['marked']}, links {a['cites']}")
+    grammar(b, t, "Code, made-up", "#code")
+    for width in (400,):
+        b.cmd("Emulation.setDeviceMetricsOverride", width=width, height=900, deviceScaleFactor=1, mobile=True)
+        b.time.sleep(0.6)
+        for view in ("ask", "files"):
+            b.ev(f"document.querySelector('#code [data-cv={view}]').click()")
+            b.time.sleep(0.3)
+            t.same(f"Code, made-up: the page is no wider than a phone ({width} px, {view})", b.ev("document.documentElement.scrollWidth > innerWidth + 1"), False)
+    b.cmd("Emulation.clearDeviceMetricsOverride")
+
+
 def look(out: str) -> int:
     b, t = Browser(), Tally()
     # 1. the made-up Software tab
@@ -351,9 +570,11 @@ def look(out: str) -> int:
             b.time.sleep(0.6)
             t.same(f"Software, made-up: the page is no wider than a phone ({width} px)", b.ev("document.documentElement.scrollWidth > innerWidth + 1"), False)
         b.cmd("Emulation.clearDeviceMetricsOverride")
+    # 2. the admin page's CODE tab, made-up
+    code_tab(b, t, out)
     made_up_errors = [e for e in b.errors if "404" not in e and "Failed to load" not in e and "Could not load" not in e]
     b.errors.clear()
-    # 2. the dev app, every tab
+    # 3. the dev app, every tab
     b.where = "dev app"
     b.go(APP + "/", 4)
     tabs = (("Today", "tabToday", "todayBox", "document.getElementById('tTiles') && document.getElementById('tTiles').children.length > 0"),
@@ -515,5 +736,6 @@ if __name__ == "__main__":
         sys.exit(__doc__)
     if sys.argv[1] == "data":
         made_up(sys.argv[2])
+        made_up_code(sys.argv[2])
     else:
         sys.exit(look(sys.argv[2]))

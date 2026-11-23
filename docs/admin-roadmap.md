@@ -296,6 +296,171 @@ by the hour. Stage copy: `config.py`, `secureview.py`,
   `--overview`, `--ai`) from the page; the app's log for the
   last hours and config.yaml as loaded, secrets filtered out.
 
+## The CODE tab: a chat about the source code (built on dev 2026-11-23, "Build it")
+
+The proposal, as it was given and agreed, follows this section's
+"Built" part unchanged, so what differs can be seen.
+
+### Built
+
+The user, 2026-11-22: "Build it", after "We can test this
+functionality in dev with nemotron", "Is this multi turn chat? Can I
+ask what this 'line of code' means?" and "Look in [another project's
+folder on the dev host] for nemotron info. Since we don't have gpt in
+dev so use nemotron. Prod will have gpt".
+
+- **What is there**: a fourth admin tab, CODE (`/admin#code`), two
+  sub-tabs. ASK: the chat, with follow-up questions (the last 6), the
+  code an answer names under it (read from the disk by the app), what
+  it looked at, and what it names that it did not look at marked.
+  FILES (no AI): the 36 files with their lines and what each does, a
+  search of every line, a file's parts (settings, functions, classes,
+  the address a web function serves) beside its code, and lines picked
+  by a line number, a drag or a part for "Explain these lines ▸" /
+  "Ask about them…". README.md, "Code", has every click.
+- **Different from the proposal**, and why:
+  - No `files` look-up: the list of files (36 lines) goes with every
+    question in the instructions, so the AI spends no step on it. The
+    look-ups are `search`, `outline`, `read`, `setting`.
+  - A search box on FILES, with no AI (the chat's own `search`): it
+    was built anyway and works when the AI is down.
+  - More is marked than promised: besides a file, function or line
+    not looked up, also a number found nowhere, and a name that the
+    code does not have at all is said apart from one that exists but
+    was not looked up.
+  - A code block the AI types itself is labelled as its own, unless
+    every line of it is a line of the files (the proposal only said
+    the code shown is read from the disk).
+  - A question is a job that only a logged-in admin can read (the
+    main page's job address answers 404 for it).
+  - A host that got `web.py` without `code_chat.py` still starts: the
+    tab and `verify --ai` say which file to copy. Found while writing
+    the list of files for the copy: without it the app would not
+    have started.
+- **Gaps found before any copy**, each by a test or the page check:
+  "agent.py: 8 a question" was read as line 8 of agent.py, and
+  "web.py:5 and 4242 tries" as lines 5 to 4242 (now a place is
+  `file:first-last`, nothing around the colon, only a dash for a
+  range); four tabs were 27 px wider than a phone's 400 px, so the
+  whole admin page scrolled sideways (the tabs slide sideways now, as
+  the main page's); the code view lost its place after Ask and back.
+- **Measured on dev with Nemotron 3.5 Super** (NVIDIA's hosted API,
+  as another project on the dev host uses it; `verify --ai`,
+  2026-11-23): every check OK.
+  "answers questions about the code (admin page)": right for 8 of 8
+  in both runs (before and after the change to its instructions
+  below), each question in 2.9 to 15.5 s, 1 to 7 look-ups; the admin
+  password was in no answer and in nothing it looked at. In a real
+  Chrome over the dev page: a question, a follow-up, a place clicked
+  through to FILES, a search, a part and lines picked, "Explain these
+  lines", dark, a phone's width, log out; no script error. 461 tests;
+  the page check ends "0 do not" (241 agree) with the tab in it.
+- **Not done, said plainly**:
+  - GPT is not measured: that is stage's `verify --ai`. Nemotron on
+    dev is 3.5 Super, prod's own is 3 Super: a pass on dev proves
+    neither.
+  - The marks prove that a file, line, name or number was in what the
+    AI looked at. They do not prove its explanation of the code is
+    right: on dev one answer said environment variables override
+    `refresh_minutes`, which no line of the code says (it took it
+    from config.py's first sentence in the list of files). The
+    instructions now say the list is no proof of how a setting
+    behaves; asked again, the answer was right, from 4 look-ups.
+    That lowers it, it does not rule it out.
+  - Why something was decided is known only from the code's own
+    comments: CLAUDE.md and `docs/` are not on the live host.
+  - Where a function of a page's script ends is read from the layout
+    (the "}" at the start of a line), not parsed; the styles and the
+    HTML of a page are not listed as parts (they are searched and
+    read as lines).
+  - No count of code questions on STATISTICS (nothing is kept); the
+    AI calls are on the Load panel as "code chat".
+- **Copy**: stage, 4 files: `src/uxcorrelate/code_chat.py` (new),
+  `src/uxcorrelate/web.py`, `src/uxcorrelate/verify.py`,
+  `src/uxcorrelate/static/admin.html`; restart; no image, compose,
+  k8s or config change (stage's `ai:` is already set). Prod after
+  stage: those with the 11 waiting since 596cd86, 12 files in all
+  (three of the four are among the 11).
+
+### The proposal (2026-11-22)
+
+The user: "I want to have a chat on admin to inquire source codes.
+I want to know what every .py file does, I want to able able to ask
+where a configuration is, which part in the script does xx/yy. I
+want the chat in prod using gpt and have the similar conversation
+with you. Provide proposal". Proposal given; waiting for "build it".
+
+- **What it is**: a fourth tab on the admin page, CODE (link
+  `#code`), behind the admin login. Two parts.
+  1. Files, no AI: every source file with its lines and what it
+     does (the file's own first sentence; every `.py` file has
+     one, 33 files). A click: its functions, classes and settings
+     with line numbers; a click on one: its code. Right even when
+     the AI is down.
+  2. A chat with GPT (`ai.chat`'s service), with follow-up
+     questions. "Explain" on a file or function of part 1 asks it.
+     Follow-ups as Ask anything's (the user, 2026-11-22: "Is this
+     multi turn chat?"): the last 6 questions and answers go with
+     each new one, with a line of what was looked up; kept in the
+     page only, gone at a reload or log-out. A line of code (the
+     user: "Can I ask what this 'line of code' means?"; added to
+     the proposal): click a line or select a few in part 1's code,
+     "Explain this ▸" sends the file, the line numbers and the
+     function around them; or type "line 412 of software.py"; or
+     paste the line (`search` finds it, `read` gives what is
+     around it). The lines are shown over the answer, read from
+     the disk by our code.
+- **Why look-ups, not the whole code**: the source is 1.6 MB (26,500
+  lines with the two pages); GPT read 40,000 characters right on
+  stage. So GPT looks things up in the files on that host, as Ask
+  anything does with Aternity (up to 8 a question, 24,000
+  characters each): `files`, `search` (a word or name: file and
+  line), `outline` (one file's functions and settings), `read`
+  (lines of one file), `setting` (a config.yaml key: where it is
+  read, its default, its limits).
+- **Guards**: read only; the app's own source only, never `.env`,
+  `config.yaml`, certificates or `data` (no password, no PC or user
+  name; a setting's place and default, never its value on that
+  host). Every file, function and line an answer names must be in
+  what was looked up, else it is marked. The code shown under an
+  answer is read from the disk by our code, not written by the AI.
+  One question at a time, counted on the Load panel, nothing saved.
+- **What it cannot do**: change or run code. Say why something was
+  decided beyond what the code's own comments say: CLAUDE.md and
+  `docs/` are not on prod (the bundle carries README.md and `src`).
+  Be as good as a session with Claude Code: slower, shorter chains;
+  how good is not known until measured.
+- **Build**: one new file (`code_chat.py`; Python's own `ast`, no
+  new library, no new image), `web.py`, `admin.html`, `usage.py`
+  (the Load panel's purpose), `verify.py` (`verify --ai`: "answers
+  questions about the code", about 10 questions with a known file
+  and function, both models), tests, the page check.
+- **Test on dev first** (the user, 2026-11-22: "We can test this
+  functionality in dev with nemotron"): build it on dev, measure it
+  there with Nemotron (`verify --ai`, and the tab in a browser),
+  stage with GPT only after that. Dev had no AI service (no `ai:`
+  in its config.yaml, no key in its `.env`, two lights only). Set
+  on 2026-11-22 (the user: "Look in [another project's folder on
+  the dev host] for nemotron info. Since we don't have gpt in dev
+  so use nemotron. Prod will have gpt"): the same service that
+  project uses on dev, NVIDIA's hosted API with Nemotron 3.5 Super
+  (prod's own Nemotron is 3 Super), as `ai:` in dev's config.yaml
+  and the key as `AI_KEY_NEMOTRON` in dev's `.env`, copied from
+  that project's `.env` without being shown. What the chats send
+  leaves the dev host (dev's data is made up; that project's own
+  note: free tiers may train on prompts). `verify --ai` on dev:
+  reachable, plain reply, the software look-up 12 of 12, explains
+  a panel 12 of 12, a long page right up to 40,000 characters, the
+  assessment, all OK; Ask anything 6 of 7 (one answer held a
+  number, 13, that was in none of its look-ups). Ask anything on
+  the dev page answers now, third light green. Passing on dev with
+  Nemotron does not prove GPT's answers: GPT is still measured on
+  stage before prod.
+- **Open choices** (my recommendation first): source only at first,
+  docs later if answers lack the why (CLAUDE.md changes with nearly
+  every commit: one more file in each copy); admin page only, not
+  the main page.
+
 ## To find out on stage
 
 - Whether something in front of the app hides the desktops'

@@ -40,6 +40,21 @@ data, then its daily data with the people and desktops. See
 
 ## Waiting on you
 
+- **The CODE tab on the admin page: built on dev, stage copy next
+  (the user's "Build it", 2026-11-22)**: the app's own source, listed
+  and asked about (what each file does, where a setting is, which
+  part does something, what a line means), a chat with follow-up
+  questions. All of it, what differs from the proposal and what is
+  not done: `docs/admin-roadmap.md`. Dev has an AI service since
+  2026-11-22 for it: Nemotron on NVIDIA's hosted API, as another
+  project on the dev host uses it (dev's config.yaml and `.env`,
+  neither in git), so Ask anything, Explain, the assessment's wording and the
+  Software summary run with an AI on dev too. `verify --ai` on dev,
+  2026-11-23: all checks passed, the code chat 8 of 8. Stage: 4 files
+  (`src/uxcorrelate/code_chat.py` new, `web.py`, `verify.py`,
+  `static/admin.html`), restart, then `verify --ai` there measures
+  GPT. Prod after stage: 12 files (these with the 11 waiting).
+
 - **Software tab: the headline box is gone, the same PCs decide,
   and a full review for discrepancies (the user, 2026-11-22, on two
   photos of stage: "Am I seeing discrepancies here? Look at the
@@ -56,8 +71,9 @@ data, then its daily data with the people and desktops. See
   2026-11-22 (third photo): works. Seven more photos the same
   day: one count does not add up; fixed with a page check in
   the repo (a0acbd5, below); on stage the same day: the
-  second count still read as a raise; fixed again on dev;
-  stage copy of 1 file next, then prod (11 files).**
+  second count still read as a raise; fixed again (2a27a5a);
+  on stage the same day: "Count is good on stage". Prod
+  copy next (11 files).**
   - On stage (photo, same application, virtual desktops, a read
     a day later so the counts moved a little): no headline box,
     "Version by version" on top. X crashed on 149 of 2,476 (6%),
@@ -258,6 +274,8 @@ data, then its daily data with the people and desktops. See
       error of mine in Explain before any copy. A picture of
       the new table was sent to the user before the copy step.
       Stage copy: `src/uxcorrelate/static/index.html` only.
+    - On stage with 2a27a5a (2026-11-22), the user: "Count is
+      good on stage. Prod is still not updated yet."
     - Prod list corrected: 11 files, not 8. The 8 took it that
       prod already had the usage charts and the look switch
       (cfea4d4); nothing I have says so. The last version

@@ -257,7 +257,7 @@ def test_the_admin_page_needs_its_login(monkeypatch, tmp_path):
     assert 'fetch("admin/api/secureview"' in page and "confirm(" not in page and "alert(" not in page
     # two tabs, each with its link (the user, Nov 17 2026): Statistics opens first, SecureView by its link
     assert 'data-t="stats">Statistics<' in page and 'data-t="sv">SecureView<' in page
-    assert 'const TABS = { stats: "statistics", sv: "secureview", act: "actions" };' in page
+    assert 'const TABS = { stats: "statistics", sv: "secureview", act: "actions", code: "code" };' in page
     assert 'Object.keys(TABS).find(k => location.hash === "#" + TABS[k]) || "stats"' in page
     # by department across the page, a row sets the Department box (the user's pick B, Nov 17 2026)
     assert 'svDeptPick("svTDept", "tdept", tDept, "svTq");' in page and 'svDeptPick("svHDept", "hdept", hDept, "svHq");' in page

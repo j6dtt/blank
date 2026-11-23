@@ -936,8 +936,9 @@ demo mode: nothing in `src/` knows about it.
   (`verify.verify_ai`, passed on prod for both services: key, reachable,
   login header, plain reply, then the right software look-up in 12 tries
   covering every block (`software_chat.TOOLS`, `AI_SW_TRIES`) + no pick
-  outside the data, Explain, the assessment, Ask anything; the old Today
-  chat's checks went with it from the page).
+  outside the data, Explain, the assessment, Ask anything, the admin
+  page's code chat; the old Today chat's checks went with it from the
+  page).
 - `verify --overview` (`verify._overview`, also at the end of a full verify):
   what a "today's issues" overview could rest on: activity rows an hour,
   Aternity's own status and severity words with counts, and whether its
@@ -1020,6 +1021,75 @@ demo mode: nothing in `src/` knows about it.
   functions and `ACT` in admin.html; read only on Show / Read again /
   "All actions today ▸" (`actFor`), no minute; suggestions from
   `/api/names`; an application box, CSV, "Show all" after 200.
+- `code_chat.py`: the admin page's CODE tab (`/admin/api/code`,
+  `/file`, `/search`, `/ask`, `/job/{id}`; `#code`; the user, Nov 22
+  2026: "I want to have a chat on admin to inquire source codes. I want
+  to know what every .py file does, I want to able able to ask where a
+  configuration is, which part in the script does xx/yy. I want the chat
+  in prod using gpt and have the similar conversation with you", "Is
+  this multi turn chat? Can I ask what this 'line of code' means?",
+  "Build it"; docs/admin-roadmap.md). The app's own source, by the list
+  only: `Source.names` is `*.py` of the package folder (`ROOT`) and
+  `static/*.html`, real files of those two folders (no link out); a
+  file is never opened from a path that was typed or that the AI sent
+  (`Source.pick`: the listed file a name means, else None), so
+  config.yaml, .env, certificates and data cannot be read and nothing
+  is written. Do not add a look-up that takes a path. Parts
+  (`parse`): a `.py` file by Python's `ast` (`_python`: settings =
+  module names in capitals with their value and comment, classes with
+  fields and methods, functions also inside functions, `route` from
+  `@app.get(...)`: web.py's handlers live in `create_app`), a page by
+  its script's top-level lines (`_page`: where a function ends is read
+  from the layout, said in outline's note); `File.owner` is the part
+  each line is in. "What it does" is the file's own first sentence
+  (`first_sentences`; the pages have ours, `PAGES`). Files part, no AI:
+  `listing`, `file_view`, `search`. The chat (`ask`, as `agent.ask`:
+  `MAX_STEPS` 8, `RESULT_CHARS`, `HISTORY` 6, earlier look-ups in the
+  instructions): `TOOLS` search (lines that define the name first,
+  count per file, `SEARCH_ROWS`), outline (`OUTLINE_ROWS`), read (a
+  range, or a part by name; `READ_LINES` 160, numbered "412: code"),
+  setting (a config.yaml key as `ai.chat`, an .env name, a constant:
+  defined / named in quotes / used / used as the constant that holds
+  its name; never its value here); the list of files is in the
+  instructions (`system`), so there is no look-up for it. "Explain
+  these lines" (`about_step`): the lines picked on the page with the
+  function around them whole up to `AROUND` lines, else `AROUND_LINES`
+  each side, as a look-up already made (first of "What it looked at").
+  What an answer names against what was looked at (`check`, kinds
+  file / line / unseen / name / number, each with `why`): a place is
+  `file:first-last` (`CITES`: after "file:" only a dash makes a range,
+  and nothing stands around the colon: "agent.py: 8 a question" and
+  "web.py:5 and 4242 tries" were read as places, both caught by tests
+  before any copy), a name is one in backticks, with an underscore or
+  before "()" (capitals apart: `HttpOnly` is the code's httponly), a
+  number as the chats' (`numbers`/`allowed`). Marked, not replaced.
+  `shown`: the places an answer names read from the disk for the page
+  (`SHOWN_MAX`, `SHOWN_LINES`; not the lines asked about again);
+  `blocks`: a code block the AI typed is its own unless every line is
+  a line of the files. A question is a job only an admin can read
+  (`start(admin=True)`, `admin_jobs`: `/api/jobs` gives 404 for it),
+  one at a time (`code_lock`, 409), its AI calls on the Load panel as
+  "code chat"; nothing is kept and no question is counted in
+  Statistics. A host that got web.py without code_chat.py still
+  starts (`code_in`: the tab's calls answer 503 naming the file to
+  copy; verify --ai says "Not checked"). The marks prove where a name
+  or line came from, not that the AI's explanation is right (dev:
+  "environment variables override refresh_minutes", taken from
+  config.py's first sentence in the list of files; the instructions
+  now say the list is no proof of how a setting behaves). Page: `code*` functions and `CODE` in admin.html, sub-tabs
+  ASK and FILES; a place in an answer is a link to Files
+  (`CODE_CITE`, `codeOpen`); lines are picked by a line number
+  (Shift for a range), a drag or a part (`CODE.sel`), then "Explain
+  these lines ▸" / "Ask about them…"; the code view keeps its place
+  across Ask and back (`CODE.top`). `verify --ai`: "answers questions
+  about the code (admin page)" (`AI_CODE`, 8 questions with what a right
+  answer names, pinned by tests/test_code_chat.py so a rename fails on
+  dev; the admin password of that host is compared with the answer and
+  every look-up). Built on dev with Nemotron (NVIDIA's hosted API, as
+  another project on the dev host uses it: dev's config.yaml `ai:` and
+  `.env`, not in git; what the chats send leaves the dev host); GPT is measured on
+  stage. The page check opens the tab made-up, with no login and no AI
+  (`made_up_code`, `code_tab`).
 - `ad.py` + `verify --ad` (`verify.verify_ad`, the user's "build it",
   2026-11-15; docs/admin-roadmap.md): Active Directory, read only.
   verify and the app's look-up share `find_dcs`, `ports_of`, `best`,
@@ -1233,10 +1303,11 @@ demo mode: nothing in `src/` knows about it.
 - `usage.py` + `static/admin.html`: the admin page (`/admin`, no link
   from the main page; docs/admin-roadmap.md, the user's request and
   choices, 2026-11-15). Folder tabs as the main page's (the user,
-  2026-11-17): STATISTICS (the usage panels, first), SECUREVIEW and
-  ACTIONS; `openTab`, the link `#statistics` / `#secureview` /
-  `#actions` (`TABS`,
-  `tabOfLink`, hashchange); only the open tab is read and keeps its
+  2026-11-17): STATISTICS (the usage panels, first), SECUREVIEW,
+  ACTIONS and CODE; `openTab`, the link `#statistics` / `#secureview` /
+  `#actions` / `#code` (`TABS`,
+  `tabOfLink`, hashchange; on a phone the tabs slide sideways: four
+  were 27 px wider than 400 px); only the open tab is read and keeps its
   minute (`load`, `svLoad` return on the other tab; `TAB.seq` drops a
   read overtaken by a newer one or sent before a log-out); the Day box
   is Statistics' only (`#statsBar`, kept in its place so the bar does
