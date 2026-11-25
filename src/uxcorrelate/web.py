@@ -51,6 +51,11 @@ ADMIN_COOKIE = "uxadmin"
 ADMIN_HOURS = 8  # a login lasts this long (Log out ends it; a restart too)
 ADMIN_TRIES = 5  # wrong passwords from one address before it is locked ...
 ADMIN_LOCK_MIN = 15  # ... for this long
+# SecureView's feed for another platform (GET /api/MSS/secureview/new): a key of its own, FEED_ENV in .env
+FEED_ENV = "SECUREVIEW_KEY"
+FEED_HEADER = "X-API-Key"
+FEED_TRIES = 5  # wrong keys from one address before it is locked ...
+FEED_LOCK_MIN = 15  # ... for this long
 # what the calls to Riverbed are for, by the page's request (the admin page's "Load on Riverbed")
 PURPOSES = (("/api/software", "Software tab"), ("/api/inventory", "Inventory tab"), ("/api/explain", "Explain"),
             ("/api/care", "Care list (page)"),
@@ -206,6 +211,11 @@ def create_app(config_path: str | None = None) -> FastAPI:
     _http.METER, _http.CUT = usage.call, usage.cut
     from .ad import Lookup
     ad_lookup = app.state.ad = Lookup(lambda: load_settings(config_path).ad)  # the admin page's names from AD
+    from .ad import ASK_MAX
+    from .secureview import People, keep_asking
+    # SecureView's feed: each new device's person looked up in AD in a thread of its own (secureview.People)
+    sv_people = app.state.sv_people = People(
+        sv, lambda users, now: ad_lookup.look(users, [], now, page="the SecureView feed"), batch=ASK_MAX)
     care.counts = usage.care_counts
     assess = app.state.assess = Assessments(today, care, status, os.environ.get("UXCORRELATE_DATA") or None,
                                             aternity_of=lambda: aternity_client(),
@@ -274,6 +284,10 @@ def create_app(config_path: str | None = None) -> FastAPI:
             sv.started = True
             threading.Thread(target=_http.as_doing("SecureView daily read", keep_backfilling),
                              args=(sv, today, aternity_client, time.sleep), daemon=True, name="secureview").start()
+        if sv.on() and not sv_people.started:  # the feed's names and departments from AD, asked after each read
+            sv_people.started = True
+            threading.Thread(target=_http.as_doing("SecureView feed", keep_asking), args=(sv_people,), daemon=True,
+                             name="secureview-feed").start()
         if not care.started:
             care.started = True
             threading.Thread(target=_http.as_doing("Care list investigations", care.work),
@@ -323,6 +337,59 @@ def create_app(config_path: str | None = None) -> FastAPI:
         alert / ok / unknown, level, since and a short summary, all in UTC (care.status)."""
         usage.poll(addr_of(request))
         return care.status(datetime.now(timezone.utc))
+
+    feed_fails: dict[str, list] = {}  # address -> [wrong keys, locked until]
+    feed_lock = threading.Lock()
+
+    @app.get("/api/MSS/secureview/new")
+    def secureview_new(request: Request, after: str = ""):
+        """SecureView's feed for another platform that asks every few minutes (the user, Nov 24-25
+        2026: "ONLY NEW DEVICE(S) RETURN(S) each call"): the devices heard for the first time on
+        their day since the number the caller sends back (`after`: the `next` of its last reply),
+        each once, with the person's name and department from AD (secureview.People.reply). Its own
+        key (FEED_ENV in .env) in the FEED_HEADER header, HTTPS only; off while no key is set. A
+        missing key is not a wrong try; FEED_TRIES wrong keys lock the address FEED_LOCK_MIN."""
+        addr = addr_of(request) or "?"
+        key = os.environ.get(FEED_ENV, "")
+        if not key:
+            raise HTTPException(503, f"The SecureView feed is off: put {FEED_ENV}=... in .env, then docker compose "
+                                     "up -d (a restart does not read .env again).")
+        if not admin_https(request):
+            raise HTTPException(400, "Ask on the HTTPS address (https://...:8444 on Docker): on plain HTTP the key "
+                                     "can be read on the network.")
+        sent, now = request.headers.get(FEED_HEADER) or "", time.time()
+        with feed_lock:
+            tries, until = feed_fails.get(addr, [0, 0.0])
+            if until > now:
+                raise HTTPException(423, f"Locked after {FEED_TRIES} wrong keys: try again after "
+                                         f"{max(1, round((until - now) / 60))} min.")
+            if not sent:
+                raise HTTPException(401, f"Send the feed's key in the {FEED_HEADER} header.")
+            if not hmac.compare_digest(sent.encode(), key.encode()):
+                tries += 1
+                if tries >= FEED_TRIES:
+                    feed_fails[addr] = [0, now + FEED_LOCK_MIN * 60]
+                    log.warning("SecureView feed: locked for %d min after %d wrong keys from %s", FEED_LOCK_MIN,
+                                FEED_TRIES, addr)
+                    raise HTTPException(423, f"Locked after {FEED_TRIES} wrong keys: try again after "
+                                             f"{FEED_LOCK_MIN} min.")
+                feed_fails[addr] = [tries, 0.0]
+                log.warning("SecureView feed: a wrong key from %s (%d of %d before a %d-minute lock)", addr, tries,
+                            FEED_TRIES, FEED_LOCK_MIN)
+                raise HTTPException(401, f"Wrong key ({FEED_TRIES - tries} more tries before a {FEED_LOCK_MIN}-minute "
+                                         "lock).")
+            feed_fails.pop(addr, None)
+        try:
+            number = int(after) if after.strip() else None
+        except ValueError:
+            raise HTTPException(400, 'after must be the number the reply before gave as "next" (leave it out at '
+                                     "the first call).")
+        got = sv_people.reply(today, number, datetime.now(timezone.utc))
+        usage.feed(addr, len(got["devices"]))
+        if got["devices"]:
+            log.info("SecureView feed: %d new device%s given to %s (send back next=%s)", len(got["devices"]),
+                     "" if len(got["devices"]) == 1 else "s", addr, got["next"])
+        return got
 
     def care_check_now() -> None:
         """After a change on the page: the new tile's history and issues now, not at the next read."""

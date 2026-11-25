@@ -1,4 +1,4 @@
-"""The chat on the Today tab: building blocks count, the AI only picks and words.
+"""The block chat (chat.py; off the page): building blocks count, the AI only picks and words.
 Made-up PCs, users and apps; a stand-in AI service."""
 
 import json

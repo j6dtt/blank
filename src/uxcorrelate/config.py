@@ -1,7 +1,8 @@
 """Configuration loading.
 
-Settings come from a YAML file (see config.example.yaml) and can be overridden
-with environment variables for secrets:
+Settings come from a YAML file (see config.example.yaml); environment variables set only
+Aternity's and NetIM's address and login and Active Directory's account, no other setting.
+They are for secrets (refresh_minutes, timezone and the rest are config.yaml's alone):
 
     ATERNITY_URL, ATERNITY_USERNAME, ATERNITY_PASSWORD
     NETIM_URL, NETIM_USERNAME, NETIM_PASSWORD

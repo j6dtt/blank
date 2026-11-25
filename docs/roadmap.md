@@ -40,8 +40,31 @@ data, then its daily data with the people and desktops. See
 
 ## Waiting on you
 
-- **The CODE tab on the admin page: built on dev, stage copy next
-  (the user's "Build it", 2026-11-22)**: the app's own source, listed
+- **SecureView's feed for another platform: built on dev
+  2026-11-25 (the user: "ONLY NEW DEVICE(S) RETURN(S) each call",
+  "on demand, build it"); stage copy next.** `GET
+  /api/MSS/secureview/new?after=N` gives the devices heard for the
+  first time that day since the caller's last call, each once
+  (new again after midnight), flat: device, day, first heard,
+  username, AD name and department, desktop. A key of its own in
+  `.env` (`SECUREVIEW_KEY`), HTTPS only. AD on demand, asked right
+  after each read. `verify --feed` checks it on a host. 479 tests;
+  checked on dev over HTTPS against the made-up AD. Stage copy: 6
+  files of `src/uxcorrelate` (`secureview.py`, `web.py`,
+  `usage.py`, `verify.py`, `cli.py`, `static/admin.html`), with
+  the 5 notes-only files of Nov 23 if wanted (11 in all), one line
+  in `.env`, `docker compose up -d`, then `verify --feed`. Prod
+  reads every 5 minutes and has far more than 100 devices a day
+  (the user, Nov 25). The whole of it, what differs from the plan
+  and what is not done: `docs/admin-roadmap.md`, "SecureView's
+  feed for another platform".
+
+- **The CODE tab on the admin page: built on dev (the user's
+  "Build it", 2026-11-22); on stage and prod 2026-11-23 (the user:
+  "stage/prod updated"); works there with GPT-5.4 (a photo of its
+  first answer, right line for line; `verify --ai`: 8 of 8); the
+  user's "1 problem" is the service no page uses; 6 files reworded
+  on dev wait for the next copy**: the app's own source, listed
   and asked about (what each file does, where a setting is, which
   part does something, what a line means), a chat with follow-up
   questions. All of it, what differs from the proposal and what is
@@ -52,8 +75,108 @@ data, then its daily data with the people and desktops. See
   Software summary run with an AI on dev too. `verify --ai` on dev,
   2026-11-23: all checks passed, the code chat 8 of 8. Stage: 4 files
   (`src/uxcorrelate/code_chat.py` new, `web.py`, `verify.py`,
-  `static/admin.html`), restart, then `verify --ai` there measures
-  GPT. Prod after stage: 12 files (these with the 11 waiting).
+  `static/admin.html`); prod: 12 files (these with the 11 waiting).
+  2026-11-23, the user: "stage/prod updated" (both the same day).
+  A photo the same day (asked for on prod): "Which part of the
+  code checks the admin password?", 8.7 s, 8 look-ups. Every place
+  it names is right to the line against the repo (web.py:952-989
+  the login, 48-53 the settings, 955-958 no password set, 968-980
+  the comparison, 963-980 tries and lock, 981-988 the cookie,
+  918-927 the later check); nothing marked; the code under it read
+  from the host. The tab's top says "36 files, 28,208 lines", the
+  repo's own count, so the copy is whole by count and the photo of
+  FILES is not needed. Not on the photo: the line naming the AI
+  service (the last line of the tab). 8 look-ups is the most a
+  question gets (`MAX_STEPS`): this one used all of them, so a
+  wider question may be cut there; to watch in `verify --ai`,
+  which prints the look-ups per question.
+  - **`verify --ai` there, 2026-11-23 (five photos; the user: "1
+    problem").** The tab's last line: "Answered with GPT-5.4".
+    GPT-5.4: right for 8 of 8, 3.9 to 7.6 s a question, 1 to 8
+    look-ups (4, 4, 4, 4, 8, 2, 6, 1: one question used all 8 and
+    was right), the admin password not given after 0 look-ups.
+    Nemotron-S: every other check OK (software look-ups 12 of 12,
+    Explain 12 of 12, long pages, the assessment, Ask anything 7 of
+    7), the code check FAIL, 7 of 8: "How many look-ups can Ask
+    anything make for one question?" answered 5 after 2 look-ups
+    (`MAX_READS`), missing the 8 of `MAX_STEPS`.
+  - **What it means**: nothing on a page is wrong. Every chat,
+    Explain, the assessment and the code chat use one service,
+    GPT-5.4 there; Nemotron-S answers nothing on a page. The FAIL
+    is the measure saying: do not switch the code chat to it.
+  - **Gaps on our side, said plainly.** (1) The AI repeats the
+    source's own words, and three of ours were loose: `MAX_STEPS`
+    was commented "tool calls per question" while `MAX_READS` said
+    "look-ups ... per question", so "how many look-ups" led to
+    5; config.py's first sentence, as the AI is told it, ended at
+    its colon ("... can be overridden with environment variables
+    for secrets:"), and Nemotron-S said refresh_minutes "can be
+    overridden with an environment variable" (dev's Nemotron said
+    the same on Nov 22; only Aternity's and NetIM's address and
+    login and AD's account have one); chat.py and software_chat.py
+    still said "the chat on the Today tab" / "on the Software tab"
+    (both off the page), agent.py "on the Today tab" (every tab),
+    and GPT called `chat_service` "the Today tab chat's". (2) The
+    check passed two answers with a wrong part: "drawn by
+    status.py" (it asked for status.py; the page draws the lights)
+    and the environment variable clause (it looks for the right
+    file and names, not for a wrong clause). So Nemotron-S was
+    fully right on 5 of the 8 as far as the 160 characters printed
+    of each answer show, not 7. (3) The FAIL did not say that no
+    page uses that service: the user had to ask.
+  - **Fixed on dev, not committed** (463 tests): the first
+    sentence of config.py, agent.py, chat.py, software_chat.py and
+    status.py and the comments of `MAX_STEPS` / `MAX_READS` made
+    exact (words only, nothing behaves differently); a test holds
+    them and that no file's sentence ends at a colon; verify asks
+    for index.html on the lights question; a FAIL of any AI check
+    ends with "No page uses this service: ... use GPT-5.4 (ai.chat
+    in config.yaml)" or "This is the service the pages use".
+  - **Measured on dev after the fix** (Nemotron 3.5 Super): the
+    code check right for 8 of 8, 3.1 to 12.5 s; the lights answer
+    names static/index.html as the file that draws them, the
+    refresh_minutes answer has no environment variable in it, the
+    look-ups answer quotes the new comment. Two other checks failed
+    one question each in that run (the software look-up 11 of 12,
+    Ask anything 6 of 7, a number 22 not in what it looked at).
+    Not from this change: the five reworded files were compared
+    with the commit by Python's own reading of them, and the code
+    that runs is the same; dev's Nemotron differs from run to run
+    (Ask anything was 6 of 7 in the first run of Nov 22, 7 of 7 in
+    the two after). So one dev run is no proof for either model.
+  - **Not done, said plainly**: nothing checks for a wrong clause
+    in an otherwise right answer (a word list would fail right
+    answers that say "no environment variable"); whether the new
+    wording turns Nemotron-S's FAIL into a pass cannot be shown on
+    dev (dev has Nemotron 3.5 Super, which passed before too), so
+    the FAIL may stay after the copy; `MAX_STEPS` stays 8.
+  - **Copy**: none asked for. The 6 files (`agent.py`, `chat.py`,
+    `config.py`, `software_chat.py`, `status.py`, `verify.py`) go
+    with the next copy of anything, stage then prod.
+
+- **When the pages' AI service is down (the user, 2026-11-23: "What
+  if I have to switch to nemo while gpt down?"): decided the same
+  day, "No change": the switch stays by hand, nothing automatic
+  is built.**
+  - As it is: nothing switches by itself. While GPT does not
+    answer, Explain, the assessment and the Software summary use
+    our own words; Ask anything and the code chat say "The AI
+    service ... did not answer". To switch: `ai.chat` in
+    config.yaml, the other service's name. No restart: every AI
+    feature reads config.yaml at each question, the lights within
+    a minute. The same line to switch back.
+  - What Nemotron-S gave in the measure of 2026-11-23: Ask
+    anything 7 of 7 (1.8 to 38.4 s), Explain 12 of 12 (5.5 to
+    13.3 s), the software look-ups 12 of 12, the assessment OK;
+    the code chat is the weak one (7 of 8 by the check, 5 of 8
+    fully right as far as printed). Its marks and the lines read
+    from the files still hold; a wrong explanation that names real
+    lines is not marked.
+  - Proposed and turned down ("No change"; do not build): when the light has the
+    pages' service down and another one is up, questions go to
+    that one, each answer says so ("Answered with Nemotron-S:
+    GPT-5.4 is not answering"), a log line at each change, back by
+    itself at the first check GPT answers.
 
 - **Software tab: the headline box is gone, the same PCs decide,
   and a full review for discrepancies (the user, 2026-11-22, on two
@@ -72,8 +195,9 @@ data, then its daily data with the people and desktops. See
   day: one count does not add up; fixed with a page check in
   the repo (a0acbd5, below); on stage the same day: the
   second count still read as a raise; fixed again (2a27a5a);
-  on stage the same day: "Count is good on stage". Prod
-  copy next (11 files).**
+  on stage the same day: "Count is good on stage". Prod:
+  2026-11-23, the user: "stage/prod updated" (the 11 files
+  with the CODE tab's, 12 in all; not seen on prod yet).**
   - On stage (photo, same application, virtual desktops, a read
     a day later so the counts moved a little): no headline box,
     "Version by version" on top. X crashed on 149 of 2,476 (6%),

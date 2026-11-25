@@ -769,6 +769,75 @@ Kept in `$UXCORRELATE_DATA/secureview/<date>.json` (device names and
 usernames), 400 days, then deleted; `daily.json` notes the days read
 from Aternity and which of them by the hour.
 
+**For another platform: the new devices, each once.** The devices heard
+for the first time that day are JSON at `GET /api/MSS/secureview/new`,
+to ask every few minutes. Each call returns only the devices heard since
+the call before: a device comes once on each day it is heard, however
+long it is used, and every device is new again after midnight
+(config.yaml's time zone).
+
+```
+08:15 read   hears D1 (08:02), D2 (08:10)
+08:20 call   GET …/new?after=6000   ◄ D1, D2    next: 6002
+08:25 call   GET …/new?after=6002   ◄ nothing   next: 6002
+08:30 read   D1 again: not new.  D3: new
+08:35 call   GET …/new?after=6002   ◄ D3        next: 6003
+```
+
+```json
+{"ready": true, "as_of": "2026-11-24T11:50:03Z", "refresh_minutes": 5,
+ "note": null, "ad": "ok",
+ "devices": [{"device": "HV00045", "day": "2026-11-24",
+              "first_heard": "2026-11-24T11:45:16Z",
+              "username": "sample45", "name": "Sample User 45",
+              "department": "Operations", "in_ad": true,
+              "desktop": "VD-01"}],
+ "more": false, "next": 6001}
+```
+
+- **The number.** Each reply ends with `next`; the caller sends it back
+  as `after`. A call that failed is made again with the same number:
+  nothing is lost, nothing comes twice. With no `after` (the first
+  call): today's devices so far. The numbers are saved with the days, so
+  a restart gives nothing twice. They start at the second the records
+  were first made and go up by one; a number that is not this feed's
+  (another host's, or the data folder was replaced) gets today's devices
+  again and `note` says so. A reply holds at most 1,000 devices: with
+  `more` true, call again at once.
+- **The key.** `SECUREVIEW_KEY=...` in `.env` (a long random text; then
+  `docker compose up -d`, a restart does not read `.env` again), sent in
+  the header `X-API-Key`, over HTTPS only (port 8444 on Docker). No key
+  set: the feed is off (503). No key sent: 401. Five wrong keys from one
+  address lock it for 15 minutes (423), for the right key too.
+- **When a device comes.** New devices appear at the app's reads (every
+  `refresh_minutes`), so asking more often brings nothing more. A device
+  first used at 11:45 is heard at the next read and comes at the call
+  after it. A row Aternity sends after midnight for the day before comes
+  with that day in `day`.
+- **The device.** `device` is the name up to its first dash, the dash
+  left out: `HV00045-SAMPLE45THINVM` is given as `HV00045`. A name with
+  no dash, or with nothing before it, is given whole. Only the reply is
+  cut: the app still tells devices apart by their whole name, so two
+  whole names with the same first part come as two records with the
+  same `device` (`verify --feed` counts them). Capitals are Aternity's.
+- **The person.** `username` and `desktop` are those of the device's
+  first row of the day that names a person. `name` and `department` are
+  Active Directory's (`in_ad` true; false: no such account; null: AD was
+  not asked or did not answer, or nobody was named). AD is asked right
+  after each read, never during the call. A person's last answer is held
+  30 days, in memory, and used while AD does not answer; a device whose
+  person was never looked up waits 15 minutes at most, then comes
+  without name and department. `ad` is `ok`, `off` (no AD account in
+  `.env`), `down` or `refused`.
+- **Not in it:** last heard (it moves all day), a second person or
+  desktop on the device later that day, the days read from Aternity's
+  own data, and the days before the feed was installed (today's devices
+  are in it from the first call).
+- `ready`, `as_of`, `refresh_minutes` and `note` are the Care list
+  feed's; all times UTC, plain ASCII. Each call and the devices it gave
+  are counted on STATISTICS, in the Care list panel under the status
+  polls. `verify --feed` asks the feed as the other platform would.
+
 ### Actions
 
 Every action Aternity measured today for one person: any username
@@ -882,6 +951,12 @@ calls to the AI service are on the Load panel as "code chat".
 `uxcorrelate verify --ai` measures it per AI service: "answers
 questions about the code (admin page)", 8 questions with a known file
 and function, and that the admin password is in nothing it was given.
+A FAIL of a service says whether the pages use that service: Ask
+anything, Explain, the assessment and this chat all use one service
+(`ai.chat` in config.yaml, else the first of `ai.services`), so a FAIL
+of another one changes nothing on a page. The AI is told each file's
+first sentence and repeats it, so that sentence has to be true by
+itself: a test holds the ones that were not.
 
 ## Quick start
 
@@ -1204,6 +1279,16 @@ back to dev.
   name alone). Counts only. `--user NAME` / `--pc NAME` show that one
   user's or PC's AD details (name, title, department, office, enabled;
   OS, OU, description, last logon), or the names close to it.
+- **SecureView's feed** (`verify --feed`, only on its own): asks the
+  running app's `GET /api/MSS/secureview/new` from inside its container,
+  as the other platform would. It must refuse a call without the key
+  (401) and one over plain HTTP (400); with the key from `.env` it says
+  how many devices were first heard today, with a person, in AD, not in
+  AD, with no answer from AD, how many have the same name up to the
+  dash as another, and the number to send back; asked again with that
+  number, no device may come twice. Counts only: no device or
+  user name, never the key. It says when `SECUREVIEW_KEY` is missing,
+  short, or not the one the running app has.
 - **A reply it cannot read** (device addresses, interface addresses, metric
   data): it prints the reply's key names, never values, and which function
   in `./src/uxcorrelate/netim.py` to fix. Edit it there and run

@@ -1008,6 +1008,60 @@ demo mode: nothing in `src/` knows about it.
   spelling from the names list (`aternity`) for "All actions today
   ▸". A username anywhere in SecureView is a link (`svWho`, `data-sq`)
   to SEARCH with it; CSV (`svSCsv`).
+  The feed for another platform (`GET /api/MSS/secureview/new`,
+  `secureview_new` in web.py; the user, Nov 24-25 2026: "We need API
+  endpoint(s) to pull SecureView data ... only returns new records each
+  call", "I want to pull regularly (small interval) throughout the day.
+  ONLY NEW DEVICE(S) RETURN(S) each call", "This reset daily correct?",
+  "add first heard timestamp", "Flatten people array, why would desktop
+  be an array?", "on demand, build it"; the ideas turned down are in
+  docs/admin-roadmap.md: a day sent when over, an hour's records, the
+  app remembering each caller). A device's day gets a number, once, at
+  the end of the first read whose rows name it (`add_hour` collects
+  `unnumbered`, `save` gives the numbers in the order first heard,
+  `_number`: a restart reads its hours newest first; a day heard before
+  the feed existed gets none, but today's, so the first call brings
+  today's devices). The caller sends back `next` as `after`
+  (`feed_rows`: the devices numbered after it; none: today's so far; a
+  number outside `feed_base`..the last one, another host's or a
+  replaced data folder's, starts again with today's and says so: a new
+  store's numbers start at the second it was first used,
+  `_first_number`, so no old number is ever given again). A number is
+  given only once it is on disk (`feed_saved`, "held back" in `note`):
+  given and then lost in a stop, it would go to another device. One
+  flat record: `device`, `day` (local), `first_heard` (UTC), `username`
+  and `desktop` of the device's first row of the day that names a
+  person (`who`, kept with the day), `name`, `department`, `in_ad`.
+  `device` is the name up to its first dash (`feed_name`; the user,
+  Nov 25 2026: "Remove everythin after the dash (-) in 'device' value
+  when return data", "add error trap in case there's no -": a name
+  with no dash, or nothing before it, is given whole). Only the reply
+  is cut: devices are told apart, numbered and kept by their whole
+  name, so two whole names with one first part are two records with
+  the same `device` (`verify --feed` counts them; it tells a device
+  given twice by name, day and first heard).
+  `People`: AD on demand, asked right after each read in a thread of
+  its own (`keep_asking`, woken by `SecureView.fresh`; never the Today
+  reader, never inside the caller's request), through `ad.Lookup.look`
+  (its 24 hours and `RETRY_MIN`); the last answer held `AD_KEEP_DAYS`
+  in memory and used while AD does not answer; a person never answered
+  makes their device wait `AD_WAIT_MIN` at most (`_waits`: one wait a
+  device, the batch stops there so the order holds), then it goes
+  without (`in_ad` null); off or refused: at once. A restart loses
+  the answers held: `ask` starts with the people of today's devices,
+  and a call that meets a person with none asks for every person of
+  the devices after it too (asked one at a time, a caller got one
+  device a call after a restart: dev, Nov 25 2026). `FEED_MAX` a reply
+  (`more`). Its own key (`FEED_ENV` SECUREVIEW_KEY in .env, header
+  `FEED_HEADER`), HTTPS only (`admin_https`), off with no key (503); a
+  missing key is no wrong try, `FEED_TRIES` wrong ones lock the address
+  `FEED_LOCK_MIN`. Not in it: last heard, later people or desktops, the
+  backfill's days. Calls and devices given are counted
+  (`Usage.feed`, Statistics' Care list panel). `verify --feed`
+  (`verify_feed`: asks the running app from inside its container,
+  ports `FEED_HTTPS_PORTS`; counts only, never the key). Prod reads
+  every 5 minutes and has far more than 100 devices a day (the user,
+  Nov 25): do not write examples with 15 minutes for prod.
 - `actions.py`: the admin page's ACTIONS tab (`/admin/api/actions?user=`,
   `#actions`; the user, 2026-11-17: "search by user for today all
   actions with timestamp", "in admin page", any user, not only
@@ -1076,7 +1130,19 @@ demo mode: nothing in `src/` knows about it.
   or line came from, not that the AI's explanation is right (dev:
   "environment variables override refresh_minutes", taken from
   config.py's first sentence in the list of files; the instructions
-  now say the list is no proof of how a setting behaves). Page: `code*` functions and `CODE` in admin.html, sub-tabs
+  now say the list is no proof of how a setting behaves). The AI
+  repeats the source's own words, so a file's first sentence and a
+  setting's comment must be true by themselves and use the page's
+  word (live, Nov 23 2026, the user's photos of `verify --ai`, "1
+  problem": GPT-5.4 right for 8 of 8, 3.9 to 7.6 s; Nemotron-S 7 of
+  8: "how many look-ups" answered 5, `MAX_READS`, whose comment said
+  "look-ups" while `MAX_STEPS` said "tool calls"; it also said
+  refresh_minutes "can be overridden with an environment variable",
+  config.py's sentence cut at its colon, and "drawn by status.py",
+  which the check passed as it asked for status.py: it asks for
+  index.html now. Reworded: config.py, agent.py, chat.py,
+  software_chat.py, status.py; `tests/test_code_chat.py` holds them
+  and that no file's sentence ends at a colon). Page: `code*` functions and `CODE` in admin.html, sub-tabs
   ASK and FILES; a place in an answer is a link to Files
   (`CODE_CITE`, `codeOpen`); lines are picked by a line number
   (Shift for a range), a drag or a part (`CODE.sel`), then "Explain
@@ -1085,7 +1151,11 @@ demo mode: nothing in `src/` knows about it.
   about the code (admin page)" (`AI_CODE`, 8 questions with what a right
   answer names, pinned by tests/test_code_chat.py so a rename fails on
   dev; the admin password of that host is compared with the answer and
-  every look-up). Built on dev with Nemotron (NVIDIA's hosted API, as
+  every look-up). A FAIL of any AI check says whether the pages use
+  that service (`verify._on_pages`: every chat, Explain, the
+  assessment and the code chat use `chat_service`'s one; on the live
+  host the FAIL was the service no page uses and did not say so).
+  Built on dev with Nemotron (NVIDIA's hosted API, as
   another project on the dev host uses it: dev's config.yaml `ai:` and
   `.env`, not in git; what the chats send leaves the dev host); GPT is measured on
   stage. The page check opens the tab made-up, with no login and no AI

@@ -3020,6 +3020,114 @@ def _right(call, want) -> bool:
 
 
 # ---------------------------------------------------------------- Active Directory
+FEED = "SecureView feed"
+FEED_HTTPS_PORTS = (8443, 8444)  # the app's HTTPS port inside its container: compose.yaml's, then Kubernetes'
+FEED_HTTP_PORT = 8080
+FEED_KEY_MIN = 20  # characters: a shorter key is said (it can be guessed sooner)
+
+
+def verify_feed(settings: Settings, env=None, get=None) -> list[Check]:
+    """`verify --feed` (the user's "build it", Nov 25 2026; a check for stage and prod, where nothing
+    can be pasted): asks the running app's own feed for another platform, GET
+    /api/MSS/secureview/new, from inside its container, as that platform would. 1. it refuses a
+    call without the key, 2. and one over plain HTTP; 3. with the key: today's devices so far,
+    counted (with a person, in AD, not in AD, not answered by AD; no device or user name shown);
+    4. asked again with the number it gave: nothing, or only devices heard since, none twice."""
+    import os
+
+    import httpx
+    env = os.environ if env is None else env
+    get = get or (lambda url, headers: httpx.get(url, headers=headers, verify=False, timeout=20))
+    from .web import FEED_ENV, FEED_HEADER
+    path = "/api/MSS/secureview/new"
+    out: list[Check] = []
+    if not settings.secureview.match:
+        return [Check(FEED, "SecureView", False, "secureview.match in config.yaml is empty: SecureView is off, so the feed "
+                      "has no device to give.", "Set secureview.match, then restart the app.")]
+    key = env.get(FEED_ENV, "")
+    if not key:
+        return [Check(FEED, "the key", False, f"{FEED_ENV} is not set in .env: the feed is off (it answers 503).",
+                      f"Put {FEED_ENV}=... in .env (a long random text, {FEED_KEY_MIN} characters or more), then "
+                      "docker compose up -d (a restart does not read .env again).")]
+    if len(key) < FEED_KEY_MIN:
+        out.append(Check(FEED, "the key", None, f"The key in .env has {len(key)} characters: use {FEED_KEY_MIN} or "
+                         "more, random, so it cannot be guessed."))
+    base, tried = None, []
+    for port in FEED_HTTPS_PORTS:
+        try:
+            first = get(f"https://127.0.0.1:{port}{path}", {})
+            base = f"https://127.0.0.1:{port}"
+            break
+        except Exception as exc:
+            tried.append(f"{port}: {short_error(exc)}")
+    if base is None:
+        return out + [Check(FEED, "HTTPS", False, "The app's HTTPS port did not answer inside its container: the feed is "
+                            "given over HTTPS only.", "Is the app running, with --tls-port and its certificate (the "
+                            "log says \"HTTPS on port ...\")?", rows=tried)]
+    if first.status_code == 503:
+        return out + [Check(FEED, "the key", False, f"The running app has no {FEED_ENV}: it was started before the key "
+                            "was put in .env.", "docker compose up -d (a restart does not read .env again).")]
+    out.append(Check(FEED, "without the key", first.status_code == 401,
+                     "Refused (401), as it should be." if first.status_code == 401
+                     else f"Answered {first.status_code}, not 401: a call without the key must be refused.",
+                     "" if first.status_code == 401 else "Tell Claude this line."))
+    try:
+        plain = get(f"http://127.0.0.1:{FEED_HTTP_PORT}{path}", {}).status_code
+        out.append(Check(FEED, "over plain HTTP", plain == 400,
+                         "Refused (400): the key is never asked for where it could be read on the network." if plain == 400
+                         else f"Answered {plain}, not 400: over plain HTTP the feed must refuse.",
+                         "" if plain == 400 else "Tell Claude this line."))
+    except Exception as exc:
+        out.append(Check(FEED, "over plain HTTP", None, f"Port {FEED_HTTP_PORT} did not answer ({short_error(exc)}): "
+                         "not checked."))
+    one = get(base + path, {FEED_HEADER: key})
+    if one.status_code != 200:
+        why = ""
+        try:
+            why = str(one.json().get("detail") or "")
+        except Exception:
+            pass
+        return out + [Check(FEED, "with the key", False, f"Answered {one.status_code}: {why or 'no reason given'}",
+                            "A 401: the running app has another key than .env (docker compose up -d). A 423: wait "
+                            "the minutes it says.")]
+    a = one.json()
+    if not a.get("ready"):
+        return out + [Check(FEED, "with the key", None, f"The key is accepted. The feed is not ready yet: "
+                            f"{a.get('note') or 'no reason given'} Run this again after the app's first read.")]
+    devs = a.get("devices") or []
+    with_person = [x for x in devs if x.get("username")]
+    # the feed gives a device's name up to its dash: two whole names with the same first part are two
+    # records with the same name (counted here: the other platform may take them for one device twice)
+    same = Counter((x.get("device"), x.get("day")) for x in devs)
+    shared = sum(n for n in same.values() if n > 1)
+    said = (f"{len(devs)} device{'' if len(devs) == 1 else 's'} first heard today so far"
+            + (" (more follow: a reply holds 1,000)" if a.get("more") else "") + f", each given once; next={a.get('next')}. "
+            f"With a person: {len(with_person)}; in AD: {sum(1 for x in devs if x.get('in_ad') is True)}; not in AD: "
+            f"{sum(1 for x in devs if x.get('in_ad') is False)}; no answer from AD: "
+            f"{sum(1 for x in with_person if x.get('in_ad') is None)}; with a desktop: "
+            f"{sum(1 for x in devs if x.get('desktop'))}. Active Directory: {a.get('ad') or 'not asked yet'}. "
+            f"As of {a.get('as_of')}, reads every {a.get('refresh_minutes')} min. A device's name is given up to its "
+            "dash: " + (f"{shared} of them have the same name and day as another (their whole names differ after "
+                        "the dash)." if shared else "no two of them have the same name."))
+    out.append(Check(FEED, "with the key", True, said, rows=[f"note: {a['note']}"] if a.get("note") else []))
+    two = get(f"{base}{path}?after={a.get('next')}", {FEED_HEADER: key})
+    if two.status_code != 200:
+        return out + [Check(FEED, "asked again with its number", False, f"Answered {two.status_code}.",
+                            "Tell Claude this line.")]
+    b = two.json()
+    one_of = lambda x: (x.get("device"), x.get("day"), x.get("first_heard"), x.get("username"), x.get("desktop"))  # noqa: E731
+    again = {one_of(x) for x in devs} & {one_of(x) for x in b.get("devices") or []}
+    n2 = len(b.get("devices") or [])
+    out.append(Check(FEED, "asked again with its number", not again,
+                     (f"{n2} device{'' if n2 == 1 else 's'}" + (" more (heard since the first call, or late rows of "
+                                                                  "another day)" if n2 else ": nothing new")
+                      + f", none of them given before; next={b.get('next')}.") if not again
+                     else f"{len(again)} of the devices of the first reply came again: a device must be given once a day.",
+                     "" if not again else "Tell Claude this line.",
+                     rows=[f"note: {b['note']}"] if b.get("note") else []))
+    return out
+
+
 AD = "Active Directory"
 AD_SAMPLE = 50  # Aternity's most active usernames and PCs of the last hour, looked up in AD
 AD_ROWS = 5000  # activity rows read for them (the check's limit)
@@ -3227,15 +3335,19 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
     import time
 
     from .ai import LOGINS, AiClient, reply_message, tool_call
+    from .chat import chat_service
     from . import software_chat
     env = os.environ if env is None else env
     if not settings.ai.services:
         return [Check(AI, "services", None, AI_SETUP)]
     checks: list[Check] = []
+    used = chat_service(settings)  # the one service every chat, Explain, the assessment and the code chat use
     for n, cfg in enumerate(settings.ai.services, 1):
         name = cfg.name or f"service {n}"
+        on_pages = _on_pages(settings, cfg, used)
         add = lambda item, ok, message, fix="", rows=(): checks.append(  # noqa: E731
-            Check(AI, f"{name}: {item}", ok, message, fix, rows=list(rows)))
+            Check(AI, f"{name}: {item}", ok, message, f"{fix} {on_pages}".strip() if ok is False else fix,
+                  rows=list(rows)))
         where = f"ai.services, the entry named \"{name}\""
         if not cfg.base_url:
             add("settings", False, "base_url not set.", f"Set base_url in config.yaml ({where}).")
@@ -3369,6 +3481,20 @@ def verify_ai(settings: Settings, transport=None, env=None) -> list[Check]:
         _answers(client, add)
         _code_answers(client, add, env)
     return checks
+
+
+def _on_pages(settings: Settings, cfg, used) -> str:
+    """With a service's FAIL: do the pages use this service? (The user, Nov 23 2026, "1 problem": the
+    second service failed one code question on the live host while every page there used the first,
+    which had passed; the FAIL did not say so.)"""
+    if used is None:
+        return ""
+    if cfg is used:
+        return "This is the service the pages use, so it shows on them."
+    why = ("ai.chat in config.yaml" if settings.ai.chat and (used.name or "").casefold() == settings.ai.chat.casefold()
+           else "the first of ai.services, as ai.chat names none of them")
+    return (f"No page uses this service: Ask anything, Explain, the assessment and the admin page's code chat use "
+            f"{used.name or used.model} ({why}). It matters only if that is changed to this one.")
 
 
 def _explains(client, add) -> None:
@@ -3606,7 +3732,8 @@ def _answers(client, add) -> None:
 # a test on dev, not this check on the live host.
 AI_CODE = (
     ("Which file draws the connection lights in the top bar, and how often are they checked?",
-     (("status.py",), ("CHECK_EVERY_S", "60")), None),
+     (("index.html",), ("CHECK_EVERY_S", "60")), None),  # the page draws them; status.py checks: "drawn by
+    # status.py" passed while "status.py" was the name asked for (Nemotron-S on the live host, Nov 23 2026)
     ("Where is the admin page's password checked?", (("web.py",), ("admin_login",)), None),
     ("Where do I set how often the Today tab reads Aternity, and what is the default?",
      (("refresh_minutes",), ("config.py",), ("15",)), None),

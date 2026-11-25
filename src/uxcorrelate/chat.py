@@ -1,5 +1,8 @@
-"""The chat on the Today tab: a question in plain words, answered with our own counts.
+"""The block chat "Ask about today" (`/api/chat`; off the page since Ask anything took its place)
+and what every chat shares: the AI service they use (`chat_service`), logins, how a name is
+matched, the check of an answer's numbers.
 
+The block chat: a question in plain words, answered with our own counts.
 The AI never reads Aternity and never counts. It picks one building block (a
 "tool") and its settings; our code counts from what the Today reader already
 holds (no extra load on Aternity); the AI words the answer in two to four

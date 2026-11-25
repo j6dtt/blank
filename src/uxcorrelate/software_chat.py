@@ -1,6 +1,7 @@
-"""The chat on the Software tab ("Ask about software", POST /api/software/chat).
+"""The Software tab's look-ups, used by Ask anything as they are (`TOOLS`, `run_block`); their own
+chat, "Ask about software" (POST /api/software/chat), is off the page since Ask anything took its place.
 
-It works as the Today tab's chat (`chat.converse`): the AI picks one building
+That chat works as the block chat of chat.py (`chat.converse`): the AI picks one building
 block and its settings, our code counts, the AI words the answer in two to four
 sentences, and every number in it must be one of our counts (or in the question):
 otherwise our own sentence is shown, and says so. The counts are always shown.

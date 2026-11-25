@@ -198,6 +198,11 @@ def cmd_verify(args) -> int:
         checks += part(AD, lambda: verify_ad(settings, client, user=args.user, pc=args.pc), client=client, system=AD)
         print(render_checks(checks))
         return 1 if any(c.ok is False for c in checks) else 0
+    if args.feed:  # only SecureView's feed for another platform, asked of the running app as that platform would
+        from .verify import FEED, verify_feed
+        checks += part(FEED, verify_feed, settings, system=FEED)
+        print(render_checks(checks))
+        return 1 if any(c.ok is False for c in checks) else 0
     if args.ai:  # only the AI services: seconds, not the minutes the Riverbed checks take
         checks += part("AI services", verify_ai, settings, system="AI service")
         print(render_checks(checks))
@@ -295,6 +300,9 @@ def main(argv: list[str] | None = None) -> int:
     ver.add_argument("--actions", action="store_true",
                      help="only which applications have measured actions, their activities, and the applications "
                           "in use with none (no PC or user names shown)")
+    ver.add_argument("--feed", action="store_true",
+                     help="only SecureView's feed for another platform (GET /api/MSS/secureview/new): asks the "
+                          "running app as that platform would, counts what it gives (no device or user names shown)")
     ver.add_argument("--usage", action="store_true",
                      help="only the PCs in use: per day and per month by kind of PC with their share of Aternity's "
                           "device list, how far back daily app usage goes, people a day (no PC or user names shown)")

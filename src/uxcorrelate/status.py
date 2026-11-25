@@ -1,5 +1,6 @@
-"""The connection lights in the page's top bar (`/api/status`): Aternity, NetIM and each
-AI service in ai.services, checked every `CHECK_EVERY_S` by one background thread.
+"""The connection lights in the page's top bar (`/api/status`), checked here and drawn by the page
+(static/index.html): Aternity, NetIM and each AI service in ai.services, every `CHECK_EVERY_S`
+by one background thread.
 
 Each check is the smallest call of a kind already proven on the live systems:
 - Aternity: one activity row of the last few minutes (a time filter and $top=1);

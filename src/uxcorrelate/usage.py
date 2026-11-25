@@ -73,7 +73,8 @@ def found_of(result) -> str:
 def _new_day(d: date) -> dict:
     return {"date": d.isoformat(), "visits": [], "runs": [],
             "care": {"changes": [], "lit": 0, "runs": 0, "listed": 0},
-            "polls": {"n": 0, "last": None, "a": None}, "calls": {}, "calls_hour": {}, "reads": [], "starts": []}
+            "polls": {"n": 0, "last": None, "a": None}, "calls": {}, "calls_hour": {}, "reads": [], "starts": [],
+            "feed": {"n": 0, "last": None, "a": None, "devices": 0}}  # SecureView's feed: calls, devices given
 
 
 def _counts(by_source: dict, source: str) -> list:
@@ -228,6 +229,15 @@ class Usage:
             day = self._day(now)
             p = day["polls"]
             p.update(n=p["n"] + 1, last=_iso(now), a=addr)
+            self._changed(day, now)
+
+    def feed(self, addr: str | None, devices: int, now: datetime | None = None) -> None:
+        """The other platform's GET /api/MSS/secureview/new, and the devices that call gave."""
+        now = now or datetime.now(timezone.utc)
+        with self.lock:
+            day = self._day(now)
+            p = day["feed"]
+            p.update(n=p["n"] + 1, last=_iso(now), a=addr, devices=p["devices"] + devices)
             self._changed(day, now)
 
     def call(self, system: str, purpose: str, source: str, seconds: float, rows, retries: int, ok: bool) -> None:
@@ -442,6 +452,9 @@ class Usage:
                      "wrong_pins": sum(1 for c in day["care"]["changes"] if not c["ok"]),
                      "polls": {"n": polls["n"], "last": polls["last"], "last_local": local(polls["last"]) if polls["last"] else None,
                                "from": polls["a"]}},
+            "feed": {"n": day["feed"]["n"], "last": day["feed"]["last"],
+                     "last_local": local(day["feed"]["last"]) if day["feed"]["last"] else None,
+                     "from": day["feed"]["a"], "devices": day["feed"]["devices"]},
             "load": load,
             "reads": {"n": len(reads), "typical": round(median(reads), 1) if reads else None,
                       "longest": max(reads) if reads else None, "every_min": today.refresh_min,

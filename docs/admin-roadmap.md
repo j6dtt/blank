@@ -224,6 +224,122 @@ more. On dev (hourly made up as 35 days): 88 days in about 40 s, 34
 by the hour. Stage copy: `config.py`, `secureview.py`,
 `static/admin.html`.
 
+## SecureView's feed for another platform (built on dev 2026-11-25, "on demand, build it")
+
+The user, Nov 24-25 2026: "We need API endpoint(s) to pull SecureView
+data. Need idea(s) on endpoint design where only returns new records
+each call. Let's brainstorm."; "NO... I want to pull regularly (small
+interval) throughout the day. ONLY NEW DEVICE(S) RETURN(S) each call";
+"This reset daily correct?"; "add first heard timestamp, provide sample
+json object"; "can you can department, fullname or display name (AD)?";
+"In prod, read interval is 5 minutes, secureview devices can be way
+more than 100 a day. Flatten people array, why would desktop be an
+array?"; "on demand, build it". The brainstorm, with what was turned
+down, is kept under "Later (ideas)".
+
+How it works: a device's day gets a number, once, at the end of the
+first read that hears it. The caller sends back the number of its last
+reply and gets only the devices numbered since. A device so comes once
+on each local day it is heard; after midnight (config.yaml's time zone)
+every device is new again.
+
+- `GET /api/MSS/secureview/new?after=N`. Reply: `ready`, `as_of`,
+  `refresh_minutes`, `note` (as the Care list feed), `ad`, `devices`,
+  `more`, `next`. One device, flat: `device`, `day`, `first_heard`
+  (UTC), `username`, `name`, `department`, `in_ad`, `desktop`.
+- No `after`: today's devices so far. At most 1,000 a reply (`more`).
+- Key: `SECUREVIEW_KEY` in `.env`, header `X-API-Key`, HTTPS only; no
+  key set: off (503).
+- AD on demand: asked right after each read in a thread of its own,
+  never inside the caller's request; each name once in 24 hours (the
+  admin page's look-up); the last answer held 30 days in memory and
+  used while AD does not answer; a person never answered: their device
+  waits 15 minutes at most, then comes without name and department.
+- Counted on Statistics (Care list panel): calls, devices given, the
+  last call and its address.
+- `verify --feed`: asks the running app as the other platform would
+  (no key: 401; plain HTTP: 400; with the key: counts; again with its
+  number: no device twice). Counts only, never the key.
+
+Changed after the build, 2026-11-25 (the user: "Remove everythin
+after the dash (-) in 'device' value when return data", "add error trap
+in case there's no -"). Was: `device` was the whole name
+(`HV00045-SAMPLE45THINVM`). Now: the name up to its first dash, the
+dash left out (`HV00045`); a name with no dash, or with nothing before
+it, is given whole, never an error, never empty (`feed_name`). Only
+the reply is cut. Said to the user: the app still tells devices apart
+by their whole name, so two whole names with the same first part come
+as two records with the same `device` on a day; `verify --feed` counts
+how many do, to see on stage whether it happens. Not built: one record
+a day per name up to the dash. No file more in the copy.
+
+A gap found on dev the same day, after a restart, before any copy.
+Was: a restart loses the AD answers held in memory, and a call that met
+a person with none asked AD for that one person only and stopped; so a
+first call after a restart brought nothing, and the next ones one
+device a call (6 devices on dev; it would have been one a call for
+every device of the day on prod). Now: at its start the look-up asks
+for the people of today's devices, so the first call brings them all
+at once (dev: 6 of 6, no note), and a call that meets a person with no
+answer asks for every person of the devices after it too, so a caller
+that is behind gets them together at its next call.
+
+Different from the plan put to the user, each said to them:
+
+- The numbers are not 6001, 6002: they start at the second the records
+  were first made (1795567130 on dev) and go up by one. Why: a data
+  folder that is replaced then never gives a number an older one gave,
+  so an old number is known as not this feed's (today's devices are
+  sent again, `note` says so) and never silently skips devices.
+- A number is given only once it is saved (a gap I found in my first
+  cut before any copy: numbers were given hour by hour inside a read,
+  before the save at its end; given and then lost in a stop, a number
+  would have gone to another device: one device twice, one never). Now
+  they are given at the end of the read, in the order first heard, in
+  the step that writes them; when the disk cannot be written, new
+  devices are held back and `note` says so.
+- The person and desktop are those of the device's first row of the
+  day that names a person (a first row can name nobody).
+- A missing key is not a wrong try; 5 wrong keys lock the address 15
+  minutes, as the admin login (not in the plan).
+- `verify --feed` (not in the plan; nothing can be pasted on stage).
+- Days heard before the feed existed are not in it, but today's: the
+  first call after the copy brings today's devices so far (the restart
+  reads the last 24 hours again; checked on dev by taking the numbers
+  out of its records: 6 of today numbered, yesterday evening's not).
+
+Not done, and limits, said plainly:
+
+- A device that went without name and department (AD gave no answer in
+  15 minutes) is not sent again when AD answers later.
+- `first_heard` is the earliest row known at the call; an earlier row
+  Aternity sends later is not sent again.
+- The lock is per address: where a proxy hides the callers' addresses,
+  five wrong keys from anyone lock the feed for everyone for 15
+  minutes.
+- No history through the feed (the days before it was installed).
+- Not measured on dev: hundreds of new people in one morning against
+  the real AD (50 names a search; dev has 6 a day), and a reply of
+  1,000 (tested with a limit of 2).
+- On prod behind Kubernetes' ingress the caller's address on
+  Statistics is the ingress's until real addresses reach the pod.
+
+Checked on dev: 479 tests (16 new); the feed over HTTPS with the key
+against the made-up AD (4 of 6 people in AD, 2 not: said `in_ad`
+false); nothing at a second call; no key 401, plain HTTP 400, a wrong
+number 400, a number that is not the feed's: today's again with the
+note; `verify --feed` all OK; the install on old records; Statistics'
+line in a real Chrome (light, dark, a phone's width, no script error);
+the page check 240 agree, 0 do not.
+
+Stage copy, 6 files of `src/uxcorrelate`: `secureview.py`, `web.py`,
+`usage.py`, `verify.py`, `cli.py`, `static/admin.html`. The 5 files
+of Nov 23's wording fix that wait can go with them (`agent.py`,
+`chat.py`, `config.py`, `software_chat.py`, `status.py`: notes only,
+nothing that runs), 11 in all. Then one line in `.env`
+(`SECUREVIEW_KEY=...`) and `docker compose up -d` (a restart does not
+read `.env`), and `verify --feed`.
+
 ## Later (ideas)
 
 - **Data freshness**: how late Aternity sends rows, per hour
@@ -295,6 +411,158 @@ by the hour. Stage copy: `config.py`, `secureview.py`,
 - **Tools for prod** (no paste there): run `verify` (or
   `--overview`, `--ai`) from the page; the app's log for the
   last hours and config.yaml as loaded, secrets filtered out.
+- **A feed of SecureView's records for another platform**
+  (built 2026-11-25: the section above; the brainstorm stays here)
+  (asked 2026-11-24: "We need API endpoint(s) to pull
+  SecureView data. Need idea(s) on endpoint design where only
+  returns new records each call. Let's brainstorm."). Ideas
+  only, nothing agreed, nothing built.
+  - What makes "new" hard: a record is a device's day, and it
+    widens at every read while the device is in use (last
+    heard, hours, people, desktops); Aternity sends rows late;
+    the backfill fills older days. So a day's record is not
+    final until the day is over.
+  - A, a change number (my pick): every device's day carries
+    the number of its last change; the caller sends the number
+    it got last (`?after=`) and gets the days changed since,
+    each as it is now, with the next number. A day comes again
+    when it widens; the caller writes it over the one it has
+    (key: device + day). Nothing kept per caller; a lost reply
+    is asked for again; the numbers are saved, so a restart
+    loses none; a number from another data folder is answered
+    "start again".
+  - B, closed days only: a device's day is sent once, when
+    every hour of its day is read after it ended (about half
+    an hour after local midnight). Never changes, a day late.
+    Can be A with `closed=1`, the same number.
+    Said again on "Tell more about B, explanation is fuzzy"
+    (2026-11-24), by the code's own rule: a day is closed
+    when each of its hours was read once more 15 minutes
+    after it ended and none was cut short
+    (`SecureView.complete`), so at the first read at or
+    after 00:15 local the next day; all of that day's
+    devices close at that one read. A day not read whole
+    (the app was down, an hour cut short) would close after
+    the 03:00 read of Aternity's own hourly or daily data
+    (`backfill`), marked "not read in full", its times to
+    the hour or the day only. To decide: after how many days
+    a day with nothing from either closes as it is, and
+    whether a closed day that still widens (late rows read
+    at a restart; how often is not measured) is sent again
+    as a correction (my pick) or left as sent.
+  - C, an hour's records: one per device and local hour (who
+    and which desktop need a person kept per hour: not stored
+    today), sent once the hour is read again 15 minutes after
+    it ends. Sent once, at most about an hour late.
+  - D, the app remembers what each caller had: no number to
+    send, but a lost reply is lost for good unless the caller
+    confirms each batch, and one pointer per caller is kept
+    here. Not my pick.
+  - E, "since a time": familiar, but rows arrive late and two
+    changes can share a second; a change number has neither
+    problem.
+  - Login: SecureView is behind the admin login (usernames,
+    devices, desktops and times of about 1,500 devices, 400
+    days); a platform cannot use that cookie. My pick: a key
+    of its own in `.env`, sent as a header, HTTPS only. The
+    Care list feed is open; this one should not be.
+  - The user's choice, 2026-11-24, after B was explained
+    twice ("So caller calls once a day around 00:15?", then):
+    "NO... I want to pull regularly (small interval)
+    throughout the day. ONLY NEW DEVICE(S) RETURN(S) each
+    call". So B is out: not once a day, not after midnight.
+    What follows from it (my reading, to confirm): a record
+    is a device heard today that the caller was not given
+    yet, sent once at the read that first hears it (one per
+    device and day; about 100 a day, most in the morning),
+    by the change number of A given only at a device's first
+    row of the day, so a device already sent never comes
+    again that day, whatever it does later. Given up, said
+    to the user: last heard, a second person or desktop
+    later that day, an earlier first time found by a late
+    row. New devices appear at the app's reads (every
+    `refresh_minutes`), so a call between two reads brings
+    nothing.
+  - "New" is new today (the user, 2026-11-24: "This reset
+    daily correct?"; yes): what was heard starts empty at
+    local midnight (config.yaml's `timezone`), so a device
+    comes once on each day it is heard; a row belongs to the
+    local day of its own time (`SecureView.day`), also when
+    it is read after midnight. The number itself never
+    starts again.
+  - The plan put to the user the same day (not built; waits
+    for "build it"): `GET /api/MSS/secureview/new?after=N`
+    beside the Care list feed; reply `ready`, `as_of`,
+    `refresh_minutes`, `note`, `devices` (device, day,
+    first_heard, people, desktops, as known at the read that
+    first heard it; the user, same day: "add first heard
+    timestamp, provide sample json object": the time on
+    Aternity's own row, UTC to the second, named
+    `first_heard`, it was `first`; a sample reply given from
+    dev's made-up rows), `next`; no `after`: today's so far; the numbers
+    saved with the days; a key in `.env` sent as a header,
+    HTTPS only, off while no key is set; each call counted
+    on Statistics as the Care list feed's. Not in it: days
+    filled in at night from Aternity's own data (changed
+    from my first pick, "sent with its day": the feed is
+    what the app heard itself; after a restart the reader
+    reads the last 24 hours again, so a shorter stop loses
+    no device).
+  - AD on each person (the user, same day: "can you can
+    department, fullname or display name (AD)? I assume
+    'people' = username?"). Yes to both: `people` is the
+    username as Aternity writes it, and each person becomes
+    an object: `username`, `name` (AD's displayName),
+    `department`, `in_ad` (true, false, or null when AD was
+    not asked or did not answer), by the look-up the admin
+    page already has (`ad.Lookup.look`: each name once in 24
+    hours, in memory; it also has title, office and
+    disabled, not asked for). What follows, my picks, put to
+    the user: with AD on it the feed has to have a key (AD
+    look-ups on a page with no login stay with the Care
+    list, the user's own rule); a record is sent once, so
+    while AD does not answer a new device waits, at most one
+    read's time (15 minutes), then goes without the name and
+    department, the reply's `ad` saying why (ok / off / down
+    / refused, as `/api/care/ad`'s `state`).
+  - Corrected by the user, 2026-11-25: "In prod, read
+    interval is 5 minutes, secureview devices can be way
+    more than 100 a day. Flatten people array, why would
+    desktop be an array?". Was: my examples had reads every
+    15 minutes (the default) and "about 100 devices a day"
+    (my note of Nov 17). Now: prod reads every 5 minutes, so
+    new devices can appear at each 5-minute call, and the
+    count a day is not assumed (a reply holds at most 1,000,
+    `more` true: call again at once). Was: `people` and
+    `desktops` as lists, because the store keeps every
+    person and desktop of a device's day for History. Now:
+    flat, one person and one desktop, those of the device's
+    first row of the day (the earliest row that names a
+    person): `username`, `name`, `department`, `in_ad`,
+    `desktop` beside `device`, `day`, `first_heard`. The
+    store has no desktop per row today: the build keeps the
+    first row's person and desktop with the device's day.
+  - AD for the feed, how (the user, 2026-11-25: "Question on
+    AD pull, once a day and store local as cache for lookup
+    or pull on demand?"). Put to the user, not chosen yet.
+    Today's look-up is already both: a name is asked the
+    first time it is needed and kept 24 hours in memory
+    (`ad.Lookup`, `KEEP_H`), 50 names a search. My pick:
+    keep that, asked right after the read that first hears
+    a person (a small thread of the feed's own, never the
+    Today reader, never inside the caller's request), and
+    while AD does not answer use the last answer held for
+    that person; only a person with none waits (at most 15
+    minutes). Against one read of the whole directory a
+    day: it reads every account to use a small part (how
+    many accounts AD has is not known to me), an account
+    made today would still need a look-up on demand, and
+    nothing of AD is on disk today (in memory only, decided
+    Nov 16). For it: one read a night instead of searches
+    through the day, and no wait when AD is down in working
+    hours; the AD team may prefer it.
+  - Open: can the other platform keep one number (else the
+    app has to remember what each caller had, D).
 
 ## The CODE tab: a chat about the source code (built on dev 2026-11-23, "Build it")
 
@@ -381,6 +649,35 @@ dev so use nemotron. Prod will have gpt".
   k8s or config change (stage's `ai:` is already set). Prod after
   stage: those with the 11 waiting since 596cd86, 12 files in all
   (three of the four are among the 11).
+- **On stage and prod, 2026-11-23** (the user: "stage/prod
+  updated"). A photo the same day (asked for on prod): "Which part
+  of the code checks the admin password?", 8.7 s, 8 look-ups.
+  - Every place the answer names is right to the line against the
+    repo: web.py:952-989 (the login), 48-53 (the settings), 955-958
+    (no password set), 968-980 (the comparison), 963-980 (tries and
+    lock), 981-988 (the cookie), 918-927 (the later check). Nothing
+    marked, no note; the lines under it were read from the host.
+  - The top of the tab says "36 files, 28,208 lines": the repo's
+    own count, so the copy is whole by count (a FILES photo is not
+    needed).
+  - Not on the photo: which AI service answered ("Answered with
+    …" is the tab's last line, under the answers).
+  - To watch: 8 look-ups is the most a question gets (`MAX_STEPS`)
+    and this plain question used all of them (several at once, by
+    the time it took). The page says nothing when the limit is
+    reached, only when the AI goes on asking after it. A wider
+    question may be answered from less than it wanted. Not changed:
+    `verify --ai` prints the look-ups per question, decide from it.
+  - `verify --ai` there the same day (five photos; the user: "1
+    problem"): the tab says "Answered with GPT-5.4"; GPT-5.4 right
+    for 8 of 8 (3.9 to 7.6 s, 1 to 8 look-ups, the password not
+    given); Nemotron-S FAIL, 7 of 8 ("how many look-ups" answered
+    5, `MAX_READS`). No page uses Nemotron-S there. Our gaps (loose
+    words in the source that the AI repeats, a check that passed
+    "drawn by status.py", a FAIL that did not say which service
+    the pages use), the fix on dev and what is not done:
+    `docs/roadmap.md`, Waiting on you. Six files wait for the next
+    copy; none is asked for now.
 
 ### The proposal (2026-11-22)
 

@@ -31,7 +31,8 @@ x-settings:
 #   1. cp config.example.yaml config.yaml, fill <REQUIRED>
 #   2. put ATERNITY_PASSWORD / NETIM_PASSWORD in ./.env
 #      (ADMIN_PASSWORD too, for the admin page /admin;
-#      AD_USERNAME / AD_PASSWORD for Active Directory, optional)
+#      AD_USERNAME / AD_PASSWORD for Active Directory, optional;
+#      SECUREVIEW_KEY for SecureView's feed, optional)
 #      and: mkdir -p data && chmod a+rwx data
 #   3. docker compose up -d, then check the connection:
 #      docker compose exec uxcorrelate uxcorrelate verify

@@ -657,7 +657,7 @@ def admin():
             item("CODE", "Ask (the chat, with the code under each answer) and Files (every file, its parts and "
                  "its code, a search of every line)."),
         ]]),
-        ("5. By a click", "", "click", [[
+        ("5. By a click", "And the feed for another platform", "click", [[
             item("A department", "Lists its devices; again for every department."),
             item("A username", "Opens Search with it; \"All actions today\" opens Actions for that person."),
             item("CSV", "Search results and Actions can be saved as a file."),
@@ -666,6 +666,16 @@ def admin():
             item("A part, a line number, a drag", "Picks lines in a file; \"Explain these lines\" asks at once, "
                  "\"Ask about them\" takes them to the chat for your own question."),
             item("A file", "Opens its parts and its code; \"Explain this file\" asks what it does."),
+        ], [
+            item("SecureView's feed", "Another platform asks every few minutes and gets only the devices heard "
+                 "for the first time that day since its last call: a device once a day, new again after midnight. "
+                 "It sends back the number of its last reply."),
+            item("One device in it", "The device (its name up to the dash), its day, when it was first heard, the "
+                 "person and desktop of its first row, the person's name and department from AD. Times in UTC. At most "
+                 f"{secureview.FEED_MAX:,} a reply."),
+            item("Its key, and AD", f"A key of its own, sent as a header, over HTTPS only; {web.FEED_TRIES} wrong "
+                 f"keys lock the address {web.FEED_LOCK_MIN} minutes. AD is asked right after each read; with no "
+                 f"answer a new person's device waits {secureview.AD_WAIT_MIN} minutes at most."),
         ]]),
     ])
 

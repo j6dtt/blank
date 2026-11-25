@@ -17,7 +17,8 @@ ASKED = {  # Ask anything: the stand-in's look-up for each open question
     AI_ASK[5][0]: ("programs_per_pc", {}),
     AI_ASK[6][0]: ("page", {})}
 CODE_ASKED = {  # the code chat: the stand-in's look-up for each question (None: it answers at once), and its answer
-    AI_CODE[0][0]: (("outline", {"file": "status.py"}), "status.py checks them every 60 seconds (`CHECK_EVERY_S`, status.py:25)."),
+    AI_CODE[0][0]: (("outline", {"file": "status.py"}), "static/index.html draws them; status.py checks them every 60 "
+                    "seconds (`CHECK_EVERY_S`, status.py:26)."),
     AI_CODE[1][0]: (("search", {"text": "admin_login"}), "In `admin_login` in web.py."),
     AI_CODE[2][0]: (("setting", {"name": "refresh_minutes"}),
                     "Set `refresh_minutes` in config.yaml: it is defined in config.py with the default 15."),
@@ -295,6 +296,28 @@ def test_a_model_that_names_what_the_code_does_not_have_fails_the_code_check():
     assert any("nowhere.py (not one of this app's source files here)" in r
                and "made_up_helper (not a name in the code)" in r for r in c.rows)
     assert "1 problem(s) found." in text
+
+
+def test_a_failed_check_says_whether_the_pages_use_that_service():
+    """The user, Nov 23 2026, "1 problem": on the live host the second service failed one code question
+    while every page used the first, which had passed; the FAIL did not say so."""
+    code = "answers questions about the code (admin page)"
+
+    def fixes(cfg):
+        return {c.item: c.fix for c in verify_ai(cfg, service([], code="invents"), {"AI_KEY_1": "k-1"}) if c.ok is False}
+
+    cfg = settings()
+    cfg.ai.services.append(AiService(name="two", base_url="https://ai.test/v1", model="model-a", key_env="AI_KEY_1"))
+    cfg.ai.chat = "TWO"
+    fix = fixes(cfg)
+    assert "No page uses this service" in fix[f"one: {code}"] and "use two (ai.chat in config.yaml)" in fix[f"one: {code}"]
+    assert fix[f"two: {code}"].endswith("This is the service the pages use, so it shows on them.")
+    cfg.ai.chat = ""
+    fix = fixes(cfg)
+    assert fix[f"one: {code}"].endswith("This is the service the pages use, so it shows on them.")
+    assert "use one (the first of ai.services, as ai.chat names none of them)" in fix[f"two: {code}"]
+    passed = [c for c in verify_ai(settings(), service([]), {"AI_KEY_1": "k-1"}) if c.ok is not False]
+    assert passed and not any("the pages use" in (c.fix or "") or "No page uses" in (c.fix or "") for c in passed)
 
 
 def test_the_admin_password_is_never_in_what_the_code_chat_is_given():

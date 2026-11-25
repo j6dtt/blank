@@ -159,6 +159,24 @@ def test_the_first_sentence_of_a_docstring():
 
 
 # -- what can be read --------------------------------------------------------------------------------
+def test_what_a_file_does_is_a_sentence_that_is_true_by_itself():
+    """The AI is told each file's first sentence and repeats it. On the live host (Nov 23 2026) both
+    models were told config.py's sentence cut at its colon, "... can be overridden with environment
+    variables for secrets:", and one answered that refresh_minutes "can be overridden with an
+    environment variable"; "tool calls per question" on MAX_STEPS sent it to MAX_READS for "how many
+    look-ups"; the chats' files still said "on the Today tab"."""
+    src = cc.Source()
+    does = {f["file"]: f["does"] for f in cc.listing(src)["files"]}
+    assert not [name for name, text in does.items() if text.rstrip(" …").endswith(":")]  # cut before what it introduces
+    assert "set only" in does["config.py"] and "no other setting" in does["config.py"]
+    assert "every tab" in does["agent.py"] and "MAX_STEPS" in does["agent.py"] and "Today tab" not in does["agent.py"]
+    assert "off the page" in does["chat.py"] and "chat_service" in does["chat.py"]
+    assert "off the page" in does["software_chat.py"] and "Ask anything" in does["software_chat.py"]
+    assert "drawn by the page (static/index.html)" in does["status.py"]
+    steps = next(r for r in cc.outline(src, "agent.py")["rows"] if r[1] == "MAX_STEPS")
+    assert steps[3].startswith("= 8 · look-ups per question")  # the page's word, as the question asks it
+
+
 def test_only_the_listed_source_files_can_be_read(tmp_path):
     """config.yaml, .env, a data folder, any other kind of file and a link that leads out of the
     folder are not in the list, and nothing is opened that is not in it."""

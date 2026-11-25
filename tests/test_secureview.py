@@ -8,10 +8,11 @@ from datetime import date, datetime, timedelta, timezone
 import httpx
 from fastapi.testclient import TestClient
 
+from uxcorrelate import secureview as sv_module
 from uxcorrelate import web
 from uxcorrelate.aternity import AternityClient
 from uxcorrelate.config import AternityConfig, Settings, config_notes, load_settings
-from uxcorrelate.secureview import SecureView, keep_backfilling
+from uxcorrelate.secureview import People, SecureView, keep_backfilling
 from uxcorrelate.today import HOUR, Today, _read_hour
 
 ZONE = "America/New_York"  # UTC-5 in November
@@ -37,6 +38,7 @@ def hour_rows(sv, rows, now=NOW, partial=False):
         per.setdefault(t.replace(minute=0, second=0, microsecond=0), []).append(r)
     for start, rs in sorted(per.items()):
         sv.add_hour(start, rs, F, now, partial)
+    sv.save(now)  # as the Today reader, at the end of each read (the feed's numbers are given there)
 
 
 def test_only_matching_devices_any_case_and_off_when_empty_or_wrong(tmp_path):
@@ -450,3 +452,406 @@ def test_the_hourly_source_names_are_riverbeds_own():
     from uxcorrelate.verify import parse_odata_metadata
     schema = parse_odata_metadata((Path(__file__).parent / "fixtures" / "aternity_metadata_v2.xml").read_text())
     assert {v for k, v in SECUREVIEW_HOURLY.items() if k != "entity"} <= schema[SECUREVIEW_HOURLY["entity"]]
+
+
+# -- the feed for another platform (the user, Nov 24-25 2026: "I want to pull regularly (small interval)
+#    throughout the day. ONLY NEW DEVICE(S) RETURN(S) each call"; "This reset daily correct?"; "add first
+#    heard timestamp"; AD's name and department; "Flatten people array, why would desktop be an array?";
+#    "on demand, build it") -------------------------------------------------------------------------------
+D17 = date(2026, 11, 17)
+A, B, C = "HV00041-HOME41THIN", "HV00042-HOME42THIN", "HV00043-HOME43THINE"
+A1, B1, C1 = "HV00041", "HV00042", "HV00043"  # as the feed gives them: up to the dash (feed_name)
+AD = {"ann": {"found": True, "name": "Ann Archer", "title": "Clerk", "department": "Finance", "office": "B2",
+              "disabled": False},
+      "bob": {"found": True, "name": "Bob Baker", "title": None, "department": "Operations", "office": None,
+              "disabled": False}}
+
+
+class Directory:
+    """ad.Lookup.look for the feed, made-up: answers from AD above, a name it has not is "not in AD";
+    `state` down / off / refused answers nobody."""
+    def __init__(self, state="ok"):
+        self.state, self.asked = state, []
+
+    def __call__(self, users, now):
+        self.asked.append(list(users))
+        got = {u: AD.get(u.lower(), {"found": False}) for u in users} if self.state == "ok" else {}
+        return {"state": self.state, "why": "", "users": got}
+
+
+def reader(read_ok=NOW, ready=True, as_of=None, refresh=5):
+    """What the feed reads of the Today reader."""
+    from types import SimpleNamespace
+    return SimpleNamespace(ready=ready, off=None, status="Reading Aternity's activity: 3 of 25 hours read",
+                           read_ok=read_ok, as_of=as_of or read_ok, refresh_min=refresh)
+
+
+def feed_of(tmp_path, state="ok"):
+    sv = SecureView(MATCH, ZONE, tmp_path)
+    ad = Directory(state)
+    return sv, People(sv, ad), ad
+
+
+def names(reply):
+    return [x["device"] for x in reply["devices"]]
+
+
+def test_the_feed_gives_a_device_once_on_each_day_it_is_heard_in_the_order_first_heard(tmp_path):
+    sv, people, _ = feed_of(tmp_path)
+    hour_rows(sv, [row(at(D17, 8, 10), B, "bob", "VD-02"), row(at(D17, 8, 2), A, "ann", "VD-01"),
+                   row(at(D17, 8, 20), "WTC0037", "cat")])  # WTC0037 is no SecureView device
+    people.ask(NOW)
+    first = people.reply(reader(), None, NOW)  # no number sent: today's devices so far
+    assert first["devices"] == [
+        {"device": A1, "day": "2026-11-17", "first_heard": "2026-11-17T13:02:00Z", "username": "ann",
+         "name": "Ann Archer", "department": "Finance", "in_ad": True, "desktop": "VD-01"},
+        {"device": B1, "day": "2026-11-17", "first_heard": "2026-11-17T13:10:00Z", "username": "bob",
+         "name": "Bob Baker", "department": "Operations", "in_ad": True, "desktop": "VD-02"}]
+    assert (first["ready"], first["as_of"], first["refresh_minutes"], first["note"], first["ad"], first["more"]) == \
+        (True, "2026-11-17T21:45:00Z", 5, None, "ok", False)
+    assert people.reply(reader(), first["next"], NOW)["devices"] == []  # nothing new: nothing, the same number
+    assert people.reply(reader(), first["next"], NOW)["next"] == first["next"]
+    # the next read: A again, and a second person on it (not new), C new
+    hour_rows(sv, [row(at(D17, 9, 30), A, "ann", "VD-01"), row(at(D17, 9, 31), A, "dan", "VD-07"),
+                   row(at(D17, 9, 5), C, "cy", "VD-03")])
+    people.ask(NOW)
+    second = people.reply(reader(), first["next"], NOW)
+    assert names(second) == [C1] and second["next"] == first["next"] + 1
+    assert second["devices"][0] | {"device": 0} == {"device": 0, "day": "2026-11-17", "first_heard": "2026-11-17T14:05:00Z",
+                                                   "username": "cy", "name": None, "department": None, "in_ad": False,
+                                                   "desktop": "VD-03"}  # cy is not in AD: said, not left out
+    # the next day everything starts again: A is new for Wednesday (the number goes on, it never starts again)
+    d18, now18 = date(2026, 11, 18), NOW + timedelta(days=1)
+    hour_rows(sv, [row(at(d18, 8, 15), A, "ann", "VD-01")], now=now18)
+    people.ask(now18)
+    third = people.reply(reader(now18), second["next"], now18)
+    assert [(x["device"], x["day"], x["first_heard"]) for x in third["devices"]] == [(A1, "2026-11-18", "2026-11-18T13:15:00Z")]
+    assert third["next"] == second["next"] + 1
+    assert names(people.reply(reader(now18), None, now18)) == [A1]  # with no number: that day's only
+
+
+def test_the_feeds_person_and_desktop_are_those_of_the_first_row_that_names_a_person(tmp_path):
+    sv, people, _ = feed_of(tmp_path)
+    hour_rows(sv, [row(at(D17, 8, 20), A, "ann", "VD-01"), row(at(D17, 8, 0), A, None, "VD-09"),
+                   row(at(D17, 8, 5), A, "bob", "VD-02")])
+    people.ask(NOW)
+    [x] = people.reply(reader(), None, NOW)["devices"]
+    assert (x["first_heard"], x["username"], x["desktop"]) == ("2026-11-17T13:00:00Z", "bob", "VD-02")
+    # a row Aternity sends late, earlier than bob's: the person moves, the device is not given again
+    n = people.reply(reader(), None, NOW)["next"]
+    hour_rows(sv, [row(at(D17, 7, 58), A, "cy", "VD-03")])
+    assert people.reply(reader(), n, NOW)["devices"] == []
+    assert people.reply(reader(), None, NOW)["devices"] == []  # asked from the start: cy is asked of AD now
+    people.ask(NOW)
+    [x] = people.reply(reader(), None, NOW)["devices"]
+    assert (x["first_heard"], x["username"], x["desktop"]) == ("2026-11-17T12:58:00Z", "cy", "VD-03")
+    # a device nobody is named on: no person, nothing asked of AD, given at once
+    hour_rows(sv, [row(at(D17, 9, 0), B, None, None)])
+    [y] = people.reply(reader(), n, NOW)["devices"]
+    assert (y["device"], y["username"], y["name"], y["in_ad"], y["desktop"]) == (B1, None, None, None, None)
+
+
+def test_a_late_row_of_yesterday_is_given_with_its_own_day_and_aternitys_own_days_are_not_in_the_feed(tmp_path):
+    sv, people, _ = feed_of(tmp_path)
+    d16 = date(2026, 11, 16)
+    hour_rows(sv, [row(at(D17, 8, 2), A, "ann")])
+    people.ask(NOW)
+    n = people.reply(reader(), None, NOW)["next"]
+    hour_rows(sv, [row(at(d16, 23, 58), B, "bob", "VD-02")])  # read after midnight: it is Monday's
+    people.ask(NOW)
+    got = people.reply(reader(), n, NOW)
+    assert [(x["device"], x["day"]) for x in got["devices"]] == [(B1, "2026-11-16")]
+    assert names(people.reply(reader(), None, NOW)) == [A1]  # with no number: today's, not Monday's
+    # a day the app filled in from Aternity's own data (the backfill) has no number: not in the feed
+    old = NOW - timedelta(days=40)
+    fake = Daily({datetime(old.year, old.month, old.day, tzinfo=timezone.utc): ["HV00148-SAMPLE48THIN"]})
+    sv.backfill(client_of(fake), NOW)
+    assert any("HV00148-SAMPLE48THIN" in d["devices"] for d in sv.days.values())
+    assert people.reply(reader(), got["next"], NOW)["devices"] == [] and len(sv.feed) == 2
+
+
+def test_the_feeds_numbers_are_saved_so_a_restart_gives_nothing_twice_and_loses_nothing(tmp_path):
+    sv, people, _ = feed_of(tmp_path)
+    hour_rows(sv, [row(at(D17, 8, 2), A, "ann"), row(at(D17, 8, 10), B, "bob", "VD-02")])
+    people.ask(NOW)
+    n = people.reply(reader(), None, NOW)["next"]
+    hour_rows(sv, [row(at(D17, 9, 5), C, "cy", "VD-03")])  # heard, not asked for before the restart
+    sv.save(NOW)
+    again, people2, _ = feed_of(tmp_path)  # a restart
+    assert (again.feed_n, again.feed_base, len(again.feed)) == (sv.feed_n, sv.feed_base, 3)
+    # the restart reads the last 24 hours again: the same rows give no new number
+    hour_rows(again, [row(at(D17, 8, 2), A, "ann"), row(at(D17, 8, 10), B, "bob", "VD-02"), row(at(D17, 9, 5), C, "cy", "VD-03")])
+    assert again.feed_n == sv.feed_n
+    people2.ask(NOW)
+    got = people2.reply(reader(), n, NOW)
+    assert names(got) == [C1] and got["next"] == n + 1
+    # the state file written after the days: a stop between the two loses no number
+    (tmp_path / "secureview" / "daily.json").unlink()
+    third = SecureView(MATCH, ZONE, tmp_path)
+    assert third.feed_n == sv.feed_n and third.feed_base <= sv.feed_n - 3
+    hour_rows(third, [row(at(D17, 10, 0), "HV00044-HOME44THIN", "ann")])
+    assert third.feed[-1][0] == sv.feed_n + 1
+
+
+def test_a_number_that_is_not_this_feeds_starts_again_with_todays_devices_and_says_so(tmp_path):
+    sv, people, _ = feed_of(tmp_path)
+    hour_rows(sv, [row(at(D17, 8, 2), A, "ann")])
+    people.ask(NOW)
+    n = people.reply(reader(), None, NOW)["next"]
+    assert n == sv.feed_base + 1  # numbers start at the second the store was first used, then go up by one
+    for wrong in (n + 50, sv.feed_base - 1, 0, -3):  # ahead of the feed, or from before its numbers began
+        got = people.reply(reader(), wrong, NOW)
+        assert names(got) == [A1] and got["next"] == n and "is not one this feed gave" in got["note"]
+    assert people.reply(reader(), sv.feed_base, NOW)["note"] is None  # where its numbers start is its own
+    # a store made again later (the data folder replaced) starts above every number the old one gave
+    newer = SecureView(MATCH, ZONE, tmp_path / "replaced")
+    assert newer.feed_base >= sv.feed_base
+
+
+def test_a_reply_holds_feed_max_devices_and_says_more(tmp_path, monkeypatch):
+    monkeypatch.setattr("uxcorrelate.secureview.FEED_MAX", 2)
+    sv, people, _ = feed_of(tmp_path)
+    hour_rows(sv, [row(at(D17, 8, k), f"HV0005{k}-HOME5{k}THIN", "ann") for k in range(5)])
+    people.ask(NOW)
+    one = people.reply(reader(), None, NOW)
+    assert (len(one["devices"]), one["more"]) == (2, True)
+    two = people.reply(reader(), one["next"], NOW)
+    three = people.reply(reader(), two["next"], NOW)
+    assert (len(two["devices"]), two["more"], len(three["devices"]), three["more"]) == (2, True, 1, False)
+    assert names(one) + names(two) + names(three) == [f"HV0005{k}" for k in range(5)]
+
+
+def test_while_ad_does_not_answer_the_last_answer_is_used_and_a_new_person_waits_15_minutes_at_most(tmp_path):
+    sv, people, ad = feed_of(tmp_path)
+    hour_rows(sv, [row(at(D17, 8, 2), A, "ann")])
+    people.ask(NOW)
+    n = people.reply(reader(), None, NOW)["next"]
+    ad.state = "down"
+    # ann (answered before) on another device, then bob (never answered), then ann again
+    hour_rows(sv, [row(at(D17, 9, 0), B, "ann"), row(at(D17, 9, 5), C, "bob", "VD-02"),
+                   row(at(D17, 9, 9), "HV00044-HOME44THIN", "Ann")])
+    people.ask(NOW)
+    got = people.reply(reader(), n, NOW)
+    assert names(got) == [B1] and got["devices"][0]["name"] == "Ann Archer" and got["ad"] == "down"
+    assert got["next"] == n + 1 and "wait for Active Directory's answer (15 min at most)" in got["note"]
+    soon = NOW + timedelta(minutes=14)
+    people.ask(soon)
+    assert people.reply(reader(soon), got["next"], soon)["devices"] == []  # still waiting, nothing skipped
+    late = NOW + timedelta(minutes=16)
+    people.ask(late)
+    gone = people.reply(reader(late), got["next"], late)
+    assert [(x["device"], x["username"], x["name"], x["in_ad"]) for x in gone["devices"]] == [
+        (C1, "bob", None, None), ("HV00044", "Ann", "Ann Archer", True)]
+    assert "did not answer in 15 min: 1 of these devices" in gone["note"]
+    # asked for again with the old number: bob's device does not start a second wait
+    assert names(people.reply(reader(late), got["next"], late)) == [C1, "HV00044"]
+    # AD answers again: a device bob is heard on after that is asked for and given with his name
+    ad.state = "ok"
+    hour_rows(sv, [row(at(D17, 10, 0), "HV00045-HOME45THIN", "bob", "VD-02")], now=late)
+    people.ask(late)
+    back = people.reply(reader(late), gone["next"], late)
+    assert [(x["device"], x["name"], x["department"]) for x in back["devices"]] == [("HV00045", "Bob Baker", "Operations")]
+    assert back["ad"] == "ok" and back["note"] is None
+
+
+def test_after_a_restart_todays_people_are_asked_for_at_once_and_a_caller_behind_gets_all_its_devices_together(tmp_path):
+    """A restart loses the answers held. Today's devices are what a first call brings, so their
+    people are asked for at the start. A caller that is behind asks for older devices: their people
+    are asked for at its call, all of them, and the devices come together at its next one (asked for
+    one at a time, it got one device a call: found on dev after a restart, Nov 25 2026)."""
+    d16 = date(2026, 11, 16)
+    sv, people, ad = feed_of(tmp_path)
+    n0 = sv.feed_n
+    two_hours_ago = NOW - timedelta(hours=2)
+    hour_rows(sv, [row(at(d16, 20, 1), A, "ann"), row(at(d16, 20, 2), B, "bob", "VD-02"), row(at(d16, 20, 3), C, "cy", "VD-03"),
+                   row(at(D17, 8, 2), "HV00044-HOME44THIN", "ann")], now=two_hours_ago)
+    sv2, people2, ad2 = feed_of(tmp_path)  # the restart: nothing held
+    people2.ask(NOW)
+    assert ad2.asked == [["ann"]]  # today's device's person, though numbered two hours ago
+    assert names(people2.reply(reader(), None, NOW)) == ["HV00044"]  # so the first call brings it at once
+    people2.known.clear()  # as if only yesterday's people were wanted: none of the three is held
+    got = people2.reply(reader(), n0, NOW)
+    assert got["devices"] == [] and got["next"] == n0 and "wait for Active Directory's answer" in got["note"]
+    assert sv2.fresh.is_set() and sorted(people2.pending) == ["ann", "bob", "cy"]  # all three asked for, not the first
+    people2.ask(NOW)
+    assert names(people2.reply(reader(), n0, NOW)) == [A1, B1, C1, "HV00044"]
+
+
+def test_with_no_ad_account_or_a_refused_login_devices_go_at_once_without_name_and_department(tmp_path):
+    for state, said in (("off", None), ("refused", "refuses the app's login")):
+        sv, people, _ = feed_of(tmp_path / state, state)
+        hour_rows(sv, [row(at(D17, 8, 2), A, "ann")])
+        people.ask(NOW)
+        got = people.reply(reader(), None, NOW)
+        assert [(x["username"], x["name"], x["department"], x["in_ad"]) for x in got["devices"]] == [("ann", None, None, None)]
+        assert got["ad"] == state and (said in got["note"] if said else got["note"] is None)
+
+
+def test_the_feed_says_when_it_is_not_ready_or_a_read_of_aternity_failed(tmp_path):
+    sv, people, _ = feed_of(tmp_path)
+    hour_rows(sv, [row(at(D17, 8, 2), A, "ann")])
+    people.ask(NOW)
+    got = people.reply(reader(ready=False), 7, NOW)  # the first read after a restart is not done
+    assert (got["ready"], got["devices"], got["next"]) == (False, [], 7) and got["note"].startswith("Reading Aternity")
+    assert people.reply(reader(read_ok=None), None, NOW)["ready"] is False
+    failed = people.reply(reader(NOW - timedelta(minutes=5), as_of=NOW), None, NOW)
+    assert failed["ready"] and names(failed) == [A1] and "could not be read in full at 21:45 UTC" in failed["note"]
+    stale = people.reply(reader(NOW - timedelta(minutes=16)), None, NOW)
+    assert "No read of Aternity since 21:29 UTC (reads are every 5 min)" in stale["note"]
+    off = People(SecureView("", ZONE, tmp_path / "off"), Directory())
+    assert off.reply(reader(), None, NOW)["note"] == "SecureView is off: secureview.match in config.yaml is empty."
+
+
+def test_the_feed_needs_its_own_key_over_https(monkeypatch, tmp_path):
+    monkeypatch.setenv("UXCORRELATE_DATA", str(tmp_path))
+    monkeypatch.delenv(web.FEED_ENV, raising=False)
+    app = web.create_app()
+    http, https = TestClient(app), TestClient(app, base_url="https://testserver")
+    url, key = "/api/MSS/secureview/new", {web.FEED_HEADER: "feed-key-of-the-test"}
+    assert https.get(url, headers=key).status_code == 503  # no key set: the feed is off
+    monkeypatch.setenv(web.FEED_ENV, "feed-key-of-the-test")
+    assert http.get(url, headers=key).status_code == 400  # plain HTTP: the key could be read on the network
+    for _ in range(web.FEED_TRIES + 2):  # no key sent is not a wrong try: it never locks
+        assert https.get(url).status_code == 401
+    got = https.get(url, headers=key)
+    assert got.status_code == 200 and set(got.json()) == {"ready", "as_of", "refresh_minutes", "note", "ad", "devices",
+                                                        "more", "next"}
+    assert got.json()["ready"] is False and got.json()["devices"] == []  # no secureview.match in this config
+    assert https.get(url + "?after=abc", headers=key).status_code == 400
+    assert https.get(url + "?after=12", headers=key).json()["next"] == 12
+    wrong = {web.FEED_HEADER: "not-the-key"}
+    assert [https.get(url, headers=wrong).status_code for _ in range(web.FEED_TRIES)] == [401] * (web.FEED_TRIES - 1) + [423]
+    assert https.get(url, headers=key).status_code == 423  # locked: the right key too, FEED_LOCK_MIN
+    feed = app.state.usage.view(datetime.now(timezone.utc))["feed"]
+    assert (feed["n"], feed["devices"], feed["from"]) == (2, 0, "testclient")  # the two calls that were answered
+    page = (web.STATIC / "admin.html").read_text(encoding="utf-8")
+    assert "The other platform's calls for SecureView's new devices" in page and "j.feed" in page
+
+
+def test_a_number_is_given_only_once_it_is_saved(tmp_path, monkeypatch):
+    """A number given and then lost in a stop would go to another device after the restart: one
+    device given twice, one never. So a device is held back until its day is on disk."""
+    sv, people, _ = feed_of(tmp_path)
+    hour_rows(sv, [row(at(D17, 8, 2), A, "ann")])  # saved at once, before any caller can ask
+    assert json.loads((tmp_path / "secureview" / "2026-11-17.json").read_text())["devices"][A]["n"] == sv.feed_n
+    people.ask(NOW)
+    n = people.reply(reader(), None, NOW)["next"]
+    real = sv_module.os.replace
+
+    def full(*a):
+        raise OSError("No space left on device")
+    monkeypatch.setattr(sv_module.os, "replace", full)
+    hour_rows(sv, [row(at(D17, 9, 5), B, "bob", "VD-02")])
+    people.ask(NOW)
+    got = people.reply(reader(), n, NOW)
+    assert got["devices"] == [] and got["next"] == n and "1 new device held back" in got["note"]
+    monkeypatch.setattr(sv_module.os, "replace", real)
+    sv.save(NOW)  # the reader's own save after its next read
+    got = people.reply(reader(), n, NOW)
+    assert names(got) == [B1] and got["note"] is None
+
+
+def test_verify_feed_asks_the_running_app_as_the_other_platform_would(monkeypatch, tmp_path):
+    """`verify --feed`: no key, plain HTTP, with the key, then again with the number given. Counts
+    only: no device or user name is printed."""
+    from urllib.parse import urlsplit
+
+    from uxcorrelate.verify import verify_feed
+    path = tmp_path / "config.yaml"
+    path.write_text(f"secureview:\n  match: '{MATCH}'\n")
+    monkeypatch.setenv("UXCORRELATE_DATA", str(tmp_path))
+    monkeypatch.delenv("AD_USERNAME", raising=False)
+    monkeypatch.setenv(web.FEED_ENV, "feed-key-of-the-test-0123")
+    settings = load_settings(str(path))
+    app = web.create_app(str(path))
+    clients = {"http": TestClient(app), "https": TestClient(app, base_url="https://testserver")}
+
+    def get(url, headers):
+        u = urlsplit(url)
+        if u.port == 8443:  # this app answers on Kubernetes' port only: the first one tried does not
+            raise OSError("Connection refused")
+        return clients[u.scheme].get(u.path + ("?" + u.query if u.query else ""), headers=headers)
+
+    env = {web.FEED_ENV: "feed-key-of-the-test-0123"}
+    assert "is not set in .env" in verify_feed(settings, env={}, get=get)[0].message
+    not_ready = verify_feed(settings, env=env, get=get)
+    assert [c.ok for c in not_ready] == [True, True, None] and "not ready yet" in not_ready[-1].message
+    now = datetime.now(timezone.utc)
+    sv, today = app.state.secureview, app.state.today
+    sv.add_hour(now.replace(minute=0, second=0, microsecond=0),
+                [row(now, A, "ann"), row(now, B, None, None), row(now, "WTC0037", "cat")], F, now)
+    sv.save(now)
+    today.ready, today.read_ok, today.as_of = True, now, now
+    app.state.sv_people.ask(now)  # no AD account here: devices go at once, without name and department
+    checks = verify_feed(settings, env=env, get=get)
+    by = {c.item: c for c in checks}
+    assert [c.ok for c in checks] == [True, True, True, True]
+    assert by["with the key"].message.startswith("2 devices first heard today so far, each given once; next=")
+    assert "With a person: 1; in AD: 0; not in AD: 0; no answer from AD: 1; with a desktop: 1. Active Directory: off." \
+        in by["with the key"].message
+    assert by["with the key"].message.endswith("A device's name is given up to its dash: no two of them have the same name.")
+    assert by["asked again with its number"].message.startswith("0 devices: nothing new, none of them given before")
+    text = " ".join(c.message + " ".join(c.rows) for c in checks)
+    assert A not in text and A1 not in text and "ann" not in text and "feed-key" not in text  # no name, never the key
+    short = verify_feed(settings, env={web.FEED_ENV: "abc"}, get=get)
+    assert "has 3 characters: use 20 or more" in short[0].message and short[-1].ok is False  # the app has another key
+    assert verify_feed(Settings(), env=env, get=get)[0].item == "SecureView"  # no secureview.match: off
+
+
+def test_a_day_heard_before_the_feed_existed_gets_no_number_but_todays(tmp_path):
+    """The copy that brings the feed: the restart reads the last 24 hours again. Today's devices,
+    heard before it, are to come at the first call; yesterday evening's are not new."""
+    d16 = date(2026, 11, 16)
+    old = SecureView(MATCH, ZONE, tmp_path)
+    hour_rows(old, [row(at(d16, 20, 0), A, "ann"), row(at(D17, 8, 2), A, "ann"), row(at(D17, 8, 10), B, "bob", "VD-02")])
+    old.save(NOW)
+    for f in (tmp_path / "secureview").glob("2026-*.json"):  # as the build before wrote them: no number, no first row
+        raw = json.loads(f.read_text())
+        for x in raw["devices"].values():
+            for k in ("n", "at", "who"):
+                x.pop(k, None)
+        f.write_text(json.dumps(raw))
+    (tmp_path / "secureview" / "daily.json").unlink()
+    sv, people, _ = feed_of(tmp_path)
+    assert sv.feed == [] and people.reply(reader(), None, NOW)["devices"] == []
+    hour_rows(sv, [row(at(d16, 20, 0), A, "ann"), row(at(D17, 8, 2), A, "ann"), row(at(D17, 8, 10), B, "bob", "VD-02"),
+                   row(at(d16, 23, 50), C, "cy", "VD-03")])  # the same rows again, and one of Monday not heard before
+    assert [(d.isoformat(), name) for _, d, name in sv.feed] == [("2026-11-16", C), ("2026-11-17", A), ("2026-11-17", B)]
+    people.ask(NOW)
+    got = people.reply(reader(), None, NOW)
+    assert [(x["device"], x["username"], x["desktop"]) for x in got["devices"]] == [(A1, "ann", "VD-01"), (B1, "bob", "VD-02")]
+    assert people.reply(reader(), got["next"], NOW)["devices"] == []
+
+
+def test_one_reads_devices_are_numbered_in_the_order_first_heard_whatever_the_order_of_its_hours(tmp_path):
+    """After a restart the reader reads the last 24 hours newest first: the numbers are given at the
+    end of the read, not hour by hour."""
+    sv, people, _ = feed_of(tmp_path)
+    nine, eight = at(D17, 9), at(D17, 8)
+    sv.add_hour(nine, [row(at(D17, 9, 40), B, "bob", "VD-02"), row(at(D17, 9, 20), A, "ann")], F, NOW)
+    assert sv.feed == [] and people.reply(reader(), None, NOW)["devices"] == []  # the read is not over
+    sv.add_hour(eight, [row(at(D17, 8, 30), C, "cy", "VD-03"), row(at(D17, 8, 5), B, "bob", "VD-02")], F, NOW)
+    sv.save(NOW)
+    people.ask(NOW)
+    got = people.reply(reader(), None, NOW)
+    assert [(x["device"], x["first_heard"][11:16]) for x in got["devices"]] == [(B1, "13:05"), (C1, "13:30"), (A1, "14:20")]
+
+
+def test_the_feed_gives_a_devices_name_up_to_its_dash_and_a_name_with_no_dash_whole(tmp_path):
+    """The user, Nov 25 2026: "Remove everythin after the dash (-) in 'device' value when return
+    data", "add error trap in case there's no -"."""
+    from uxcorrelate.secureview import feed_name
+    assert feed_name("HV00045-SAMPLE45THINVM") == "HV00045" and feed_name("hv00047-sample47thin") == "hv00047"
+    assert feed_name("HV00045-A-THIN-2") == "HV00045" and feed_name("HV00045 -THIN") == "HV00045"  # the first dash
+    # no dash, or nothing before it: the whole name, never an error, never an empty one
+    assert [feed_name(x) for x in ("THINCLIENT9", "-THIN", "", None, 7)] == ["THINCLIENT9", "-THIN", "", "None", "7"]
+    # only the reply is cut: with a pattern that takes names with no dash, and two whole names with one first part
+    sv = SecureView("THIN", ZONE, tmp_path)
+    people = People(sv, Directory())
+    hour_rows(sv, [row(at(D17, 8, 1), "THINCLIENT9", "ann"), row(at(D17, 8, 2), "HV00041-HOME41THIN", "ann"),
+                   row(at(D17, 8, 3), "HV00041-HOME41THINVM", "bob", "VD-02")])
+    people.ask(NOW)
+    got = people.reply(reader(), None, NOW)
+    assert [(x["device"], x["username"]) for x in got["devices"]] == [("THINCLIENT9", "ann"), ("HV00041", "ann"), ("HV00041", "bob")]
+    assert set(sv.days[D17]["devices"]) == {"THINCLIENT9", "HV00041-HOME41THIN", "HV00041-HOME41THINVM"}  # kept whole
+    assert people.reply(reader(), got["next"], NOW)["devices"] == []

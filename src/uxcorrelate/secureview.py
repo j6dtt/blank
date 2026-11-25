@@ -20,6 +20,16 @@ first and last hour, the desktops; how long it keeps them is not known), then it
 That is kept apart from the records (`back`), never moving a time SecureView saw itself; a day
 shows the records' minute unless Aternity's hour is earlier (later): "08:xx" (`ends`). A day is
 <data>/secureview/<date>.json (device names and usernames), KEEP_DAYS.
+
+The feed for another platform (`GET /api/MSS/secureview/new`; the user, Nov 24-25 2026: "I want to
+pull regularly (small interval) throughout the day. ONLY NEW DEVICE(S) RETURN(S) each call"): a
+device's day gets a number at the end of the first read whose rows name it (`add_hour`, `save`),
+once, so a device comes once on each local day it is heard and never again that day. Each reply ends with `next`,
+the caller sends it back as `after` (`feed_rows`). One flat record: the device (its name up to the
+dash, `feed_name`), its day, when it was first heard, and the person and desktop of its first row that names a person (`who`), with
+that person's name and department from Active Directory (`People`: asked right after the read in
+a thread of its own, never inside the caller's request; the last answer held is used while AD
+does not answer). The numbers are saved with the days: a restart sends nothing twice.
 """
 
 from __future__ import annotations
@@ -29,6 +39,7 @@ import logging
 import os
 import re
 import threading
+import time
 from bisect import bisect_left, bisect_right
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -57,6 +68,12 @@ DAILY_AT_H = 3  # local hour the daily read runs each day (a day Aternity has no
 STATE = "daily.json"
 SEARCH_MIN = 2  # characters a search needs
 SEARCH_MAX = 20  # people, devices and desktops listed each (more: "type more")
+FEED_MAX = 1000  # devices in one reply of the feed: with more, "more" is true and the caller asks again at once
+AD_WAIT_MIN = 15  # a new device waits this long for Active Directory's answer, then goes without name and department
+AD_KEEP_DAYS = 30  # a person's last answer from AD is held this long (used while AD does not answer)
+AD_BATCH = 200  # names in one request of the look-up (ad.ASK_MAX)
+AD_WAKE_S = 60  # the look-up's thread wakes at each read that gave numbers, and this often
+STALE_READS = 3  # the feed says no new device can come after this many reads' time with no read (as the Care list's)
 
 
 def _new_day() -> dict:
@@ -71,6 +88,7 @@ def _to_json(day: dict) -> dict:
     return {"devices": {n: {"first": x["first"], "last": x["last"], "hours": sorted(x["hours"]),
                             "people": x["people"], "desktops": sorted(x["desktops"])}
                         | ({"back": x["back"]} if x.get("back") else {})
+                        | {k: x[k] for k in ("n", "at", "who") if x.get(k) is not None}
                         for n, x in sorted(day["devices"].items())},
             "final": sorted(day["final"]), "cut": sorted(day["cut"]), "daily": day["daily"]}
 
@@ -81,6 +99,11 @@ def _from_json(raw: dict) -> dict:
         day["devices"][str(n)] = {"first": x.get("first"), "last": x.get("last"), "hours": set(x.get("hours") or ()),
                                   "people": {k: list(v) for k, v in (x.get("people") or {}).items()},
                                   "desktops": set(x.get("desktops") or ())}
+        if isinstance(x.get("n"), int):  # the feed's number, when it was given, the first row's person and desktop
+            day["devices"][str(n)].update(n=x["n"], at=int(x.get("at") or 0))
+        who = x.get("who")
+        if isinstance(who, list) and len(who) == 3:
+            day["devices"][str(n)]["who"] = list(who)
         back = x.get("back")
         if isinstance(back, dict):
             day["devices"][str(n)]["back"] = {"by": back.get("by") or "day", "h": back.get("h"),
@@ -110,8 +133,26 @@ class SecureView:
         self.pruned: date | None = None
         self.started = False  # the daily read's thread (one per process)
         self.lock = threading.Lock()
+        # the feed for another platform: the numbers in the order given (number, day, device), the last one
+        # given and the one they started after; `fresh` wakes the AD look-up's thread (People)
+        self.feed: list[tuple[int, date, str]] = []
+        self.feed_n: int | None = None
+        self.feed_base: int | None = None
+        self.feed_saved = 0  # the last number that is on disk: the feed gives no number above it (feed_rows)
+        self.unnumbered: set[tuple[date, str]] = set()  # heard for the first time in this read: numbered at its end
+        self.state_dirty = False
+        self.fresh = threading.Event()
         if self.on():
             self.load()
+            self._first_number()
+
+    def _first_number(self) -> None:
+        """Where a new store's numbers start: the second it was first used. A store made again later
+        (the data folder replaced) so never gives a number an older one gave: a caller's old number is
+        known as not this feed's (`feed_rows`) and never silently skips devices."""
+        if self.feed_n is None:
+            self.feed_base = self.feed_n = self.feed_saved = int(time.time())
+            self.state_dirty = True
 
     def on(self) -> bool:
         return self.rx is not None
@@ -194,12 +235,19 @@ class SecureView:
 
     # -- the Today reader's rows ---------------------------------------------------------
     def add_hour(self, start: datetime, rows: list[dict], f: dict, now: datetime, partial: bool = False) -> None:
-        """One hour of activity rows (any day): the matching devices' days widen."""
+        """One hour of activity rows (any day): the matching devices' days widen. A device's day
+        these rows are the first to name is to get the feed's next number at the end of the read
+        (`save`): that is the one time the feed gives it. A day heard before the feed existed has no
+        number and gets none, but today's: the first call is to bring today's devices so far (the
+        restart that brings the feed reads the last 24 hours again, so each is named again)."""
         cdev, ts, uf, df = f.get("client_device"), f["timestamp"], f.get("username"), f.get("device")
         if not cdev or not self.on():
             return
         key = int(start.timestamp())
+        heard: dict[tuple[date, str], dict] = {}
+        first_time: set[tuple[date, str]] = set()
         with self.lock:
+            self._first_number()
             d0 = self.day(start)
             day0 = self.days.setdefault(d0, _new_day())
             if partial:
@@ -215,6 +263,8 @@ class SecureView:
                 t = parse_time(r.get(ts)) or start
                 d, e = self.day(t), int(t.timestamp())
                 x = self.days.setdefault(d, _new_day())["devices"].setdefault(str(name), _new_dev())
+                if x["first"] is None:
+                    first_time.add((d, str(name)))
                 x["first"] = e if x["first"] is None else min(x["first"], e)
                 x["last"] = e if x["last"] is None else max(x["last"], e)
                 x["hours"].add(t.astimezone(self.zone).hour)
@@ -225,7 +275,31 @@ class SecureView:
                 desk = r.get(df) if df else None
                 if desk:
                     x["desktops"].add(str(desk))
+                # the device's first row of the day that names a person (with none, its first row): the
+                # feed's person and desktop
+                who = x.get("who")
+                if who is None or (user and not who[1]) or (bool(user) == bool(who[1]) and e < who[0]):
+                    x["who"] = [e, str(user) if user else None, str(desk) if desk else None]
+                heard[(d, str(name))] = x
                 self.dirty.add(d)
+            today = self.day(now)
+            self.unnumbered |= {k for k, x in heard.items() if "n" not in x and (k in first_time or k[0] == today)}
+
+    def _number(self, now: datetime) -> list:
+        """The feed's numbers for the devices a read heard for the first time on their day, in the
+        order first heard, at the end of the read (the caller holds self.lock): one read's hours come
+        newest first after a restart, and a number is written to disk in the same step it is given."""
+        self._first_number()
+        new = sorted((self.days[d]["devices"][name]["first"], name, d) for d, name in self.unnumbered
+                     if name in self.days.get(d, _new_day())["devices"] and "n" not in self.days[d]["devices"][name])
+        self.unnumbered.clear()
+        for _, name, d in new:
+            self.feed_n += 1
+            self.days[d]["devices"][name].update(n=self.feed_n, at=int(now.timestamp()))
+            self.feed.append((self.feed_n, d, name))
+            self.dirty.add(d)
+        self.state_dirty = self.state_dirty or bool(new)
+        return new
 
     # -- Aternity's daily data, before the records ----------------------------------------
     def backfill(self, client, now: datetime) -> None:
@@ -411,25 +485,48 @@ class SecureView:
                     self.daily = {"read": {date.fromisoformat(x) for x in raw.get("read") or ()},
                                   "hour": {date.fromisoformat(x) for x in raw.get("hour") or ()},
                                   "state": raw.get("state") or "", "note": raw.get("note") or "", "at": raw.get("at")}
+                feed = raw.get("feed")
+                if isinstance(feed, dict) and isinstance(feed.get("n"), int) and isinstance(feed.get("base"), int):
+                    self.feed_base, self.feed_n = feed["base"], feed["n"]
         except (OSError, ValueError) as exc:
             bad.append(f"the folder ({short_error(exc)})")
+        # the feed's numbers, from the days themselves: the state is written after the days, so a stop
+        # between the two leaves a day with a number the state does not have yet
+        self.feed = sorted((x["n"], d, name) for d, day in self.days.items() for name, x in day["devices"].items()
+                           if "n" in x)
+        if self.feed:
+            self.feed_n = max(self.feed_n or 0, self.feed[-1][0])
+            self.feed_base = min(self.feed[0][0] - 1, self.feed_n if self.feed_base is None else self.feed_base)
+        self.feed_saved = self.feed_n or 0
         if bad:
             self.notes["files"] = (f"Saved days in {self.store} could not be read: {', '.join(bad[:3])}; those days are "
                                    "left out. The folder must be writable by the container (uid 1000).")
         log.info("SecureView: %d saved days loaded", len(self.days))
 
     def save(self, now: datetime) -> None:
-        """The days changed since the last save (after each read of the Today reader)."""
+        """The days changed since the last save (after each read of the Today reader), and the
+        feed's numbers for the devices that read heard for the first time (`_number`). A number
+        given and then lost in a stop would go to another device after it (one device twice, one
+        never), so the feed gives a number only once this has written it (`feed_saved`)."""
         if not self.on():
             return
         self.prune(now)
         with self.lock:
+            new = self._number(now)
             todo = {d: _to_json(self.days[d]) for d in self.dirty if d in self.days}
             self.dirty.clear()
             state = {"v": STATE_V, "read": sorted(d.isoformat() for d in self.daily["read"]),
                      "hour": sorted(d.isoformat() for d in self.daily["hour"]), "state": self.daily["state"],
-                     "note": self.daily["note"], "at": self.daily["at"]}
-        if not self.store or not todo:
+                     "note": self.daily["note"], "at": self.daily["at"],
+                     "feed": {"base": self.feed_base, "n": self.feed_n}}
+            state_dirty, self.state_dirty = self.state_dirty, False
+            giving = self.feed_n
+        if new:
+            log.info("SecureView feed: %d device%s heard for the first time on %s: given at the other platform's "
+                     "next call", len(new), "" if len(new) == 1 else "s",
+                     "their day" if len({d for _, _, d in new}) > 1 else f"{new[0][2]:%b %d}")
+            self.fresh.set()  # their people are looked up in AD now (People), before a caller asks
+        if not self.store or not (todo or state_dirty):
             return
         try:
             self.store.mkdir(parents=True, exist_ok=True)
@@ -438,12 +535,15 @@ class SecureView:
                 tmp.write_text(json.dumps(data, separators=(",", ":")))
                 os.replace(tmp, self.store / name)
             self.notes.pop("files", None)
+            if giving is not None:
+                self.feed_saved = max(self.feed_saved, giving)
         except OSError as exc:
             self.notes["files"] = (f"SecureView's days could not be saved in {self.store} ({short_error(exc)}); "
                                    "tried again at the next read. The folder must be writable by the container "
                                    "(uid 1000).")
             with self.lock:
                 self.dirty |= set(todo)
+                self.state_dirty = self.state_dirty or state_dirty
 
     def prune(self, now: datetime) -> None:
         """Days older than KEEP_DAYS go, from memory and disk (once a day)."""
@@ -457,6 +557,8 @@ class SecureView:
             for d in old:
                 del self.days[d]
                 self.dirty.discard(d)
+            if old:
+                self.feed = [r for r in self.feed if r[1] >= cut]
             self.daily["read"] = {d for d in self.daily["read"] if d >= today - timedelta(days=DAILY_DAYS + 1)}
             self.daily["hour"] &= self.daily["read"]
         if self.store:
@@ -465,6 +567,38 @@ class SecureView:
                     (self.store / f"{d.isoformat()}.json").unlink(missing_ok=True)
                 except OSError:
                     pass
+
+    # -- the feed for another platform ------------------------------------------------------
+    def feed_rows(self, after: int | None, now: datetime) -> tuple[list[dict], int, str | None, int]:
+        """(the devices numbered after `after`, in the order first heard and FEED_MAX + 1 at most; the
+        last number the feed gives; why the feed starts again, or None; how many numbers are held
+        back). With no `after`: today's devices so far. A number that is not this feed's (below where
+        its numbers start or above the last one given: the data folder was replaced, or the number
+        is another host's) starts again with today's, and says so. A number is given only once it is
+        on disk (`feed_saved`; with no data folder there is nothing to lose: all are given). Times
+        are the rows' own, in seconds since 1970 UTC."""
+        today = self.day(now)
+        with self.lock:
+            self._first_number()
+            last, again = (self.feed_n if self.store is None else min(self.feed_n, self.feed_saved)), None
+            if after is not None and not self.feed_base <= after <= last:
+                again = (f"The number sent ({after}) is not one this feed gave (its numbers run from "
+                         f"{self.feed_base + 1} to {last}): today's devices so far are sent again. Send the "
+                         "\"next\" of this reply from now on.")
+                after = None
+            if after is None:
+                got = sorted((x["n"], today, name) for name, x in (self.days.get(today) or _new_day())["devices"].items()
+                             if "n" in x)
+            else:
+                got = self.feed[bisect_right(self.feed, after, key=lambda r: r[0]):]
+            got = [r for r in got[:FEED_MAX + 1] if r[0] <= last]
+            rows = []
+            for n, d, name in got:
+                x = self.days[d]["devices"][name]
+                who = x.get("who") or [None, None, None]
+                rows.append({"n": n, "at": x.get("at") or 0, "device": name, "day": d.isoformat(), "first": x["first"],
+                             "username": who[1], "desktop": who[2]})
+            return rows, last, again, self.feed_n - last
 
     # -- the admin page --------------------------------------------------------------------
     def view(self, now: datetime, as_of: datetime | None = None, ready: bool = True, off: str | None = None) -> dict:
@@ -663,6 +797,210 @@ class SecureView:
         return {"q": q, "people": ps, "devices": ds, "desktops": ks, "more": {"people": pmore, "devices": dmore,
                 "desktops": kmore}, "max": SEARCH_MAX, "records_since": since.isoformat() if since else None,
                 "date": self.day(now).isoformat(), "zone": self.zone_label, "keep_days": KEEP_DAYS}
+
+
+def _utc(epoch: float) -> str:
+    return datetime.fromtimestamp(int(epoch), timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def feed_name(name) -> str:
+    """A device's name as the feed gives it (the user, Nov 25 2026: "Remove everythin after the dash
+    (-) in 'device' value when return data", "add error trap in case there's no -"): the part before
+    its first dash, the dash left out ("HV00045-SAMPLE45THINVM" is "HV00045"). A name with no dash,
+    or with nothing before it, is given whole: never an error, never an empty name. Only the feed's
+    reply is cut; a device is still told apart, numbered and kept by its whole name, so two names
+    with the same first part are two records with the same `device`."""
+    whole = str(name)
+    return whole.split("-", 1)[0].strip() or whole
+
+
+class People:
+    """The feed's people in Active Directory, on demand (the user, Nov 25 2026: "on demand, build
+    it"): a person's name and department are asked for right after the read that first hears
+    them (`keep_asking`, a thread of its own: never the Today reader, never inside the caller's
+    request, which only reads what is held here). `look` is ad.Lookup's: each name asked of AD at
+    most once in 24 hours, tried again 5 minutes after AD did not answer. The last answer for a
+    person is held AD_KEEP_DAYS, in memory only, and used while AD does not answer. A device is
+    given once, so one whose person was never answered waits AD_WAIT_MIN at most, then goes
+    without name and department (`in_ad` null); with no AD account set, or its login refused, it
+    goes at once."""
+
+    def __init__(self, sv: SecureView, look, batch: int = AD_BATCH):
+        self.sv, self.look, self.batch = sv, look, batch
+        self.known: dict[str, tuple[int, dict]] = {}  # username in lower case -> (answered at, AD's answer)
+        self.pending: dict[str, tuple[str, int]] = {}  # -> (the name as Aternity writes it, first wanted at)
+        self.state = ""  # ok / off / down / refused, as ad.Lookup's ("" until the first look)
+        self.asked: int | None = None  # the people of the feed's numbers up to this one were asked for
+        self.started = False  # its thread (one per process)
+        self.lock = threading.Lock()
+
+    def ask(self, now: datetime) -> None:
+        """Ask AD for the people of the devices numbered since the last time, and those still
+        without an answer. At the start (the answers held are gone with a restart): of today's
+        devices, which a first call or a caller that is behind asks for, and of those numbered in
+        the last AD_WAIT_MIN minutes."""
+        e, sv = int(now.timestamp()), self.sv
+        with sv.lock:
+            if self.asked is None:
+                today = sv.day(now)
+                new = [r for r in reversed(sv.feed[-FEED_MAX:])
+                       if sv.days[r[1]]["devices"][r[2]].get("at", 0) >= e - AD_WAIT_MIN * 60]
+                new += [(x["n"], today, name) for name, x in sv.days.get(today, _new_day())["devices"].items() if "n" in x]
+            else:
+                new = sv.feed[bisect_right(sv.feed, self.asked, key=lambda r: r[0]):]
+            users = [(sv.days[d]["devices"][name].get("who") or [None, None])[1] for _, d, name in new]
+            self.asked = sv.feed_n
+        with self.lock:
+            for u in users:  # a person newly heard is asked for AD_WAIT_MIN from now, also when given up on before
+                if u and not self._wanted(u.lower(), e):
+                    self.pending[u.lower()] = (u, e)
+            self.pending = {k: v for k, v in self.pending.items() if e - v[1] < 86400}
+            self.known = {k: v for k, v in self.known.items() if e - v[0] < AD_KEEP_DAYS * 86400}
+            # only those still waited for: after AD_WAIT_MIN their devices went without, and the name stays
+            # here unasked (a later call for one of those devices must not start the wait again)
+            names = [u for k, (u, _) in self.pending.items() if self._wanted(k, e)]
+        state = ""
+        for i in range(0, max(len(names), 1), self.batch):  # with no name: only whether AD is set and answers
+            got = self.look(names[i:i + self.batch], now)
+            state = got.get("state") or ""
+            with self.lock:
+                for u, view in (got.get("users") or {}).items():
+                    self.known[str(u).lower()] = (e, view)
+                    self.pending.pop(str(u).lower(), None)
+            if state != "ok":
+                break
+        with self.lock:
+            if state != self.state:
+                log.info("SecureView feed: %s", {
+                    "ok": "names and departments come from Active Directory",
+                    "off": "no Active Directory account is set (AD_USERNAME and AD_PASSWORD in .env): devices are "
+                           "given without name and department",
+                    "down": f"Active Directory does not answer: a new person's device waits up to {AD_WAIT_MIN} "
+                            "min, then is given without name and department",
+                    "refused": "Active Directory refuses the app's login: devices are given without name and "
+                               "department"}.get(state, f"Active Directory's state is {state or 'not known'}"))
+            self.state = state
+            if state in ("off", "refused"):  # no answer will come: nothing waits
+                self.pending.clear()
+
+    def _wanted(self, key: str, e: int) -> bool:
+        """Still waited for: asked for less than AD_WAIT_MIN ago (the caller holds self.lock)."""
+        held = self.pending.get(key)
+        return held is not None and e - held[1] < AD_WAIT_MIN * 60
+
+    def _waits(self, user: str, e: int, at: int) -> bool:
+        """A person with no answer yet: their device waits while AD may still answer, AD_WAIT_MIN at
+        most from when they were first asked for. One never asked for, or given up on before this
+        device was heard (`at`), is asked for now (the thread wakes)."""
+        with self.lock:
+            if self.state in ("off", "refused"):
+                return False
+            held = self.pending.get(user.lower())
+            if held is None or (not self._wanted(user.lower(), e) and at > held[1]):
+                self.pending[user.lower()] = (user, e)
+                self.sv.fresh.set()
+            return self._wanted(user.lower(), e)
+
+    def reply(self, today, after: int | None, now: datetime) -> dict:
+        """`GET /api/MSS/secureview/new`: the devices heard for the first time on their day since
+        the number the caller sends back (`after`, the `next` of its last reply), each once. ready,
+        as_of, refresh_minutes and note as the Care list's feed; all times UTC; plain ASCII."""
+        sv = self.sv
+        out = {"ready": False, "as_of": None, "refresh_minutes": today.refresh_min, "note": None,
+               "ad": self.state or None, "devices": [], "more": False, "next": after}
+        if not sv.on():
+            out["note"] = _ascii(sv.error or "SecureView is off: secureview.match in config.yaml is empty.")
+            return out
+        if today.off or not today.ready:
+            out["note"] = _ascii(today.off or today.status or "Starting")
+            return out
+        if today.read_ok is None:
+            out["note"] = "Aternity could not be read yet: no device until it is."
+            return out
+        out.update(ready=True, as_of=_utc(today.read_ok.timestamp()))
+        notes = []
+        if today.as_of and today.read_ok < today.as_of:
+            notes.append(f"Aternity could not be read in full at {today.as_of:%H:%M} UTC: a device first heard since "
+                         f"{today.read_ok:%H:%M} UTC may come late.")
+        elif now - today.read_ok > STALE_READS * timedelta(minutes=today.refresh_min):
+            notes.append(f"No read of Aternity since {today.read_ok:%H:%M} UTC (reads are every {today.refresh_min} "
+                         "min): no new device can come until it is read again.")
+        rows, last, again, held = sv.feed_rows(after, now)
+        if again:
+            notes.append(again)
+            after = None
+        if held:
+            notes.append(f"{held} new device{'' if held == 1 else 's'} held back: the app could not save its records "
+                         "on its host; given once it can.")
+        e, devices, waiting, bare = int(now.timestamp()), [], False, 0
+        for i, r in enumerate(rows):
+            if len(devices) >= FEED_MAX:
+                out["more"] = True
+                break
+            user, view = r["username"], None
+            if user:
+                with self.lock:
+                    held = self.known.get(user.lower())
+                if held is not None:
+                    view = held[1]
+                elif self._waits(user, e, r["at"]):
+                    waiting = True
+                    # the people of the devices after it are asked for now too: one wait for all of them
+                    # (asked for one at a time, a caller behind after a restart got one device a call)
+                    for later in rows[i + 1:]:
+                        with self.lock:
+                            have = not later["username"] or later["username"].lower() in self.known
+                        if not have:
+                            self._waits(later["username"], e, later["at"])
+                    break
+                else:
+                    bare += 1
+            found = view.get("found") if view else None
+            devices.append({"device": feed_name(r["device"]), "day": r["day"], "first_heard": _utc(r["first"]),
+                            "username": user, "name": view.get("name") if found else None,
+                            "department": view.get("department") if found else None,
+                            "in_ad": bool(found) if view else None, "desktop": r["desktop"]})
+        # the number to send back: the last device given; with none, the one sent (nothing is skipped)
+        out["next"] = (rows[len(devices) - 1]["n"] if devices else after if after is not None
+                       else rows[0]["n"] - 1 if rows else last)
+        out["devices"] = devices
+        state = self.state
+        if waiting:
+            notes.append(f"New devices wait for Active Directory's answer ({AD_WAIT_MIN} min at most): they come at "
+                         "a later call.")
+        if bare and state not in ("off", "refused"):
+            notes.append(f"Active Directory did not answer in {AD_WAIT_MIN} min: {bare} of these devices come "
+                         "without name and department.")
+            log.warning("SecureView feed: %d devices given without name and department (Active Directory did not "
+                        "answer in %d min)", bare, AD_WAIT_MIN)
+        elif state == "refused":
+            notes.append("Active Directory refuses the app's login: devices come without name and department.")
+        out["ad"], out["note"] = state or None, _ascii(" ".join(notes)) or None
+        return out
+
+
+def _ascii(text: str) -> str:
+    """Plain ASCII for another platform (as the Care list's feed)."""
+    return text.translate({0x2013: "-", 0x2014: "-", 0x2018: "'", 0x2019: "'", 0x201C: '"', 0x201D: '"',
+                           0x2026: "..."}).encode("ascii", "ignore").decode()
+
+
+def keep_asking(people: People, clock=lambda: datetime.now(timezone.utc)) -> None:
+    """The feed's people looked up in AD: at the start, at each read that gave numbers
+    (`SecureView.fresh`) and every AD_WAKE_S (AD that did not answer is tried again by ad.Lookup's
+    own rule). Guarded: an error is logged and the thread goes on."""
+    said = None
+    while True:
+        try:
+            people.ask(clock())
+            said = None
+        except Exception as exc:
+            if short_error(exc) != said:  # once, not every minute
+                said = short_error(exc)
+                log.warning("SecureView feed: names could not be looked up in Active Directory (%s); tried again "
+                            "every %d s", said, AD_WAKE_S)
+        people.sv.fresh.wait(AD_WAKE_S)
+        people.sv.fresh.clear()
 
 
 def _sam(user: str) -> str:

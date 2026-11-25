@@ -1,7 +1,9 @@
-"""Ask anything: the open chat on the Today tab (step 1; the user's request 2026-11-12: "HOW DO
-WE MAKE THIS LIKE NORMAL REGULAR CHAT", after "What PCs had hard drive issue this week?" was
-answered "no event named Hard drive" by the block chat).
+"""Ask anything: the one chat, at the bottom of every tab: the AI looks things up in several
+steps (at most `MAX_STEPS` look-ups a question, of any kind) and answers in its own words.
 
+Step 1, then on the Today tab only (the user's request 2026-11-12: "HOW DO WE MAKE THIS LIKE
+NORMAL REGULAR CHAT", after "What PCs had hard drive issue this week?" was answered "no event
+named Hard drive" by the block chat).
 The AI looks things up with general tools, as many steps as it needs (`MAX_STEPS`), sees the
 records themselves (rows, with a summary of the counts), and answers in its own words. Every
 step and its rows go back to the page ("What I looked at"); a number in the answer that is in
@@ -42,14 +44,14 @@ from .today import EVENT_PAD, HEALTH_DAYS, NO_APP, SLOW_PAD, Today
 
 log = logging.getLogger("uxcorrelate")
 
-MAX_STEPS = 8  # tool calls per question
+MAX_STEPS = 8  # look-ups per question, of any kind (the AI's tool calls); MAX_READS of them may read Aternity
 ROWS_MAX = 150  # rows of one step, given to the AI and shown
 RESULT_CHARS = 24000  # one step as given to the AI, at most
 HISTORY = 6  # earlier questions and answers sent with a new one
 ANSWER_MAX = 4000
 KINDS_MAX = 80  # kinds of event named in the instructions, the most PCs first
 FIND_MAX = 20  # names of each sort a find returns
-MAX_READS = 5  # look-ups that read Aternity now, per question
+MAX_READS = 5  # of a question's MAX_STEPS look-ups, those that may read Aternity now
 MAX_INVESTIGATIONS = 1  # whole investigations per question (the slowest look-up)
 INVESTIGATE_HOURS = 4  # an investigation's window when none is asked for (as Investigate ▸ on Today)
 INVESTIGATE_MAX_H = 24  # an investigation's window, at most: longer ones on the Investigate tab

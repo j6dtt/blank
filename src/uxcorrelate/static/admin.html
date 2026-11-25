@@ -665,6 +665,15 @@ function carePanel(j) {
     s += `<p class="small">${plural(p.n, "poll")} (one every 5 min is 288 a day); the last at ${esc(p.last_local)} from ${esc(p.from || "?")}.</p>`;
     if (late) s += `<p class="warn small">No poll for ${dur((Date.now() - Date.parse(p.last)) / 1000)}: the other platform may have stopped asking.</p>`;
   }
+  // SecureView's feed (GET /api/MSS/secureview/new): its calls and the devices they gave, each device once a day
+  const f = j.feed || { n: 0, devices: 0 };
+  s += `<h3>The other platform's calls for SecureView's new devices</h3>`;
+  if (!f.n) s += `<p class="muted">No call of /api/MSS/secureview/new ${j.today ? "today" : "that day"}.</p>`;
+  else {
+    const late = j.today && f.last && (Date.now() - Date.parse(f.last)) > 15 * 60000;
+    s += `<p class="small">${plural(f.n, "call")}; ${plural(f.devices, "device")} given in them (a call with no number gives today's again); the last at ${esc(f.last_local)} from ${esc(f.from || "?")}.</p>`;
+    if (late) s += `<p class="warn small">No call for ${dur((Date.now() - Date.parse(f.last)) / 1000)}: the other platform may have stopped asking.</p>`;
+  }
   return s + `</section>`;
 }
 
